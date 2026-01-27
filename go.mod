@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.42.0
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.11.0
-	github.com/aws/aws-sdk-go-v2 v1.41.0
+	github.com/aws/aws-sdk-go-v2 v1.41.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.93.1
 	github.com/docker/go-connections v0.6.0
