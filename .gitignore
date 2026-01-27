@@ -1,0 +1,10 @@
+.env
+agent/evals/.env
+api/.env
+web/.env.local
+.tmp/
+.vite/
+dist/
+node_modules/
+eval-runs/
+*.DS_Store
