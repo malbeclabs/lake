@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/lmittmann/tint v1.1.2
-	github.com/malbeclabs/doublezero v0.0.0-20260127003248-a7973ff42f73
+	github.com/malbeclabs/doublezero v0.8.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/pressly/goose/v3 v3.26.0
