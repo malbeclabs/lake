@@ -10,8 +10,8 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 )
 
 type InternetMetroLatencySample struct {

@@ -11,7 +11,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/pressly/goose/v3"
 
-	"github.com/malbeclabs/doublezero/lake/indexer"
+	"github.com/malbeclabs/lake/indexer"
 )
 
 func CreateDatabase(ctx context.Context, log *slog.Logger, conn Connection, database string) error {

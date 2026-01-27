@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 )
 
 func TestLake_TelemetryLatency_Store_BackfillDeviceLinkLatency_Idempotency(t *testing.T) {

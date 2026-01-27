@@ -8,7 +8,7 @@ import (
 	"time"
 
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 // LeaderScheduleSchema defines the schema for leader schedule entries

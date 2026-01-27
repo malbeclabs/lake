@@ -10,8 +10,8 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 )
 
 // BackfillInternetMetroLatencyRPC defines the RPC interface needed for internet metro latency backfill

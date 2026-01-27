@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // MockInfluxDBClient implements InfluxDBClient using real topology from ClickHouse

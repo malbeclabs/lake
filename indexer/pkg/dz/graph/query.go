@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
 // PathWeight determines how paths are weighted for shortest path queries.

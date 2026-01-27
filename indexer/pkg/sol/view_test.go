@@ -10,7 +10,7 @@ import (
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 

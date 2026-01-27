@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // TypedFactDataset provides typed read and write methods for a specific struct type T.

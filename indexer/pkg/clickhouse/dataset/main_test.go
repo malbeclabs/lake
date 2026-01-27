@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	clickhousetesting "github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/testing"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	clickhousetesting "github.com/malbeclabs/lake/indexer/pkg/clickhouse/testing"
 	"github.com/stretchr/testify/require"
 )
 

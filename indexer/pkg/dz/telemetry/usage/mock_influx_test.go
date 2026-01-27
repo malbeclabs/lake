@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 
 	"github.com/stretchr/testify/require"
 )

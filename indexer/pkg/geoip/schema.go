@@ -3,8 +3,8 @@ package geoip
 import (
 	"log/slog"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 // GeoIPRecordSchema defines the schema for GeoIP records

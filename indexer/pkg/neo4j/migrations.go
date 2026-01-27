@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/malbeclabs/doublezero/lake/indexer"
+	"github.com/malbeclabs/lake/indexer"
 )
 
 // MigrationConfig holds the configuration for running Neo4j migrations

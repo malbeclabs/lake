@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/indexer"
+	"github.com/malbeclabs/lake/indexer/pkg/indexer"
 )
 
 // VersionInfo contains build-time version information.

@@ -10,11 +10,11 @@ import (
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/sol"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 

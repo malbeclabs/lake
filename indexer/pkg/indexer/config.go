@@ -8,13 +8,13 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
-	dztelemusage "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/usage"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/sol"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
 )
 
 type Config struct {

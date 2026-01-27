@@ -11,10 +11,10 @@ import (
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 type TelemetryRPC interface {

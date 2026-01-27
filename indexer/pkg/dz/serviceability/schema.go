@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 // ContributorSchema defines the schema for contributors

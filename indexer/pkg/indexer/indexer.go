@@ -7,15 +7,15 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	dzgraph "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/graph"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/isis"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
-	dztelemusage "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/usage"
-	mcpgeoip "github.com/malbeclabs/doublezero/lake/indexer/pkg/geoip"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/sol"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
+	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
 )
 
 type Indexer struct {

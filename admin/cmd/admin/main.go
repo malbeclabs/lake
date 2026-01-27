@@ -9,10 +9,10 @@ import (
 	flag "github.com/spf13/pflag"
 
 	"github.com/malbeclabs/doublezero/config"
-	"github.com/malbeclabs/doublezero/lake/admin/internal/admin"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
-	"github.com/malbeclabs/doublezero/lake/utils/pkg/logger"
+	"github.com/malbeclabs/lake/admin/internal/admin"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
 func main() {

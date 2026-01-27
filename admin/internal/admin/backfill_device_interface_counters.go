@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	dztelemusage "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 )
 
 const (

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/metrics"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/sol"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
 )
 
 type ViewConfig struct {

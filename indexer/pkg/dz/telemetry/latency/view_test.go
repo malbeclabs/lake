@@ -10,15 +10,15 @@ import (
 	"github.com/gagliardetto/solana-go"
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	mcpgeoip "github.com/malbeclabs/doublezero/lake/indexer/pkg/geoip"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 )
 
 type mockTelemetryRPC struct{}

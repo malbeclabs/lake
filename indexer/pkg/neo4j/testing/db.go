@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	tcneo4j "github.com/testcontainers/testcontainers-go/modules/neo4j"
 )
 

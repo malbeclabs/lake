@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // queryType represents the type of query to build

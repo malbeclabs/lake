@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 
