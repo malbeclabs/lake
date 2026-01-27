@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +24,6 @@ func TestLake_Agent_Evals_Anthropic_DZVsPublicInternet(t *testing.T) {
 
 	runTest_DZVsPublicInternet(t, newAnthropicLLMClient)
 }
-
 
 func runTest_DZVsPublicInternet(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

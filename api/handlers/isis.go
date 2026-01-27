@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/handlers/dberror"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -1255,11 +1255,11 @@ func enrichPathsWithMeasuredLatency(ctx context.Context, response *MultiPathResp
 
 // CriticalLink represents a link that is critical for network connectivity
 type CriticalLink struct {
-	SourcePK   string `json:"sourcePK"`
-	SourceCode string `json:"sourceCode"`
-	TargetPK   string `json:"targetPK"`
-	TargetCode string `json:"targetCode"`
-	Metric     uint32 `json:"metric"`
+	SourcePK    string `json:"sourcePK"`
+	SourceCode  string `json:"sourceCode"`
+	TargetPK    string `json:"targetPK"`
+	TargetCode  string `json:"targetCode"`
+	Metric      uint32 `json:"metric"`
 	Criticality string `json:"criticality"` // "critical", "important", "redundant"
 }
 
@@ -1404,18 +1404,18 @@ type RedundancyIssue struct {
 
 // RedundancyReportResponse is the response for the redundancy report endpoint
 type RedundancyReportResponse struct {
-	Issues         []RedundancyIssue `json:"issues"`
-	Summary        RedundancySummary `json:"summary"`
-	Error          string            `json:"error,omitempty"`
+	Issues  []RedundancyIssue `json:"issues"`
+	Summary RedundancySummary `json:"summary"`
+	Error   string            `json:"error,omitempty"`
 }
 
 type RedundancySummary struct {
-	TotalIssues     int `json:"totalIssues"`
-	CriticalCount   int `json:"criticalCount"`
-	WarningCount    int `json:"warningCount"`
-	InfoCount       int `json:"infoCount"`
-	LeafDevices     int `json:"leafDevices"`
-	CriticalLinks   int `json:"criticalLinks"`
+	TotalIssues      int `json:"totalIssues"`
+	CriticalCount    int `json:"criticalCount"`
+	WarningCount     int `json:"warningCount"`
+	InfoCount        int `json:"infoCount"`
+	LeafDevices      int `json:"leafDevices"`
+	CriticalLinks    int `json:"criticalLinks"`
 	SingleExitMetros int `json:"singleExitMetros"`
 }
 
@@ -2548,7 +2548,7 @@ func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 		MATCH (m1:Metro {pk: $fromPK}), (m2:Metro {pk: $toPK})
 		RETURN m1.code AS fromCode, m2.code AS toCode
 	`
-	metroResult, err := session.Run(ctx, metroCypher, map[string]interface{}{
+	metroResult, err := session.Run(ctx, metroCypher, map[string]any{
 		"fromPK": fromPK,
 		"toPK":   toPK,
 	})
@@ -2585,7 +2585,7 @@ func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 		RETURN hopList, weight AS totalMetric, size(hopList)-1 AS totalHops
 	`
 
-	result, err := session.Run(ctx, pathsCypher, map[string]interface{}{
+	result, err := session.Run(ctx, pathsCypher, map[string]any{
 		"fromPK": fromPK,
 		"toPK":   toPK,
 		"k":      k,
@@ -2608,7 +2608,7 @@ func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 		totalMetricVal, _ := record.Get("totalMetric")
 		totalHopsVal, _ := record.Get("totalHops")
 
-		hopList, _ := hopListVal.([]interface{})
+		hopList, _ := hopListVal.([]any)
 		totalMetric := asInt64(totalMetricVal)
 		totalHops := int(asInt64(totalHopsVal))
 
@@ -2620,7 +2620,7 @@ func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for _, hopVal := range hopList {
-			hopMap, ok := hopVal.(map[string]interface{})
+			hopMap, ok := hopVal.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -2689,14 +2689,14 @@ type AffectedMetroPair struct {
 
 // MaintenanceImpactResponse is the response for maintenance impact analysis
 type MaintenanceImpactResponse struct {
-	Items             []MaintenanceItem           `json:"items"`                       // Items with their individual impacts
-	TotalImpact       int                         `json:"totalImpact"`                 // Total affected paths when all items are down
-	TotalDisconnected int                         `json:"totalDisconnected"`           // Total devices that lose connectivity
-	RecommendedOrder  []string                    `json:"recommendedOrder"`            // PKs in recommended maintenance order (least impact first)
-	AffectedPaths     []MaintenanceAffectedPath   `json:"affectedPaths,omitempty"`     // Sample of affected paths
-	AffectedMetros    []AffectedMetroPair         `json:"affectedMetros,omitempty"`    // Affected metro pairs
-	DisconnectedList  []string                    `json:"disconnectedList,omitempty"`  // All devices that would be disconnected
-	Error             string                      `json:"error,omitempty"`
+	Items             []MaintenanceItem         `json:"items"`                      // Items with their individual impacts
+	TotalImpact       int                       `json:"totalImpact"`                // Total affected paths when all items are down
+	TotalDisconnected int                       `json:"totalDisconnected"`          // Total devices that lose connectivity
+	RecommendedOrder  []string                  `json:"recommendedOrder"`           // PKs in recommended maintenance order (least impact first)
+	AffectedPaths     []MaintenanceAffectedPath `json:"affectedPaths,omitempty"`    // Sample of affected paths
+	AffectedMetros    []AffectedMetroPair       `json:"affectedMetros,omitempty"`   // Affected metro pairs
+	DisconnectedList  []string                  `json:"disconnectedList,omitempty"` // All devices that would be disconnected
+	Error             string                    `json:"error,omitempty"`
 }
 
 // PostMaintenanceImpact analyzes the impact of taking multiple devices/links offline
@@ -2823,162 +2823,6 @@ func getLinkEndpoints(ctx context.Context, linkPK string) string {
 	return sideA + ":" + sideZ
 }
 
-// computeAffectedPaths finds paths that would be affected by the maintenance
-// and computes alternate routes with before/after hops and metrics
-func computeAffectedPaths(ctx context.Context, session neo4j.Session,
-	offlineDevices map[string]bool, offlineLinks map[string]bool, limit int) []MaintenanceAffectedPath {
-
-	result := []MaintenanceAffectedPath{}
-
-	offlineDevicePKs := make([]string, 0, len(offlineDevices))
-	for pk := range offlineDevices {
-		offlineDevicePKs = append(offlineDevicePKs, pk)
-	}
-
-	// If no offline devices, skip the path computation
-	if len(offlineDevicePKs) == 0 {
-		return result
-	}
-
-	// Find paths that go through offline devices, compute before/after metrics
-	// This query finds the original shortest path, then tries to find an alternate
-	cypher := `
-		// First, find device pairs where the shortest path goes through an offline device
-		MATCH (source:Device), (target:Device)
-		WHERE source.isis_system_id IS NOT NULL
-		  AND target.isis_system_id IS NOT NULL
-		  AND source.pk < target.pk
-		  AND NOT source.pk IN $offlineDevicePKs
-		  AND NOT target.pk IN $offlineDevicePKs
-
-		// Find the current shortest path
-		MATCH originalPath = shortestPath((source)-[:ISIS_ADJACENT*]-(target))
-		WHERE any(n IN nodes(originalPath) WHERE n.pk IN $offlineDevicePKs)
-
-		// Calculate original path metrics
-		WITH source, target, originalPath,
-		     length(originalPath) AS hopsBefore,
-		     reduce(m = 0, r IN relationships(originalPath) | m + coalesce(r.metric, 10)) AS metricBefore
-
-		LIMIT $limit
-
-		// Get metro info
-		OPTIONAL MATCH (source)-[:LOCATED_IN]->(sm:Metro)
-		OPTIONAL MATCH (target)-[:LOCATED_IN]->(tm:Metro)
-
-		// Return with source/target PKs for alternate path lookup
-		RETURN source.pk AS sourcePK, source.code AS sourceCode,
-		       target.pk AS targetPK, target.code AS targetCode,
-		       COALESCE(sm.code, 'unknown') AS sourceMetro,
-		       COALESCE(tm.code, 'unknown') AS targetMetro,
-		       hopsBefore, metricBefore
-	`
-
-	records, err := session.Run(ctx, cypher, map[string]interface{}{
-		"offlineDevicePKs": offlineDevicePKs,
-		"limit":            limit,
-	})
-	if err != nil {
-		log.Printf("Error computing affected paths: %v", err)
-		return result
-	}
-
-	// Collect paths that need alternate route computation
-	type pathInfo struct {
-		sourcePK     string
-		targetPK     string
-		sourceCode   string
-		targetCode   string
-		sourceMetro  string
-		targetMetro  string
-		hopsBefore   int
-		metricBefore int
-	}
-	paths := []pathInfo{}
-
-	for records.Next(ctx) {
-		record := records.Record()
-		sourcePK, _ := record.Get("sourcePK")
-		targetPK, _ := record.Get("targetPK")
-		sourceCode, _ := record.Get("sourceCode")
-		targetCode, _ := record.Get("targetCode")
-		sourceMetro, _ := record.Get("sourceMetro")
-		targetMetro, _ := record.Get("targetMetro")
-		hopsBefore, _ := record.Get("hopsBefore")
-		metricBefore, _ := record.Get("metricBefore")
-
-		paths = append(paths, pathInfo{
-			sourcePK:     asString(sourcePK),
-			targetPK:     asString(targetPK),
-			sourceCode:   asString(sourceCode),
-			targetCode:   asString(targetCode),
-			sourceMetro:  asString(sourceMetro),
-			targetMetro:  asString(targetMetro),
-			hopsBefore:   int(asInt64(hopsBefore)),
-			metricBefore: int(asInt64(metricBefore)),
-		})
-	}
-
-	// For each affected path, try to find an alternate route
-	for _, p := range paths {
-		affectedPath := MaintenanceAffectedPath{
-			Source:       p.sourceCode,
-			Target:       p.targetCode,
-			SourceMetro:  p.sourceMetro,
-			TargetMetro:  p.targetMetro,
-			HopsBefore:   p.hopsBefore,
-			MetricBefore: p.metricBefore,
-			HopsAfter:    -1,
-			MetricAfter:  -1,
-			Status:       "disconnected",
-		}
-
-		// Try to find alternate path avoiding offline devices
-		altCypher := `
-			MATCH (source:Device {pk: $sourcePK}), (target:Device {pk: $targetPK})
-
-			// Find shortest path that avoids offline devices
-			MATCH altPath = shortestPath((source)-[:ISIS_ADJACENT*]-(target))
-			WHERE none(n IN nodes(altPath) WHERE n.pk IN $offlineDevicePKs)
-
-			WITH altPath, length(altPath) AS hopsAfter,
-			     reduce(m = 0, r IN relationships(altPath) | m + coalesce(r.metric, 10)) AS metricAfter
-
-			RETURN hopsAfter, metricAfter
-			LIMIT 1
-		`
-
-		altRecords, err := session.Run(ctx, altCypher, map[string]interface{}{
-			"sourcePK":         p.sourcePK,
-			"targetPK":         p.targetPK,
-			"offlineDevicePKs": offlineDevicePKs,
-		})
-		if err == nil && altRecords.Next(ctx) {
-			record := altRecords.Record()
-			hopsAfter, _ := record.Get("hopsAfter")
-			metricAfter, _ := record.Get("metricAfter")
-
-			affectedPath.HopsAfter = int(asInt64(hopsAfter))
-			affectedPath.MetricAfter = int(asInt64(metricAfter))
-
-			// Determine status based on degradation
-			hopIncrease := affectedPath.HopsAfter - affectedPath.HopsBefore
-			metricIncrease := affectedPath.MetricAfter - affectedPath.MetricBefore
-
-			if hopIncrease > 2 || metricIncrease > 100 {
-				affectedPath.Status = "degraded"
-			} else {
-				affectedPath.Status = "rerouted"
-			}
-		}
-
-		result = append(result, affectedPath)
-	}
-
-	return result
-}
-
-
 // analyzeDevicesImpactBatch computes the impact of taking multiple devices offline in a single query
 func analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devicePKs []string) []MaintenanceItem {
 	items := make([]MaintenanceItem, 0, len(devicePKs))
@@ -3014,7 +2858,7 @@ func analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devic
 		       [x IN disconnectedCodes WHERE x IS NOT NULL] AS disconnectedDevices
 	`
 
-	result, err := session.Run(ctx, cypher, map[string]interface{}{
+	result, err := session.Run(ctx, cypher, map[string]any{
 		"devicePKs": devicePKs,
 	})
 	if err != nil {
@@ -3035,7 +2879,7 @@ func analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devic
 		disconnectedDevices, _ := record.Get("disconnectedDevices")
 
 		disconnectedList := []string{}
-		if arr, ok := disconnectedDevices.([]interface{}); ok {
+		if arr, ok := disconnectedDevices.([]any); ok {
 			for _, v := range arr {
 				if s := asString(v); s != "" {
 					disconnectedList = append(disconnectedList, s)
@@ -3173,7 +3017,7 @@ func analyzeLinksImpactBatch(ctx context.Context, session neo4j.Session, linkPKs
 	})
 
 	if len(linkEndpoints) > 0 {
-		result, err := session.Run(ctx, degreeCypher, map[string]interface{}{
+		result, err := session.Run(ctx, degreeCypher, map[string]any{
 			"links": linkEndpoints,
 		})
 		if err == nil {
@@ -3317,7 +3161,7 @@ func computeAffectedPathsFast(ctx context.Context, session neo4j.Session,
 		LIMIT $limit
 	`
 
-	records, err := session.Run(ctx, cypher, map[string]interface{}{
+	records, err := session.Run(ctx, cypher, map[string]any{
 		"offlineDevicePKs": offlineDevicePKs,
 		"limit":            limit * 2, // Get more candidates, we'll filter
 	})
@@ -3391,7 +3235,7 @@ func computeAffectedPathsFast(ctx context.Context, session neo4j.Session,
 			LIMIT 1
 		`
 
-		altResult, err := session.Run(ctx, altCypher, map[string]interface{}{
+		altResult, err := session.Run(ctx, altCypher, map[string]any{
 			"sourcePK":         c.sourcePK,
 			"targetPK":         c.targetPK,
 			"offlineDevicePKs": offlineDevicePKs,
@@ -3460,7 +3304,7 @@ func computeAffectedMetrosFast(ctx context.Context, session neo4j.Session,
 		LIMIT 50
 	`
 
-	records, err := session.Run(ctx, cypher, map[string]interface{}{
+	records, err := session.Run(ctx, cypher, map[string]any{
 		"offlineDevicePKs": offlineDevicePKs,
 	})
 	if err != nil {
@@ -3530,7 +3374,7 @@ func analyzeDeviceImpact(ctx context.Context, session neo4j.Session, devicePK st
 		MATCH (d:Device {pk: $pk})
 		RETURN d.code AS code
 	`
-	codeResult, err := session.Run(ctx, codeCypher, map[string]interface{}{"pk": devicePK})
+	codeResult, err := session.Run(ctx, codeCypher, map[string]any{"pk": devicePK})
 	if err == nil {
 		if record, err := codeResult.Single(ctx); err == nil {
 			if code, ok := record.Get("code"); ok {
@@ -3549,7 +3393,7 @@ func analyzeDeviceImpact(ctx context.Context, session neo4j.Session, devicePK st
 		WITH d, count(path) AS pathCount
 		RETURN pathCount
 	`
-	pathsResult, err := session.Run(ctx, pathsCypher, map[string]interface{}{"pk": devicePK})
+	pathsResult, err := session.Run(ctx, pathsCypher, map[string]any{"pk": devicePK})
 	if err == nil {
 		if record, err := pathsResult.Single(ctx); err == nil {
 			if pathCount, ok := record.Get("pathCount"); ok {
@@ -3570,7 +3414,7 @@ func analyzeDeviceImpact(ctx context.Context, session neo4j.Session, devicePK st
 		WHERE degree = 1
 		RETURN neighbor.code AS disconnectedCode
 	`
-	criticalResult, err := session.Run(ctx, criticalCypher, map[string]interface{}{"pk": devicePK})
+	criticalResult, err := session.Run(ctx, criticalCypher, map[string]any{"pk": devicePK})
 	if err == nil {
 		for criticalResult.Next(ctx) {
 			record := criticalResult.Record()
@@ -3580,110 +3424,6 @@ func analyzeDeviceImpact(ctx context.Context, session neo4j.Session, devicePK st
 			}
 		}
 		item.CausesPartition = item.Disconnected > 0
-	}
-
-	return item
-}
-
-// analyzeLinkImpact computes the impact of taking a single link offline
-func analyzeLinkImpact(ctx context.Context, session neo4j.Session, linkPK string) MaintenanceItem {
-	item := MaintenanceItem{
-		Type: "link",
-		PK:   linkPK,
-	}
-
-	// Look up link from ClickHouse to get side_a_pk and side_z_pk
-	linkQuery := `
-		SELECT
-			l.code,
-			COALESCE(l.side_a_pk, '') as side_a_pk,
-			COALESCE(l.side_z_pk, '') as side_z_pk,
-			COALESCE(da.code, '') as side_a_code,
-			COALESCE(dz.code, '') as side_z_code
-		FROM dz_links_current l
-		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
-		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-		WHERE l.pk = $1
-	`
-	var linkCode, sideAPK, sideZPK, sideACode, sideZCode string
-	if err := config.DB.QueryRow(ctx, linkQuery, linkPK).Scan(&linkCode, &sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
-		item.Code = "Link not found"
-		return item
-	}
-
-	if sideAPK == "" || sideZPK == "" {
-		item.Code = linkCode + " (missing endpoints)"
-		return item
-	}
-
-	item.Code = sideACode + " - " + sideZCode
-	sourcePK, targetPK := sideAPK, sideZPK
-
-	// Check if removing this link would disconnect devices
-	// If either endpoint has degree 1, removing the link disconnects that device
-	degreeCypher := `
-		MATCH (s:Device {pk: $sourcePK}), (t:Device {pk: $targetPK})
-		WHERE s.isis_system_id IS NOT NULL AND t.isis_system_id IS NOT NULL
-		OPTIONAL MATCH (s)-[:ISIS_ADJACENT]-(sn:Device) WHERE sn.isis_system_id IS NOT NULL
-		WITH s, t, count(DISTINCT sn) AS sourceDegree
-		OPTIONAL MATCH (t)-[:ISIS_ADJACENT]-(tn:Device) WHERE tn.isis_system_id IS NOT NULL
-		WITH s, t, sourceDegree, count(DISTINCT tn) AS targetDegree
-		RETURN s.code AS sourceCode, t.code AS targetCode, sourceDegree, targetDegree
-	`
-	degreeResult, err := session.Run(ctx, degreeCypher, map[string]interface{}{
-		"sourcePK": sourcePK,
-		"targetPK": targetPK,
-	})
-	if err == nil {
-		if record, err := degreeResult.Single(ctx); err == nil {
-			sourceCode, _ := record.Get("sourceCode")
-			targetCode, _ := record.Get("targetCode")
-			sourceDegree, _ := record.Get("sourceDegree")
-			targetDegree, _ := record.Get("targetDegree")
-			sDeg := int(asInt64(sourceDegree))
-			tDeg := int(asInt64(targetDegree))
-
-			// If either has degree 1, this link is critical
-			if sDeg == 1 || tDeg == 1 {
-				item.CausesPartition = true
-				if sDeg == 1 {
-					item.DisconnectedDevices = append(item.DisconnectedDevices, asString(sourceCode))
-					item.Disconnected++
-				}
-				if tDeg == 1 {
-					item.DisconnectedDevices = append(item.DisconnectedDevices, asString(targetCode))
-					item.Disconnected++
-				}
-			}
-		}
-	}
-
-	// Count paths that use this link
-	// We count device pairs where the shortest path goes through this link
-	pathsCypher := `
-		MATCH (s:Device {pk: $sourcePK})-[:ISIS_ADJACENT]-(t:Device {pk: $targetPK})
-		WHERE s.isis_system_id IS NOT NULL AND t.isis_system_id IS NOT NULL
-		// Get neighbors of source (excluding target)
-		OPTIONAL MATCH (s)-[:ISIS_ADJACENT]-(sNeighbor:Device)
-		WHERE sNeighbor.isis_system_id IS NOT NULL AND sNeighbor.pk <> t.pk
-		WITH s, t, collect(DISTINCT sNeighbor.pk) AS sourceNeighbors
-		// Get neighbors of target (excluding source)
-		OPTIONAL MATCH (t)-[:ISIS_ADJACENT]-(tNeighbor:Device)
-		WHERE tNeighbor.isis_system_id IS NOT NULL AND tNeighbor.pk <> s.pk
-		WITH sourceNeighbors, collect(DISTINCT tNeighbor.pk) AS targetNeighbors
-		// Rough estimate: paths affected = sourceNeighbors * targetNeighbors
-		RETURN size(sourceNeighbors) * size(targetNeighbors) AS affectedPaths
-	`
-	pathsResult, err := session.Run(ctx, pathsCypher, map[string]interface{}{
-		"sourcePK": sourcePK,
-		"targetPK": targetPK,
-	})
-	if err == nil {
-		if record, err := pathsResult.Single(ctx); err == nil {
-			if affectedPaths, ok := record.Get("affectedPaths"); ok {
-				item.Impact = int(asInt64(affectedPaths))
-			}
-		}
 	}
 
 	return item
@@ -3850,7 +3590,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 			source, target := source, target
 
 			go func() {
-				sem <- struct{}{} // Acquire
+				sem <- struct{}{}        // Acquire
 				defer func() { <-sem }() // Release
 
 				// Use a fresh context for each query

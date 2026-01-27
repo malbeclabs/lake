@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type ContributorListItem struct {

@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	clickhousetesting "github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/testing"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	neo4jtesting "github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j/testing"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	clickhousetesting "github.com/malbeclabs/lake/indexer/pkg/clickhouse/testing"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	neo4jtesting "github.com/malbeclabs/lake/indexer/pkg/neo4j/testing"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -810,4 +810,3 @@ func TestStore_Sync_UserDeviceAssignment(t *testing.T) {
 	relCount, _ := record.Get("count")
 	require.Equal(t, int64(1), relCount, "expected only one ASSIGNED_TO relationship")
 }
-

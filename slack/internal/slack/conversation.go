@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/utils/pkg/retry"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/utils/pkg/retry"
 	"github.com/slack-go/slack"
 )
 

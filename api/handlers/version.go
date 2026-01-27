@@ -24,10 +24,10 @@ func GetVersion(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// In development, version.json might not exist
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VersionResponse{BuildTimestamp: "dev"})
+		_ = json.NewEncoder(w).Encode(VersionResponse{BuildTimestamp: "dev"})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }

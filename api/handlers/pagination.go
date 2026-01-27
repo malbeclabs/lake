@@ -118,8 +118,8 @@ const (
 
 // FilterFieldConfig describes how to filter a field
 type FilterFieldConfig struct {
-	Column    string
-	Type      FieldType
+	Column string
+	Type   FieldType
 }
 
 // NumericOp represents a numeric comparison operator
@@ -198,7 +198,7 @@ func ParseNumericFilter(input string, fieldType FieldType) *NumericOp {
 
 // BuildFilterClause builds a WHERE clause fragment for the given filter
 // Returns the clause (without WHERE keyword) and any query parameters
-func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (string, []interface{}) {
+func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (string, []any) {
 	if f.IsEmpty() {
 		return "", nil
 	}
@@ -206,7 +206,7 @@ func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (st
 	// Handle "all" field - search across all text fields
 	if f.Field == "all" {
 		var textClauses []string
-		var args []interface{}
+		var args []any
 		for _, config := range fields {
 			if config.Type == FieldTypeText {
 				textClauses = append(textClauses, "positionCaseInsensitive("+config.Column+", ?) > 0")
@@ -227,7 +227,7 @@ func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (st
 	switch config.Type {
 	case FieldTypeText:
 		// Case-insensitive substring match using ClickHouse's positionCaseInsensitive
-		return "positionCaseInsensitive(" + config.Column + ", ?) > 0", []interface{}{f.Value}
+		return "positionCaseInsensitive(" + config.Column + ", ?) > 0", []any{f.Value}
 
 	case FieldTypeBoolean:
 		val := strings.ToLower(strings.TrimSpace(f.Value))
@@ -243,7 +243,7 @@ func (f FilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (st
 		if numOp == nil {
 			return "", nil
 		}
-		return config.Column + " " + numOp.Op + " ?", []interface{}{numOp.Value}
+		return config.Column + " " + numOp.Op + " ?", []any{numOp.Value}
 	}
 
 	return "", nil

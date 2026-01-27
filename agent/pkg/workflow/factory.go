@@ -6,8 +6,8 @@ package workflow
 // Example usage:
 //
 //	import (
-//	    "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-//	    v3 "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/v3"
+//	    "github.com/malbeclabs/lake/agent/pkg/workflow"
+//	    v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
 //	)
 //
 //	prompts, _ := v3.LoadPrompts()

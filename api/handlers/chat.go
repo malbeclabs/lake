@@ -13,14 +13,14 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	v3 "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/v3"
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
+	"github.com/malbeclabs/lake/api/config"
 )
 
 // ChatMessage represents a single message in conversation history.
 type ChatMessage struct {
-	Role            string   `json:"role"`              // "user" or "assistant"
+	Role            string   `json:"role"` // "user" or "assistant"
 	Content         string   `json:"content"`
 	ExecutedQueries []string `json:"executedQueries,omitempty"` // SQL from previous turns
 }
@@ -63,9 +63,9 @@ type ChatResponse struct {
 	Answer string `json:"answer"`
 
 	// Workflow steps (for transparency)
-	DataQuestions    []DataQuestionResponse    `json:"dataQuestions,omitempty"`
-	GeneratedQueries []GeneratedQueryResponse  `json:"generatedQueries,omitempty"`
-	ExecutedQueries  []ExecutedQueryResponse   `json:"executedQueries,omitempty"`
+	DataQuestions    []DataQuestionResponse   `json:"dataQuestions,omitempty"`
+	GeneratedQueries []GeneratedQueryResponse `json:"generatedQueries,omitempty"`
+	ExecutedQueries  []ExecutedQueryResponse  `json:"executedQueries,omitempty"`
 
 	// Thinking steps from the agent (for timeline display)
 	ThinkingSteps []string `json:"thinking_steps,omitempty"`
@@ -95,7 +95,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ChatResponse{Error: "Chat requires ANTHROPIC_API_KEY to be set"})
+		_ = json.NewEncoder(w).Encode(ChatResponse{Error: "Chat requires ANTHROPIC_API_KEY to be set"})
 		return
 	}
 
@@ -103,7 +103,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	prompts, err := v3.LoadPrompts()
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ChatResponse{Error: internalError("Failed to load prompts", err)})
+		_ = json.NewEncoder(w).Encode(ChatResponse{Error: internalError("Failed to load prompts", err)})
 		return
 	}
 
@@ -132,7 +132,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	wf, err := v3.New(cfg)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ChatResponse{Error: internalError("Failed to initialize chat", err)})
+		_ = json.NewEncoder(w).Encode(ChatResponse{Error: internalError("Failed to initialize chat", err)})
 		return
 	}
 
@@ -149,7 +149,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	result, err := wf.RunWithHistory(r.Context(), req.Message, history)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ChatResponse{Error: internalError("Chat processing failed", err)})
+		_ = json.NewEncoder(w).Encode(ChatResponse{Error: internalError("Chat processing failed", err)})
 		return
 	}
 
@@ -157,7 +157,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	response := convertWorkflowResult(result)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // convertWorkflowResult converts the internal workflow result to the API response format.
@@ -256,7 +256,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 		if err == ErrKillSwitch {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(QuotaExceededError{
+			_ = json.NewEncoder(w).Encode(QuotaExceededError{
 				Error:     "Service temporarily unavailable. Please try again later.",
 				Remaining: 0,
 				ResetsAt:  nextMidnightUTC().Format(time.RFC3339),
@@ -266,7 +266,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 		if err == ErrGlobalLimitExceeded {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
-			json.NewEncoder(w).Encode(QuotaExceededError{
+			_ = json.NewEncoder(w).Encode(QuotaExceededError{
 				Error:     "Service is currently at capacity. Please try again tomorrow.",
 				Remaining: 0,
 				ResetsAt:  nextMidnightUTC().Format(time.RFC3339),
@@ -279,7 +279,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 		// Quota exceeded - return error before setting SSE headers
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(QuotaExceededError{
+		_ = json.NewEncoder(w).Encode(QuotaExceededError{
 			Error:     "Daily question limit exceeded. Please sign in or try again tomorrow.",
 			Remaining: 0,
 			ResetsAt:  nextMidnightUTC().Format(time.RFC3339),
@@ -466,7 +466,6 @@ func chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.Conve
 	}
 }
 
-
 // CompleteRequest is the request for a simple LLM completion.
 type CompleteRequest struct {
 	Message string `json:"message"`
@@ -495,7 +494,7 @@ func Complete(w http.ResponseWriter, r *http.Request) {
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(CompleteResponse{Error: "Completion requires ANTHROPIC_API_KEY to be set"})
+		_ = json.NewEncoder(w).Encode(CompleteResponse{Error: "Completion requires ANTHROPIC_API_KEY to be set"})
 		return
 	}
 
@@ -506,10 +505,10 @@ func Complete(w http.ResponseWriter, r *http.Request) {
 	response, err := llm.Complete(r.Context(), "You are a helpful assistant. Respond concisely.", req.Message)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(CompleteResponse{Error: internalError("Completion failed", err)})
+		_ = json.NewEncoder(w).Encode(CompleteResponse{Error: internalError("Completion failed", err)})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CompleteResponse{Response: strings.TrimSpace(response)})
+	_ = json.NewEncoder(w).Encode(CompleteResponse{Response: strings.TrimSpace(response)})
 }

@@ -16,14 +16,14 @@ import (
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	v3 "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/v3"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/sol"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -816,10 +816,10 @@ type graphMetro struct {
 }
 
 type graphDevice struct {
-	PK       string
-	Code     string
-	Status   string
-	MetroPK  string
+	PK        string
+	Code      string
+	Status    string
+	MetroPK   string
 	MetroCode string
 }
 

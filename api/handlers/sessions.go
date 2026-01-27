@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/api/config"
 )
 
 // Session represents a chat or query session
@@ -100,7 +100,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Build owner filter
 	var ownerFilter string
-	var ownerArg interface{}
+	var ownerArg any
 	if account != nil {
 		ownerFilter = "account_id = $2"
 		ownerArg = account.ID
@@ -110,7 +110,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// No owner specified - return empty list
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(SessionListResponse{Sessions: []SessionListItem{}, Total: 0, HasMore: false})
+		_ = json.NewEncoder(w).Encode(SessionListResponse{Sessions: []SessionListItem{}, Total: 0, HasMore: false})
 		return
 	}
 
@@ -161,7 +161,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 			Total:    total,
 			HasMore:  offset+len(sessions) < total,
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -200,7 +200,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 		Total:    total,
 		HasMore:  offset+len(sessions) < total,
 	}
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // BatchGetSessionsRequestWithOwner includes anonymous_id
@@ -219,7 +219,7 @@ func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.IDs) == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BatchGetSessionsResponse{Sessions: []Session{}})
+		_ = json.NewEncoder(w).Encode(BatchGetSessionsResponse{Sessions: []Session{}})
 		return
 	}
 
@@ -235,7 +235,7 @@ func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 
 	var rows interface {
 		Next() bool
-		Scan(dest ...interface{}) error
+		Scan(dest ...any) error
 		Err() error
 		Close()
 	}
@@ -257,7 +257,7 @@ func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 		`, req.IDs, *req.AnonymousID)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BatchGetSessionsResponse{Sessions: []Session{}})
+		_ = json.NewEncoder(w).Encode(BatchGetSessionsResponse{Sessions: []Session{}})
 		return
 	}
 
@@ -283,7 +283,7 @@ func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(BatchGetSessionsResponse{Sessions: sessions})
+	_ = json.NewEncoder(w).Encode(BatchGetSessionsResponse{Sessions: sessions})
 }
 
 // GetSession returns a single session by ID (must belong to current user)
@@ -333,7 +333,7 @@ func GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(session)
+	_ = json.NewEncoder(w).Encode(session)
 }
 
 // CreateSessionRequest is the request body for creating a session
@@ -403,7 +403,7 @@ func CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(session)
+	_ = json.NewEncoder(w).Encode(session)
 }
 
 // UpdateSessionRequestWithOwner includes anonymous_id for ownership
@@ -473,7 +473,7 @@ func UpdateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(session)
+	_ = json.NewEncoder(w).Encode(session)
 }
 
 // DeleteSession deletes a session by ID (must belong to current user)

@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 )
 
 func TestLake_TelemetryLatency_Store_BackfillInternetMetroLatency_Idempotency(t *testing.T) {

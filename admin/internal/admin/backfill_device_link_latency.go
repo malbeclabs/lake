@@ -9,11 +9,11 @@ import (
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 
 	"github.com/malbeclabs/doublezero/config"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 )
 
 const (

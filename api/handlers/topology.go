@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/handlers/dberror"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
+	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -409,7 +409,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 
 	if pk == "" || (itemType != "link" && itemType != "device" && itemType != "validator") {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(TrafficResponse{Points: []TrafficDataPoint{}})
+		_ = json.NewEncoder(w).Encode(TrafficResponse{Points: []TrafficDataPoint{}})
 		return
 	}
 
@@ -478,7 +478,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Traffic query error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
+		_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
 		return
 	}
 	defer rows.Close()
@@ -489,7 +489,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
 			log.Printf("Traffic scan error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
+			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
 			return
 		}
 		if avgIn != nil {
@@ -515,7 +515,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(TrafficResponse{Points: points})
+	_ = json.NewEncoder(w).Encode(TrafficResponse{Points: points})
 }
 
 // Link latency data point for charts
@@ -587,7 +587,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 	if pk == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(LinkLatencyResponse{Points: []LinkLatencyDataPoint{}})
+		_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Points: []LinkLatencyDataPoint{}})
 		return
 	}
 
@@ -606,13 +606,13 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		fromTime, err := time.Parse("2006-01-02-15:04:05", fromParam)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(LinkLatencyResponse{Error: "invalid 'from' format, use yyyy-mm-dd-hh:mm:ss"})
+			_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: "invalid 'from' format, use yyyy-mm-dd-hh:mm:ss"})
 			return
 		}
 		toTime, err := time.Parse("2006-01-02-15:04:05", toParam)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(LinkLatencyResponse{Error: "invalid 'to' format, use yyyy-mm-dd-hh:mm:ss"})
+			_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: "invalid 'to' format, use yyyy-mm-dd-hh:mm:ss"})
 			return
 		}
 		duration := toTime.Sub(fromTime)
@@ -678,7 +678,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Latency query error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
+		_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 		return
 	}
 	defer rows.Close()
@@ -690,7 +690,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&p.Time, &avgRtt, &p95Rtt, &avgJitter, &lossPct, &avgRttAtoZ, &p95RttAtoZ, &avgRttZtoA, &p95RttZtoA, &jitterAtoZ, &jitterZtoA); err != nil {
 			log.Printf("Latency scan error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
+			_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 			return
 		}
 		if avgRtt != nil {
@@ -734,37 +734,37 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(LinkLatencyResponse{Points: points})
+	_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Points: points})
 }
 
 // DZ vs Internet latency comparison types
 type LatencyComparison struct {
-	OriginMetroPK      string   `json:"origin_metro_pk"`
-	OriginMetroCode    string   `json:"origin_metro_code"`
-	OriginMetroName    string   `json:"origin_metro_name"`
-	TargetMetroPK      string   `json:"target_metro_pk"`
-	TargetMetroCode    string   `json:"target_metro_code"`
-	TargetMetroName    string   `json:"target_metro_name"`
-	DzAvgRttMs         float64  `json:"dz_avg_rtt_ms"`
-	DzP95RttMs         float64  `json:"dz_p95_rtt_ms"`
-	DzAvgJitterMs      *float64 `json:"dz_avg_jitter_ms"`
-	DzLossPct          float64  `json:"dz_loss_pct"`
-	DzSampleCount      uint64   `json:"dz_sample_count"`
-	InternetAvgRttMs   float64  `json:"internet_avg_rtt_ms"`
-	InternetP95RttMs   float64  `json:"internet_p95_rtt_ms"`
-	InternetAvgJitterMs *float64 `json:"internet_avg_jitter_ms"`
-	InternetSampleCount uint64  `json:"internet_sample_count"`
-	RttImprovementPct  *float64 `json:"rtt_improvement_pct"`
+	OriginMetroPK        string   `json:"origin_metro_pk"`
+	OriginMetroCode      string   `json:"origin_metro_code"`
+	OriginMetroName      string   `json:"origin_metro_name"`
+	TargetMetroPK        string   `json:"target_metro_pk"`
+	TargetMetroCode      string   `json:"target_metro_code"`
+	TargetMetroName      string   `json:"target_metro_name"`
+	DzAvgRttMs           float64  `json:"dz_avg_rtt_ms"`
+	DzP95RttMs           float64  `json:"dz_p95_rtt_ms"`
+	DzAvgJitterMs        *float64 `json:"dz_avg_jitter_ms"`
+	DzLossPct            float64  `json:"dz_loss_pct"`
+	DzSampleCount        uint64   `json:"dz_sample_count"`
+	InternetAvgRttMs     float64  `json:"internet_avg_rtt_ms"`
+	InternetP95RttMs     float64  `json:"internet_p95_rtt_ms"`
+	InternetAvgJitterMs  *float64 `json:"internet_avg_jitter_ms"`
+	InternetSampleCount  uint64   `json:"internet_sample_count"`
+	RttImprovementPct    *float64 `json:"rtt_improvement_pct"`
 	JitterImprovementPct *float64 `json:"jitter_improvement_pct"`
 }
 
 type LatencyComparisonResponse struct {
 	Comparisons []LatencyComparison `json:"comparisons"`
 	Summary     struct {
-		TotalPairs         int     `json:"total_pairs"`
-		AvgImprovementPct  float64 `json:"avg_improvement_pct"`
-		MaxImprovementPct  float64 `json:"max_improvement_pct"`
-		PairsWithData      int     `json:"pairs_with_data"`
+		TotalPairs        int     `json:"total_pairs"`
+		AvgImprovementPct float64 `json:"avg_improvement_pct"`
+		MaxImprovementPct float64 `json:"max_improvement_pct"`
+		PairsWithData     int     `json:"pairs_with_data"`
 	} `json:"summary"`
 }
 
@@ -774,7 +774,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 		if cached := statusCache.GetLatencyComparison(); cached != nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(cached)
+			_ = json.NewEncoder(w).Encode(cached)
 			return
 		}
 	}
@@ -889,7 +889,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	response.Summary.PairsWithData = pairsWithData
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // fetchLatencyComparisonData fetches DZ vs Internet latency comparison data.
@@ -1177,5 +1177,5 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }

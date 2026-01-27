@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // DBQuerier implements workflow.Querier using the global connection pool.

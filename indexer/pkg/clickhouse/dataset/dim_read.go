@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // GetCurrentRow returns the current (non-deleted) row for a single entity

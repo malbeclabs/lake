@@ -1,0 +1,142 @@
+name: release.docker.lake
+
+on:
+  push:
+    # NOTE: Update STAGING_BRANCHES env var below when changing this list
+    branches:
+      - main
+      - lake/staging
+    paths:
+      - '**'
+      - '.github/workflows/release.docker.lake.yml'
+  pull_request:
+    types: [opened, synchronize, labeled]
+  workflow_dispatch:
+
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+  id-token: write  # Required for AWS OIDC
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/lake
+  DOCKER_BUILDKIT: 1
+  AWS_REGION: us-east-1
+  # Preview assets go to preview bucket with branch prefix
+  # Production assets go to production bucket
+  PREVIEW_ASSET_BUCKET: malbeclabs-lake-app-web-assets-previews
+  PROD_ASSET_BUCKET: malbeclabs-lake-app-web-assets
+  # Branches that auto-deploy to staging (space-separated)
+  STAGING_BRANCHES: "main lake/staging"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04-16c-64gb
+    # Run on push, or on PR only if it has the preview-lake label
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview-lake'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute versions
+        id: v
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          # Use head_ref for PRs, ref_name for pushes
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BRANCH="${{ github.head_ref }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+          fi
+
+          SAN_BRANCH="${BRANCH//\//-}"
+          echo "branch_name=$SAN_BRANCH" >> $GITHUB_OUTPUT
+          echo "version=${SAN_BRANCH}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+          # Check if this branch should deploy to staging
+          IS_STAGING="false"
+          for b in ${{ env.STAGING_BRANCHES }}; do
+            if [[ "$BRANCH" == "$b" ]]; then
+              IS_STAGING="true"
+              break
+            fi
+          done
+          echo "is_staging=$IS_STAGING" >> $GITHUB_OUTPUT
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build web assets
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::879381273509:role/github-actions-lake-web-assets
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload assets to S3
+        run: |
+          # Determine bucket and path based on branch
+          if [[ "${{ steps.v.outputs.is_staging }}" == "true" ]]; then
+            # Staging branches (including main): sync to both prod and staging
+            # This ensures assets are ready when promoting to prod
+            echo "Uploading assets to prod bucket..."
+            aws s3 sync web/dist/assets/ "s3://${{ env.PROD_ASSET_BUCKET }}/assets/" \
+              --cache-control "public, max-age=31536000, immutable"
+
+            echo "Uploading assets to staging location..."
+            aws s3 sync web/dist/assets/ "s3://${{ env.PREVIEW_ASSET_BUCKET }}/staging/" \
+              --cache-control "public, max-age=31536000, immutable"
+          else
+            # Other branches: sync to preview bucket with branch prefix
+            echo "Uploading assets to s3://${{ env.PREVIEW_ASSET_BUCKET }}/${{ steps.v.outputs.branch_name }}/"
+            aws s3 sync web/dist/assets/ "s3://${{ env.PREVIEW_ASSET_BUCKET }}/${{ steps.v.outputs.branch_name }}/" \
+              --cache-control "public, max-age=31536000, immutable"
+          fi
+        id: assets
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ steps.v.outputs.version }}
+            BUILD_COMMIT=${{ steps.v.outputs.short_sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.run_started_at }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.v.outputs.version }}
+            ${{ env.IMAGE }}:${{ steps.v.outputs.branch_name }}
+            ${{ env.IMAGE }}:sha-${{ steps.v.outputs.short_sha }}
+            ${{ steps.v.outputs.is_staging == 'true' && format('{0}:staging', env.IMAGE) || '' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

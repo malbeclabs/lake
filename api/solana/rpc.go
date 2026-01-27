@@ -24,10 +24,10 @@ func GetRPCURL() string {
 
 // rpcRequest represents a JSON-RPC 2.0 request
 type rpcRequest struct {
-	JSONRPC string        `json:"jsonrpc"`
-	ID      int           `json:"id"`
-	Method  string        `json:"method"`
-	Params  []interface{} `json:"params"`
+	JSONRPC string `json:"jsonrpc"`
+	ID      int    `json:"id"`
+	Method  string `json:"method"`
+	Params  []any  `json:"params"`
 }
 
 // rpcResponse represents a JSON-RPC 2.0 response
@@ -58,7 +58,7 @@ func GetBalance(ctx context.Context, address string) (int64, error) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "getBalance",
-		Params:  []interface{}{address},
+		Params:  []any{address},
 	}
 
 	body, err := json.Marshal(req)

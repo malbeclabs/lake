@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/require"
 	tcneo4j "github.com/testcontainers/testcontainers-go/modules/neo4j"
 )
@@ -102,7 +102,7 @@ func NewNeo4jDB(ctx context.Context, log *slog.Logger, cfg *Neo4jDBConfig) (*Neo
 
 	boltURL, err := container.BoltUrl(ctx)
 	if err != nil {
-		container.Terminate(ctx)
+		_ = container.Terminate(ctx)
 		return nil, fmt.Errorf("failed to get Neo4j bolt URL: %w", err)
 	}
 

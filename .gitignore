@@ -1,1 +1,14 @@
+.DS_STORE
+.env
+.idea
+.private
+.vscode
+.zed
+.tmp
+
+**/*.swp
+**/coverage.out
+
+dist/
 eval-runs/
+logs/

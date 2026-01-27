@@ -13,7 +13,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/docker/go-connections/nat"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/api/config"
 	"github.com/stretchr/testify/require"
 	tcch "github.com/testcontainers/testcontainers-go/modules/clickhouse"
 )

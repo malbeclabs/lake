@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +20,6 @@ func TestLake_Agent_Evals_Anthropic_ConversationalFollowup(t *testing.T) {
 
 	runTest_ConversationalFollowup(t, newAnthropicLLMClient)
 }
-
 
 func runTest_ConversationalFollowup(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -102,7 +101,6 @@ func TestLake_Agent_Evals_Anthropic_CapabilitiesQuestion(t *testing.T) {
 	runTest_CapabilitiesQuestion(t, newAnthropicLLMClient)
 }
 
-
 func runTest_CapabilitiesQuestion(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
 
@@ -169,7 +167,6 @@ func TestLake_Agent_Evals_Anthropic_AffirmativeQueryConfirmation(t *testing.T) {
 	runTest_AffirmativeQueryConfirmation(t, newAnthropicLLMClient)
 }
 
-
 // runTest_AffirmativeQueryConfirmation tests that when the assistant offers to run a query
 // and the user says "yes", it should be classified as data_analysis and actually execute the query.
 func runTest_AffirmativeQueryConfirmation(t *testing.T, llmFactory LLMClientFactory) {
@@ -235,7 +232,6 @@ func TestLake_Agent_Evals_Anthropic_ThankYouResponse(t *testing.T) {
 
 	runTest_ThankYouResponse(t, newAnthropicLLMClient)
 }
-
 
 func runTest_ThankYouResponse(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

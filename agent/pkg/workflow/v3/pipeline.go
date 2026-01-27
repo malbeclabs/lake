@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
 )
 
 // queryMarkerPattern matches [Q1], [Q2], etc. - markers that should only appear
@@ -28,7 +28,6 @@ const (
 type Workflow struct {
 	cfg           *workflow.Config
 	prompts       *Prompts
-	systemPrompt  string // Cached system prompt with schema
 	tools         []workflow.ToolDefinition
 	maxIterations int
 }

@@ -4,8 +4,8 @@
 // For v1 workflow:
 //
 //	import (
-//	    "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-//	    v1 "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/v1"
+//	    "github.com/malbeclabs/lake/agent/pkg/workflow"
+//	    v1 "github.com/malbeclabs/lake/agent/pkg/workflow/v1"
 //	)
 //
 //	prompts, _ := v1.LoadPrompts()

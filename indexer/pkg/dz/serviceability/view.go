@@ -11,9 +11,9 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 type Contributor struct {

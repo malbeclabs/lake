@@ -10,7 +10,7 @@ import (
 
 	"github.com/docker/go-connections/nat"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/stretchr/testify/require"
 	tcch "github.com/testcontainers/testcontainers-go/modules/clickhouse"
 )

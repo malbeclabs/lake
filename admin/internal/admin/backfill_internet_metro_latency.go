@@ -10,11 +10,11 @@ import (
 
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 )
 
 // BackfillInternetMetroLatencyConfig holds the configuration for the backfill command

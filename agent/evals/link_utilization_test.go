@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemusage "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +27,6 @@ func TestLake_Agent_Evals_Anthropic_LinkUtilization(t *testing.T) {
 
 	runTest_LinkUtilization(t, newAnthropicLLMClient)
 }
-
 
 func runTest_LinkUtilization(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

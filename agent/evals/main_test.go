@@ -7,11 +7,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	clickhousetesting "github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/testing"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
-	neo4jtesting "github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j/testing"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	clickhousetesting "github.com/malbeclabs/lake/indexer/pkg/clickhouse/testing"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
+	neo4jtesting "github.com/malbeclabs/lake/indexer/pkg/neo4j/testing"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 )
 
 var (

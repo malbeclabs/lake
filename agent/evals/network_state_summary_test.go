@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +26,6 @@ func TestLake_Agent_Evals_Anthropic_NetworkStateSummary(t *testing.T) {
 
 	runTest_NetworkStateSummary(t, newAnthropicLLMClient)
 }
-
 
 func runTest_NetworkStateSummary(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -159,16 +158,16 @@ func seedNetworkStateSummaryData(t *testing.T, ctx context.Context, conn clickho
 	err = latencyDS.WriteBatch(ctx, conn, len(latencies), func(i int) ([]any, error) {
 		l := latencies[i]
 		return []any{
-			l.eventTS.UTC(),   // event_ts
-			now,               // ingested_at
-			int64(1),          // epoch
-			int32(0),          // sample_index
-			l.originDevicePK,  // origin_device_pk
-			l.targetDevicePK,  // target_device_pk
-			l.linkPK,          // link_pk
-			l.rttUs,           // rtt_us
-			false,             // loss
-			int64(0),          // ipdv_us
+			l.eventTS.UTC(),  // event_ts
+			now,              // ingested_at
+			int64(1),         // epoch
+			int32(0),         // sample_index
+			l.originDevicePK, // origin_device_pk
+			l.targetDevicePK, // target_device_pk
+			l.linkPK,         // link_pk
+			l.rttUs,          // rtt_us
+			false,            // loss
+			int64(0),         // ipdv_us
 		}, nil
 	})
 	require.NoError(t, err)

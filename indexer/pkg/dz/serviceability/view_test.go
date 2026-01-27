@@ -7,8 +7,8 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"

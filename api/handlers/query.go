@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // toJSONSafe converts ClickHouse values to JSON-serializable types.
@@ -113,7 +113,7 @@ func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(QueryResponse{
+		_ = json.NewEncoder(w).Encode(QueryResponse{
 			Error:     err.Error(),
 			ElapsedMs: duration.Milliseconds(),
 		})
@@ -140,7 +140,7 @@ func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(values...); err != nil {
 			metrics.RecordClickHouseQuery(duration, err)
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(QueryResponse{
+			_ = json.NewEncoder(w).Encode(QueryResponse{
 				Error:     err.Error(),
 				ElapsedMs: duration.Milliseconds(),
 			})
@@ -158,7 +158,7 @@ func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	if err := rows.Err(); err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(QueryResponse{
+		_ = json.NewEncoder(w).Encode(QueryResponse{
 			Error:     err.Error(),
 			ElapsedMs: duration.Milliseconds(),
 		})

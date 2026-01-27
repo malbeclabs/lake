@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // VisualizeRequest is the incoming request for visualization recommendation.
@@ -39,7 +39,7 @@ func RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.Columns) == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Reasoning: "No columns provided"})
+		_ = json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Reasoning: "No columns provided"})
 		return
 	}
 
@@ -47,7 +47,7 @@ func RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Error: "ANTHROPIC_API_KEY not set"})
+		_ = json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Error: "ANTHROPIC_API_KEY not set"})
 		return
 	}
 
@@ -68,7 +68,7 @@ func RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordAnthropicRequest("messages", duration, err)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Error: internalError("Failed to recommend visualization", err)})
+		_ = json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Error: internalError("Failed to recommend visualization", err)})
 		return
 	}
 	metrics.RecordAnthropicTokens(message.Usage.InputTokens, message.Usage.OutputTokens)
@@ -86,7 +86,7 @@ func RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 	response := parseVisualizeResponse(responseText)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func buildVisualizePrompt(req VisualizeRequest) string {

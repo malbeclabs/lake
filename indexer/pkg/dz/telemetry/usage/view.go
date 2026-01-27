@@ -13,8 +13,8 @@ import (
 
 	"github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 	"github.com/jonboulle/clockwork"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/metrics"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 // InfluxDBClient is an interface for querying InfluxDB 3 with SQL

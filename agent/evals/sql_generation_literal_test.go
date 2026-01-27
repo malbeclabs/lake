@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/prompts"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,11 +67,11 @@ func runTest_SQLGenerationLiteral(t *testing.T) {
 				"dz_devices",
 			},
 			mustNotContain: []string{
-				"status",       // Should not add status breakdown
-				"metro",        // Should not add metro grouping
-				"GROUP BY",     // Count should not have GROUP BY unless asked
-				"code",         // Should not add device codes
-				"activated",    // Should not filter by status unless asked
+				"status",    // Should not add status breakdown
+				"metro",     // Should not add metro grouping
+				"GROUP BY",  // Count should not have GROUP BY unless asked
+				"code",      // Should not add device codes
+				"activated", // Should not filter by status unless asked
 			},
 		},
 		{
@@ -82,9 +82,9 @@ func runTest_SQLGenerationLiteral(t *testing.T) {
 				"dz_devices",
 			},
 			mustNotContain: []string{
-				"status",       // Should not add status
-				"metro",        // Should not add metro
-				"created",      // Should not add timestamps
+				"status",  // Should not add status
+				"metro",   // Should not add metro
+				"created", // Should not add timestamps
 			},
 		},
 	}
@@ -160,8 +160,8 @@ func runTest_SQLGenerationPreserveQuery(t *testing.T) {
 				"activated", // The requested filter
 			},
 			mustNotContain: []string{
-				"metro",    // Should not add columns
-				"COUNT",    // Should not change to aggregation
+				"metro", // Should not add columns
+				"COUNT", // Should not change to aggregation
 			},
 		},
 		{

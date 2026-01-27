@@ -9,11 +9,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/geoip"
 	maxmindgeoip "github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/geoip"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +26,6 @@ func TestLake_Agent_Evals_Anthropic_OffDZValidatorsByRegion(t *testing.T) {
 
 	runTest_OffDZValidatorsByRegion(t, newAnthropicLLMClient)
 }
-
 
 func runTest_OffDZValidatorsByRegion(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

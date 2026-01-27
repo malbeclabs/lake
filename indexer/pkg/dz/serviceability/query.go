@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 // deviceRow is an intermediate struct for reading from ClickHouse

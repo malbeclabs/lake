@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://json.schemastore.org/dependabot-2.0.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+# Please see the documentation for all configuration options:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directories:
+    - "**/*"
+    schedule:
+      interval: "weekly"

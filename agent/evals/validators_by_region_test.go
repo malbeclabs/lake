@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +24,6 @@ func TestLake_Agent_Evals_Anthropic_ValidatorsByRegion(t *testing.T) {
 
 	runTest_ValidatorsByRegion(t, newAnthropicLLMClient)
 }
-
 
 func runTest_ValidatorsByRegion(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

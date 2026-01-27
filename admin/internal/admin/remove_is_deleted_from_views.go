@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 func RemoveIsDeletedFromViews(log *slog.Logger, addr, database, username, password string, secure, dryRun, skipConfirm bool) error {

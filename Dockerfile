@@ -5,7 +5,7 @@ FROM golang:1.25-bookworm AS builder-base
 # -----------------------------------------------------------------------------
 FROM builder-base AS builder-go
 
-WORKDIR /doublezero
+WORKDIR /lake
 COPY . .
 RUN mkdir -p bin/
 
@@ -23,28 +23,28 @@ ENV CGO_ENABLED=0
 ENV GO_LDFLAGS="-X main.version=${BUILD_VERSION} -X main.commit=${BUILD_COMMIT} -X main.date=${BUILD_DATE}"
 
 # Set up a binaries directory
-ENV BIN_DIR=/doublezero/bin
+ENV BIN_DIR=/lake/bin
 RUN mkdir -p ${BIN_DIR}
 
 # Build the slack bot (golang)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/doublezero-lake-slack-bot lake/slack/cmd/slack-bot/main.go
+    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/lake-slack-bot ./slack/cmd/slack-bot/main.go
 
 # Build lake-indexer (golang)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/doublezero-lake-indexer lake/indexer/cmd/indexer/main.go
+    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/lake-indexer ./indexer/cmd/indexer/main.go
 
 # Build lake-admin (golang)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/doublezero-lake-admin lake/admin/cmd/admin/main.go
+    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/lake-admin ./admin/cmd/admin/main.go
 
 # Build lake-api (golang)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/doublezero-lake-api lake/api/main.go
+    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/lake-api ./api/main.go
 
 
 # Force COPY in later stages to always copy the binaries, even if they appear to be the same.
@@ -74,13 +74,13 @@ RUN apt update -qq && \
     apt install --no-install-recommends -y clickhouse-client && \
     rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/doublezero/bin:${PATH}"
+ENV PATH="/lake/bin:${PATH}"
 
 # Copy binaries from the builder stage.
-COPY --from=builder-go /doublezero/bin/. /doublezero/bin/.
+COPY --from=builder-go /lake/bin/. /lake/bin/.
 
 # Copy pre-built web assets (built by deploy script, uploaded to S3)
-COPY lake/web/dist /doublezero/web/dist
-RUN test -f /doublezero/web/dist/index.html || (echo "Error: web assets not built. Run 'cd lake/web && bun run build' first." && exit 1)
+COPY web/dist /lake/web/dist
+RUN test -f /lake/web/dist/index.html || (echo "Error: web assets not built. Run 'cd web && bun run build' first." && exit 1)
 
 CMD ["/bin/bash"]

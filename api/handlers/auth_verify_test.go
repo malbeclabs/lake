@@ -13,10 +13,10 @@ func TestGoogleIDTokenClaimsParsing(t *testing.T) {
 	// Google's tokeninfo endpoint returns exp/iat as strings, not numbers
 	// This test ensures our struct can handle that format
 	tests := []struct {
-		name     string
-		json     string
-		wantErr  bool
-		wantExp  string
+		name      string
+		json      string
+		wantErr   bool
+		wantExp   string
 		wantEmail string
 	}{
 		{
@@ -158,12 +158,12 @@ func TestVerifyEd25519Signature(t *testing.T) {
 	signatureBase64 := base64.StdEncoding.EncodeToString(signature)
 
 	tests := []struct {
-		name            string
-		publicKey       string
-		message         string
-		signature       string
-		wantValid       bool
-		wantErr         bool
+		name      string
+		publicKey string
+		message   string
+		signature string
+		wantValid bool
+		wantErr   bool
 	}{
 		{
 			name:      "valid signature",

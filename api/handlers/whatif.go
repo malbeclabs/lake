@@ -8,23 +8,23 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
 // SimulateLinkRemovalResponse is the response for simulating link removal
 type SimulateLinkRemovalResponse struct {
-	SourcePK             string             `json:"sourcePK"`
-	SourceCode           string             `json:"sourceCode"`
-	TargetPK             string             `json:"targetPK"`
-	TargetCode           string             `json:"targetCode"`
-	DisconnectedDevices  []ImpactDevice     `json:"disconnectedDevices"`
-	DisconnectedCount    int                `json:"disconnectedCount"`
-	AffectedPaths        []AffectedPath     `json:"affectedPaths"`
-	AffectedPathCount    int                `json:"affectedPathCount"`
-	CausesPartition      bool               `json:"causesPartition"`
-	Error                string             `json:"error,omitempty"`
+	SourcePK            string         `json:"sourcePK"`
+	SourceCode          string         `json:"sourceCode"`
+	TargetPK            string         `json:"targetPK"`
+	TargetCode          string         `json:"targetCode"`
+	DisconnectedDevices []ImpactDevice `json:"disconnectedDevices"`
+	DisconnectedCount   int            `json:"disconnectedCount"`
+	AffectedPaths       []AffectedPath `json:"affectedPaths"`
+	AffectedPathCount   int            `json:"affectedPathCount"`
+	CausesPartition     bool           `json:"causesPartition"`
+	Error               string         `json:"error,omitempty"`
 }
 
 // AffectedPath represents a path that would be affected by link removal
@@ -258,29 +258,29 @@ func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 
 // SimulateLinkAdditionResponse is the response for simulating link addition
 type SimulateLinkAdditionResponse struct {
-	SourcePK          string          `json:"sourcePK"`
-	SourceCode        string          `json:"sourceCode"`
-	TargetPK          string          `json:"targetPK"`
-	TargetCode        string          `json:"targetCode"`
-	Metric            uint32          `json:"metric"`
-	ImprovedPaths     []ImprovedPath  `json:"improvedPaths"`
-	ImprovedPathCount int             `json:"improvedPathCount"`
+	SourcePK          string           `json:"sourcePK"`
+	SourceCode        string           `json:"sourceCode"`
+	TargetPK          string           `json:"targetPK"`
+	TargetCode        string           `json:"targetCode"`
+	Metric            uint32           `json:"metric"`
+	ImprovedPaths     []ImprovedPath   `json:"improvedPaths"`
+	ImprovedPathCount int              `json:"improvedPathCount"`
 	RedundancyGains   []RedundancyGain `json:"redundancyGains"`
-	RedundancyCount   int             `json:"redundancyCount"`
-	Error             string          `json:"error,omitempty"`
+	RedundancyCount   int              `json:"redundancyCount"`
+	Error             string           `json:"error,omitempty"`
 }
 
 // ImprovedPath represents a path that would be improved by adding a link
 type ImprovedPath struct {
-	FromPK       string `json:"fromPK"`
-	FromCode     string `json:"fromCode"`
-	ToPK         string `json:"toPK"`
-	ToCode       string `json:"toCode"`
-	BeforeHops   int    `json:"beforeHops"`
-	BeforeMetric uint32 `json:"beforeMetric"`
-	AfterHops    int    `json:"afterHops"`
-	AfterMetric  uint32 `json:"afterMetric"`
-	HopReduction int    `json:"hopReduction"`
+	FromPK          string `json:"fromPK"`
+	FromCode        string `json:"fromCode"`
+	ToPK            string `json:"toPK"`
+	ToCode          string `json:"toCode"`
+	BeforeHops      int    `json:"beforeHops"`
+	BeforeMetric    uint32 `json:"beforeMetric"`
+	AfterHops       int    `json:"afterHops"`
+	AfterMetric     uint32 `json:"afterMetric"`
+	HopReduction    int    `json:"hopReduction"`
 	MetricReduction uint32 `json:"metricReduction"`
 }
 
@@ -549,12 +549,12 @@ type WhatIfRemovalRequest struct {
 
 // WhatIfRemovalResponse is the response for unified what-if removal analysis
 type WhatIfRemovalResponse struct {
-	Items              []WhatIfRemovalItem   `json:"items"`
-	TotalAffectedPaths int                   `json:"totalAffectedPaths"`
-	TotalDisconnected  int                   `json:"totalDisconnected"`
-	AffectedPaths      []WhatIfAffectedPath  `json:"affectedPaths,omitempty"`
-	DisconnectedList   []string              `json:"disconnectedList,omitempty"`
-	Error              string                `json:"error,omitempty"`
+	Items              []WhatIfRemovalItem  `json:"items"`
+	TotalAffectedPaths int                  `json:"totalAffectedPaths"`
+	TotalDisconnected  int                  `json:"totalDisconnected"`
+	AffectedPaths      []WhatIfAffectedPath `json:"affectedPaths,omitempty"`
+	DisconnectedList   []string             `json:"disconnectedList,omitempty"`
+	Error              string               `json:"error,omitempty"`
 }
 
 // WhatIfRemovalItem represents impact of a single device or link removal

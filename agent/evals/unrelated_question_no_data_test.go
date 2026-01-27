@@ -21,7 +21,6 @@ func TestLake_Agent_Evals_Anthropic_UnrelatedQuestionNoData(t *testing.T) {
 	runTest_UnrelatedQuestionNoData(t, newAnthropicLLMClient)
 }
 
-
 func runTest_UnrelatedQuestionNoData(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
 

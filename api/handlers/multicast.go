@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type MulticastGroupListItem struct {
@@ -250,13 +250,13 @@ type MulticastTreeHop struct {
 
 // MulticastTreePath represents a path from publisher to subscriber
 type MulticastTreePath struct {
-	PublisherDevicePK   string             `json:"publisherDevicePK"`
-	PublisherDeviceCode string             `json:"publisherDeviceCode"`
-	SubscriberDevicePK  string             `json:"subscriberDevicePK"`
-	SubscriberDeviceCode string            `json:"subscriberDeviceCode"`
-	Path                []MulticastTreeHop `json:"path"`
-	TotalMetric         int                `json:"totalMetric"`
-	HopCount            int                `json:"hopCount"`
+	PublisherDevicePK    string             `json:"publisherDevicePK"`
+	PublisherDeviceCode  string             `json:"publisherDeviceCode"`
+	SubscriberDevicePK   string             `json:"subscriberDevicePK"`
+	SubscriberDeviceCode string             `json:"subscriberDeviceCode"`
+	Path                 []MulticastTreeHop `json:"path"`
+	TotalMetric          int                `json:"totalMetric"`
+	HopCount             int                `json:"hopCount"`
 }
 
 // MulticastTreeResponse is the response for multicast tree paths endpoint

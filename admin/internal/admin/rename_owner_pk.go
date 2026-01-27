@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 func RenameOwnerPK(log *slog.Logger, addr, database, username, password string, secure, dryRun, skipConfirm bool) error {

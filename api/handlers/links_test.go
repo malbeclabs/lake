@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/handlers"
-	apitesting "github.com/malbeclabs/doublezero/lake/api/testing"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/handlers"
+	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
 type CypherQueryRequest struct {
@@ -39,7 +39,7 @@ func ExecuteCypher(w http.ResponseWriter, r *http.Request) {
 	// Check if Neo4j is available
 	if config.Neo4jClient == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(CypherQueryResponse{
+		_ = json.NewEncoder(w).Encode(CypherQueryResponse{
 			Error: "Neo4j is not available",
 		})
 		return
@@ -92,7 +92,7 @@ func ExecuteCypher(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(CypherQueryResponse{
+		_ = json.NewEncoder(w).Encode(CypherQueryResponse{
 			Error:     err.Error(),
 			ElapsedMs: duration.Milliseconds(),
 		})
@@ -103,5 +103,5 @@ func ExecuteCypher(w http.ResponseWriter, r *http.Request) {
 	response.ElapsedMs = duration.Milliseconds()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }

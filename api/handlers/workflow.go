@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/api/config"
 )
 
 // WorkflowStep represents a single step in the workflow execution timeline.
@@ -39,9 +39,9 @@ type WorkflowStep struct {
 	Error    string   `json:"error,omitempty"`
 
 	// For cypher_query steps
-	Cypher string  `json:"cypher,omitempty"`
-	Nodes  []any   `json:"nodes,omitempty"`
-	Edges  []any   `json:"edges,omitempty"`
+	Cypher string `json:"cypher,omitempty"`
+	Nodes  []any  `json:"nodes,omitempty"`
+	Edges  []any  `json:"edges,omitempty"`
 
 	// For read_docs steps
 	Page string `json:"page,omitempty"`
@@ -49,10 +49,10 @@ type WorkflowStep struct {
 
 // WorkflowRun represents a persistent workflow execution.
 type WorkflowRun struct {
-	ID           uuid.UUID       `json:"id"`
-	SessionID    uuid.UUID       `json:"session_id"`
-	Status       string          `json:"status"` // running, completed, failed, cancelled
-	UserQuestion string          `json:"user_question"`
+	ID           uuid.UUID `json:"id"`
+	SessionID    uuid.UUID `json:"session_id"`
+	Status       string    `json:"status"` // running, completed, failed, cancelled
+	UserQuestion string    `json:"user_question"`
 
 	// Checkpoint state
 	Iteration       int             `json:"iteration"`
@@ -393,7 +393,7 @@ func GetWorkflowForSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(run)
+	_ = json.NewEncoder(w).Encode(run)
 }
 
 // GetWorkflow handles GET /api/workflows/{id}
@@ -416,15 +416,15 @@ func GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(run)
+	_ = json.NewEncoder(w).Encode(run)
 }
 
 // WorkflowStreamResponse contains the events to emit for a workflow stream reconnection.
 type WorkflowStreamResponse struct {
 	// For completed workflows, contains the final response
-	Status   string       `json:"status"`
+	Status   string        `json:"status"`
 	Response *ChatResponse `json:"response,omitempty"`
-	Error    string       `json:"error,omitempty"`
+	Error    string        `json:"error,omitempty"`
 
 	// For running workflows, contains catch-up events
 	ThinkingSteps   []string        `json:"thinking_steps,omitempty"`
@@ -689,4 +689,3 @@ func convertRowsToArray(result workflow.QueryResult) [][]any {
 	}
 	return rows
 }
-

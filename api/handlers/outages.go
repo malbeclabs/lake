@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/api/config"
 )
 
 // LinkOutage represents a discrete outage event on a link
@@ -229,19 +229,19 @@ func GetLinkOutages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // statusChange represents a link status change event
 type statusChange struct {
-	LinkPK         string
-	LinkCode       string
-	PreviousStatus string
-	NewStatus      string
-	ChangedTS      time.Time
-	SideAMetro     string
-	SideZMetro     string
-	LinkType       string
+	LinkPK          string
+	LinkCode        string
+	PreviousStatus  string
+	NewStatus       string
+	ChangedTS       time.Time
+	SideAMetro      string
+	SideZMetro      string
+	LinkType        string
 	ContributorCode string
 }
 
@@ -295,7 +295,7 @@ func fetchStatusOutages(ctx context.Context, conn driver.Conn, duration time.Dur
 
 	query += " WHERE sc.changed_ts >= now() - INTERVAL $1 SECOND"
 
-	args := []interface{}{int64(duration.Seconds())}
+	args := []any{int64(duration.Seconds())}
 	argIdx := 2
 
 	// Apply filters
@@ -370,7 +370,7 @@ func fetchCurrentlyDrainedLinks(ctx context.Context, conn driver.Conn, filters [
 			WHERE l.status IN ('soft-drained', 'hard-drained')
 	`
 
-	var args []interface{}
+	var args []any
 	argIdx := 1
 
 	// Apply filters
@@ -784,7 +784,7 @@ func fetchLinkMetadata(ctx context.Context, conn driver.Conn, filters []OutageFi
 		WHERE 1=1
 	`
 
-	var args []interface{}
+	var args []any
 	argIdx := 1
 
 	// Apply filters
@@ -936,8 +936,6 @@ func pairPacketLossOutagesCompleted(buckets []lossBucket, linkMeta map[string]li
 					peakLoss = b.LossPct
 				}
 			}
-
-			prevLoss = b.LossPct
 		}
 
 		// Handle outage that was active at end of time window
@@ -1092,7 +1090,7 @@ func fetchDrainedPeriods(ctx context.Context, conn driver.Conn, duration time.Du
 	defer rows.Close()
 
 	type statusChange struct {
-		LinkPK    string
+		LinkPK     string
 		PrevStatus string
 		NewStatus  string
 		ChangedTS  time.Time
@@ -1323,7 +1321,7 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=link-outages.csv")
 
 	// Write header
-	w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,outage_type,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
+	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,outage_type,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
 
 	for _, o := range outages {
 		var details string
@@ -1347,7 +1345,7 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 			o.ID, o.LinkCode, o.LinkType, o.SideAMetro, o.SideZMetro,
 			o.ContributorCode, o.OutageType, details, o.StartedAt, endedAt,
 			durationSecs, o.IsOngoing)
-		w.Write([]byte(line))
+		_, _ = w.Write([]byte(line))
 	}
 }
 

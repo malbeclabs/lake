@@ -12,9 +12,9 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/prompts"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type GenerateRequest struct {
@@ -39,10 +39,10 @@ const maxValidationAttempts = 3
 
 // Cached prompts for query generation
 var (
-	cachedGeneratePrompt   string
-	cachedSQLContext       string
-	cachedPromptsOnce      sync.Once
-	cachedPromptsErr       error
+	cachedGeneratePrompt string
+	cachedSQLContext     string
+	cachedPromptsOnce    sync.Once
+	cachedPromptsErr     error
 )
 
 func loadGeneratePrompts() error {
@@ -91,14 +91,14 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 	schema, err := schemaFetcher.FetchSchema(r.Context())
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to fetch schema", err)})
+		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to fetch schema", err)})
 		return
 	}
 
 	// Require Anthropic API key
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GenerateResponse{Error: "ANTHROPIC_API_KEY environment variable is not set"})
+		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: "ANTHROPIC_API_KEY environment variable is not set"})
 		return
 	}
 
@@ -123,7 +123,7 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 		sql, err = generateWithAnthropic(r.Context(), schema, prompt, req.History)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to generate SQL", err), Provider: "anthropic", Attempts: attempts})
+			_ = json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to generate SQL", err), Provider: "anthropic", Attempts: attempts})
 			return
 		}
 
@@ -135,7 +135,7 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 		if validationErr == "" {
 			// Query is valid
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(GenerateResponse{SQL: sql, Provider: "anthropic", Attempts: attempts})
+			_ = json.NewEncoder(w).Encode(GenerateResponse{SQL: sql, Provider: "anthropic", Attempts: attempts})
 			return
 		}
 
@@ -145,7 +145,7 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 
 	// Max attempts reached, return last SQL with validation error
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GenerateResponse{
+	_ = json.NewEncoder(w).Encode(GenerateResponse{
 		SQL:      sql,
 		Provider: "anthropic",
 		Attempts: attempts,

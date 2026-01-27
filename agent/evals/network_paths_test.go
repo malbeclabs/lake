@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +37,6 @@ func TestLake_Agent_Evals_Anthropic_ShortestPath(t *testing.T) {
 
 	runTest_ShortestPath(t, newAnthropicLLMClient)
 }
-
 
 func runTest_NetworkPaths(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -296,10 +295,11 @@ func TestLake_Agent_Evals_Anthropic_MetroToMetroShortestPath(t *testing.T) {
 
 // runTest_MetroToMetroShortestPath tests metro-to-metro shortest path queries.
 // The topology has multiple devices per metro with different path lengths:
-// - NYC: nyc-dzd1, nyc-dzd2
-// - LON: lon-dzd1, lon-dzd2
-// - Paths: nyc-dzd1 -> lon-dzd1 (direct, 1 hop)
-//          nyc-dzd2 -> fra-dzd1 -> lon-dzd2 (2 hops via Frankfurt)
+//   - NYC: nyc-dzd1, nyc-dzd2
+//   - LON: lon-dzd1, lon-dzd2
+//   - Paths: nyc-dzd1 -> lon-dzd1 (direct, 1 hop)
+//     nyc-dzd2 -> fra-dzd1 -> lon-dzd2 (2 hops via Frankfurt)
+//
 // The query must find the shortest (nyc-dzd1 -> lon-dzd1), not an arbitrary path.
 func runTest_MetroToMetroShortestPath(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

@@ -10,9 +10,9 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	v3 "github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/v3"
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
+	"github.com/malbeclabs/lake/api/config"
 )
 
 // WorkflowEvent represents a progress event from a running workflow.
@@ -105,11 +105,11 @@ type SessionChatMessage struct {
 
 // SessionWorkflowData contains workflow execution details for display in the web UI.
 type SessionWorkflowData struct {
-	DataQuestions     []DataQuestionResponse     `json:"dataQuestions,omitempty"`
-	GeneratedQueries  []GeneratedQueryResponse   `json:"generatedQueries,omitempty"`
-	ExecutedQueries   []ExecutedQueryResponse    `json:"executedQueries,omitempty"`
-	FollowUpQuestions []string                   `json:"followUpQuestions,omitempty"`
-	ProcessingSteps   []ClientProcessingStep     `json:"processingSteps,omitempty"`
+	DataQuestions     []DataQuestionResponse   `json:"dataQuestions,omitempty"`
+	GeneratedQueries  []GeneratedQueryResponse `json:"generatedQueries,omitempty"`
+	ExecutedQueries   []ExecutedQueryResponse  `json:"executedQueries,omitempty"`
+	FollowUpQuestions []string                 `json:"followUpQuestions,omitempty"`
+	ProcessingSteps   []ClientProcessingStep   `json:"processingSteps,omitempty"`
 }
 
 // ClientProcessingStep matches the web's ProcessingStep format.
@@ -129,9 +129,9 @@ type ClientProcessingStep struct {
 	Question string   `json:"question,omitempty"`
 	SQL      string   `json:"sql,omitempty"`
 	Status   string   `json:"status,omitempty"`
-	Rows     int      `json:"rows,omitempty"`     // Row count
+	Rows     int      `json:"rows,omitempty"` // Row count
 	Columns  []string `json:"columns,omitempty"`
-	Data     [][]any  `json:"data,omitempty"`     // Actual row data
+	Data     [][]any  `json:"data,omitempty"` // Actual row data
 	Error    string   `json:"error,omitempty"`
 
 	// For cypher_query steps
@@ -152,9 +152,9 @@ func (s WorkflowStep) toClientFormat() ClientProcessingStep {
 		Question: s.Question,
 		SQL:      s.SQL,
 		Status:   s.Status,
-		Rows:     s.Count,   // Server's "Count" -> Client's "rows"
+		Rows:     s.Count, // Server's "Count" -> Client's "rows"
 		Columns:  s.Columns,
-		Data:     s.Rows,    // Server's "Rows" -> Client's "data"
+		Data:     s.Rows, // Server's "Rows" -> Client's "data"
 		Error:    s.Error,
 		Cypher:   s.Cypher,
 		Nodes:    s.Nodes,

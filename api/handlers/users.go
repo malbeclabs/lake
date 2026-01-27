@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type UserListItem struct {
@@ -141,23 +141,23 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type UserDetail struct {
-	PK             string  `json:"pk"`
-	OwnerPubkey    string  `json:"owner_pubkey"`
-	Status         string  `json:"status"`
-	Kind           string  `json:"kind"`
-	DzIP           string  `json:"dz_ip"`
-	DevicePK       string  `json:"device_pk"`
-	DeviceCode     string  `json:"device_code"`
-	MetroPK        string  `json:"metro_pk"`
-	MetroCode      string  `json:"metro_code"`
-	MetroName      string  `json:"metro_name"`
-	ContributorPK  string  `json:"contributor_pk"`
-	ContributorCode string `json:"contributor_code"`
-	InBps          float64 `json:"in_bps"`
-	OutBps         float64 `json:"out_bps"`
-	IsValidator    bool    `json:"is_validator"`
-	VotePubkey     string  `json:"vote_pubkey"`
-	StakeSol       float64 `json:"stake_sol"`
+	PK              string  `json:"pk"`
+	OwnerPubkey     string  `json:"owner_pubkey"`
+	Status          string  `json:"status"`
+	Kind            string  `json:"kind"`
+	DzIP            string  `json:"dz_ip"`
+	DevicePK        string  `json:"device_pk"`
+	DeviceCode      string  `json:"device_code"`
+	MetroPK         string  `json:"metro_pk"`
+	MetroCode       string  `json:"metro_code"`
+	MetroName       string  `json:"metro_name"`
+	ContributorPK   string  `json:"contributor_pk"`
+	ContributorCode string  `json:"contributor_code"`
+	InBps           float64 `json:"in_bps"`
+	OutBps          float64 `json:"out_bps"`
+	IsValidator     bool    `json:"is_validator"`
+	VotePubkey      string  `json:"vote_pubkey"`
+	StakeSol        float64 `json:"stake_sol"`
 }
 
 func GetUser(w http.ResponseWriter, r *http.Request) {

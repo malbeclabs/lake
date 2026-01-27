@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // Global usage tracking
 var (
 	globalUsageMu       sync.Mutex
-	globalAlertedDate   string           // Date string (YYYY-MM-DD) when alerts were last tracked
-	globalAlertedLevels map[int]bool     // Which threshold percentages have been alerted today
+	globalAlertedDate   string       // Date string (YYYY-MM-DD) when alerts were last tracked
+	globalAlertedLevels map[int]bool // Which threshold percentages have been alerted today
 )
 
 // GetGlobalDailyLimit returns the configured global daily limit (0 = unlimited)

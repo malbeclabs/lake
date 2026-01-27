@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/stretchr/testify/require"
 )
 

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/api/handlers"
+	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/stretchr/testify/assert"
 )
 

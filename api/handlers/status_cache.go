@@ -17,11 +17,11 @@ type StatusCache struct {
 
 	// Cached responses
 	status            *StatusResponse
-	linkHistory       map[string]*LinkHistoryResponse   // keyed by "range:buckets" e.g. "24h:72"
-	deviceHistory     map[string]*DeviceHistoryResponse // keyed by "range:buckets" e.g. "24h:72"
-	timeline          *TimelineResponse                 // default 24h timeline
-	outages           *LinkOutagesResponse              // default 24h outages
-	latencyComparison *LatencyComparisonResponse        // DZ vs Internet latency comparison
+	linkHistory       map[string]*LinkHistoryResponse      // keyed by "range:buckets" e.g. "24h:72"
+	deviceHistory     map[string]*DeviceHistoryResponse    // keyed by "range:buckets" e.g. "24h:72"
+	timeline          *TimelineResponse                    // default 24h timeline
+	outages           *LinkOutagesResponse                 // default 24h outages
+	latencyComparison *LatencyComparisonResponse           // DZ vs Internet latency comparison
 	metroPathLatency  map[string]*MetroPathLatencyResponse // keyed by optimize strategy (hops, latency, bandwidth)
 
 	// Refresh intervals

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/slack-go/slack/slackevents"
 )
 

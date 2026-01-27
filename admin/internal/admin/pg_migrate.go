@@ -6,7 +6,7 @@ import (
 	"log/slog"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx driver with database/sql
-	"github.com/malbeclabs/doublezero/lake/api/config"
+	"github.com/malbeclabs/lake/api/config"
 	"github.com/pressly/goose/v3"
 )
 

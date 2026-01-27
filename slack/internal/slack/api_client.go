@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/utils/pkg/retry"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/utils/pkg/retry"
 )
 
 // APIClient is an HTTP client for the Lake API.
@@ -76,8 +76,8 @@ type chatMessage struct {
 
 // doneEventData represents the data in a "done" SSE event.
 type doneEventData struct {
-	Answer          string `json:"answer"`
-	DataQuestions   []struct {
+	Answer        string `json:"answer"`
+	DataQuestions []struct {
 		Question  string `json:"question"`
 		Rationale string `json:"rationale"`
 	} `json:"dataQuestions"`

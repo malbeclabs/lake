@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // FieldValuesResponse is the response for the field values endpoint
@@ -25,9 +25,9 @@ type fieldConfig struct {
 // entityFieldConfigs maps entity+field to the SQL query config
 var entityFieldConfigs = map[string]map[string]fieldConfig{
 	"devices": {
-		"status": {table: "dz_devices_current", column: "status"},
-		"type":   {table: "dz_devices_current", column: "device_type"},
-		"metro":  {table: "dz_devices_current d JOIN dz_metros_current m ON d.metro_pk = m.pk", column: "m.code"},
+		"status":      {table: "dz_devices_current", column: "status"},
+		"type":        {table: "dz_devices_current", column: "device_type"},
+		"metro":       {table: "dz_devices_current d JOIN dz_metros_current m ON d.metro_pk = m.pk", column: "m.code"},
 		"contributor": {table: "dz_devices_current d JOIN dz_contributors_current c ON d.contributor_pk = c.pk", column: "c.code"},
 	},
 	"links": {
@@ -84,7 +84,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		// Return empty for unknown entities
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(FieldValuesResponse{Values: []string{}})
+		_ = json.NewEncoder(w).Encode(FieldValuesResponse{Values: []string{}})
 		return
 	}
 
@@ -92,7 +92,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		// Return empty for unknown fields
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(FieldValuesResponse{Values: []string{}})
+		_ = json.NewEncoder(w).Encode(FieldValuesResponse{Values: []string{}})
 		return
 	}
 

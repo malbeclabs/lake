@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
 // Neo4jClient is the global read-only Neo4j client

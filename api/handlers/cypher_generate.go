@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/prompts"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
 // Cached prompts for Cypher generation
@@ -70,7 +70,7 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 	// Check if Neo4j is available for schema fetching
 	if config.Neo4jClient == nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GenerateResponse{Error: "Neo4j is not available"})
+		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: "Neo4j is not available"})
 		return
 	}
 
@@ -79,14 +79,14 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 	schema, err := schemaFetcher.FetchSchema(r.Context())
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to fetch Neo4j schema", err)})
+		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to fetch Neo4j schema", err)})
 		return
 	}
 
 	// Require Anthropic API key
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GenerateResponse{Error: "ANTHROPIC_API_KEY environment variable is not set"})
+		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: "ANTHROPIC_API_KEY environment variable is not set"})
 		return
 	}
 
@@ -111,7 +111,7 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 		cypher, err = generateCypherWithAnthropic(schema, prompt, req.History)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to generate Cypher", err), Provider: "anthropic", Attempts: attempts})
+			_ = json.NewEncoder(w).Encode(GenerateResponse{Error: internalError("Failed to generate Cypher", err), Provider: "anthropic", Attempts: attempts})
 			return
 		}
 
@@ -123,7 +123,7 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 		if validationErr == "" {
 			// Query is valid
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(GenerateResponse{SQL: cypher, Provider: "anthropic", Attempts: attempts})
+			_ = json.NewEncoder(w).Encode(GenerateResponse{SQL: cypher, Provider: "anthropic", Attempts: attempts})
 			return
 		}
 
@@ -133,7 +133,7 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 
 	// Max attempts reached, return last Cypher with validation error
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GenerateResponse{
+	_ = json.NewEncoder(w).Encode(GenerateResponse{
 		SQL:      cypher,
 		Provider: "anthropic",
 		Attempts: attempts,

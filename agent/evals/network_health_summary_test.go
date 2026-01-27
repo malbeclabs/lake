@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
-	dztelemusage "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/usage"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +26,6 @@ func TestLake_Agent_Evals_Anthropic_NetworkHealthSummary(t *testing.T) {
 
 	runTest_NetworkHealthSummary(t, newAnthropicLLMClient)
 }
-
 
 func runTest_NetworkHealthSummary(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -126,7 +125,6 @@ func TestLake_Agent_Evals_Anthropic_NetworkHealthAllHealthy(t *testing.T) {
 
 	runTest_NetworkHealthAllHealthy(t, newAnthropicLLMClient)
 }
-
 
 // runTest_NetworkHealthAllHealthy tests that when the network is completely healthy,
 // the agent doesn't include spurious warnings or "no issues found" sections.
@@ -302,49 +300,49 @@ func seedHealthyNetworkData(t *testing.T, ctx context.Context, conn clickhouse.C
 		e := ifaceUsageEntries[i]
 		// Order: event_ts, ingested_at, then all columns from schema (must match exactly)
 		return []any{
-			e.time.UTC(),      // event_ts
-			now,               // ingested_at
-			e.devicePK,        // device_pk
-			e.host,            // host
-			e.intf,            // intf
-			nil,               // user_tunnel_id
-			e.linkPK,          // link_pk
-			e.linkSide,        // link_side
-			nil,               // model_name
-			nil,               // serial_number
-			nil,               // carrier_transitions
-			nil,               // in_broadcast_pkts
-			nil,               // in_discards
-			nil,               // in_errors
-			nil,               // in_fcs_errors
-			nil,               // in_multicast_pkts
-			nil,               // in_octets
-			nil,               // in_pkts
-			nil,               // in_unicast_pkts
-			nil,               // out_broadcast_pkts
-			nil,               // out_discards
-			nil,               // out_errors
-			nil,               // out_multicast_pkts
-			nil,               // out_octets
-			nil,               // out_pkts
-			nil,               // out_unicast_pkts
-			nil,               // carrier_transitions_delta
-			nil,               // in_broadcast_pkts_delta
-			nil,               // in_discards_delta
-			nil,               // in_errors_delta
-			nil,               // in_fcs_errors_delta
-			nil,               // in_multicast_pkts_delta
-			e.inOctetsDelta,   // in_octets_delta
-			nil,               // in_pkts_delta
-			nil,               // in_unicast_pkts_delta
-			nil,               // out_broadcast_pkts_delta
-			nil,               // out_discards_delta
-			nil,               // out_errors_delta
-			nil,               // out_multicast_pkts_delta
-			e.outOctetsDelta,  // out_octets_delta
-			nil,               // out_pkts_delta
-			nil,               // out_unicast_pkts_delta
-			&e.deltaDuration,  // delta_duration
+			e.time.UTC(),     // event_ts
+			now,              // ingested_at
+			e.devicePK,       // device_pk
+			e.host,           // host
+			e.intf,           // intf
+			nil,              // user_tunnel_id
+			e.linkPK,         // link_pk
+			e.linkSide,       // link_side
+			nil,              // model_name
+			nil,              // serial_number
+			nil,              // carrier_transitions
+			nil,              // in_broadcast_pkts
+			nil,              // in_discards
+			nil,              // in_errors
+			nil,              // in_fcs_errors
+			nil,              // in_multicast_pkts
+			nil,              // in_octets
+			nil,              // in_pkts
+			nil,              // in_unicast_pkts
+			nil,              // out_broadcast_pkts
+			nil,              // out_discards
+			nil,              // out_errors
+			nil,              // out_multicast_pkts
+			nil,              // out_octets
+			nil,              // out_pkts
+			nil,              // out_unicast_pkts
+			nil,              // carrier_transitions_delta
+			nil,              // in_broadcast_pkts_delta
+			nil,              // in_discards_delta
+			nil,              // in_errors_delta
+			nil,              // in_fcs_errors_delta
+			nil,              // in_multicast_pkts_delta
+			e.inOctetsDelta,  // in_octets_delta
+			nil,              // in_pkts_delta
+			nil,              // in_unicast_pkts_delta
+			nil,              // out_broadcast_pkts_delta
+			nil,              // out_discards_delta
+			nil,              // out_errors_delta
+			nil,              // out_multicast_pkts_delta
+			e.outOctetsDelta, // out_octets_delta
+			nil,              // out_pkts_delta
+			nil,              // out_unicast_pkts_delta
+			&e.deltaDuration, // delta_duration
 		}, nil
 	})
 	require.NoError(t, err)

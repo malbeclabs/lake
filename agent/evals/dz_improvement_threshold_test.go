@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemlatency "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/latency"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +24,6 @@ func TestLake_Agent_Evals_Anthropic_DZImprovementThreshold(t *testing.T) {
 
 	runTest_DZImprovementThreshold(t, newAnthropicLLMClient)
 }
-
 
 func runTest_DZImprovementThreshold(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -183,14 +182,14 @@ func seedDZImprovementThresholdData(t *testing.T, ctx context.Context, conn clic
 		return []any{
 			s.time.UTC(),
 			ingestedAt,
-			int64(100),       // epoch
-			int32(i + 1),     // sample_index
+			int64(100),   // epoch
+			int32(i + 1), // sample_index
 			s.originDevicePK,
 			s.targetDevicePK,
 			s.linkPK,
 			int64(s.rttUs),
-			false,            // loss
-			(*int64)(nil),    // ipdv_us
+			false,         // loss
+			(*int64)(nil), // ipdv_us
 		}, nil
 	})
 	require.NoError(t, err)
@@ -229,13 +228,13 @@ func seedDZImprovementThresholdData(t *testing.T, ctx context.Context, conn clic
 		return []any{
 			s.time.UTC(),
 			ingestedAt,
-			int64(100),     // epoch
-			int32(i + 1),   // sample_index
+			int64(100),   // epoch
+			int32(i + 1), // sample_index
 			s.originMetroPK,
 			s.targetMetroPK,
-			"provider1",    // data_provider
+			"provider1", // data_provider
 			int64(s.rttUs),
-			(*int64)(nil),  // ipdv_us
+			(*int64)(nil), // ipdv_us
 		}, nil
 	})
 	require.NoError(t, err)

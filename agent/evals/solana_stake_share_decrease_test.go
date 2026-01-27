@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +25,6 @@ func TestLake_Agent_Evals_Anthropic_SolanaStakeShareDecrease(t *testing.T) {
 
 	runTest_SolanaStakeShareDecrease(t, newAnthropicLLMClient)
 }
-
 
 func runTest_SolanaStakeShareDecrease(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -285,15 +284,15 @@ func seedSolanaStakeShareDecreaseData(t *testing.T, ctx context.Context, conn cl
 
 	// Define stake amounts in lamports
 	const (
-		vote1Stake = 1000000000000  // 1000 SOL
-		vote2Stake = 1500000000000  // 1500 SOL
-		vote3Stake = 1200000000000  // 1200 SOL
-		vote4Stake = 5000000000000  // 5000 SOL
-		vote5Stake = 4000000000000  // 4000 SOL
-		vote6Stake = 2000000000000  // 2000 SOL
-		vote7Stake = 3000000000000  // 3000 SOL
-		vote8Stake = 2500000000000  // 2500 SOL
-		vote9Stake = 6000000000000  // 6000 SOL
+		vote1Stake  = 1000000000000 // 1000 SOL
+		vote2Stake  = 1500000000000 // 1500 SOL
+		vote3Stake  = 1200000000000 // 1200 SOL
+		vote4Stake  = 5000000000000 // 5000 SOL
+		vote5Stake  = 4000000000000 // 4000 SOL
+		vote6Stake  = 2000000000000 // 2000 SOL
+		vote7Stake  = 3000000000000 // 3000 SOL
+		vote8Stake  = 2500000000000 // 2500 SOL
+		vote9Stake  = 6000000000000 // 6000 SOL
 		vote10Stake = 3500000000000 // 3500 SOL
 	)
 

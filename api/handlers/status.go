@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -54,17 +54,17 @@ type SystemHealth struct {
 
 type NetworkSummary struct {
 	// Counts
-	ValidatorsOnDZ   uint64  `json:"validators_on_dz"`
-	TotalStakeSol    float64 `json:"total_stake_sol"`
-	StakeSharePct    float64 `json:"stake_share_pct"`
-	StakeShareDelta  float64 `json:"stake_share_delta"` // Change from 24h ago (percentage points)
-	Users            uint64  `json:"users"`
-	Devices          uint64  `json:"devices"`
-	Links            uint64  `json:"links"`
-	Contributors     uint64  `json:"contributors"`
-	Metros           uint64  `json:"metros"`
-	BandwidthBps     int64   `json:"bandwidth_bps"`
-	UserInboundBps   float64 `json:"user_inbound_bps"`
+	ValidatorsOnDZ  uint64  `json:"validators_on_dz"`
+	TotalStakeSol   float64 `json:"total_stake_sol"`
+	StakeSharePct   float64 `json:"stake_share_pct"`
+	StakeShareDelta float64 `json:"stake_share_delta"` // Change from 24h ago (percentage points)
+	Users           uint64  `json:"users"`
+	Devices         uint64  `json:"devices"`
+	Links           uint64  `json:"links"`
+	Contributors    uint64  `json:"contributors"`
+	Metros          uint64  `json:"metros"`
+	BandwidthBps    int64   `json:"bandwidth_bps"`
+	UserInboundBps  float64 `json:"user_inbound_bps"`
 
 	// Status breakdown
 	DevicesByStatus map[string]uint64 `json:"devices_by_status"`
@@ -72,26 +72,26 @@ type NetworkSummary struct {
 }
 
 type LinkHealth struct {
-	Total          uint64       `json:"total"`
-	Healthy        uint64       `json:"healthy"`
-	Degraded       uint64       `json:"degraded"`  // High latency or some loss
-	Unhealthy      uint64       `json:"unhealthy"` // Significant loss or down
-	Disabled       uint64       `json:"disabled"`  // Extended packet loss (100% for 2+ hours)
-	Issues         []LinkIssue  `json:"issues"`    // Top issues
-	HighUtilLinks  []LinkMetric `json:"high_util_links"` // Links with high utilization
-	TopUtilLinks   []LinkMetric `json:"top_util_links"`  // Top 10 links by max utilization
+	Total         uint64       `json:"total"`
+	Healthy       uint64       `json:"healthy"`
+	Degraded      uint64       `json:"degraded"`        // High latency or some loss
+	Unhealthy     uint64       `json:"unhealthy"`       // Significant loss or down
+	Disabled      uint64       `json:"disabled"`        // Extended packet loss (100% for 2+ hours)
+	Issues        []LinkIssue  `json:"issues"`          // Top issues
+	HighUtilLinks []LinkMetric `json:"high_util_links"` // Links with high utilization
+	TopUtilLinks  []LinkMetric `json:"top_util_links"`  // Top 10 links by max utilization
 }
 
 type LinkIssue struct {
 	Code        string  `json:"code"`
 	LinkType    string  `json:"link_type"`
 	Contributor string  `json:"contributor"`
-	Issue       string  `json:"issue"`       // "packet_loss", "high_latency", "down"
-	Value       float64 `json:"value"`       // The problematic value
-	Threshold   float64 `json:"threshold"`   // The threshold exceeded
+	Issue       string  `json:"issue"`     // "packet_loss", "high_latency", "down"
+	Value       float64 `json:"value"`     // The problematic value
+	Threshold   float64 `json:"threshold"` // The threshold exceeded
 	SideAMetro  string  `json:"side_a_metro"`
 	SideZMetro  string  `json:"side_z_metro"`
-	Since       string  `json:"since"`       // ISO timestamp when issue started
+	Since       string  `json:"since"` // ISO timestamp when issue started
 }
 
 type LinkMetric struct {
@@ -148,10 +148,10 @@ type InterfaceIssue struct {
 	Contributor        string `json:"contributor"`
 	Metro              string `json:"metro"`
 	InterfaceName      string `json:"interface_name"`
-	LinkPK             string `json:"link_pk,omitempty"`      // Empty if not a link interface
-	LinkCode           string `json:"link_code,omitempty"`    // Empty if not a link interface
-	LinkType           string `json:"link_type,omitempty"`    // WAN, DZX, etc.
-	LinkSide           string `json:"link_side,omitempty"`    // A or Z
+	LinkPK             string `json:"link_pk,omitempty"`   // Empty if not a link interface
+	LinkCode           string `json:"link_code,omitempty"` // Empty if not a link interface
+	LinkType           string `json:"link_type,omitempty"` // WAN, DZX, etc.
+	LinkSide           string `json:"link_side,omitempty"` // A or Z
 	InErrors           uint64 `json:"in_errors"`
 	OutErrors          uint64 `json:"out_errors"`
 	InDiscards         uint64 `json:"in_discards"`
@@ -188,12 +188,12 @@ type InfrastructureAlerts struct {
 // Thresholds for health classification (matching methodology)
 // Packet loss severity: Minor (<1%), Moderate (1-10%), Severe (≥10%)
 const (
-	LatencyWarningPct  = 20.0  // 20% over committed RTT
-	LatencyCriticalPct = 50.0  // 50% over committed RTT
-	LossWarningPct     = 1.0   // 1% - Moderate (degraded)
-	LossCriticalPct    = 10.0  // 10% - Severe (unhealthy)
-	UtilWarningPct     = 70.0  // 70%
-	UtilCriticalPct    = 90.0  // 90%
+	LatencyWarningPct  = 20.0 // 20% over committed RTT
+	LatencyCriticalPct = 50.0 // 50% over committed RTT
+	LossWarningPct     = 1.0  // 1% - Moderate (degraded)
+	LossCriticalPct    = 10.0 // 10% - Severe (unhealthy)
+	UtilWarningPct     = 70.0 // 70%
+	UtilCriticalPct    = 90.0 // 90%
 )
 
 func GetStatus(w http.ResponseWriter, r *http.Request) {
@@ -1086,11 +1086,11 @@ type LinkHistory struct {
 }
 
 type LinkHistoryResponse struct {
-	Links          []LinkHistory `json:"links"`
-	TimeRange      string        `json:"time_range"`       // "24h", "3d", "7d"
-	BucketMinutes  int           `json:"bucket_minutes"`   // Size of each bucket in minutes
-	BucketCount    int           `json:"bucket_count"`     // Number of buckets
-	Error          string        `json:"error,omitempty"`
+	Links         []LinkHistory `json:"links"`
+	TimeRange     string        `json:"time_range"`     // "24h", "3d", "7d"
+	BucketMinutes int           `json:"bucket_minutes"` // Size of each bucket in minutes
+	BucketCount   int           `json:"bucket_count"`   // Number of buckets
+	Error         string        `json:"error,omitempty"`
 }
 
 func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
@@ -1211,17 +1211,17 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 
 	// Build map of link metadata
 	type linkMeta struct {
-		code              string
-		linkType          string
-		contributor       string
-		sideAMetro        string
-		sideZMetro        string
-		sideADevice       string
-		sideZDevice       string
-		bandwidthBps      int64
-		committedRttUs    float64
-		delayOverrideNs   int64
-		status            string
+		code            string
+		linkType        string
+		contributor     string
+		sideAMetro      string
+		sideZMetro      string
+		sideADevice     string
+		sideZDevice     string
+		bandwidthBps    int64
+		committedRttUs  float64
+		delayOverrideNs int64
+		status          string
 	}
 	linkMap := make(map[string]linkMeta)
 
@@ -2301,7 +2301,7 @@ func GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) {
@@ -2386,12 +2386,12 @@ type DeviceInterfaceHistoryResponse struct {
 
 // InterfaceHistory is the history of a single interface
 type InterfaceHistory struct {
-	InterfaceName string                   `json:"interface_name"`
-	LinkPK        string                   `json:"link_pk,omitempty"`
-	LinkCode      string                   `json:"link_code,omitempty"`
-	LinkType      string                   `json:"link_type,omitempty"`
-	LinkSide      string                   `json:"link_side,omitempty"`
-	Hours         []InterfaceHourStatus    `json:"hours"`
+	InterfaceName string                `json:"interface_name"`
+	LinkPK        string                `json:"link_pk,omitempty"`
+	LinkCode      string                `json:"link_code,omitempty"`
+	LinkType      string                `json:"link_type,omitempty"`
+	LinkSide      string                `json:"link_side,omitempty"`
+	Hours         []InterfaceHourStatus `json:"hours"`
 }
 
 // InterfaceHourStatus is the status of an interface for a single time bucket
@@ -2436,7 +2436,7 @@ func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {

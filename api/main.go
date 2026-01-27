@@ -23,9 +23,9 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/handlers"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -263,7 +263,7 @@ func main() {
 	if err := config.LoadNeo4j(); err != nil {
 		log.Printf("Warning: Neo4j not available: %v", err)
 	} else {
-		defer config.CloseNeo4j()
+		defer func() { _ = config.CloseNeo4j() }()
 	}
 
 	// Initialize status cache for fast page loads
@@ -368,13 +368,13 @@ func main() {
 	// Health check endpoints
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		// Immediately fail if shutting down
 		if shuttingDown.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("shutting down"))
+			_, _ = w.Write([]byte("shutting down"))
 			return
 		}
 
@@ -384,12 +384,12 @@ func main() {
 
 		if err := config.DB.Ping(ctx); err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("database connection failed: " + err.Error()))
+			_, _ = w.Write([]byte("database connection failed: " + err.Error()))
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 
 	r.Get("/api/config", handlers.GetConfig)
@@ -600,4 +600,3 @@ func main() {
 		}
 	}
 }
-

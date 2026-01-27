@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +25,6 @@ func TestLake_Agent_Evals_Anthropic_SolanaValidatorsConnectedCount(t *testing.T)
 
 	runTest_SolanaValidatorsConnectedCount(t, newAnthropicLLMClient)
 }
-
 
 func runTest_SolanaValidatorsConnectedCount(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

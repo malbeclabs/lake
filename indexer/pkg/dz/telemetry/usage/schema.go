@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 type DeviceInterfaceCountersSchema struct{}

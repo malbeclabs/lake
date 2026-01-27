@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type LinkListItem struct {
@@ -209,29 +209,29 @@ type LinkDetail struct {
 
 // TopologyLinkHealth represents the SLA health status of a link for topology overlay
 type TopologyLinkHealth struct {
-	LinkPK          string  `json:"link_pk"`
-	SideAPK         string  `json:"side_a_pk"`
-	SideACode       string  `json:"side_a_code"`
-	SideZPK         string  `json:"side_z_pk"`
-	SideZCode       string  `json:"side_z_code"`
-	AvgRttUs        float64 `json:"avg_rtt_us"`
-	P95RttUs        float64 `json:"p95_rtt_us"`
-	CommittedRttNs  int64   `json:"committed_rtt_ns"`
-	LossPct         float64 `json:"loss_pct"`
-	ExceedsCommit   bool    `json:"exceeds_commit"`
-	HasPacketLoss   bool    `json:"has_packet_loss"`
-	IsDark          bool    `json:"is_dark"`
-	SlaStatus       string  `json:"sla_status"` // "healthy", "warning", "critical", "unknown"
-	SlaRatio        float64 `json:"sla_ratio"`  // measured / committed (0 if no commitment)
+	LinkPK         string  `json:"link_pk"`
+	SideAPK        string  `json:"side_a_pk"`
+	SideACode      string  `json:"side_a_code"`
+	SideZPK        string  `json:"side_z_pk"`
+	SideZCode      string  `json:"side_z_code"`
+	AvgRttUs       float64 `json:"avg_rtt_us"`
+	P95RttUs       float64 `json:"p95_rtt_us"`
+	CommittedRttNs int64   `json:"committed_rtt_ns"`
+	LossPct        float64 `json:"loss_pct"`
+	ExceedsCommit  bool    `json:"exceeds_commit"`
+	HasPacketLoss  bool    `json:"has_packet_loss"`
+	IsDark         bool    `json:"is_dark"`
+	SlaStatus      string  `json:"sla_status"` // "healthy", "warning", "critical", "unknown"
+	SlaRatio       float64 `json:"sla_ratio"`  // measured / committed (0 if no commitment)
 }
 
 type TopologyLinkHealthResponse struct {
 	Links         []TopologyLinkHealth `json:"links"`
-	TotalLinks    int          `json:"total_links"`
-	HealthyCount  int          `json:"healthy_count"`
-	WarningCount  int          `json:"warning_count"`
-	CriticalCount int          `json:"critical_count"`
-	UnknownCount  int          `json:"unknown_count"`
+	TotalLinks    int                  `json:"total_links"`
+	HealthyCount  int                  `json:"healthy_count"`
+	WarningCount  int                  `json:"warning_count"`
+	CriticalCount int                  `json:"critical_count"`
+	UnknownCount  int                  `json:"unknown_count"`
 }
 
 func GetLinkHealth(w http.ResponseWriter, r *http.Request) {

@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -64,20 +64,20 @@ type DeviceEntity struct {
 
 // LinkEntity represents a link's current state
 type LinkEntity struct {
-	PK                 string `json:"pk"`
-	Code               string `json:"code"`
-	Status             string `json:"status"`
-	LinkType           string `json:"link_type"`
-	TunnelNet          string `json:"tunnel_net"`
-	ContributorPK      string `json:"contributor_pk"`
-	SideAPK            string `json:"side_a_pk"`
-	SideZPK            string `json:"side_z_pk"`
-	SideAIfaceName     string `json:"side_a_iface_name"`
-	SideZIfaceName     string `json:"side_z_iface_name"`
-	CommittedRttNs     int64  `json:"committed_rtt_ns"`
-	CommittedJitterNs  int64  `json:"committed_jitter_ns"`
-	BandwidthBps       int64  `json:"bandwidth_bps"`
-	ISISDelayOverride  int64  `json:"isis_delay_override_ns"`
+	PK                string `json:"pk"`
+	Code              string `json:"code"`
+	Status            string `json:"status"`
+	LinkType          string `json:"link_type"`
+	TunnelNet         string `json:"tunnel_net"`
+	ContributorPK     string `json:"contributor_pk"`
+	SideAPK           string `json:"side_a_pk"`
+	SideZPK           string `json:"side_z_pk"`
+	SideAIfaceName    string `json:"side_a_iface_name"`
+	SideZIfaceName    string `json:"side_z_iface_name"`
+	CommittedRttNs    int64  `json:"committed_rtt_ns"`
+	CommittedJitterNs int64  `json:"committed_jitter_ns"`
+	BandwidthBps      int64  `json:"bandwidth_bps"`
+	ISISDelayOverride int64  `json:"isis_delay_override_ns"`
 	// Joined fields
 	ContributorCode string `json:"contributor_code,omitempty"`
 	SideACode       string `json:"side_a_code,omitempty"`
@@ -167,7 +167,7 @@ type ValidatorEventDetails struct {
 	DevicePK      string  `json:"device_pk,omitempty"`
 	DeviceCode    string  `json:"device_code,omitempty"`
 	MetroCode     string  `json:"metro_code,omitempty"`
-	Kind          string  `json:"kind"` // "validator" or "gossip_only"
+	Kind          string  `json:"kind"`   // "validator" or "gossip_only"
 	Action        string  `json:"action"` // "joined" or "left"
 }
 
@@ -260,7 +260,7 @@ func GetTimelineBounds(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func parseTimelineParams(r *http.Request) TimelineParams {
@@ -1155,15 +1155,15 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 		}
 
 		events = append(events, TimelineEvent{
-			ID:          generateEventID(entityID, snapshotTS, eventType),
-			EventType:   eventType,
-			Timestamp:   snapshotTS.Format(time.RFC3339),
-			Category:    "state_change",
-			Severity:    severity,
-			Title:       title,
-			EntityType:  "device",
-			EntityPK:    pk,
-			EntityCode:  code,
+			ID:         generateEventID(entityID, snapshotTS, eventType),
+			EventType:  eventType,
+			Timestamp:  snapshotTS.Format(time.RFC3339),
+			Category:   "state_change",
+			Severity:   severity,
+			Title:      title,
+			EntityType: "device",
+			EntityPK:   pk,
+			EntityCode: code,
 			Details: EntityChangeDetails{
 				ChangeType: changeType,
 				Changes:    changes,
@@ -1282,42 +1282,42 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			entityID            string
-			snapshotTS          time.Time
-			pk                  string
-			code                string
-			status              string
-			linkType            string
-			tunnelNet           string
-			contributorPK       string
-			sideAPK             string
-			sideZPK             string
-			sideAIfaceName      string
-			sideZIfaceName      string
-			committedRttNs      int64
-			committedJitterNs   int64
-			bandwidthBps        int64
-			isisDelayOverride   int64
-			isDeleted           uint8
-			prevStatus          *string
-			prevLinkType        *string
-			prevTunnelNet       *string
-			prevContributorPK   *string
-			prevSideAPK         *string
-			prevSideZPK         *string
+			entityID              string
+			snapshotTS            time.Time
+			pk                    string
+			code                  string
+			status                string
+			linkType              string
+			tunnelNet             string
+			contributorPK         string
+			sideAPK               string
+			sideZPK               string
+			sideAIfaceName        string
+			sideZIfaceName        string
+			committedRttNs        int64
+			committedJitterNs     int64
+			bandwidthBps          int64
+			isisDelayOverride     int64
+			isDeleted             uint8
+			prevStatus            *string
+			prevLinkType          *string
+			prevTunnelNet         *string
+			prevContributorPK     *string
+			prevSideAPK           *string
+			prevSideZPK           *string
 			prevCommittedRttNs    *int64
 			prevCommittedJitter   *int64
 			prevBandwidthBps      *int64
 			prevISISDelayOverride *int64
 			prevIsDeleted         *uint8
-			changeType          string
-			contributorCode     string
-			sideACode           string
-			sideZCode           string
-			sideAMetroCode      string
-			sideZMetroCode      string
-			sideAMetroPK        string
-			sideZMetroPK        string
+			changeType            string
+			contributorCode       string
+			sideACode             string
+			sideZCode             string
+			sideAMetroCode        string
+			sideZMetroCode        string
+			sideAMetroPK          string
+			sideZMetroPK          string
 		)
 
 		if err := rows.Scan(
@@ -1437,15 +1437,15 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 		}
 
 		events = append(events, TimelineEvent{
-			ID:          generateEventID(entityID, snapshotTS, eventType),
-			EventType:   eventType,
-			Timestamp:   snapshotTS.Format(time.RFC3339),
-			Category:    "state_change",
-			Severity:    severity,
-			Title:       title,
-			EntityType:  "link",
-			EntityPK:    pk,
-			EntityCode:  code,
+			ID:         generateEventID(entityID, snapshotTS, eventType),
+			EventType:  eventType,
+			Timestamp:  snapshotTS.Format(time.RFC3339),
+			Category:   "state_change",
+			Severity:   severity,
+			Title:      title,
+			EntityType: "link",
+			EntityPK:   pk,
+			EntityCode: code,
 			Details: EntityChangeDetails{
 				ChangeType: changeType,
 				Changes:    changes,
@@ -1586,15 +1586,15 @@ func queryMetroChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 		}
 
 		events = append(events, TimelineEvent{
-			ID:          generateEventID(entityID, snapshotTS, eventType),
-			EventType:   eventType,
-			Timestamp:   snapshotTS.Format(time.RFC3339),
-			Category:    "state_change",
-			Severity:    "info",
-			Title:       title,
-			EntityType:  "metro",
-			EntityPK:    pk,
-			EntityCode:  code,
+			ID:         generateEventID(entityID, snapshotTS, eventType),
+			EventType:  eventType,
+			Timestamp:  snapshotTS.Format(time.RFC3339),
+			Category:   "state_change",
+			Severity:   "info",
+			Title:      title,
+			EntityType: "metro",
+			EntityPK:   pk,
+			EntityCode: code,
 			Details: EntityChangeDetails{
 				ChangeType: changeType,
 				Changes:    changes,
@@ -1723,15 +1723,15 @@ func queryContributorChanges(ctx context.Context, startTime, endTime time.Time) 
 		}
 
 		events = append(events, TimelineEvent{
-			ID:          generateEventID(entityID, snapshotTS, eventType),
-			EventType:   eventType,
-			Timestamp:   snapshotTS.Format(time.RFC3339),
-			Category:    "state_change",
-			Severity:    "info",
-			Title:       title,
-			EntityType:  "contributor",
-			EntityPK:    pk,
-			EntityCode:  code,
+			ID:         generateEventID(entityID, snapshotTS, eventType),
+			EventType:  eventType,
+			Timestamp:  snapshotTS.Format(time.RFC3339),
+			Category:   "state_change",
+			Severity:   "info",
+			Title:      title,
+			EntityType: "contributor",
+			EntityPK:   pk,
+			EntityCode: code,
 			Details: EntityChangeDetails{
 				ChangeType: changeType,
 				Changes:    changes,
@@ -1829,27 +1829,27 @@ func queryUserChanges(ctx context.Context, startTime, endTime time.Time, include
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			entityID     string
-			snapshotTS   time.Time
-			pk           string
-			ownerPubkey  string
-			kind         string
-			status       string
-			clientIP     string
-			dzIP         string
-			devicePK     string
-			tunnelID     int32
-			isDeleted    uint8
-			prevStatus   *string
-			prevKind     *string
-			prevClientIP *string
-			prevDZIP     *string
-			prevDevicePK *string
-			prevTunnelID *int32
+			entityID      string
+			snapshotTS    time.Time
+			pk            string
+			ownerPubkey   string
+			kind          string
+			status        string
+			clientIP      string
+			dzIP          string
+			devicePK      string
+			tunnelID      int32
+			isDeleted     uint8
+			prevStatus    *string
+			prevKind      *string
+			prevClientIP  *string
+			prevDZIP      *string
+			prevDevicePK  *string
+			prevTunnelID  *int32
 			prevIsDeleted *uint8
-			changeType   string
-			deviceCode   string
-			metroCode    string
+			changeType    string
+			deviceCode    string
+			metroCode     string
 		)
 
 		if err := rows.Scan(
@@ -2276,15 +2276,15 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 		}
 
 		events = append(events, TimelineEvent{
-			ID:          generateEventID(devicePK+intf, hour, eventType),
-			EventType:   eventType,
-			Timestamp:   hour.Format(time.RFC3339),
-			Category:    category,
-			Severity:    severity,
-			Title:       title,
-			EntityType:  "device",
-			EntityPK:    devicePK,
-			EntityCode:  deviceCode,
+			ID:         generateEventID(devicePK+intf, hour, eventType),
+			EventType:  eventType,
+			Timestamp:  hour.Format(time.RFC3339),
+			Category:   category,
+			Severity:   severity,
+			Title:      title,
+			EntityType: "device",
+			EntityPK:   devicePK,
+			EntityCode: deviceCode,
 			Details: InterfaceEventDetails{
 				DevicePK:           devicePK,
 				DeviceCode:         deviceCode,

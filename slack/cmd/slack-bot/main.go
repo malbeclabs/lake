@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	slackbot "github.com/malbeclabs/doublezero/lake/slack/internal/slack"
-	"github.com/malbeclabs/doublezero/lake/utils/pkg/logger"
+	slackbot "github.com/malbeclabs/lake/slack/internal/slack"
+	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"

@@ -3,7 +3,7 @@ package dztelemlatency
 import (
 	"log/slog"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
 )
 
 type DeviceLinkLatencySchema struct{}

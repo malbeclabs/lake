@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow/prompts"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
 	"github.com/stretchr/testify/require"
 )
 
@@ -214,8 +214,8 @@ func runTest_CypherGenerationPreserveQuery(t *testing.T) {
 				"activated",
 			},
 			mustNotContain: []string{
-				"Metro",   // Should not add nodes
-				"Link",    // Should not add relationships
+				"Metro", // Should not add nodes
+				"Link",  // Should not add relationships
 			},
 		},
 		{
@@ -231,8 +231,8 @@ func runTest_CypherGenerationPreserveQuery(t *testing.T) {
 				"LIMIT 10",
 			},
 			mustNotContain: []string{
-				"Link",      // Should not add nodes
-				"ORDER BY",  // Should not add ordering
+				"Link",     // Should not add nodes
+				"ORDER BY", // Should not add ordering
 			},
 		},
 		{

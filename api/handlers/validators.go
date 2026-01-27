@@ -8,25 +8,25 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type ValidatorListItem struct {
-	VotePubkey   string  `json:"vote_pubkey"`
-	NodePubkey   string  `json:"node_pubkey"`
-	StakeSol     float64 `json:"stake_sol"`
-	StakeShare   float64 `json:"stake_share"`
-	Commission   int64   `json:"commission"`
-	OnDZ         bool    `json:"on_dz"`
-	DeviceCode   string  `json:"device_code"`
-	MetroCode    string  `json:"metro_code"`
-	City         string  `json:"city"`
-	Country      string  `json:"country"`
-	InBps        float64 `json:"in_bps"`
-	OutBps       float64 `json:"out_bps"`
-	SkipRate     float64 `json:"skip_rate"`
-	Version      string  `json:"version"`
+	VotePubkey string  `json:"vote_pubkey"`
+	NodePubkey string  `json:"node_pubkey"`
+	StakeSol   float64 `json:"stake_sol"`
+	StakeShare float64 `json:"stake_share"`
+	Commission int64   `json:"commission"`
+	OnDZ       bool    `json:"on_dz"`
+	DeviceCode string  `json:"device_code"`
+	MetroCode  string  `json:"metro_code"`
+	City       string  `json:"city"`
+	Country    string  `json:"country"`
+	InBps      float64 `json:"in_bps"`
+	OutBps     float64 `json:"out_bps"`
+	SkipRate   float64 `json:"skip_rate"`
+	Version    string  `json:"version"`
 }
 
 type ValidatorListResponse struct {
@@ -288,24 +288,24 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 }
 
 type ValidatorDetail struct {
-	VotePubkey      string  `json:"vote_pubkey"`
-	NodePubkey      string  `json:"node_pubkey"`
-	StakeSol        float64 `json:"stake_sol"`
-	StakeShare      float64 `json:"stake_share"`
-	Commission      int64   `json:"commission"`
-	OnDZ            bool    `json:"on_dz"`
-	DevicePK        string  `json:"device_pk"`
-	DeviceCode      string  `json:"device_code"`
-	MetroPK         string  `json:"metro_pk"`
-	MetroCode       string  `json:"metro_code"`
-	City            string  `json:"city"`
-	Country         string  `json:"country"`
-	GossipIP        string  `json:"gossip_ip"`
-	GossipPort      int32   `json:"gossip_port"`
-	InBps           float64 `json:"in_bps"`
-	OutBps          float64 `json:"out_bps"`
-	SkipRate        float64 `json:"skip_rate"`
-	Version         string  `json:"version"`
+	VotePubkey string  `json:"vote_pubkey"`
+	NodePubkey string  `json:"node_pubkey"`
+	StakeSol   float64 `json:"stake_sol"`
+	StakeShare float64 `json:"stake_share"`
+	Commission int64   `json:"commission"`
+	OnDZ       bool    `json:"on_dz"`
+	DevicePK   string  `json:"device_pk"`
+	DeviceCode string  `json:"device_code"`
+	MetroPK    string  `json:"metro_pk"`
+	MetroCode  string  `json:"metro_code"`
+	City       string  `json:"city"`
+	Country    string  `json:"country"`
+	GossipIP   string  `json:"gossip_ip"`
+	GossipPort int32   `json:"gossip_port"`
+	InBps      float64 `json:"in_bps"`
+	OutBps     float64 `json:"out_bps"`
+	SkipRate   float64 `json:"skip_rate"`
+	Version    string  `json:"version"`
 }
 
 func GetValidator(w http.ResponseWriter, r *http.Request) {

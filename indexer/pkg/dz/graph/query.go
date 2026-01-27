@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	dzsvc "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
 // PathWeight determines how paths are weighted for shortest path queries.
@@ -105,11 +105,11 @@ type ISISDevice struct {
 
 // ISISLink represents a link with ISIS properties.
 type ISISLink struct {
-	PK        string
-	Code      string
-	Status    string
-	SideAPK   string
-	SideZPK   string
+	PK         string
+	Code       string
+	Status     string
+	SideAPK    string
+	SideZPK    string
 	ISISMetric uint32
 	AdjSIDs    []uint32
 }

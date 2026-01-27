@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/stretchr/testify/require"
 )
 

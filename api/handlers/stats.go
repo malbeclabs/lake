@@ -7,24 +7,24 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
 type StatsResponse struct {
-	ValidatorsOnDZ  uint64  `json:"validators_on_dz"`
-	TotalStakeSol   float64 `json:"total_stake_sol"`
-	StakeSharePct   float64 `json:"stake_share_pct"`
-	Users           uint64  `json:"users"`
-	Devices         uint64  `json:"devices"`
-	Links           uint64  `json:"links"`
-	Contributors    uint64  `json:"contributors"`
-	Metros          uint64  `json:"metros"`
-	BandwidthBps    int64   `json:"bandwidth_bps"`
-	UserInboundBps  float64 `json:"user_inbound_bps"`
-	FetchedAt       string  `json:"fetched_at"`
-	Error           string  `json:"error,omitempty"`
+	ValidatorsOnDZ uint64  `json:"validators_on_dz"`
+	TotalStakeSol  float64 `json:"total_stake_sol"`
+	StakeSharePct  float64 `json:"stake_share_pct"`
+	Users          uint64  `json:"users"`
+	Devices        uint64  `json:"devices"`
+	Links          uint64  `json:"links"`
+	Contributors   uint64  `json:"contributors"`
+	Metros         uint64  `json:"metros"`
+	BandwidthBps   int64   `json:"bandwidth_bps"`
+	UserInboundBps float64 `json:"user_inbound_bps"`
+	FetchedAt      string  `json:"fetched_at"`
+	Error          string  `json:"error,omitempty"`
 }
 
 func GetStats(w http.ResponseWriter, r *http.Request) {
@@ -32,17 +32,17 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 	if statusCache != nil {
 		if cached := statusCache.GetStatus(); cached != nil {
 			stats := StatsResponse{
-				ValidatorsOnDZ:  cached.Network.ValidatorsOnDZ,
-				TotalStakeSol:   cached.Network.TotalStakeSol,
-				StakeSharePct:   cached.Network.StakeSharePct,
-				Users:           cached.Network.Users,
-				Devices:         cached.Network.Devices,
-				Links:           cached.Network.Links,
-				Contributors:    cached.Network.Contributors,
-				Metros:          cached.Network.Metros,
-				BandwidthBps:    cached.Network.BandwidthBps,
-				UserInboundBps:  cached.Network.UserInboundBps,
-				FetchedAt:       cached.Timestamp,
+				ValidatorsOnDZ: cached.Network.ValidatorsOnDZ,
+				TotalStakeSol:  cached.Network.TotalStakeSol,
+				StakeSharePct:  cached.Network.StakeSharePct,
+				Users:          cached.Network.Users,
+				Devices:        cached.Network.Devices,
+				Links:          cached.Network.Links,
+				Contributors:   cached.Network.Contributors,
+				Metros:         cached.Network.Metros,
+				BandwidthBps:   cached.Network.BandwidthBps,
+				UserInboundBps: cached.Network.UserInboundBps,
+				FetchedAt:      cached.Timestamp,
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")

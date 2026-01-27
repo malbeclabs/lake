@@ -4,7 +4,7 @@ set -euo pipefail
 # Promote a lake image from staging to prod (or between any tags)
 # Usage: ./promote-to-prod.sh [options] [source_tag] [target_tag]
 
-IMAGE="ghcr.io/malbeclabs/doublezero-lake"
+IMAGE="ghcr.io/malbeclabs/lake"
 DRY_RUN=false
 YES=false
 

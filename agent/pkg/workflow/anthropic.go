@@ -9,7 +9,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // AnthropicLLMClient implements LLMClient using the Anthropic API.

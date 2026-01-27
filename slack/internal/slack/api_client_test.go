@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -276,7 +276,7 @@ func TestAI_Slack_APIClient_ChatStream_WithConversationHistory(t *testing.T) {
 	var receivedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedBody = make([]byte, r.ContentLength)
-		r.Body.Read(receivedBody)
+		_, _ = r.Body.Read(receivedBody)
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)

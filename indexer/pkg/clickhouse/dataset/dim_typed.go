@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // TypedDimensionType2Dataset provides typed read and write methods for a specific struct type T.

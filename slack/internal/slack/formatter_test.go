@@ -476,7 +476,7 @@ func TestAI_Slack_ConvertMarkdownToBlocks_InlineFormatting(t *testing.T) {
 	t.Run("nested list with bold text preserves formatting", func(t *testing.T) {
 		t.Parallel()
 		input := `- **Bold item**
-  - Nested with `+ "`code`" + `
+  - Nested with ` + "`code`" + `
   - Normal nested`
 
 		blocks := ConvertMarkdownToBlocks(input, slog.Default())

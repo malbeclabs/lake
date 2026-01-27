@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
-	dztelemusage "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +24,6 @@ func TestLake_Agent_Evals_Anthropic_DeviceErrorHistory(t *testing.T) {
 
 	runTest_DeviceErrorHistory(t, newAnthropicLLMClient)
 }
-
 
 func runTest_DeviceErrorHistory(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -115,49 +114,49 @@ func seedDeviceErrorHistoryData(t *testing.T, ctx context.Context, conn clickhou
 	err = countersDS.WriteBatch(ctx, conn, len(counters), func(i int) ([]any, error) {
 		c := counters[i]
 		return []any{
-			c.eventTS.UTC(),   // event_ts
-			now,               // ingested_at
-			c.devicePK,        // device_pk
-			c.host,            // host
-			c.ifaceName,       // intf
-			nil,               // user_tunnel_id
-			nil,               // link_pk
-			nil,               // link_side
-			nil,               // model_name
-			nil,               // serial_number
-			nil,               // carrier_transitions
-			nil,               // in_broadcast_pkts
-			nil,               // in_discards
-			nil,               // in_errors
-			nil,               // in_fcs_errors
-			nil,               // in_multicast_pkts
-			nil,               // in_octets
-			nil,               // in_pkts
-			nil,               // in_unicast_pkts
-			nil,               // out_broadcast_pkts
-			nil,               // out_discards
-			nil,               // out_errors
-			nil,               // out_multicast_pkts
-			nil,               // out_octets
-			nil,               // out_pkts
-			nil,               // out_unicast_pkts
-			nil,               // carrier_transitions_delta
-			nil,               // in_broadcast_pkts_delta
-			nil,               // in_discards_delta
-			c.inErrorsDelta,   // in_errors_delta
-			nil,               // in_fcs_errors_delta
-			nil,               // in_multicast_pkts_delta
-			nil,               // in_octets_delta
-			nil,               // in_pkts_delta
-			nil,               // in_unicast_pkts_delta
-			nil,               // out_broadcast_pkts_delta
-			nil,               // out_discards_delta
-			c.outErrorsDelta,  // out_errors_delta
-			nil,               // out_multicast_pkts_delta
-			nil,               // out_octets_delta
-			nil,               // out_pkts_delta
-			nil,               // out_unicast_pkts_delta
-			&deltaDuration,    // delta_duration
+			c.eventTS.UTC(),  // event_ts
+			now,              // ingested_at
+			c.devicePK,       // device_pk
+			c.host,           // host
+			c.ifaceName,      // intf
+			nil,              // user_tunnel_id
+			nil,              // link_pk
+			nil,              // link_side
+			nil,              // model_name
+			nil,              // serial_number
+			nil,              // carrier_transitions
+			nil,              // in_broadcast_pkts
+			nil,              // in_discards
+			nil,              // in_errors
+			nil,              // in_fcs_errors
+			nil,              // in_multicast_pkts
+			nil,              // in_octets
+			nil,              // in_pkts
+			nil,              // in_unicast_pkts
+			nil,              // out_broadcast_pkts
+			nil,              // out_discards
+			nil,              // out_errors
+			nil,              // out_multicast_pkts
+			nil,              // out_octets
+			nil,              // out_pkts
+			nil,              // out_unicast_pkts
+			nil,              // carrier_transitions_delta
+			nil,              // in_broadcast_pkts_delta
+			nil,              // in_discards_delta
+			c.inErrorsDelta,  // in_errors_delta
+			nil,              // in_fcs_errors_delta
+			nil,              // in_multicast_pkts_delta
+			nil,              // in_octets_delta
+			nil,              // in_pkts_delta
+			nil,              // in_unicast_pkts_delta
+			nil,              // out_broadcast_pkts_delta
+			nil,              // out_discards_delta
+			c.outErrorsDelta, // out_errors_delta
+			nil,              // out_multicast_pkts_delta
+			nil,              // out_octets_delta
+			nil,              // out_pkts_delta
+			nil,              // out_unicast_pkts_delta
+			&deltaDuration,   // delta_duration
 		}, nil
 	})
 	require.NoError(t, err)

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 type TableInfo struct {
@@ -84,7 +84,7 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 		metrics.RecordClickHouseQuery(colDuration, err)
 		// Non-fatal: return tables without columns
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(CatalogResponse{Tables: tables})
+		_ = json.NewEncoder(w).Encode(CatalogResponse{Tables: tables})
 		return
 	}
 	defer colRows.Close()
@@ -115,5 +115,5 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CatalogResponse{Tables: tables})
+	_ = json.NewEncoder(w).Encode(CatalogResponse{Tables: tables})
 }

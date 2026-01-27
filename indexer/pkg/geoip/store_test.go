@@ -5,9 +5,9 @@ import (
 	"net"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	laketesting "github.com/malbeclabs/doublezero/lake/utils/pkg/testing"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 	"github.com/stretchr/testify/require"
 )
 

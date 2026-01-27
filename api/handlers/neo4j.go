@@ -6,9 +6,9 @@ import (
 	"math"
 	"strings"
 
-	"github.com/malbeclabs/doublezero/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/neo4j"
+	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
@@ -491,7 +491,7 @@ func (f *Neo4jSchemaFetcher) getNodeLabels(ctx context.Context, session neo4j.Se
 	labels := labelsResult.([]string)
 
 	// Get properties for each label using schema.nodeTypeProperties if available
-	propsResult, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
+	propsResult, _ := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
 		res, err := tx.Run(ctx, "CALL db.schema.nodeTypeProperties()", nil)
 		if err != nil {
 			// Fall back if procedure doesn't exist
@@ -567,7 +567,7 @@ func (f *Neo4jSchemaFetcher) getRelationshipTypes(ctx context.Context, session n
 	relTypes := typesResult.([]string)
 
 	// Get properties for each relationship type
-	propsResult, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
+	propsResult, _ := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
 		res, err := tx.Run(ctx, "CALL db.schema.relTypeProperties()", nil)
 		if err != nil {
 			return nil, nil

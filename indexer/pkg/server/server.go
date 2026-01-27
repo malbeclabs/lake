@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/indexer"
+	"github.com/malbeclabs/lake/indexer/pkg/indexer"
 )
 
 type Server struct {

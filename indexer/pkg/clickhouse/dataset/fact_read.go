@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // GetRowsOptions provides options for querying fact table rows.

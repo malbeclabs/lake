@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
 // WriteBatch writes a batch of fact table data to ClickHouse using PrepareBatch.

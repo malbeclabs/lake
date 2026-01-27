@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -510,7 +510,7 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if len(q) < 2 {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(AutocompleteResponse{Suggestions: []SearchSuggestion{}})
+		_ = json.NewEncoder(w).Encode(AutocompleteResponse{Suggestions: []SearchSuggestion{}})
 		return
 	}
 
@@ -525,7 +525,7 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 	term, types := parseQuery(q)
 	if term == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(AutocompleteResponse{Suggestions: []SearchSuggestion{}})
+		_ = json.NewEncoder(w).Encode(AutocompleteResponse{Suggestions: []SearchSuggestion{}})
 		return
 	}
 
@@ -573,7 +573,7 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	g.Wait()
+	_ = g.Wait()
 	close(resultsChan)
 
 	// Collect results and merge
@@ -593,7 +593,7 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 	if allSuggestions == nil {
 		allSuggestions = []SearchSuggestion{}
 	}
-	json.NewEncoder(w).Encode(AutocompleteResponse{Suggestions: allSuggestions})
+	_ = json.NewEncoder(w).Encode(AutocompleteResponse{Suggestions: allSuggestions})
 }
 
 // Search handles the full search endpoint
@@ -606,7 +606,7 @@ func Search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(SearchResponse{Query: "", Results: map[string]SearchResultGroup{}})
+		_ = json.NewEncoder(w).Encode(SearchResponse{Query: "", Results: map[string]SearchResultGroup{}})
 		return
 	}
 
@@ -640,7 +640,7 @@ func Search(w http.ResponseWriter, r *http.Request) {
 
 	if term == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(SearchResponse{Query: q, Results: map[string]SearchResultGroup{}})
+		_ = json.NewEncoder(w).Encode(SearchResponse{Query: q, Results: map[string]SearchResultGroup{}})
 		return
 	}
 
@@ -684,7 +684,7 @@ func Search(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	g.Wait()
+	_ = g.Wait()
 	close(resultsChan)
 
 	// Collect results
@@ -701,5 +701,5 @@ func Search(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(time.Since(start), nil)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(SearchResponse{Query: q, Results: results})
+	_ = json.NewEncoder(w).Encode(SearchResponse{Query: q, Results: results})
 }

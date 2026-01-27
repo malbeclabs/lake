@@ -7,9 +7,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse"
-	"github.com/malbeclabs/doublezero/lake/indexer/pkg/clickhouse/dataset"
-	serviceability "github.com/malbeclabs/doublezero/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse/dataset"
+	serviceability "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +22,6 @@ func TestLake_Agent_Evals_Anthropic_EntityNotFound_Link(t *testing.T) {
 
 	runTest_EntityNotFound_Link(t, newAnthropicLLMClient)
 }
-
 
 func runTest_EntityNotFound_Link(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()
@@ -80,7 +79,6 @@ func TestLake_Agent_Evals_Anthropic_EntityNotFound_Device(t *testing.T) {
 
 	runTest_EntityNotFound_Device(t, newAnthropicLLMClient)
 }
-
 
 func runTest_EntityNotFound_Device(t *testing.T, llmFactory LLMClientFactory) {
 	ctx := context.Background()

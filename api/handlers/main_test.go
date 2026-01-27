@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	apitesting "github.com/malbeclabs/doublezero/lake/api/testing"
+	apitesting "github.com/malbeclabs/lake/api/testing"
 )
 
 var (

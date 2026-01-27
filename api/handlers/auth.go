@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/solana"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/solana"
 )
 
 // Account types
@@ -322,10 +322,12 @@ func GetAuthMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(MeResponse{
+	if err := json.NewEncoder(w).Encode(MeResponse{
 		Account: account,
 		Quota:   quota,
-	})
+	}); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
 }
 
 // PostAuthLogout handles POST /api/auth/logout
@@ -380,7 +382,9 @@ func GetAuthNonce(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(WalletNonceResponse{Nonce: nonce})
+	if err := json.NewEncoder(w).Encode(WalletNonceResponse{Nonce: nonce}); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
 }
 
 // PostAuthWallet handles POST /api/auth/wallet - verifies wallet signature and creates session
@@ -497,10 +501,12 @@ func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(WalletAuthResponse{
+	if err := json.NewEncoder(w).Encode(WalletAuthResponse{
 		Token:   token,
 		Account: &account,
-	})
+	}); err != nil {
+		slog.Error("Failed to encode response", "error", err)
+	}
 }
 
 // PostAuthGoogle handles POST /api/auth/google - verifies Google ID token and creates session
@@ -575,7 +581,7 @@ func PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GoogleAuthResponse{
+	_ = json.NewEncoder(w).Encode(GoogleAuthResponse{
 		Token:   token,
 		Account: &account,
 	})
@@ -597,7 +603,7 @@ func GetUsageQuota(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(quota)
+	_ = json.NewEncoder(w).Encode(quota)
 }
 
 // extractBearerToken extracts the token from Authorization header

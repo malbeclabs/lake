@@ -9,17 +9,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/doublezero/lake/api/config"
-	"github.com/malbeclabs/doublezero/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
 type StakeOverview struct {
 	// Current values
-	DZStakeSol       float64 `json:"dz_stake_sol"`
-	TotalStakeSol    float64 `json:"total_stake_sol"`
-	StakeSharePct    float64 `json:"stake_share_pct"`
-	ValidatorCount   uint64  `json:"validator_count"`
+	DZStakeSol     float64 `json:"dz_stake_sol"`
+	TotalStakeSol  float64 `json:"total_stake_sol"`
+	StakeSharePct  float64 `json:"stake_share_pct"`
+	ValidatorCount uint64  `json:"validator_count"`
 
 	// 24h comparison
 	DZStakeSol24hAgo    float64 `json:"dz_stake_sol_24h_ago"`
@@ -296,7 +296,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Stake history query error: %v", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 	defer rows.Close()
@@ -308,7 +308,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 			response.Error = fmt.Sprintf("row scan error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 			return
 		}
 		response.Points = append(response.Points, point)
@@ -319,7 +319,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -350,13 +350,13 @@ type StakeChangesResponse struct {
 }
 
 type ChangeSummary struct {
-	JoinedCount        int     `json:"joined_count"`
-	JoinedStakeSol     float64 `json:"joined_stake_sol"`
-	LeftCount          int     `json:"left_count"`
-	LeftStakeSol       float64 `json:"left_stake_sol"`
-	StakeIncreaseSol   float64 `json:"stake_increase_sol"`
-	StakeDecreaseSol   float64 `json:"stake_decrease_sol"`
-	NetChangeSol       float64 `json:"net_change_sol"`
+	JoinedCount      int     `json:"joined_count"`
+	JoinedStakeSol   float64 `json:"joined_stake_sol"`
+	LeftCount        int     `json:"left_count"`
+	LeftStakeSol     float64 `json:"left_stake_sol"`
+	StakeIncreaseSol float64 `json:"stake_increase_sol"`
+	StakeDecreaseSol float64 `json:"stake_decrease_sol"`
+	NetChangeSol     float64 `json:"net_change_sol"`
 }
 
 func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
@@ -565,13 +565,13 @@ type StakeValidator struct {
 }
 
 type StakeValidatorsResponse struct {
-	Validators   []StakeValidator `json:"validators"`
-	TotalCount   int              `json:"total_count"`
-	OnDZCount    int              `json:"on_dz_count"`
-	TotalStakeSol float64         `json:"total_stake_sol"`
-	DZStakeSol   float64          `json:"dz_stake_sol"`
-	FetchedAt    string           `json:"fetched_at"`
-	Error        string           `json:"error,omitempty"`
+	Validators    []StakeValidator `json:"validators"`
+	TotalCount    int              `json:"total_count"`
+	OnDZCount     int              `json:"on_dz_count"`
+	TotalStakeSol float64          `json:"total_stake_sol"`
+	DZStakeSol    float64          `json:"dz_stake_sol"`
+	FetchedAt     string           `json:"fetched_at"`
+	Error         string           `json:"error,omitempty"`
 }
 
 func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
@@ -609,7 +609,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Total stake query error: %v", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 	response.TotalStakeSol = totalStake
@@ -713,7 +713,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Stake validators query error: %v", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 	defer rows.Close()
@@ -726,7 +726,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 			response.Error = fmt.Sprintf("row scan error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 			return
 		}
 		v.OnDZ = onDZInt == 1
@@ -747,7 +747,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
 
@@ -755,34 +755,4 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("JSON encoding error: %v", err)
 	}
-}
-
-func getPointCount(rangeParam, intervalParam string) int {
-	rangeHours := map[string]int{
-		"24h": 24,
-		"7d":  168,
-		"30d": 720,
-	}
-	intervalHours := map[string]float64{
-		"5m":  0.0833,
-		"15m": 0.25,
-		"1h":  1,
-		"6h":  6,
-		"1d":  24,
-	}
-
-	hours := rangeHours[rangeParam]
-	if hours == 0 {
-		hours = 168 // default 7d
-	}
-	interval := intervalHours[intervalParam]
-	if interval == 0 {
-		interval = 1 // default 1h
-	}
-
-	count := int(float64(hours) / interval)
-	if count > 500 {
-		count = 500 // cap at 500 points
-	}
-	return count
 }
