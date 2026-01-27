@@ -1,14 +1,11 @@
-name: release.docker.lake
+name: release.docker
 
 on:
   push:
     # NOTE: Update STAGING_BRANCHES env var below when changing this list
     branches:
       - main
-      - lake/staging
-    paths:
-      - '**'
-      - '.github/workflows/release.docker.lake.yml'
+      - staging
   pull_request:
     types: [opened, synchronize, labeled]
   workflow_dispatch:
@@ -33,16 +30,16 @@ env:
   PREVIEW_ASSET_BUCKET: malbeclabs-lake-app-web-assets-previews
   PROD_ASSET_BUCKET: malbeclabs-lake-app-web-assets
   # Branches that auto-deploy to staging (space-separated)
-  STAGING_BRANCHES: "main lake/staging"
+  STAGING_BRANCHES: "main staging"
 
 jobs:
   build-and-push:
     runs-on: ubuntu-24.04-16c-64gb
-    # Run on push, or on PR only if it has the preview-lake label
+    # Run on push, or on PR only if it has the preview label
     if: >
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview-lake'))
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'preview'))
 
     steps:
       - uses: actions/checkout@v4

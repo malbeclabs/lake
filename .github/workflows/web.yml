@@ -1,4 +1,4 @@
-name: lake
+name: web
 on:
   push:
     branches: [main]
@@ -6,14 +6,14 @@ on:
       - 'web/**'
       - 'agent/**'
       - 'api/**'
-      - '.github/workflows/lake.yml'
+      - '.github/workflows/web.yml'
   pull_request:
     branches: [main]
     paths:
       - 'web/**'
       - 'agent/**'
       - 'api/**'
-      - '.github/workflows/lake.yml'
+      - '.github/workflows/web.yml'
 
 jobs:
   web-build:

@@ -1,4 +1,4 @@
-name: promote.lake
+name: promote
 
 # Promotes a lake image from one tag to another (e.g., staging → prod)
 # This retags an existing image without rebuilding
