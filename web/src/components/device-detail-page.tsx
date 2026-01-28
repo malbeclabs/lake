@@ -2,7 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchDevice } from '@/lib/api'
-import { DeviceInfoContent, deviceDetailToInfo } from '@/components/shared/DeviceInfoContent'
+import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
+import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'

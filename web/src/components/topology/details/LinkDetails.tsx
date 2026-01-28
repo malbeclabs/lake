@@ -1,6 +1,7 @@
 import type { LinkInfo } from '../types'
 import { EntityLink } from '../EntityLink'
-import { LinkInfoContent, topologyLinkToInfo } from '@/components/shared/LinkInfoContent'
+import { LinkInfoContent } from '@/components/shared/LinkInfoContent'
+import { topologyLinkToInfo } from '@/components/shared/link-info-converters'
 
 interface LinkDetailsProps {
   link: LinkInfo

@@ -238,7 +238,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
           fill: color + '80',  // Use more opacity for stacked areas
           band: [previousIndex, currentIndex],
           scale: 'y',
-        } as any)
+        } as uPlot.Series)
       } else {
         // Non-stacked: add raw data
         dataArrays.push(rawSeriesData[i])
@@ -427,7 +427,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
         plotRef.current = null
       }
     }
-  }, [uplotData, uplotSeries])
+  }, [uplotData, uplotSeries, linkLookup, seriesMetadata, stacked])
 
   // Separate effect for handling click to pin/unpin tooltip
   useEffect(() => {

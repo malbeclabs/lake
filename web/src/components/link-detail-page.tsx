@@ -2,7 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Cable, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchLink } from '@/lib/api'
-import { LinkInfoContent, linkDetailToInfo } from '@/components/shared/LinkInfoContent'
+import { LinkInfoContent } from '@/components/shared/LinkInfoContent'
+import { linkDetailToInfo } from '@/components/shared/link-info-converters'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
