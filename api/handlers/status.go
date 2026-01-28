@@ -1473,10 +1473,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		ORDER BY link_pk, bucket
 	`
 
-	statusRows, err := config.DB.Query(ctx, statusHistoryQuery, totalHours)
+	statusRows, err := safeQueryRows(ctx, statusHistoryQuery, totalHours)
 	if err != nil {
 		log.Printf("Link status history query error: %v", err)
-		// Non-fatal - continue without historical status
 	}
 
 	// Build map of link status per bucket
@@ -2074,10 +2073,9 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		ORDER BY device_pk, bucket
 	`
 
-	statusRows, err := config.DB.Query(ctx, statusHistoryQuery, totalHours)
+	statusRows, err := safeQueryRows(ctx, statusHistoryQuery, totalHours)
 	if err != nil {
 		log.Printf("Device status history query error: %v", err)
-		// Non-fatal - continue without historical status
 	}
 
 	// Build map of device status per bucket

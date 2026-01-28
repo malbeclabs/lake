@@ -2031,11 +2031,11 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 		GROUP BY metro1, metro2
 	`
 
-	rows, err := config.DB.Query(ctx, internetQuery)
+	rows, err := safeQueryRows(ctx, internetQuery)
 	if err != nil {
 		log.Printf("Metro path latency internet query error: %v", err)
-		// Continue without internet data
-	} else {
+	}
+	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var metro1, metro2 string
@@ -2246,11 +2246,11 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 		GROUP BY metro1, metro2
 	`
 
-	rows, err := config.DB.Query(ctx, internetQuery)
+	rows, err := safeQueryRows(ctx, internetQuery)
 	if err != nil {
 		log.Printf("Metro path latency internet query error: %v", err)
-		// Continue without internet data
-	} else {
+	}
+	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var metro1, metro2 string
