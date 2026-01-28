@@ -266,29 +266,50 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_hashSeed(t *testing.T) {
 func TestLake_TelemetryUsage_MockInfluxDBClient_getInterfaceCapacity(t *testing.T) {
 	t.Parallel()
 
-	client := &MockInfluxDBClient{}
+	client := &MockInfluxDBClient{
+		topology: &mockTopology{
+			devices:      make(map[string]*mockDevice),
+			linkLookup:   make(map[string]*mockLinkInfo),
+			tunnelLookup: make(map[string]int64),
+		},
+	}
 
 	t.Run("tunnel interfaces have lower capacity than physical", func(t *testing.T) {
 		t.Parallel()
-		tunnelCap := client.getInterfaceCapacity("Tunnel501", 12345)
-		ethCap := client.getInterfaceCapacity("eth0", 12345)
+		tunnelCap := client.getInterfaceCapacity("device1", "Tunnel501", 12345)
+		ethCap := client.getInterfaceCapacity("device1", "eth0", 12345)
 		require.Less(t, tunnelCap, ethCap, "tunnel should have lower capacity than physical interface")
 	})
 
 	t.Run("loopback interfaces have lower capacity than physical", func(t *testing.T) {
 		t.Parallel()
-		loopbackCap := client.getInterfaceCapacity("Loopback0", 12345)
-		ethCap := client.getInterfaceCapacity("eth0", 12345)
+		loopbackCap := client.getInterfaceCapacity("device1", "Loopback0", 12345)
+		ethCap := client.getInterfaceCapacity("device1", "eth0", 12345)
 		require.Less(t, loopbackCap, ethCap, "loopback should have lower capacity than physical interface")
 	})
 
 	t.Run("physical interfaces are 10 or 100 Gbps", func(t *testing.T) {
 		t.Parallel()
-		ethCap := client.getInterfaceCapacity("eth0", 12345)
+		ethCap := client.getInterfaceCapacity("device1", "eth0", 12345)
 		// Should be either 10 Gbps or 100 Gbps
 		is10G := ethCap == float64(10_000_000_000)
 		is100G := ethCap == float64(100_000_000_000)
 		require.True(t, is10G || is100G, "physical interface should be 10G or 100G")
+	})
+
+	t.Run("interface with link bandwidth uses link capacity", func(t *testing.T) {
+		t.Parallel()
+		clientWithLink := &MockInfluxDBClient{
+			topology: &mockTopology{
+				devices: make(map[string]*mockDevice),
+				linkLookup: map[string]*mockLinkInfo{
+					"device1:eth0": {linkPK: "link1", linkSide: "A", bandwidthBps: int64(1_000_000_000)},
+				},
+				tunnelLookup: make(map[string]int64),
+			},
+		}
+		ethCap := clientWithLink.getInterfaceCapacity("device1", "eth0", 12345)
+		require.Equal(t, float64(1_000_000_000), ethCap, "should use link bandwidth")
 	})
 }
 

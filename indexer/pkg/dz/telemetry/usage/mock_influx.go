@@ -55,8 +55,9 @@ type mockInterface struct {
 }
 
 type mockLinkInfo struct {
-	linkPK   string
-	linkSide string // "A" or "Z"
+	linkPK       string
+	linkSide     string // "A" or "Z"
+	bandwidthBps int64
 }
 
 // NewMockInfluxDBClient creates a new mock InfluxDB client that generates
@@ -225,7 +226,8 @@ func (c *MockInfluxDBClient) loadLinks(ctx context.Context, conn clickhouse.Conn
 			side_a_pk,
 			side_z_pk,
 			side_a_iface_name,
-			side_z_iface_name
+			side_z_iface_name,
+			bandwidth_bps
 		FROM dz_links_current
 		WHERE side_a_pk != '' AND side_z_pk != ''
 	`
@@ -237,7 +239,8 @@ func (c *MockInfluxDBClient) loadLinks(ctx context.Context, conn clickhouse.Conn
 
 	for rows.Next() {
 		var linkPK, sideAPK, sideZPK, sideAIface, sideZIface string
-		if err := rows.Scan(&linkPK, &sideAPK, &sideZPK, &sideAIface, &sideZIface); err != nil {
+		var bandwidthBps int64
+		if err := rows.Scan(&linkPK, &sideAPK, &sideZPK, &sideAIface, &sideZIface, &bandwidthBps); err != nil {
 			return fmt.Errorf("failed to scan link row: %w", err)
 		}
 
@@ -245,8 +248,9 @@ func (c *MockInfluxDBClient) loadLinks(ctx context.Context, conn clickhouse.Conn
 		if sideAPK != "" && sideAIface != "" {
 			key := fmt.Sprintf("%s:%s", sideAPK, sideAIface)
 			topology.linkLookup[key] = &mockLinkInfo{
-				linkPK:   linkPK,
-				linkSide: "A",
+				linkPK:       linkPK,
+				linkSide:     "A",
+				bandwidthBps: bandwidthBps,
 			}
 		}
 
@@ -254,8 +258,9 @@ func (c *MockInfluxDBClient) loadLinks(ctx context.Context, conn clickhouse.Conn
 		if sideZPK != "" && sideZIface != "" {
 			key := fmt.Sprintf("%s:%s", sideZPK, sideZIface)
 			topology.linkLookup[key] = &mockLinkInfo{
-				linkPK:   linkPK,
-				linkSide: "Z",
+				linkPK:       linkPK,
+				linkSide:     "Z",
+				bandwidthBps: bandwidthBps,
 			}
 		}
 	}
@@ -277,9 +282,19 @@ func (c *MockInfluxDBClient) loadUsers(ctx context.Context, conn clickhouse.Conn
 			return fmt.Errorf("failed to scan user row: %w", err)
 		}
 
+		tunnelIfaceName := fmt.Sprintf("Tunnel%d", tunnelID)
+
 		// Map device_pk + Tunnel<id> interface name to tunnel_id
-		key := fmt.Sprintf("%s:Tunnel%d", devicePK, tunnelID)
+		key := fmt.Sprintf("%s:%s", devicePK, tunnelIfaceName)
 		topology.tunnelLookup[key] = int64(tunnelID)
+
+		// Add tunnel interface to the device so mock data is generated for it
+		if device, ok := topology.devices[devicePK]; ok {
+			device.interfaces = append(device.interfaces, mockInterface{
+				name:   tunnelIfaceName,
+				status: "up",
+			})
+		}
 	}
 
 	return nil
@@ -335,7 +350,7 @@ func (c *MockInfluxDBClient) generateCounterRow(device *mockDevice, iface mockIn
 
 	// Get interface capacity and base utilization for this interface
 	// These are stable per-interface to ensure counters always increase
-	capacityBps := c.getInterfaceCapacity(iface.name, seed)
+	capacityBps := c.getInterfaceCapacity(device.pk, iface.name, seed)
 	baseUtilization := c.getBaseUtilization(iface.name, seed)
 
 	// Calculate cumulative bytes based on capacity * average_utilization * time
@@ -428,8 +443,19 @@ func (c *MockInfluxDBClient) generateCounterRow(device *mockDevice, iface mockIn
 	return row
 }
 
-// getInterfaceCapacity returns the interface capacity in bps based on interface type
-func (c *MockInfluxDBClient) getInterfaceCapacity(ifaceName string, seed uint64) float64 {
+// getInterfaceCapacity returns the interface capacity in bps based on interface type.
+// For interfaces associated with a link, the capacity is capped at the link's bandwidth.
+func (c *MockInfluxDBClient) getInterfaceCapacity(devicePK, ifaceName string, seed uint64) float64 {
+	// Check if this interface has an associated link with a known bandwidth
+	c.mu.RLock()
+	linkKey := fmt.Sprintf("%s:%s", devicePK, ifaceName)
+	linkInfo := c.topology.linkLookup[linkKey]
+	c.mu.RUnlock()
+
+	if linkInfo != nil && linkInfo.bandwidthBps > 0 {
+		return float64(linkInfo.bandwidthBps)
+	}
+
 	switch {
 	case strings.HasPrefix(ifaceName, "Tunnel"):
 		// Tunnel interfaces: capacity varies (100 Mbps - 1 Gbps)
