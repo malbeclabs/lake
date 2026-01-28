@@ -16,26 +16,26 @@ type errorConn struct{}
 
 var errFake = errors.New("fake db error")
 
-func (errorConn) Contributors() []string                                         { return nil }
-func (errorConn) ServerVersion() (*driver.ServerVersion, error)                  { return nil, errFake }
-func (errorConn) Select(context.Context, any, string, ...any) error              { return errFake }
-func (errorConn) Query(context.Context, string, ...any) (driver.Rows, error)     { return nil, errFake }
-func (errorConn) QueryRow(_ context.Context, _ string, _ ...any) driver.Row      { return &errorRow{} }
+func (errorConn) Contributors() []string                                     { return nil }
+func (errorConn) ServerVersion() (*driver.ServerVersion, error)              { return nil, errFake }
+func (errorConn) Select(context.Context, any, string, ...any) error          { return errFake }
+func (errorConn) Query(context.Context, string, ...any) (driver.Rows, error) { return nil, errFake }
+func (errorConn) QueryRow(_ context.Context, _ string, _ ...any) driver.Row  { return &errorRow{} }
 func (errorConn) PrepareBatch(context.Context, string, ...driver.PrepareBatchOption) (driver.Batch, error) {
 	return nil, errFake
 }
-func (errorConn) Exec(context.Context, string, ...any) error            { return errFake }
+func (errorConn) Exec(context.Context, string, ...any) error              { return errFake }
 func (errorConn) AsyncInsert(context.Context, string, bool, ...any) error { return errFake }
-func (errorConn) Ping(context.Context) error                            { return errFake }
-func (errorConn) Stats() driver.Stats                                   { return driver.Stats{} }
-func (errorConn) Close() error                                          { return nil }
+func (errorConn) Ping(context.Context) error                              { return errFake }
+func (errorConn) Stats() driver.Stats                                     { return driver.Stats{} }
+func (errorConn) Close() error                                            { return nil }
 
 // errorRow implements driver.Row and returns errors.
 type errorRow struct{}
 
-func (errorRow) Err() error              { return errFake }
-func (errorRow) Scan(...any) error       { return errFake }
-func (errorRow) ScanStruct(any) error    { return errFake }
+func (errorRow) Err() error           { return errFake }
+func (errorRow) Scan(...any) error    { return errFake }
+func (errorRow) ScanStruct(any) error { return errFake }
 
 // newCancelledCache returns a StatusCache whose parent context is already
 // cancelled, so any refresh that derives a child context will fail immediately.

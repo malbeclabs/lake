@@ -13,14 +13,14 @@ import (
 // This proves that safeQueryRows never touches rows when an error is returned.
 type panicRows struct{}
 
-func (panicRows) Columns() []string          { panic("Columns called on bad rows") }
+func (panicRows) Columns() []string                { panic("Columns called on bad rows") }
 func (panicRows) ColumnTypes() []driver.ColumnType { panic("ColumnTypes called on bad rows") }
-func (panicRows) Next() bool                 { panic("Next called on bad rows") }
-func (panicRows) Scan(dest ...any) error     { panic("Scan called on bad rows") }
-func (panicRows) ScanStruct(dest any) error  { panic("ScanStruct called on bad rows") }
-func (panicRows) Totals(dest ...any) error   { panic("Totals called on bad rows") }
-func (panicRows) Close() error               { panic("Close called on bad rows") }
-func (panicRows) Err() error                 { panic("Err called on bad rows") }
+func (panicRows) Next() bool                       { panic("Next called on bad rows") }
+func (panicRows) Scan(dest ...any) error           { panic("Scan called on bad rows") }
+func (panicRows) ScanStruct(dest any) error        { panic("ScanStruct called on bad rows") }
+func (panicRows) Totals(dest ...any) error         { panic("Totals called on bad rows") }
+func (panicRows) Close() error                     { panic("Close called on bad rows") }
+func (panicRows) Err() error                       { panic("Err called on bad rows") }
 
 // mockConn implements the minimal driver.Conn interface needed for Query.
 type mockConn struct {
