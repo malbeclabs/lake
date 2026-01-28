@@ -1473,12 +1473,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		ORDER BY link_pk, bucket
 	`
 
-	statusRows, err := config.DB.Query(ctx, statusHistoryQuery, totalHours)
+	statusRows, err := safeQueryRows(ctx, statusHistoryQuery, totalHours)
 	if err != nil {
 		log.Printf("Link status history query error: %v", err)
-		// clickhouse-go may return non-nil rows with nil internals on timeout,
-		// causing a panic in rows.Next()/Close(). See https://github.com/ClickHouse/clickhouse-go/issues/761
-		statusRows = nil
 	}
 
 	// Build map of link status per bucket
@@ -2076,12 +2073,9 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		ORDER BY device_pk, bucket
 	`
 
-	statusRows, err := config.DB.Query(ctx, statusHistoryQuery, totalHours)
+	statusRows, err := safeQueryRows(ctx, statusHistoryQuery, totalHours)
 	if err != nil {
 		log.Printf("Device status history query error: %v", err)
-		// clickhouse-go may return non-nil rows with nil internals on timeout,
-		// causing a panic in rows.Next()/Close(). See https://github.com/ClickHouse/clickhouse-go/issues/761
-		statusRows = nil
 	}
 
 	// Build map of device status per bucket
