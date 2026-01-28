@@ -248,6 +248,11 @@ func (c *StatusCache) refreshStatus() {
 
 	resp := fetchStatusData(ctx)
 
+	if resp.Error != "" {
+		log.Printf("Status cache refresh error: %v (keeping stale data)", resp.Error)
+		return
+	}
+
 	c.mu.Lock()
 	c.status = resp
 	c.statusLastRefresh = time.Now()
@@ -352,6 +357,11 @@ func (c *StatusCache) refreshTimeline() {
 
 	resp := fetchDefaultTimelineData(ctx)
 
+	if ctx.Err() != nil {
+		log.Printf("Timeline cache refresh error: %v (keeping stale data)", ctx.Err())
+		return
+	}
+
 	c.mu.Lock()
 	c.timeline = resp
 	c.timelineLastRefresh = time.Now()
@@ -367,6 +377,11 @@ func (c *StatusCache) refreshOutages() {
 	defer cancel()
 
 	resp := fetchDefaultOutagesData(ctx)
+
+	if ctx.Err() != nil {
+		log.Printf("Outages cache refresh error: %v (keeping stale data)", ctx.Err())
+		return
+	}
 
 	c.mu.Lock()
 	c.outages = resp

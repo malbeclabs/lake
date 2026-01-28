@@ -2034,8 +2034,11 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	rows, err := config.DB.Query(ctx, internetQuery)
 	if err != nil {
 		log.Printf("Metro path latency internet query error: %v", err)
-		// Continue without internet data
-	} else {
+		// clickhouse-go may return non-nil rows with nil internals on timeout,
+		// causing a panic in rows.Next()/Close(). See https://github.com/ClickHouse/clickhouse-go/issues/761
+		rows = nil
+	}
+	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var metro1, metro2 string
@@ -2249,8 +2252,11 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 	rows, err := config.DB.Query(ctx, internetQuery)
 	if err != nil {
 		log.Printf("Metro path latency internet query error: %v", err)
-		// Continue without internet data
-	} else {
+		// clickhouse-go may return non-nil rows with nil internals on timeout,
+		// causing a panic in rows.Next()/Close(). See https://github.com/ClickHouse/clickhouse-go/issues/761
+		rows = nil
+	}
+	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
 			var metro1, metro2 string
