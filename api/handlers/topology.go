@@ -422,7 +422,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		// Get hourly traffic for a link over the last 24 hours
 		query = `
 			SELECT
-				formatDateTime(toStartOfHour(event_ts), '%H:%M') as time_bucket,
+				formatDateTime(toStartOfHour(event_ts), '%H:%i') as time_bucket,
 				avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
 				avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
 				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
@@ -440,7 +440,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		// Get hourly traffic for a validator (user tunnel) over the last 24 hours
 		query = `
 			SELECT
-				formatDateTime(toStartOfHour(event_ts), '%H:%M') as time_bucket,
+				formatDateTime(toStartOfHour(event_ts), '%H:%i') as time_bucket,
 				avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
 				avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
 				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
@@ -458,7 +458,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		// Get hourly traffic for a device over the last 24 hours
 		query = `
 			SELECT
-				formatDateTime(toStartOfHour(event_ts), '%H:%M') as time_bucket,
+				formatDateTime(toStartOfHour(event_ts), '%H:%i') as time_bucket,
 				avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
 				avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
 				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
