@@ -511,7 +511,7 @@ func main() {
 	// Serve static files from the web dist directory
 	webDir := os.Getenv("WEB_DIST_DIR")
 	if webDir == "" {
-		webDir = "/doublezero/web/dist"
+		webDir = "/lake/web/dist"
 	}
 	// Optional S3 bucket URL for fetching assets not in the local dist
 	// (allows serving old assets after deploys while users still have old index.html cached)

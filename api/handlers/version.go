@@ -16,7 +16,7 @@ type VersionResponse struct {
 func GetVersion(w http.ResponseWriter, r *http.Request) {
 	webDir := os.Getenv("WEB_DIST_DIR")
 	if webDir == "" {
-		webDir = "/doublezero/web/dist"
+		webDir = "/lake/web/dist"
 	}
 
 	versionFile := filepath.Join(webDir, "version.json")
