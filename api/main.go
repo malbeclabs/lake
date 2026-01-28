@@ -444,6 +444,7 @@ func main() {
 
 	// Traffic analytics routes
 	r.Get("/api/traffic/data", handlers.GetTrafficData)
+	r.Get("/api/traffic/discards", handlers.GetDiscardsData)
 
 	r.Get("/api/topology", handlers.GetTopology)
 	r.Get("/api/topology/traffic", handlers.GetTopologyTraffic)

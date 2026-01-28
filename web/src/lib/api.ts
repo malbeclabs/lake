@@ -3453,6 +3453,43 @@ export async function fetchTrafficData(
   return res.json()
 }
 
+// Discards analytics types and functions
+export interface DiscardsPoint {
+  time: string
+  device_pk: string
+  device: string
+  intf: string
+  in_discards: number
+  out_discards: number
+}
+
+export interface DiscardSeriesInfo {
+  key: string
+  device: string
+  intf: string
+  total: number
+}
+
+export interface DiscardsDataResponse {
+  points: DiscardsPoint[]
+  series: DiscardSeriesInfo[]
+}
+
+export async function fetchDiscardsData(
+  timeRange: string = '12h',
+  bucket: string = 'auto'
+): Promise<DiscardsDataResponse> {
+  const params = new URLSearchParams({
+    time_range: timeRange,
+    bucket: bucket
+  })
+  const res = await fetchWithRetry(`/api/traffic/discards?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch discards data')
+  }
+  return res.json()
+}
+
 // Search types and functions
 export type SearchEntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip'
 

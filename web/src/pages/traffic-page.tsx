@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { ChevronDown, GripVertical, Check, RefreshCw } from 'lucide-react'
-import { fetchTrafficData, fetchTopology } from '@/lib/api'
+import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
+import { DiscardsChart } from '@/components/discards-chart'
 import { LoadingSplash } from '@/components/loading-splash'
 
 export interface LinkLookupInfo {
@@ -82,14 +83,18 @@ const aggLabels: Record<AggMethod, string> = {
   'avg': 'Average',
 }
 
-type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel'
+type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel' | 'discards'
 
 const chartSectionLabels: Record<ChartSection, string> = {
   'non-tunnel-stacked': 'Non-Tunnel Traffic (stacked)',
   'non-tunnel': 'Non-Tunnel Traffic',
   'tunnel-stacked': 'Tunnel Traffic (stacked)',
   'tunnel': 'Tunnel Traffic',
+  'discards': 'Interface Discards',
 }
+
+// All known chart sections (used to detect new sections added after localStorage was saved)
+const ALL_KNOWN_SECTIONS: ChartSection[] = ['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards']
 
 type Layout = '1x4' | '2x2'
 
@@ -409,9 +414,10 @@ export function TrafficPage() {
     'non-tunnel',
     'tunnel-stacked',
     'tunnel',
+    'discards',
   ])
   const [visibleSections, setVisibleSections] = useState<Set<ChartSection>>(
-    new Set(['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel'])
+    new Set(['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards'])
   )
   const [layout, setLayout] = useState<Layout>('1x4')
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>('never')
@@ -430,7 +436,15 @@ export function TrafficPage() {
     if (saved) {
       try {
         const sections = JSON.parse(saved) as ChartSection[]
-        setChartSections(sections)
+        // Add any new sections that weren't in localStorage
+        const missingSections = ALL_KNOWN_SECTIONS.filter(s => !sections.includes(s))
+        if (missingSections.length > 0) {
+          const updatedSections = [...sections, ...missingSections]
+          setChartSections(updatedSections)
+          localStorage.setItem('traffic-chart-sections', JSON.stringify(updatedSections))
+        } else {
+          setChartSections(sections)
+        }
       } catch {
         // Ignore invalid data
       }
@@ -443,7 +457,15 @@ export function TrafficPage() {
     if (saved) {
       try {
         const sections = JSON.parse(saved) as ChartSection[]
-        setVisibleSections(new Set(sections))
+        // Add any new sections that weren't in localStorage (make them visible by default)
+        const missingSections = ALL_KNOWN_SECTIONS.filter(s => !sections.includes(s))
+        if (missingSections.length > 0) {
+          const updatedSections = [...sections, ...missingSections]
+          setVisibleSections(new Set(updatedSections))
+          localStorage.setItem('traffic-visible-sections', JSON.stringify(updatedSections))
+        } else {
+          setVisibleSections(new Set(sections))
+        }
       } catch {
         // Ignore invalid data
       }
@@ -577,11 +599,25 @@ export function TrafficPage() {
     refetchInterval: refetchIntervalValue,
   })
 
+  // Fetch discards data
+  const {
+    data: discardsData,
+    isLoading: discardsLoading,
+    error: discardsError,
+    refetch: refetchDiscards,
+  } = useQuery({
+    queryKey: ['discards', timeRange, actualBucketSize],
+    queryFn: () => fetchDiscardsData(timeRange, actualBucketSize),
+    staleTime: 30000, // 30 seconds
+    refetchInterval: refetchIntervalValue,
+  })
+
   // Manual refresh handler
   const handleManualRefresh = () => {
     refetchTunnel()
     refetchNonTunnel()
     refetchTopology()
+    refetchDiscards()
   }
 
   // Build link lookup: device_pk + interface -> link info
@@ -609,19 +645,20 @@ export function TrafficPage() {
     return map
   }, [topologyData])
 
+  // Don't block page loading on discards data - let it load independently
   const showLoading = useDelayedLoading(tunnelLoading || nonTunnelLoading || topologyLoading)
 
   if (showLoading) {
     return <LoadingSplash />
   }
 
-  if (tunnelError || nonTunnelError) {
+  if (tunnelError || nonTunnelError || discardsError) {
     return (
       <div className="flex-1 overflow-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
           <div className="text-center py-12">
             <p className="text-lg text-muted-foreground">
-              Error loading traffic data: {(tunnelError || nonTunnelError)?.toString()}
+              Error loading traffic data: {(tunnelError || nonTunnelError || discardsError)?.toString()}
             </p>
           </div>
         </div>
@@ -644,6 +681,22 @@ export function TrafficPage() {
   // Render a chart section
   const renderChartSection = (section: ChartSection) => {
     if (!visibleSections.has(section)) return null
+
+    // Handle discards chart separately
+    if (section === 'discards') {
+      return (
+        <div key={section} className="border border-border rounded-lg p-4">
+          <LazyChart key={`${section}-${layout}`}>
+            <DiscardsChart
+              title="Interface Discards"
+              data={discardsData?.points || []}
+              series={discardsData?.series || []}
+              isLoading={discardsLoading}
+            />
+          </LazyChart>
+        </div>
+      )
+    }
 
     let title = ''
     let data = nonTunnelData
