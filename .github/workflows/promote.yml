@@ -35,6 +35,22 @@ jobs:
         run: |
           echo "Promoting ${{ env.IMAGE }}:${{ inputs.source_tag }} → ${{ env.IMAGE }}:${{ inputs.target_tag }}"
           docker pull ${{ env.IMAGE }}:${{ inputs.source_tag }}
+
+          # Extract the commit SHA from the source image labels
+          SHA=$(docker inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' ${{ env.IMAGE }}:${{ inputs.source_tag }} 2>/dev/null || true)
+          SHORT_SHA="${SHA::8}"
+
+          # Always push the target tag
           docker tag ${{ env.IMAGE }}:${{ inputs.source_tag }} ${{ env.IMAGE }}:${{ inputs.target_tag }}
           docker push ${{ env.IMAGE }}:${{ inputs.target_tag }}
+
+          # Also push sha tag if we have a SHA
+          if [ -n "$SHORT_SHA" ]; then
+            echo "Also tagging with sha-${SHORT_SHA}"
+            docker tag ${{ env.IMAGE }}:${{ inputs.source_tag }} ${{ env.IMAGE }}:sha-${SHORT_SHA}
+            docker push ${{ env.IMAGE }}:sha-${SHORT_SHA}
+          else
+            echo "⚠️ Could not extract SHA from image labels, skipping sha tag"
+          fi
+
           echo "✅ Promoted successfully"
