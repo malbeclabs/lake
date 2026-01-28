@@ -4,6 +4,7 @@ import { Loader2, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchDevice } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
+import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -60,7 +61,8 @@ export function DeviceDetailPage() {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
+      {/* Header section - constrained width */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
         <button
           onClick={() => navigate('/dz/devices')}
@@ -107,8 +109,15 @@ export function DeviceDetailPage() {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Shared device info content (same as topology panel) */}
+      {/* Status row - full width */}
+      <div className="w-full px-4 sm:px-8 pb-6">
+        <SingleDeviceStatusRow devicePk={device.pk} />
+      </div>
+
+      {/* Shared device info content - constrained width */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8">
         <div className="border border-border rounded-lg p-4 bg-card">
           <DeviceInfoContent device={deviceInfo} />
         </div>

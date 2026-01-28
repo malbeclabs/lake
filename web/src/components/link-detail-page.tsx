@@ -4,6 +4,10 @@ import { Loader2, Cable, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchLink } from '@/lib/api'
 import { LinkInfoContent } from '@/components/shared/LinkInfoContent'
 import { linkDetailToInfo } from '@/components/shared/link-info-converters'
+import { SingleLinkStatusRow } from '@/components/single-link-status-row'
+import { TrafficCharts } from '@/components/topology/TrafficCharts'
+import { LatencyCharts } from '@/components/topology/LatencyCharts'
+import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
@@ -42,7 +46,8 @@ export function LinkDetailPage() {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
+      {/* Header section - constrained width */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
         <button
           onClick={() => navigate('/dz/links')}
@@ -60,9 +65,32 @@ export function LinkDetailPage() {
             <div className="text-sm text-muted-foreground">{link.link_type}</div>
           </div>
         </div>
+      </div>
 
-        {/* Link info content */}
-        <LinkInfoContent link={linkDetailToInfo(link)} />
+      {/* Link stats - constrained width, hide status row and charts */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
+        <LinkInfoContent link={linkDetailToInfo(link)} hideStatusRow hideCharts />
+      </div>
+
+      {/* Status row - full width */}
+      <div className="w-full px-4 sm:px-8 pb-6">
+        <SingleLinkStatusRow linkPk={link.pk} />
+      </div>
+
+      {/* Charts - constrained width */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8 space-y-6">
+        {/* Charts row - side by side on large screens */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <TrafficCharts entityType="link" entityPk={link.pk} />
+          </div>
+          <div>
+            <LatencyCharts linkPk={link.pk} />
+          </div>
+        </div>
+
+        {/* Link status charts (packet loss, interface issues) */}
+        <LinkStatusCharts linkPk={link.pk} />
       </div>
     </div>
   )

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
+import { SingleLinkStatusRow } from '@/components/single-link-status-row'
 
 // Shared link info type that both topology and link page can use
 export interface LinkInfoData {
@@ -41,6 +42,10 @@ interface LinkInfoContentProps {
   link: LinkInfoData
   /** Compact mode for sidebar panels */
   compact?: boolean
+  /** Hide status row (to be rendered separately at page level) */
+  hideStatusRow?: boolean
+  /** Hide charts section (to be rendered separately at page level) */
+  hideCharts?: boolean
 }
 
 function formatBps(bps: number): string {
@@ -74,7 +79,7 @@ const statusColors: Record<string, string> = {
  * Shared component for displaying link information.
  * Used by both the topology panel and the link detail page.
  */
-export function LinkInfoContent({ link, compact = false }: LinkInfoContentProps) {
+export function LinkInfoContent({ link, compact = false, hideStatusRow = false, hideCharts = false }: LinkInfoContentProps) {
   // Check if we have directional latency data
   const hasDirectionalData = link.latencyAtoZUs > 0 || link.latencyZtoAUs > 0
 
@@ -175,6 +180,9 @@ export function LinkInfoContent({ link, compact = false }: LinkInfoContentProps)
             <div className="text-xs text-muted-foreground">Contributor</div>
           </div>
         </div>
+
+        {/* Link Status History Timeline */}
+        <SingleLinkStatusRow linkPk={link.pk} />
 
         {/* Traffic charts */}
         <TrafficCharts entityType="link" entityPk={link.pk} />
@@ -324,18 +332,28 @@ export function LinkInfoContent({ link, compact = false }: LinkInfoContentProps)
         </div>
       </div>
 
-      {/* Charts row - side by side on large screens */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
-          <TrafficCharts entityType="link" entityPk={link.pk} />
-        </div>
-        <div>
-          <LatencyCharts linkPk={link.pk} />
-        </div>
-      </div>
+      {/* Link Status History Timeline */}
+      {!hideStatusRow && (
+        <SingleLinkStatusRow linkPk={link.pk} />
+      )}
 
-      {/* Link status charts (packet loss, interface issues) */}
-      <LinkStatusCharts linkPk={link.pk} />
+      {/* Charts section */}
+      {!hideCharts && (
+        <>
+          {/* Charts row - side by side on large screens */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <TrafficCharts entityType="link" entityPk={link.pk} />
+            </div>
+            <div>
+              <LatencyCharts linkPk={link.pk} />
+            </div>
+          </div>
+
+          {/* Link status charts (packet loss, interface issues) */}
+          <LinkStatusCharts linkPk={link.pk} />
+        </>
+      )}
     </div>
   )
 }

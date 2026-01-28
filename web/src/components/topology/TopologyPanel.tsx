@@ -8,7 +8,7 @@ const SIDEBAR_EXPANDED_WIDTH = 256 // w-64
 
 interface TopologyPanelProps {
   children: ReactNode
-  title?: string
+  title?: ReactNode
   subtitle?: ReactNode
 }
 

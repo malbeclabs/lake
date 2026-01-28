@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import type { DeviceInterface } from '@/lib/api'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { InterfaceHealthCharts } from '@/components/topology/InterfaceHealthCharts'
+import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
 
 // Shared device info type that both topology and device page can use
 export interface DeviceInfoData {
@@ -117,6 +118,9 @@ export function DeviceInfoContent({ device, compact = false }: DeviceInfoContent
             </div>
           </div>
         )}
+
+        {/* Device Status History Timeline */}
+        <SingleDeviceStatusRow devicePk={device.pk} />
 
         {/* Traffic charts */}
         <TrafficCharts entityType="device" entityPk={device.pk} />

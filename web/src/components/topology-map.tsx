@@ -3027,8 +3027,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       {selectedItem && panel.isOpen && panel.content === 'details' && (
         <TopologyPanel
           title={
-            selectedItem.type === 'device' ? selectedItem.data.code :
-            selectedItem.type === 'link' ? selectedItem.data.code :
+            selectedItem.type === 'device' ? (
+              <TopologyEntityLink to={`/dz/devices/${selectedItem.data.pk}`}>{selectedItem.data.code}</TopologyEntityLink>
+            ) :
+            selectedItem.type === 'link' ? (
+              <TopologyEntityLink to={`/dz/links/${selectedItem.data.pk}`}>{selectedItem.data.code}</TopologyEntityLink>
+            ) :
             selectedItem.type === 'metro' ? selectedItem.data.name :
             selectedItem.data.votePubkey.substring(0, 12) + '...'
           }

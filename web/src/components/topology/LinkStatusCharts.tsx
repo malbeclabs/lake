@@ -19,6 +19,16 @@ function hasPacketLossData(hours: LinkHourStatus[]): boolean {
   return hours.some(h => h.avg_loss_pct > 0)
 }
 
+// Check if there's any latency issues (latency over committed RTT)
+function hasLatencyIssues(hours: LinkHourStatus[], committedRttUs?: number): boolean {
+  if (!committedRttUs || committedRttUs <= 0) return false
+  return hours.some(h => {
+    if (h.avg_latency_us <= 0) return false
+    const latencyOveragePct = ((h.avg_latency_us - committedRttUs) / committedRttUs) * 100
+    return latencyOveragePct >= 20 // LATENCY_WARNING_PCT from backend
+  })
+}
+
 // Check if there's any interface issue data
 function hasInterfaceIssueData(hours: LinkHourStatus[]): boolean {
   return hours.some(h =>
@@ -68,6 +78,7 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
   }, [historyData])
 
   const showPacketLoss = historyData?.hours && hasPacketLossData(historyData.hours)
+  const showLatencyIssues = historyData?.hours && hasLatencyIssues(historyData.hours, historyData.committed_rtt_us)
   const showInterfaceIssues = historyData?.hours && hasInterfaceIssueData(historyData.hours)
 
   // Colors
@@ -100,7 +111,15 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
     )
   }
 
+  // Show appropriate message if no charts to display
   if (!showPacketLoss && !showInterfaceIssues) {
+    if (showLatencyIssues) {
+      return (
+        <div className="text-sm text-amber-600 dark:text-amber-400 text-center py-4">
+          Link latency is exceeding SLA. See Round-Trip Time chart above for details.
+        </div>
+      )
+    }
     return (
       <div className="text-sm text-green-600 dark:text-green-400 text-center py-4">
         No packet loss or interface issues in the last 24 hours

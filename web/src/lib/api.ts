@@ -1281,6 +1281,7 @@ export async function fetchLinkHistory(timeRange?: string, buckets?: number): Pr
 export interface SingleLinkHistoryResponse {
   pk: string
   code: string
+  committed_rtt_us: number
   hours: LinkHourStatus[]
   time_range: string
   bucket_minutes: number
@@ -1336,6 +1337,33 @@ export async function fetchDeviceHistory(timeRange?: string, buckets?: number): 
   if (timeRange) params.set('range', timeRange)
   if (buckets) params.set('buckets', buckets.toString())
   const url = `/api/status/device-history${params.toString() ? '?' + params.toString() : ''}`
+  const res = await fetchWithRetry(url)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device history')
+  }
+  return res.json()
+}
+
+// Single device history response
+export interface SingleDeviceHistoryResponse {
+  pk: string
+  code: string
+  device_type: string
+  contributor: string
+  metro: string
+  max_users: number
+  hours: DeviceHourStatus[]
+  issue_reasons: string[]
+  time_range: string
+  bucket_minutes: number
+  bucket_count: number
+}
+
+export async function fetchSingleDeviceHistory(devicePk: string, timeRange?: string, buckets?: number): Promise<SingleDeviceHistoryResponse> {
+  const params = new URLSearchParams()
+  if (timeRange) params.set('range', timeRange)
+  if (buckets) params.set('buckets', buckets.toString())
+  const url = `/api/status/devices/${encodeURIComponent(devicePk)}/history${params.toString() ? '?' + params.toString() : ''}`
   const res = await fetchWithRetry(url)
   if (!res.ok) {
     throw new Error('Failed to fetch device history')

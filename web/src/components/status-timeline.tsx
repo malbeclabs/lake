@@ -56,6 +56,46 @@ const LOSS_EXTENDED_PCT = 95.0  // Extended: link effectively down
 const LATENCY_WARNING_PCT = 20
 const LATENCY_CRITICAL_PCT = 50
 
+function hasInterfaceIssues(hour: LinkHourStatus): boolean {
+  return (
+    (hour.side_a_in_errors ?? 0) > 0 ||
+    (hour.side_a_out_errors ?? 0) > 0 ||
+    (hour.side_z_in_errors ?? 0) > 0 ||
+    (hour.side_z_out_errors ?? 0) > 0 ||
+    (hour.side_a_in_discards ?? 0) > 0 ||
+    (hour.side_a_out_discards ?? 0) > 0 ||
+    (hour.side_z_in_discards ?? 0) > 0 ||
+    (hour.side_z_out_discards ?? 0) > 0 ||
+    (hour.side_a_carrier_transitions ?? 0) > 0 ||
+    (hour.side_z_carrier_transitions ?? 0) > 0
+  )
+}
+
+function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'disabled' {
+  // Keep original status if not healthy
+  if (hour.status !== 'healthy') {
+    return hour.status
+  }
+
+  // Check for high latency (>= 50% over SLA = critical/unhealthy, >= 20% = warning/degraded)
+  if (committedRttUs && committedRttUs > 0 && hour.avg_latency_us > 0) {
+    const latencyOveragePct = ((hour.avg_latency_us - committedRttUs) / committedRttUs) * 100
+    if (latencyOveragePct >= LATENCY_CRITICAL_PCT) {
+      return 'unhealthy'
+    }
+    if (latencyOveragePct >= LATENCY_WARNING_PCT) {
+      return 'degraded'
+    }
+  }
+
+  // If marked as healthy but has interface issues, downgrade to degraded
+  if (hasInterfaceIssues(hour)) {
+    return 'degraded'
+  }
+
+  return hour.status
+}
+
 function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string[] {
   const reasons: string[] = []
 
@@ -82,6 +122,22 @@ function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string
     }
   }
 
+  // Check interface issues
+  if (hasInterfaceIssues(hour)) {
+    const interfaceIssues: string[] = []
+    const totalErrors = (hour.side_a_in_errors ?? 0) + (hour.side_a_out_errors ?? 0) + (hour.side_z_in_errors ?? 0) + (hour.side_z_out_errors ?? 0)
+    const totalDiscards = (hour.side_a_in_discards ?? 0) + (hour.side_a_out_discards ?? 0) + (hour.side_z_in_discards ?? 0) + (hour.side_z_out_discards ?? 0)
+    const totalCarrier = (hour.side_a_carrier_transitions ?? 0) + (hour.side_z_carrier_transitions ?? 0)
+
+    if (totalErrors > 0) interfaceIssues.push(`${totalErrors} interface errors`)
+    if (totalDiscards > 0) interfaceIssues.push(`${totalDiscards} discards`)
+    if (totalCarrier > 0) interfaceIssues.push(`${totalCarrier} carrier transitions`)
+
+    if (interfaceIssues.length > 0) {
+      reasons.push(interfaceIssues.join(', '))
+    }
+  }
+
   return reasons
 }
 
@@ -102,6 +158,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
     <div className="relative">
       <div className="flex gap-[2px]">
         {hours.map((hour, index) => {
+          const effectiveStatus = getEffectiveStatus(hour, committedRttUs)
           return (
           <div
             key={hour.hour}
@@ -110,7 +167,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
             onMouseLeave={() => setHoveredIndex(null)}
           >
             <div
-              className={`w-full h-6 rounded-sm ${statusColors[hour.status]} cursor-pointer transition-opacity hover:opacity-80`}
+              className={`w-full h-6 rounded-sm ${statusColors[effectiveStatus]} cursor-pointer transition-opacity hover:opacity-80`}
             />
 
             {/* Tooltip */}
@@ -121,12 +178,12 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
                     {formatTimeRange(hour.hour, bucketMinutes)}
                   </div>
                   <div className={`text-xs mb-2 ${
-                    hour.status === 'healthy' ? 'text-green-600 dark:text-green-400' :
-                    hour.status === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
-                    hour.status === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
+                    effectiveStatus === 'healthy' ? 'text-green-600 dark:text-green-400' :
+                    effectiveStatus === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
+                    effectiveStatus === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
                     'text-muted-foreground'
                   }`}>
-                    {statusLabels[hour.status]}
+                    {statusLabels[effectiveStatus]}
                   </div>
                   {/* Reasons */}
                   {(() => {
