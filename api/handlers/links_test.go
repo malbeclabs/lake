@@ -28,7 +28,11 @@ func setupLinksTables(t *testing.T) {
 			bandwidth_bps Nullable(Int64),
 			side_a_pk Nullable(String),
 			side_z_pk Nullable(String),
-			contributor_pk Nullable(String)
+			contributor_pk Nullable(String),
+			side_a_iface_name Nullable(String),
+			side_a_ip Nullable(String),
+			side_z_iface_name Nullable(String),
+			side_z_ip Nullable(String)
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
@@ -88,7 +92,8 @@ func setupLinksTables(t *testing.T) {
 			link_pk String,
 			rtt_us Float64,
 			ipdv_us Float64,
-			loss UInt8
+			loss UInt8,
+			direction Nullable(String)
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)

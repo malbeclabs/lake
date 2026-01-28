@@ -28,7 +28,8 @@ func setupDevicesTables(t *testing.T) {
 			contributor_pk Nullable(String),
 			metro_pk Nullable(String),
 			public_ip Nullable(String),
-			max_users Nullable(Int32)
+			max_users Nullable(Int32),
+			interfaces Nullable(String)
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
