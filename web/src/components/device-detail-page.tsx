@@ -111,8 +111,8 @@ export function DeviceDetailPage() {
         </div>
       </div>
 
-      {/* Status row - full width */}
-      <div className="w-full px-4 sm:px-8 pb-6">
+      {/* Status row */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
         <SingleDeviceStatusRow devicePk={device.pk} />
       </div>
 

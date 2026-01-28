@@ -72,8 +72,8 @@ export function LinkDetailPage() {
         <LinkInfoContent link={linkDetailToInfo(link)} hideStatusRow hideCharts />
       </div>
 
-      {/* Status row - full width */}
-      <div className="w-full px-4 sm:px-8 pb-6">
+      {/* Status row */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
         <SingleLinkStatusRow linkPk={link.pk} />
       </div>
 
