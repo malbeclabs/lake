@@ -225,7 +225,13 @@ function CopyResponseButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(content)
+    const { marked } = await import('marked')
+    const html = await marked(content, { gfm: true })
+    const blob = new Blob([html], { type: 'text/html' })
+    const textBlob = new Blob([content], { type: 'text/plain' })
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'text/html': blob, 'text/plain': textBlob }),
+    ])
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
