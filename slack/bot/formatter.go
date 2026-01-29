@@ -1,10 +1,11 @@
-package slack
+package bot
 
 import (
 	"log/slog"
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/slack-go/slack"
 	slackutil "github.com/takara2314/slack-go-util"
@@ -271,12 +272,13 @@ func convertMarkdownTablesToASCII(text string) string {
 
 			rows = append(rows, cells)
 
-			// Track max width for each column
+			// Track max width for each column (use rune count for correct alignment with multi-byte chars)
 			for j, cell := range cells {
+				w := utf8.RuneCountInString(cell)
 				if j >= len(maxWidths) {
-					maxWidths = append(maxWidths, len(cell))
-				} else if len(cell) > maxWidths[j] {
-					maxWidths[j] = len(cell)
+					maxWidths = append(maxWidths, w)
+				} else if w > maxWidths[j] {
+					maxWidths[j] = w
 				}
 			}
 		}
@@ -332,7 +334,11 @@ func parseTableRow(line string) []string {
 	parts := strings.Split(line, "|")
 	cells := make([]string, 0, len(parts))
 	for _, part := range parts {
-		cells = append(cells, strings.TrimSpace(part))
+		cell := strings.TrimSpace(part)
+		// Strip inline code backticks — the table is already in a code block
+		cell = strings.TrimPrefix(cell, "`")
+		cell = strings.TrimSuffix(cell, "`")
+		cells = append(cells, cell)
 	}
 	return cells
 }
@@ -354,8 +360,8 @@ func buildASCIIRow(cells []string, widths []int) string {
 		if i < len(cells) {
 			cell = cells[i]
 		}
-		// Left-pad cell to width
-		padded := cell + strings.Repeat(" ", w-len(cell))
+		// Pad cell to width (use rune count for correct alignment with multi-byte chars)
+		padded := cell + strings.Repeat(" ", w-utf8.RuneCountInString(cell))
 		parts = append(parts, " "+padded+" ")
 	}
 	return "|" + strings.Join(parts, "|") + "|"
@@ -831,11 +837,7 @@ func SanitizeErrorMessage(errMsg string) string {
 		cleanLines = append(cleanLines, line)
 	}
 
-	if len(cleanLines) > 0 {
-		return "Sorry, I encountered an error: " + strings.Join(cleanLines, " ")
-	}
-
-	return "Sorry, I encountered an error. Please try again."
+	return "Sorry, I encountered an error processing your request. Please try again."
 }
 
 // normalizeTwoWayArrow replaces the two-way arrow (↔) and :left_right_arrow: emoji with the double arrow (⇔) and removes variation selectors

@@ -1,4 +1,4 @@
-package slack
+package bot
 
 import (
 	"os"
@@ -14,7 +14,6 @@ func TestAI_Slack_LoadFromEnv(t *testing.T) {
 		"SLACK_BOT_TOKEN",
 		"SLACK_APP_TOKEN",
 		"SLACK_SIGNING_SECRET",
-		"API_BASE_URL",
 	}
 
 	for _, key := range envVars {
@@ -56,7 +55,6 @@ func TestAI_Slack_LoadFromEnv(t *testing.T) {
 				require.Equal(t, ModeSocket, cfg.Mode)
 				require.Equal(t, "xoxb-test", cfg.BotToken)
 				require.Equal(t, "xapp-test", cfg.AppToken)
-				require.Equal(t, "http://localhost:8080", cfg.APIBaseURL)
 			},
 		},
 		{
@@ -146,18 +144,6 @@ func TestAI_Slack_LoadFromEnv(t *testing.T) {
 				require.Equal(t, "0.0.0.0:8080", cfg.MetricsAddr)
 				require.True(t, cfg.Verbose)
 				require.True(t, cfg.EnablePprof)
-			},
-		},
-		{
-			name: "custom API base URL",
-			setupEnv: func() {
-				os.Setenv("SLACK_BOT_TOKEN", "xoxb-test")
-				os.Setenv("SLACK_APP_TOKEN", "xapp-test")
-				os.Setenv("API_BASE_URL", "https://api.example.com")
-			},
-			modeFlag: "socket",
-			checkConfig: func(t *testing.T, cfg *Config) {
-				require.Equal(t, "https://api.example.com", cfg.APIBaseURL)
 			},
 		},
 	}

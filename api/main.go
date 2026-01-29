@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io"
 	"log"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -26,7 +27,9 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/malbeclabs/lake/api/metrics"
+	slackbot "github.com/malbeclabs/lake/slack/bot"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/slack-go/slack/socketmode"
 )
 
 var (
@@ -572,12 +575,51 @@ func main() {
 	handlers.InitUsageMetrics(serverCtx)
 	handlers.StartDailyResetWorker(serverCtx)
 
+	// Slack OAuth routes (available when SLACK_CLIENT_ID is set, regardless of bot mode)
+	if os.Getenv("SLACK_CLIENT_ID") != "" {
+		r.Group(func(r chi.Router) {
+			r.Use(handlers.RequireAuth)
+			r.Get("/api/slack/oauth/start", handlers.GetSlackOAuthStart)
+			r.Get("/api/slack/installations", handlers.GetSlackInstallations)
+			r.Post("/api/slack/installations/confirm/{pending_id}", handlers.ConfirmSlackInstallation)
+			r.Delete("/api/slack/installations/{team_id}", handlers.DeleteSlackInstallation)
+		})
+		r.Get("/api/slack/oauth/callback", handlers.GetSlackOAuthCallback)
+	}
+
+	// Start Slack bot if configured
+	var slackEventHandler *slackbot.EventHandler
+	if slackBotToken := os.Getenv("SLACK_BOT_TOKEN"); slackBotToken != "" {
+		// Single-tenant dev mode
+		slackEventHandler = startSlackBot(serverCtx, r)
+	} else if os.Getenv("SLACK_CLIENT_ID") != "" && os.Getenv("SLACK_CLIENT_SECRET") != "" {
+		// Multi-tenant mode
+		slackEventHandler = startSlackBotMultiTenant(serverCtx, r)
+	}
+
 	// Wait for shutdown signal
 	sig := <-shutdown
 	log.Printf("Received signal %v, shutting down gracefully...", sig)
 
 	// Immediately mark as shutting down so readiness probe returns 503
 	shuttingDown.Store(true)
+
+	// Stop Slack bot if running (before cancelling server context)
+	if slackEventHandler != nil {
+		log.Println("Stopping Slack bot...")
+		shutdownComplete := slackEventHandler.StopAcceptingNew()
+		waitDone := make(chan struct{})
+		go func() {
+			shutdownComplete()
+			close(waitDone)
+		}()
+		select {
+		case <-waitDone:
+			log.Println("Slack bot stopped gracefully")
+		case <-time.After(30 * time.Second):
+			log.Println("Slack bot shutdown timed out")
+		}
+	}
 
 	// Cancel the server context to signal SSE connections to close
 	// This triggers ctx.Done() in all active request handlers
@@ -604,4 +646,159 @@ func main() {
 			log.Println("Metrics server stopped gracefully")
 		}
 	}
+}
+
+// startSlackBot initializes and starts the Slack bot in the background.
+// Returns the event handler for graceful shutdown, or nil if startup fails.
+func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
+	// Load Slack config from env
+	// Determine mode: socket if SLACK_APP_TOKEN is set, otherwise HTTP
+	modeFlag := ""
+	cfg, err := slackbot.LoadFromEnv(modeFlag, "", "", false, false)
+	if err != nil {
+		log.Printf("Slack bot config error: %v (bot will not start)", err)
+		return nil
+	}
+
+	// Initialize Slack client
+	slackClient := slackbot.NewClient(cfg.BotToken, cfg.AppToken, slog.Default())
+	botUserID, err := slackClient.Initialize(ctx)
+	if err != nil {
+		log.Printf("Slack auth test failed, continuing anyway: %v", err)
+	}
+	cfg.BotUserID = botUserID
+
+	// Set up workflow runner (direct in-process calls instead of HTTP)
+	runner := slackbot.NewWorkflowRunner(slog.Default())
+
+	// Set up conversation manager
+	convManager := slackbot.NewManager(slog.Default())
+	convManager.StartCleanup(ctx)
+
+	// Set up message processor
+	msgProcessor := slackbot.NewProcessor(
+		slackClient,
+		runner,
+		convManager,
+		slog.Default(),
+		cfg.WebBaseURL,
+	)
+	msgProcessor.StartCleanup(ctx)
+
+	// Set up event handler
+	eventHandler := slackbot.NewEventHandler(
+		slackClient,
+		msgProcessor,
+		convManager,
+		slog.Default(),
+		cfg.BotUserID,
+		ctx,
+	)
+	eventHandler.StartCleanup(ctx)
+
+	// Start bot based on mode
+	if cfg.Mode == slackbot.ModeSocket {
+		// Socket mode: run in background goroutine
+		api := slackClient.API()
+		client := socketmode.New(api)
+
+		go func() {
+			if err := client.Run(); err != nil {
+				log.Printf("Slack socket mode client error: %v", err)
+			}
+		}()
+
+		go func() {
+			if err := eventHandler.HandleSocketMode(ctx, client); err != nil {
+				log.Printf("Slack socket mode handler stopped: %v", err)
+			}
+		}()
+
+		log.Println("Slack bot started in socket mode")
+	} else {
+		// HTTP mode: add /slack/events route to the existing router
+		r.Post("/slack/events", func(w http.ResponseWriter, r *http.Request) {
+			eventHandler.HandleHTTP(w, r, cfg.SigningSecret)
+		})
+
+		log.Println("Slack bot started in HTTP mode (route: /slack/events)")
+	}
+
+	return eventHandler
+}
+
+// pgInstallationStore implements slackbot.InstallationStore using the handlers package
+type pgInstallationStore struct{}
+
+func (s *pgInstallationStore) GetSlackInstallation(ctx context.Context, teamID string) (*slackbot.Installation, error) {
+	inst, err := handlers.GetSlackInstallationByTeamID(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+	teamName := ""
+	if inst.TeamName != nil {
+		teamName = *inst.TeamName
+	}
+	return &slackbot.Installation{
+		TeamID:    inst.TeamID,
+		TeamName:  teamName,
+		BotToken:  inst.BotToken,
+		BotUserID: inst.BotUserID,
+	}, nil
+}
+
+// startSlackBotMultiTenant initializes the Slack bot in multi-tenant mode (HTTP only).
+func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
+	signingSecret := os.Getenv("SLACK_SIGNING_SECRET")
+	if signingSecret == "" {
+		log.Printf("SLACK_SIGNING_SECRET is required for multi-tenant mode (bot will not start)")
+		return nil
+	}
+
+	// Create client manager backed by Postgres
+	store := &pgInstallationStore{}
+	clientManager := slackbot.NewClientManager(store, slog.Default())
+
+	// Invalidate cached clients when installations change
+	handlers.OnSlackInstallationChange = func(teamID string) {
+		clientManager.InvalidateClient(teamID)
+	}
+
+	// Set up workflow runner
+	runner := slackbot.NewWorkflowRunner(slog.Default())
+
+	// Set up conversation manager
+	convManager := slackbot.NewManager(slog.Default())
+	convManager.StartCleanup(ctx)
+
+	// Set up message processor (no default client in multi-tenant mode)
+	msgProcessor := slackbot.NewProcessor(
+		nil, // no default client
+		runner,
+		convManager,
+		slog.Default(),
+		os.Getenv("WEB_BASE_URL"),
+	)
+	msgProcessor.StartCleanup(ctx)
+
+	// Set up event handler (no default client)
+	eventHandler := slackbot.NewEventHandler(
+		nil, // no default client
+		msgProcessor,
+		convManager,
+		slog.Default(),
+		"", // no single bot user ID
+		ctx,
+	)
+	eventHandler.SetClientManager(clientManager)
+	eventHandler.SetSigningSecret(signingSecret)
+	eventHandler.StartCleanup(ctx)
+
+	// HTTP mode: add /slack/events route
+	r.Post("/slack/events", func(w http.ResponseWriter, r *http.Request) {
+		eventHandler.HandleHTTPMultiTenant(w, r)
+	})
+
+	log.Println("Slack bot started in multi-tenant HTTP mode (route: /slack/events)")
+	return eventHandler
 }

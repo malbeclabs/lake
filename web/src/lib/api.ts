@@ -72,6 +72,7 @@ export interface AppConfig {
   googleClientId?: string
   sentryDsn?: string
   sentryEnvironment?: string
+  slackEnabled?: boolean
 }
 
 // Cached config (fetched once at startup)
@@ -3713,6 +3714,44 @@ export async function fetchQuota(): Promise<QuotaInfo> {
 // Build SIWS message for signing
 export function buildSIWSMessage(nonce: string): string {
   return `Sign this message to authenticate with DoubleZero Data.\n\nNonce: ${nonce}`
+}
+
+// Slack installations
+export interface SlackInstallation {
+  id: string
+  team_id: string
+  team_name?: string
+  bot_user_id: string
+  is_active: boolean
+  installed_at: string
+  updated_at: string
+}
+
+export async function getSlackInstallations(): Promise<SlackInstallation[]> {
+  const res = await fetchWithRetry('/api/slack/installations')
+  if (!res.ok) {
+    throw new Error('Failed to get Slack installations')
+  }
+  return res.json()
+}
+
+export async function confirmSlackInstallation(pendingId: string): Promise<{ status: string; team_id: string; team_name: string }> {
+  const res = await fetchWithRetry(`/api/slack/installations/confirm/${encodeURIComponent(pendingId)}`, {
+    method: 'POST',
+  })
+  if (!res.ok) {
+    throw new Error('Failed to confirm Slack installation')
+  }
+  return res.json()
+}
+
+export async function removeSlackInstallation(teamId: string): Promise<void> {
+  const res = await fetchWithRetry(`/api/slack/installations/${encodeURIComponent(teamId)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    throw new Error('Failed to remove Slack installation')
+  }
 }
 
 // Field values for autocomplete

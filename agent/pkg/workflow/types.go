@@ -181,14 +181,23 @@ type PromptsProvider interface {
 	GetPrompt(name string) string
 }
 
-// QueryResult holds the result of a SQL query.
+// QueryResult holds the result of a query execution.
 type QueryResult struct {
-	SQL       string
+	SQL       string // The SQL query text (empty for Cypher queries)
+	Cypher    string // The Cypher query text (empty for SQL queries)
 	Columns   []string
 	Rows      []map[string]any
 	Count     int
 	Error     string
 	Formatted string // Human-readable formatted result
+}
+
+// QueryText returns the query text regardless of type.
+func (r QueryResult) QueryText() string {
+	if r.Cypher != "" {
+		return r.Cypher
+	}
+	return r.SQL
 }
 
 // DataQuestion represents a single data question to be answered.
@@ -197,11 +206,25 @@ type DataQuestion struct {
 	Rationale string // Why this question helps answer the user's query
 }
 
-// GeneratedQuery represents a SQL query generated for a data question.
+// GeneratedQuery represents a query generated for a data question.
 type GeneratedQuery struct {
 	DataQuestion DataQuestion
-	SQL          string
+	SQL          string // The SQL query text (empty for Cypher queries)
+	Cypher       string // The Cypher query text (empty for SQL queries)
 	Explanation  string // Brief explanation of what the query does
+}
+
+// QueryText returns the query text regardless of type.
+func (q GeneratedQuery) QueryText() string {
+	if q.Cypher != "" {
+		return q.Cypher
+	}
+	return q.SQL
+}
+
+// IsCypher returns true if this is a Cypher query.
+func (q GeneratedQuery) IsCypher() bool {
+	return q.Cypher != ""
 }
 
 // ExecutedQuery represents an executed query with results.

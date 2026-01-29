@@ -13,6 +13,7 @@ const changelog: ChangelogEntry[] = [
     date: 'January 29, 2026',
     changes: [
       { type: 'feature', description: 'Copy button on chat responses with rich text support for Slack and Notion' },
+      { type: 'feature', description: 'Slack bot with self-serve OAuth install and interactive query progress' },
     ],
   },
   {
