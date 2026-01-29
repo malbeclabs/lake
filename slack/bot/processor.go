@@ -249,9 +249,9 @@ func linkClaimReferences(text string, webBaseURL string, executedQueries []workf
 		sqlByQ[queryIndex] = eq.GeneratedQuery.SQL
 	}
 
-	// Replace Q1, Q2, etc. with Slack links
+	// Replace Q1, Q2, etc. with Slack links, but skip code blocks
 	claimRefRegex := regexp.MustCompile(`\bQ(\d+)\b`)
-	return claimRefRegex.ReplaceAllStringFunc(text, func(match string) string {
+	replaceRef := func(match string) string {
 		sub := claimRefRegex.FindStringSubmatch(match)
 		if len(sub) < 2 {
 			return match
@@ -267,7 +267,16 @@ func linkClaimReferences(text string, webBaseURL string, executedQueries []workf
 		sessionID := uuid.New().String()
 		url := fmt.Sprintf("%s/query/%s?sql=%s", webBaseURL, sessionID, neturl.QueryEscape(sql))
 		return fmt.Sprintf("<%s|%s>", url, match)
-	})
+	}
+
+	// Split on code fences to avoid replacing inside code blocks
+	parts := strings.Split(text, "```")
+	for i := range parts {
+		if i%2 == 0 { // outside code blocks
+			parts[i] = claimRefRegex.ReplaceAllStringFunc(parts[i], replaceRef)
+		}
+	}
+	return strings.Join(parts, "```")
 }
 
 // ProcessMessage processes a single Slack message
