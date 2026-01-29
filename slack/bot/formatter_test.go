@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	slackapi "github.com/slack-go/slack"
 	"github.com/stretchr/testify/require"
@@ -869,6 +870,60 @@ Content 3`
 
 		require.Equal(t, 3, headerCount)
 		require.Equal(t, []string{"Header 1", "Header 2", "Header 3"}, headerTexts)
+	})
+}
+
+func TestAI_Slack_ConvertMarkdownTablesToASCII_BacktickStripping(t *testing.T) {
+	t.Parallel()
+
+	t.Run("backticks stripped from cell values", func(t *testing.T) {
+		t.Parallel()
+		input := "| Code | Metro |\n|------|-------|\n| `dz-nyc-01` | NYC |\n"
+
+		result := convertMarkdownTablesToASCII(input)
+
+		require.Contains(t, result, "dz-nyc-01")
+		require.NotContains(t, result, "`dz-nyc-01`")
+	})
+
+	t.Run("backticks stripped from header cells", func(t *testing.T) {
+		t.Parallel()
+		input := "| `Code` | Value |\n|--------|-------|\n| foo | 123 |\n"
+
+		result := convertMarkdownTablesToASCII(input)
+
+		require.Contains(t, result, "| Code")
+		require.NotContains(t, result, "| `Code`")
+	})
+}
+
+func TestAI_Slack_ConvertMarkdownTablesToASCII_MultiByteAlignment(t *testing.T) {
+	t.Parallel()
+
+	t.Run("multi-byte characters align correctly", func(t *testing.T) {
+		t.Parallel()
+		input := "| City | Metro |\n|------|-------|\n| São Paulo | BR |\n| Tokyo | JP |\n"
+
+		result := convertMarkdownTablesToASCII(input)
+
+		// Both separator lines should be the same length
+		lines := strings.Split(result, "\n")
+		var separators []string
+		for _, line := range lines {
+			if strings.HasPrefix(line, "+") {
+				separators = append(separators, line)
+			}
+		}
+		require.GreaterOrEqual(t, len(separators), 2)
+		require.Equal(t, separators[0], separators[1], "all separator lines should be identical")
+
+		// All data/header rows should be the same rune width as separator
+		sepWidth := utf8.RuneCountInString(separators[0])
+		for _, line := range lines {
+			if strings.HasPrefix(line, "|") {
+				require.Equal(t, sepWidth, utf8.RuneCountInString(line), "row %q should match separator width %d", line, sepWidth)
+			}
+		}
 	})
 }
 
