@@ -236,7 +236,7 @@ func TestAI_Slack_SanitizeErrorMessage(t *testing.T) {
 		{
 			name:     "error with internal details",
 			errMsg:   "Error occurred\nRequest-ID: abc123\nhttps://api.example.com/error\nActual error message",
-			want:     "Sorry, I encountered an error: Error occurred Actual error message",
+			want:     "Sorry, I encountered an error processing your request. Please try again.",
 			contains: "",
 		},
 		{
@@ -248,13 +248,13 @@ func TestAI_Slack_SanitizeErrorMessage(t *testing.T) {
 		{
 			name:     "generic error",
 			errMsg:   "something went wrong",
-			want:     "Sorry, I encountered an error: something went wrong",
+			want:     "Sorry, I encountered an error processing your request. Please try again.",
 			contains: "",
 		},
 		{
 			name:     "empty error",
 			errMsg:   "",
-			want:     "Sorry, I encountered an error. Please try again.",
+			want:     "Sorry, I encountered an error processing your request. Please try again.",
 			contains: "",
 		},
 	}

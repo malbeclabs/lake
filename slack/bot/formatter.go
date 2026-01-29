@@ -837,11 +837,7 @@ func SanitizeErrorMessage(errMsg string) string {
 		cleanLines = append(cleanLines, line)
 	}
 
-	if len(cleanLines) > 0 {
-		return "Sorry, I encountered an error: " + strings.Join(cleanLines, " ")
-	}
-
-	return "Sorry, I encountered an error. Please try again."
+	return "Sorry, I encountered an error processing your request. Please try again."
 }
 
 // normalizeTwoWayArrow replaces the two-way arrow (↔) and :left_right_arrow: emoji with the double arrow (⇔) and removes variation selectors
