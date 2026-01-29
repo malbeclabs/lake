@@ -305,7 +305,6 @@ export function MomentumPage() {
     let solThisMonth = 0
     let solThisQuarter = 0
     let latestJoinedTs: Date | null = null
-    let largestStake90d = 0
     let largestStake90dTs: Date | null = null
     let latestTier12Ts: Date | null = null
 
@@ -326,7 +325,6 @@ export function MomentumPage() {
       ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
       if (ts >= ninetyDaysAgo && stake >= 100000) {
         if (!largestStake90dTs || ts > largestStake90dTs) {
-          largestStake90d = stake
           largestStake90dTs = ts
         }
       }
@@ -371,7 +369,7 @@ export function MomentumPage() {
     if (!timelineData?.events) return []
     const aggregated = aggregateByPeriod(timelineData.events, timePeriod)
     let cumulative = 0
-    return aggregated.map((d, idx) => {
+    return aggregated.map((d) => {
       const netChange = d.joined - d.left
       const prevCumulative = cumulative
       cumulative += netChange
@@ -575,9 +573,9 @@ export function MomentumPage() {
                   />
                   <ReferenceLine yAxisId="left" y={0} stroke="hsl(var(--border))" />
                   <Tooltip
-                    formatter={(value: number, name: string) => [
-                      name.includes('%') ? formatPercent(value) : formatSol(value),
-                      name
+                    formatter={(value, name) => [
+                      value !== undefined ? (String(name).includes('%') ? formatPercent(value as number) : formatSol(value as number)) : '—',
+                      String(name)
                     ]}
                     labelFormatter={formatDateShort}
                   />
@@ -616,7 +614,7 @@ export function MomentumPage() {
                     axisLine={{ stroke: 'hsl(var(--border))' }}
                   />
                   <Tooltip
-                    formatter={(value: number) => [`${value.toFixed(2)}%`, 'Absolute Change']}
+                    formatter={(value: number | undefined) => [value !== undefined ? `${value.toFixed(2)}%` : '—', 'Absolute Change']}
                     labelFormatter={formatDateShort}
                   />
                   <Line type="monotone" dataKey="absoluteChangePct" stroke="hsl(0, 70%, 70%)" strokeWidth={2} dot={false} />
@@ -660,9 +658,9 @@ export function MomentumPage() {
                   />
                   <ReferenceLine yAxisId="left" y={0} stroke="hsl(var(--border))" />
                   <Tooltip
-                    formatter={(value: number, name: string) => [
-                      name.includes('%') ? formatPercent(value) : value,
-                      name
+                    formatter={(value, name) => [
+                      value !== undefined ? (String(name).includes('%') ? formatPercent(value as number) : value) : '—',
+                      String(name)
                     ]}
                     labelFormatter={formatDateShort}
                   />
@@ -710,7 +708,7 @@ export function MomentumPage() {
                   />
                   <ReferenceLine yAxisId="left" y={0} stroke="hsl(var(--border))" />
                   <Tooltip
-                    formatter={(value: number, name: string) => [formatSol(value), name]}
+                    formatter={(value, name) => [value !== undefined ? formatSol(value as number) : '—', String(name)]}
                     labelFormatter={formatDateShort}
                   />
                   <Legend />
