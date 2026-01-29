@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { ChevronDown, GripVertical, Check, RefreshCw } from 'lucide-react'
 import { fetchTrafficData, fetchTopology } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
-import { LoadingSplash } from '@/components/loading-splash'
 
 export interface LinkLookupInfo {
   pk: string
@@ -576,7 +574,6 @@ export function TrafficPage() {
   // Fetch topology data for link metadata
   const {
     data: topologyData,
-    isLoading: topologyLoading,
     refetch: refetchTopology,
   } = useQuery({
     queryKey: ['topology'],
@@ -617,79 +614,72 @@ export function TrafficPage() {
     return map
   }, [topologyData])
 
-  const showLoading = useDelayedLoading(tunnelLoading || nonTunnelLoading || topologyLoading)
-
-  if (showLoading) {
-    return <LoadingSplash />
-  }
-
-  if (tunnelError || nonTunnelError) {
-    return (
-      <div className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-          <div className="text-center py-12">
-            <p className="text-lg text-muted-foreground">
-              Error loading traffic data: {(tunnelError || nonTunnelError)?.toString()}
-            </p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!tunnelData || !nonTunnelData) {
-    return (
-      <div className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-          <div className="text-center py-12">
-            <p className="text-lg text-muted-foreground">No traffic data available</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   // Render a chart section
   const renderChartSection = (section: ChartSection) => {
     if (!visibleSections.has(section)) return null
 
     let title = ''
-    let data = nonTunnelData
+    let isTunnel = false
     let stacked = false
 
     switch (section) {
       case 'non-tunnel-stacked':
         title = 'Non-Tunnel Traffic Per Device & Interface (stacked)'
-        data = nonTunnelData
+        isTunnel = false
         stacked = true
         break
       case 'non-tunnel':
         title = 'Non-Tunnel Traffic Per Device & Interface'
-        data = nonTunnelData
+        isTunnel = false
         stacked = false
         break
       case 'tunnel-stacked':
         title = 'Tunnel Traffic Per Device & Interface (stacked)'
-        data = tunnelData
+        isTunnel = true
         stacked = true
         break
       case 'tunnel':
         title = 'Tunnel Traffic Per Device & Interface'
-        data = tunnelData
+        isTunnel = true
         stacked = false
         break
     }
 
+    const data = isTunnel ? tunnelData : nonTunnelData
+    const loading = isTunnel ? tunnelLoading : nonTunnelLoading
+    const error = isTunnel ? tunnelError : nonTunnelError
+
     return (
       <div key={section} className="border border-border rounded-lg p-4">
-        <LazyChart key={`${section}-${layout}`}>
-          <TrafficChart
-            title={title}
-            data={data.points}
-            series={data.series}
-            stacked={stacked}
-            linkLookup={linkLookup}
-          />
+        <LazyChart key={section}>
+          {loading ? (
+            <div className="flex flex-col space-y-2">
+              <h3 className="text-lg font-semibold">{title}</h3>
+              <div className="animate-pulse bg-muted rounded h-[400px]" />
+            </div>
+          ) : error ? (
+            <div className="flex flex-col space-y-2">
+              <h3 className="text-lg font-semibold">{title}</h3>
+              <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
+                <p className="text-muted-foreground">Error: {error.toString()}</p>
+              </div>
+            </div>
+          ) : data ? (
+            <TrafficChart
+              title={title}
+              data={data.points}
+              series={data.series}
+              stacked={stacked}
+              linkLookup={linkLookup}
+            />
+          ) : (
+            <div className="flex flex-col space-y-2">
+              <h3 className="text-lg font-semibold">{title}</h3>
+              <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
+                <p className="text-muted-foreground">No data available</p>
+              </div>
+            </div>
+          )}
         </LazyChart>
       </div>
     )
@@ -714,7 +704,7 @@ export function TrafficPage() {
             <BucketSelector
               bucketValue={bucketSize}
               aggValue={aggMethod}
-              effectiveBucket={tunnelData?.effective_bucket || nonTunnelData?.effective_bucket}
+              effectiveBucket={tunnelData?.effective_bucket ?? nonTunnelData?.effective_bucket}
               onBucketChange={handleBucketSizeChange}
               onAggChange={handleAggMethodChange}
             />
