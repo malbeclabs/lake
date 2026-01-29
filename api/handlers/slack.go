@@ -86,11 +86,17 @@ func UpsertSlackInstallation(ctx context.Context, teamID, teamName, botToken, bo
 
 // DeactivateSlackInstallation deactivates a Slack installation by team ID
 func DeactivateSlackInstallation(ctx context.Context, teamID string) error {
-	_, err := config.PgPool.Exec(ctx,
+	cmdTag, err := config.PgPool.Exec(ctx,
 		`UPDATE slack_installations SET is_active = false, updated_at = NOW() WHERE team_id = $1`,
 		teamID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if cmdTag.RowsAffected() == 0 {
+		return fmt.Errorf("no slack installation found for team_id %s", teamID)
+	}
+	return nil
 }
 
 // ListSlackInstallations returns active installations for a specific account
@@ -369,7 +375,9 @@ func DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	clientSecret := os.Getenv("SLACK_CLIENT_SECRET")
 	if clientID != "" && clientSecret != "" {
 		if err := uninstallSlackApp(r.Context(), inst.BotToken, clientID, clientSecret); err != nil {
-			slog.Warn("failed to uninstall slack app from workspace (continuing with deactivation)", "error", err, "team_id", teamID)
+			slog.Error("failed to uninstall slack app from workspace", "error", err, "team_id", teamID)
+			http.Error(w, "Failed to uninstall Slack app from workspace. Please try again.", http.StatusBadGateway)
+			return
 		}
 	}
 

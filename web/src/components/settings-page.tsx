@@ -42,7 +42,9 @@ export function SettingsPage() {
     if (slackParam === 'installed') {
       setSlackMessage({ type: 'success', text: 'Slack workspace connected successfully.' })
       // Refresh installations list
-      getSlackInstallations().then(setInstallations).catch(() => {})
+      getSlackInstallations().then(setInstallations).catch(() => {
+        setSlackMessage({ type: 'warning', text: 'Slack workspace connected, but failed to refresh installations. Try reloading the page.' })
+      })
       window.history.replaceState({}, '', window.location.pathname)
     } else if (slackParam === 'confirm_takeover') {
       const team = params.get('team') || 'this workspace'
@@ -78,7 +80,9 @@ export function SettingsPage() {
     try {
       await confirmSlackInstallation(pendingId)
       setSlackMessage({ type: 'success', text: 'Slack workspace connected successfully.' })
-      getSlackInstallations().then(setInstallations).catch(() => {})
+      getSlackInstallations().then(setInstallations).catch(() => {
+        setSlackMessage({ type: 'warning', text: 'Workspace connected, but failed to refresh installations. Try reloading the page.' })
+      })
     } catch {
       setSlackMessage({ type: 'error', text: 'Failed to confirm installation. The request may have expired.' })
     } finally {
