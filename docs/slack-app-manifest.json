@@ -1,0 +1,52 @@
+{
+    "display_information": {
+        "name": "DoubleZero AI (dev)",
+        "description": "AI-powered data analytics for the DoubleZero network",
+        "background_color": "#000000"
+    },
+    "features": {
+        "app_home": {
+            "messages_tab_enabled": true,
+            "messages_tab_read_only_enabled": false
+        },
+        "bot_user": {
+            "display_name": "DoubleZero AI (dev)",
+            "always_online": true
+        }
+    },
+    "oauth_config": {
+        "redirect_urls": [
+            "https://<your-domain>/api/slack/oauth/callback"
+        ],
+        "scopes": {
+            "bot": [
+                "app_mentions:read",
+                "channels:history",
+                "channels:read",
+                "chat:write",
+                "groups:history",
+                "groups:read",
+                "im:history",
+                "im:read",
+                "mpim:history",
+                "reactions:write",
+                "users:read"
+            ]
+        }
+    },
+    "settings": {
+        "event_subscriptions": {
+            "request_url": "https://<your-domain>/slack/events",
+            "bot_events": [
+                "app_mention",
+                "message.channels",
+                "message.groups",
+                "message.im",
+                "message.mpim"
+            ]
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": false,
+        "token_rotation_enabled": false
+    }
+}

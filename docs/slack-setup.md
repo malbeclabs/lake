@@ -2,8 +2,12 @@
 
 ## Create a Slack App
 
-1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App** → **From scratch**.
-2. Name the app (e.g. "DoubleZero Data") and select a workspace to develop it in. This workspace is just for managing the app — it won't be visible to users who install it elsewhere.
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App** → **From an app manifest**.
+2. Select a workspace to develop it in, then paste the contents of [`slack-app-manifest.json`](slack-app-manifest.json).
+3. Replace `<your-domain>` in the request URL and redirect URL with your actual domain.
+4. Click **Create**.
+
+This sets up all scopes, event subscriptions, and bot configuration automatically. The rest of this doc explains each setting if you need to modify them.
 
 ## Configure Scopes
 
