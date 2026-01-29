@@ -3,31 +3,35 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 )
 
-// VersionResponse contains the frontend build version info.
-type VersionResponse struct {
-	BuildTimestamp string `json:"buildTimestamp"`
+var (
+	// BuildVersion, BuildCommit, BuildDate are set from main via SetBuildInfo.
+	BuildVersion = "dev"
+	BuildCommit  = "none"
+	BuildDate    = "unknown"
+)
+
+// SetBuildInfo sets the build info from ldflags values in main.
+func SetBuildInfo(version, commit, date string) {
+	BuildVersion = version
+	BuildCommit = commit
+	BuildDate = date
 }
 
-// GetVersion returns the current deployed frontend version.
+// VersionResponse contains the API build version info.
+type VersionResponse struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Date    string `json:"date"`
+}
+
+// GetVersion returns the current build version info.
 func GetVersion(w http.ResponseWriter, r *http.Request) {
-	webDir := os.Getenv("WEB_DIST_DIR")
-	if webDir == "" {
-		webDir = "/lake/web/dist"
-	}
-
-	versionFile := filepath.Join(webDir, "version.json")
-	data, err := os.ReadFile(versionFile)
-	if err != nil {
-		// In development, version.json might not exist
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(VersionResponse{BuildTimestamp: "dev"})
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(data)
+	_ = json.NewEncoder(w).Encode(VersionResponse{
+		Version: BuildVersion,
+		Commit:  BuildCommit,
+		Date:    BuildDate,
+	})
 }

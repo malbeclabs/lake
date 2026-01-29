@@ -210,6 +210,7 @@ func main() {
 	flag.Parse()
 
 	log.Printf("Starting lake-api version=%s commit=%s date=%s", version, commit, date)
+	handlers.SetBuildInfo(version, commit, date)
 
 	// Load .env files if they exist
 	// godotenv doesn't override existing env vars, so later files don't overwrite earlier ones
