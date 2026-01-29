@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,13 +12,6 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
-
-type TrafficDataResponse struct {
-	Points          []TrafficPoint `json:"points"`
-	Series          []SeriesInfo   `json:"series"`
-	EffectiveBucket string         `json:"effective_bucket"`
-	Truncated       bool           `json:"truncated"`
-}
 
 type TrafficPoint struct {
 	Time     string  `json:"time"`
@@ -240,7 +234,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	}
 	defer meanRows.Close()
 
-	// Build series info from mean query
+	// Build series info from mean query (small result set — one row per device/intf)
 	series := []SeriesInfo{}
 	for meanRows.Next() {
 		var device, intf string
@@ -267,34 +261,49 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Collect points (bounded by LIMIT in query)
-	points := []TrafficPoint{}
+	// Stream JSON response directly from ClickHouse rows to avoid holding
+	// all points in memory. The response is written as:
+	//   {"points":[...rows streamed...],"series":[...],"effective_bucket":"...","truncated":bool}
+	w.Header().Set("Content-Type", "application/json")
+	bw := bufio.NewWriterSize(w, 32*1024)
+
+	bw.WriteString(`{"points":[`)
+
+	pointCount := 0
+	var scanErr error
 	for rows.Next() {
 		var point TrafficPoint
 		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps); err != nil {
 			log.Printf("Traffic row scan error: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			// Already started writing — can't send HTTP error. Log and break.
+			scanErr = err
+			break
 		}
-		points = append(points, point)
+		if pointCount > 0 {
+			bw.WriteByte(',')
+		}
+		pointJSON, err := json.Marshal(point)
+		if err != nil {
+			log.Printf("Traffic point encode error: %v", err)
+			scanErr = err
+			break
+		}
+		bw.Write(pointJSON)
+		pointCount++
 	}
 
-	if err := rows.Err(); err != nil {
-		log.Printf("Rows error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	if scanErr == nil {
+		if err := rows.Err(); err != nil {
+			log.Printf("Rows iteration error: %v", err)
+		}
 	}
 
-	response := TrafficDataResponse{
-		Points:          points,
-		Series:          series,
-		EffectiveBucket: bucket,
-		Truncated:       len(points) >= maxTrafficRows,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
-	}
+	// Write series, metadata, and close
+	bw.WriteString(`],"series":`)
+	seriesJSON, _ := json.Marshal(series)
+	bw.Write(seriesJSON)
+	fmt.Fprintf(bw, `,"effective_bucket":%q,"truncated":%t}`, bucket, pointCount >= maxTrafficRows)
+	bw.WriteString("\n")
+	bw.Flush()
 }
 
