@@ -10,6 +10,28 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'January 28, 2026',
+    changes: [
+      { type: 'feature', description: 'Health graphs on device and link status pages' },
+      { type: 'feature', description: 'Traffic charts page with unified detail views' },
+      { type: 'fix', description: 'Fix query timeout crashes and stale cache overwrites' },
+    ],
+  },
+  {
+    date: 'January 27, 2026',
+    changes: [
+      { type: 'fix', description: 'Validators incorrectly showing all as on DZ' },
+      { type: 'fix', description: 'Outage queries causing high memory usage and connection pool exhaustion' },
+    ],
+  },
+  {
+    date: 'January 26, 2026',
+    changes: [
+      { type: 'feature', description: 'Multicast trees visualization' },
+      { type: 'fix', description: 'Negative counter deltas in traffic queries filtered out' },
+    ],
+  },
+  {
     date: 'January 25, 2026',
     changes: [
       { type: 'feature', description: 'Device health issues shown in status banner with expandable per-interface charts' },
