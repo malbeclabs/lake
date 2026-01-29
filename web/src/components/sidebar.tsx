@@ -77,8 +77,6 @@ export function Sidebar() {
   const isSolanaRoute = location.pathname.startsWith('/solana/')
 
   const [isCollapsed, setIsCollapsed] = useState(() => {
-    const path = window.location.pathname
-
     // Check localStorage for user's explicit preference (not auto-collapse state)
     const userPref = localStorage.getItem('sidebar-user-collapsed')
     if (userPref !== null) return userPref === 'true'
