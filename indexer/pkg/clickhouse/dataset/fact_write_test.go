@@ -209,7 +209,44 @@ func TestLake_Clickhouse_Dataset_Fact_WriteBatch(t *testing.T) {
 		require.Contains(t, err.Error(), "expected exactly")
 	})
 
-	// Test 8: Nullable values
+	// Test 8: Sub-batching splits rows correctly
+	t.Run("sub_batching", func(t *testing.T) {
+		clearTable(t, conn, ds.TableName())
+
+		ds.WriteBatchSize = 3
+		defer func() { ds.WriteBatchSize = 0 }()
+
+		ingestedAt := time.Now().UTC()
+		totalRows := 7 // spans 3 sub-batches: 3+3+1
+
+		err := ds.WriteBatch(ctx, conn, totalRows, func(i int) ([]any, error) {
+			return []any{
+				time.Date(2024, 1, 5, 10, i, 0, 0, time.UTC),
+				ingestedAt,
+				i,
+				fmt.Sprintf("sub%d", i),
+			}, nil
+		})
+		require.NoError(t, err)
+
+		query := fmt.Sprintf(`
+			SELECT COUNT(*) as cnt
+			FROM %s
+			WHERE label LIKE 'sub%%'
+		`, ds.TableName())
+
+		rows, err := conn.Query(ctx, query)
+		require.NoError(t, err)
+		defer rows.Close()
+
+		require.True(t, rows.Next())
+		var count uint64
+		err = rows.Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, uint64(totalRows), count)
+	})
+
+	// Test 9: Nullable values
 	t.Run("nullable_values", func(t *testing.T) {
 		ingestedAt := time.Now().UTC()
 

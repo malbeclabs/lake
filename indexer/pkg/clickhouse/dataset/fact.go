@@ -19,6 +19,10 @@ type FactDataset struct {
 	payloadCols   []string
 	uniqueKeyCols []string
 	cols          []string
+
+	// WriteBatchSize overrides the default sub-batch size for WriteBatch.
+	// If zero, defaults to 50,000 rows.
+	WriteBatchSize int
 }
 
 func NewFactDataset(log *slog.Logger, schema FactSchema) (*FactDataset, error) {
