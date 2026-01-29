@@ -1098,6 +1098,9 @@ export function Chat({ messages, isPending, processingSteps, onSendMessage, onAb
                 </>
               )}
           </p>
+          <p className="text-xs text-muted-foreground/60 text-center mt-1">
+            AI-generated responses may be incorrect. Do not share sensitive info. See <a href="/terms" className="underline hover:text-muted-foreground">Terms of Use</a>.
+          </p>
         </div>
       </div>
 

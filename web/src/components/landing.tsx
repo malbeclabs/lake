@@ -193,6 +193,10 @@ export function Landing() {
         ))}
       </div>
       </div>
+
+      <p className="text-xs text-muted-foreground/60 text-center mt-auto pb-4">
+        AI-generated responses may be incorrect. Do not share sensitive info. See <a href="/terms" className="underline hover:text-muted-foreground">Terms of Use</a>.
+      </p>
     </div>
   )
 }
