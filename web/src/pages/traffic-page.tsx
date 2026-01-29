@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { ChevronDown, GripVertical, Check, RefreshCw } from 'lucide-react'
 import { fetchTrafficData, fetchTopology } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
-import { LoadingSplash } from '@/components/loading-splash'
 
 export interface LinkLookupInfo {
   pk: string
@@ -60,10 +58,9 @@ const timeRangeLabels: Record<TimeRange, string> = {
   '7d': 'Last 7 Days',
 }
 
-type BucketSize = 'none' | '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
+type BucketSize = '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
 
 const bucketLabels: Record<BucketSize, string> = {
-  'none': 'None (raw data)',
   '2 SECOND': '2 seconds',
   '30 SECOND': '30 seconds',
   '1 MINUTE': '1 minute',
@@ -165,15 +162,28 @@ function TimeRangeSelector({
 function BucketSelector({
   bucketValue,
   aggValue,
+  effectiveBucket,
   onBucketChange,
   onAggChange,
 }: {
   bucketValue: BucketSize
   aggValue: AggMethod
+  effectiveBucket?: string
   onBucketChange: (value: BucketSize) => void
   onAggChange: (value: AggMethod) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
+
+  // Show effective bucket: for "auto" show the resolved value, for manual show if the API adjusted it
+  const effectiveLabel = effectiveBucket ? (bucketLabels[effectiveBucket as BucketSize] || effectiveBucket) : undefined
+  let displayBucket: string
+  if (bucketValue === 'auto' && effectiveLabel) {
+    displayBucket = `Auto (${effectiveLabel})`
+  } else if (effectiveBucket && effectiveBucket !== bucketValue) {
+    displayBucket = `${bucketLabels[bucketValue]} → ${effectiveLabel}`
+  } else {
+    displayBucket = bucketLabels[bucketValue]
+  }
 
   return (
     <div className="relative inline-block">
@@ -181,7 +191,7 @@ function BucketSelector({
         onClick={() => setIsOpen(!isOpen)}
         className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
       >
-        Coalesce: {bucketLabels[bucketValue]} ({aggLabels[aggValue]})
+        Coalesce: {displayBucket} ({aggLabels[aggValue]})
         <ChevronDown className="h-4 w-4" />
       </button>
       {isOpen && (
@@ -191,7 +201,7 @@ function BucketSelector({
             <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground border-b border-border">
               Bucket Size
             </div>
-            {(['none', '2 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', 'auto'] as BucketSize[]).map((bucket) => (
+            {(['2 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', 'auto'] as BucketSize[]).map((bucket) => (
               <button
                 key={bucket}
                 onClick={() => {
@@ -568,7 +578,6 @@ export function TrafficPage() {
   // Fetch topology data for link metadata
   const {
     data: topologyData,
-    isLoading: topologyLoading,
     refetch: refetchTopology,
   } = useQuery({
     queryKey: ['topology'],
@@ -609,79 +618,72 @@ export function TrafficPage() {
     return map
   }, [topologyData])
 
-  const showLoading = useDelayedLoading(tunnelLoading || nonTunnelLoading || topologyLoading)
-
-  if (showLoading) {
-    return <LoadingSplash />
-  }
-
-  if (tunnelError || nonTunnelError) {
-    return (
-      <div className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-          <div className="text-center py-12">
-            <p className="text-lg text-muted-foreground">
-              Error loading traffic data: {(tunnelError || nonTunnelError)?.toString()}
-            </p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!tunnelData || !nonTunnelData) {
-    return (
-      <div className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-          <div className="text-center py-12">
-            <p className="text-lg text-muted-foreground">No traffic data available</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   // Render a chart section
   const renderChartSection = (section: ChartSection) => {
     if (!visibleSections.has(section)) return null
 
     let title = ''
-    let data = nonTunnelData
+    let isTunnel = false
     let stacked = false
 
     switch (section) {
       case 'non-tunnel-stacked':
         title = 'Non-Tunnel Traffic Per Device & Interface (stacked)'
-        data = nonTunnelData
+        isTunnel = false
         stacked = true
         break
       case 'non-tunnel':
         title = 'Non-Tunnel Traffic Per Device & Interface'
-        data = nonTunnelData
+        isTunnel = false
         stacked = false
         break
       case 'tunnel-stacked':
         title = 'Tunnel Traffic Per Device & Interface (stacked)'
-        data = tunnelData
+        isTunnel = true
         stacked = true
         break
       case 'tunnel':
         title = 'Tunnel Traffic Per Device & Interface'
-        data = tunnelData
+        isTunnel = true
         stacked = false
         break
     }
 
+    const data = isTunnel ? tunnelData : nonTunnelData
+    const loading = isTunnel ? tunnelLoading : nonTunnelLoading
+    const error = isTunnel ? tunnelError : nonTunnelError
+
     return (
       <div key={section} className="border border-border rounded-lg p-4">
-        <LazyChart key={`${section}-${layout}`}>
-          <TrafficChart
-            title={title}
-            data={data.points}
-            series={data.series}
-            stacked={stacked}
-            linkLookup={linkLookup}
-          />
+        <LazyChart key={section}>
+          {loading ? (
+            <div className="flex flex-col space-y-2">
+              <h3 className="text-lg font-semibold">{title}</h3>
+              <div className="animate-pulse bg-muted rounded h-[400px]" />
+            </div>
+          ) : error ? (
+            <div className="flex flex-col space-y-2">
+              <h3 className="text-lg font-semibold">{title}</h3>
+              <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
+                <p className="text-muted-foreground">Error: {error.toString()}</p>
+              </div>
+            </div>
+          ) : data ? (
+            <TrafficChart
+              title={title}
+              data={data.points}
+              series={data.series}
+              stacked={stacked}
+              linkLookup={linkLookup}
+            />
+          ) : (
+            <div className="flex flex-col space-y-2">
+              <h3 className="text-lg font-semibold">{title}</h3>
+              <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
+                <p className="text-muted-foreground">No data available</p>
+              </div>
+            </div>
+          )}
         </LazyChart>
       </div>
     )
@@ -706,6 +708,7 @@ export function TrafficPage() {
             <BucketSelector
               bucketValue={bucketSize}
               aggValue={aggMethod}
+              effectiveBucket={tunnelData?.effective_bucket ?? nonTunnelData?.effective_bucket}
               onBucketChange={handleBucketSizeChange}
               onAggChange={handleAggMethodChange}
             />
@@ -720,6 +723,13 @@ export function TrafficPage() {
             </button>
           </div>
         </div>
+
+        {/* Truncation warning */}
+        {(tunnelData?.truncated || nonTunnelData?.truncated) && (
+          <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-200">
+            Results were truncated due to data volume. Try a larger bucket size or shorter time range to see all data.
+          </div>
+        )}
 
         {/* Charts */}
         <div className={gridClass}>
