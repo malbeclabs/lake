@@ -96,7 +96,7 @@ func (r *WorkflowRunner) ChatStream(
 		return ChatStreamResult{}, fmt.Errorf("failed to create workflow: %w", err)
 	}
 
-	// Track queries for progress reporting
+	// Track queries and doc reads for progress reporting
 	var queriesTotal, queriesDone int
 	var dataQuestions []workflow.DataQuestion
 
@@ -104,16 +104,12 @@ func (r *WorkflowRunner) ChatStream(
 	wrappedProgress := func(progress workflow.Progress) {
 		switch progress.Stage {
 		case workflow.StageThinking:
-			// Map thinking to classifying or synthesizing based on query count
-			stage := workflow.StageClassifying
-			if queriesTotal > 0 {
-				stage = workflow.StageSynthesizing
-			}
 			onProgress(workflow.Progress{
-				Stage:         stage,
-				DataQuestions: dataQuestions,
-				QueriesTotal:  queriesTotal,
-				QueriesDone:   queriesDone,
+				Stage:           workflow.StageThinking,
+				ThinkingContent: progress.ThinkingContent,
+				DataQuestions:   dataQuestions,
+				QueriesTotal:    queriesTotal,
+				QueriesDone:     queriesDone,
 			})
 
 		case workflow.StageSQLStarted:
@@ -150,6 +146,28 @@ func (r *WorkflowRunner) ChatStream(
 			})
 
 		case workflow.StageCypherComplete:
+			queriesDone++
+			onProgress(workflow.Progress{
+				Stage:         workflow.StageExecuting,
+				DataQuestions: dataQuestions,
+				QueriesTotal:  queriesTotal,
+				QueriesDone:   queriesDone,
+			})
+
+		case workflow.StageReadDocsStarted:
+			queriesTotal++
+			dataQuestions = append(dataQuestions, workflow.DataQuestion{
+				Question:  "Reading " + progress.DocsPage,
+				Rationale: "doc_read",
+			})
+			onProgress(workflow.Progress{
+				Stage:         workflow.StageExecuting,
+				DataQuestions: dataQuestions,
+				QueriesTotal:  queriesTotal,
+				QueriesDone:   queriesDone,
+			})
+
+		case workflow.StageReadDocsComplete:
 			queriesDone++
 			onProgress(workflow.Progress{
 				Stage:         workflow.StageExecuting,

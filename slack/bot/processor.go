@@ -161,6 +161,13 @@ func formatThinkingMessage(progress workflow.Progress) string {
 	case workflow.StageClassifying:
 		sb.WriteString("_:hourglass_flowing_sand: Understanding your question..._")
 
+	case workflow.StageThinking:
+		sb.WriteString("_:brain: Thinking..._")
+		if len(progress.DataQuestions) > 0 {
+			sb.WriteString("\n")
+			writeStepsList(&sb, progress)
+		}
+
 	case workflow.StageDecomposing:
 		sb.WriteString("_:hourglass_flowing_sand: Breaking down into queries..._")
 
@@ -171,26 +178,23 @@ func formatThinkingMessage(progress workflow.Progress) string {
 		}
 
 	case workflow.StageExecuting:
-		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Running queries (%d/%d)..._\n", progress.QueriesDone, progress.QueriesTotal))
-		for i, q := range progress.DataQuestions {
-			if i < progress.QueriesDone {
-				sb.WriteString(fmt.Sprintf("_• %s ✓_\n", q.Question))
-			} else if i == progress.QueriesDone {
-				sb.WriteString(fmt.Sprintf("_• %s :hourglass_flowing_sand:_\n", q.Question))
-			} else {
-				sb.WriteString(fmt.Sprintf("_• %s_\n", q.Question))
-			}
-		}
+		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Working (%d steps done)..._\n", progress.QueriesDone))
+		writeStepsList(&sb, progress)
 
 	case workflow.StageSynthesizing:
-		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Preparing answer (%d queries complete)..._", progress.QueriesTotal))
+		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Preparing answer (%d steps complete)..._", progress.QueriesTotal))
 
 	case workflow.StageComplete:
 		// For data_analysis, show compact summary
 		if progress.Classification == workflow.ClassificationDataAnalysis && len(progress.DataQuestions) > 0 {
 			sb.WriteString("_:mag: Answered by querying:_\n")
+			n := 0
 			for _, q := range progress.DataQuestions {
-				sb.WriteString(fmt.Sprintf("_• %s_\n", q.Question))
+				if q.Rationale == "doc_read" {
+					continue
+				}
+				n++
+				sb.WriteString(fmt.Sprintf("_Q%d. %s_\n", n, q.Question))
 			}
 		}
 		// For conversational/out_of_scope, we don't show anything (just answer)
@@ -203,6 +207,19 @@ func formatThinkingMessage(progress workflow.Progress) string {
 	}
 
 	return sb.String()
+}
+
+// writeStepsList writes the ordered list of steps (queries and doc reads) with status indicators.
+func writeStepsList(sb *strings.Builder, progress workflow.Progress) {
+	for i, q := range progress.DataQuestions {
+		if i < progress.QueriesDone {
+			sb.WriteString(fmt.Sprintf("_• %s ✓_\n", q.Question))
+		} else if i == progress.QueriesDone {
+			sb.WriteString(fmt.Sprintf("_• %s :hourglass_flowing_sand:_\n", q.Question))
+		} else {
+			sb.WriteString(fmt.Sprintf("_• %s_\n", q.Question))
+		}
+	}
 }
 
 // ProcessMessage processes a single Slack message
@@ -335,7 +352,7 @@ func (p *Processor) ProcessMessage(
 			return
 		}
 
-		// Update thinking message with web link
+		// Update thinking message
 		if thinkingTS != "" {
 			thinkingText := formatThinkingMessage(progress)
 			if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, thinkingText, nil); err != nil {
