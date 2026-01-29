@@ -87,3 +87,8 @@ Output goes to `eval-runs/<timestamp>/` with:
   - `## Testing Verification` — how changes were tested
 - Focus on the final diff, not individual commits or intermediate work
 - Describe the "what" and "why", not the "how"
+- Keep bullet points concise — write like changelog entries, not a design doc
+- No bold text, no implementation details, no architecture explanations
+- Order bullets by most important/significant first
+- Group related changes together
+- Mention any breaking changes or migration steps if applicable
