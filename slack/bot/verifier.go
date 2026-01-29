@@ -1,4 +1,4 @@
-package slack
+package bot
 
 import (
 	"crypto/hmac"

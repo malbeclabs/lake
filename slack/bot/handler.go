@@ -1,4 +1,4 @@
-package slack
+package bot
 
 import (
 	"context"
@@ -20,12 +20,14 @@ const processedEventsMaxAge = 1 * time.Hour
 
 // EventHandler handles Slack events
 type EventHandler struct {
-	slackClient *Client
-	processor   *Processor
-	convManager *Manager
-	log         *slog.Logger
-	botUserID   string
-	shutdownCtx context.Context // Main shutdown context for graceful cancellation
+	slackClient   *Client
+	clientManager *ClientManager // non-nil in multi-tenant mode
+	processor     *Processor
+	convManager   *Manager
+	log           *slog.Logger
+	botUserID     string
+	signingSecret string          // used in multi-tenant HTTP mode
+	shutdownCtx   context.Context // Main shutdown context for graceful cancellation
 
 	// Track processed events by envelope ID to avoid reprocessing duplicates
 	processedEvents   map[string]time.Time
@@ -56,6 +58,31 @@ func NewEventHandler(
 		processedEvents: make(map[string]time.Time),
 		acceptingNew:    true,
 	}
+}
+
+// SetClientManager sets the client manager for multi-tenant mode
+func (h *EventHandler) SetClientManager(cm *ClientManager) {
+	h.clientManager = cm
+}
+
+// SetSigningSecret sets the signing secret for HTTP mode
+func (h *EventHandler) SetSigningSecret(secret string) {
+	h.signingSecret = secret
+}
+
+// resolveClient resolves the Slack client for a given team ID.
+// In single-tenant mode, returns the default client.
+// In multi-tenant mode, looks up the client via ClientManager.
+func (h *EventHandler) resolveClient(ctx context.Context, teamID string) *Client {
+	if h.clientManager == nil {
+		return h.slackClient
+	}
+	client, err := h.clientManager.GetClient(ctx, teamID)
+	if err != nil {
+		h.log.Warn("failed to resolve client for team", "team_id", teamID, "error", err)
+		return nil
+	}
+	return client
 }
 
 // StartCleanup starts a background goroutine to clean up old processed events
@@ -103,17 +130,33 @@ func (h *EventHandler) cleanup() {
 
 // HandleEvent handles a Slack Events API event
 func (h *EventHandler) HandleEvent(ctx context.Context, e slackevents.EventsAPIEvent, eventID string) {
-	h.log.Info("event received", "type", e.Type, "inner_event_type", e.InnerEvent.Type)
+	h.log.Info("event received", "type", e.Type, "inner_event_type", e.InnerEvent.Type, "team_id", e.TeamID)
 	EventsReceivedTotal.WithLabelValues(e.Type, e.InnerEvent.Type).Inc()
+
+	// Handle app_uninstalled and tokens_revoked events
+	if e.Type == slackevents.CallbackEvent {
+		if e.InnerEvent.Type == "app_uninstalled" || e.InnerEvent.Type == "tokens_revoked" {
+			h.handleAppUninstalled(ctx, e.TeamID)
+			return
+		}
+	}
+
 	if e.Type != slackevents.CallbackEvent {
 		h.log.Debug("ignoring non-callback event", "type", e.Type)
+		return
+	}
+
+	// Resolve client for this team
+	client := h.resolveClient(ctx, e.TeamID)
+	if client == nil {
+		h.log.Warn("no client for team, ignoring event", "team_id", e.TeamID)
 		return
 	}
 
 	// Handle app_mentions event (more reliable for channel mentions)
 	if e.InnerEvent.Type == "app_mention" {
 		if ev, ok := e.InnerEvent.Data.(*slackevents.AppMentionEvent); ok {
-			h.handleAppMention(ctx, ev, eventID)
+			h.handleAppMention(ctx, ev, eventID, client)
 			return
 		}
 	}
@@ -121,12 +164,22 @@ func (h *EventHandler) HandleEvent(ctx context.Context, e slackevents.EventsAPIE
 	// Handle message events
 	switch ev := e.InnerEvent.Data.(type) {
 	case *slackevents.MessageEvent:
-		h.handleMessageEvent(ctx, ev, eventID)
+		h.handleMessageEvent(ctx, ev, eventID, client)
 	}
 }
 
+// handleAppUninstalled handles app_uninstalled and tokens_revoked events
+func (h *EventHandler) handleAppUninstalled(ctx context.Context, teamID string) {
+	h.log.Info("app uninstalled or tokens revoked", "team_id", teamID)
+	if h.clientManager != nil {
+		h.clientManager.InvalidateClient(teamID)
+	}
+	// Deactivation in DB is handled by the API layer (DeleteSlackInstallation) or
+	// can be done here if we have a store reference. For now, invalidate cache only.
+}
+
 // handleAppMention handles app_mention events
-func (h *EventHandler) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEvent, eventID string) {
+func (h *EventHandler) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEvent, eventID string, client *Client) {
 	h.log.Info("app_mention event received", "user", ev.User, "channel", ev.Channel, "ts", ev.TimeStamp, "thread_ts", ev.ThreadTimeStamp, "text_preview", TruncateString(ev.Text, 100))
 
 	// AppMentionEvent is always from a channel (not DM), so determine channel type from channel ID
@@ -172,12 +225,12 @@ func (h *EventHandler) handleAppMention(ctx context.Context, ev *slackevents.App
 	go func() {
 		defer h.inFlightOps.Done()
 		// Use background context so shutdown cancellation doesn't interrupt in-flight operations
-		h.processor.ProcessMessage(context.Background(), msgEv, messageKey, eventID, isChannel)
+		h.processor.ProcessMessage(context.Background(), client, msgEv, messageKey, eventID, isChannel)
 	}()
 }
 
 // handleMessageEvent handles message events
-func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEvent, eventID string) {
+func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEvent, eventID string, client *Client) {
 	if ev.SubType != "" {
 		h.log.Debug("ignoring message with subtype", "subtype", ev.SubType, "channel", ev.Channel, "channel_type", ev.ChannelType)
 		MessagesIgnoredTotal.WithLabelValues("subtype").Inc()
@@ -202,7 +255,7 @@ func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.M
 
 	// For channels, respond if bot is mentioned OR if replying in an active thread (where bot was mentioned in root message)
 	if isChannel {
-		botMentioned := h.slackClient.IsBotMentioned(ev.Text)
+		botMentioned := client.IsBotMentioned(ev.Text)
 
 		// If bot is mentioned in a top-level message, skip this message event - app_mention event will handle it instead
 		if botMentioned && ev.ThreadTimeStamp == "" {
@@ -225,9 +278,9 @@ func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.M
 			}
 
 			// If not in cache, check the root message to see if bot was mentioned there
-			if !inActiveThread && h.botUserID != "" {
-				h.log.Info("fetching root message to check for bot mention", "thread_ts", ev.ThreadTimeStamp, "bot_user_id", h.botUserID)
-				rootMentioned, err := h.slackClient.CheckRootMessageMentioned(ctx, ev.Channel, ev.ThreadTimeStamp, h.botUserID)
+			if !inActiveThread && client.BotUserID() != "" {
+				h.log.Info("fetching root message to check for bot mention", "thread_ts", ev.ThreadTimeStamp, "bot_user_id", client.BotUserID())
+				rootMentioned, err := client.CheckRootMessageMentioned(ctx, ev.Channel, ev.ThreadTimeStamp, client.BotUserID())
 				if err != nil {
 					h.log.Warn("failed to check root message for mention", "thread_ts", ev.ThreadTimeStamp, "error", err)
 				} else if rootMentioned {
@@ -296,7 +349,7 @@ func (h *EventHandler) handleMessageEvent(ctx context.Context, ev *slackevents.M
 	go func() {
 		defer h.inFlightOps.Done()
 		// Use background context so shutdown cancellation doesn't interrupt in-flight operations
-		h.processor.ProcessMessage(context.Background(), ev, messageKey, eventID, isChannel)
+		h.processor.ProcessMessage(context.Background(), client, ev, messageKey, eventID, isChannel)
 	}()
 }
 
@@ -371,11 +424,17 @@ func (h *EventHandler) HandleSocketMode(ctx context.Context, client *socketmode.
 
 				client.Ack(*evt.Request)
 				// Use background context so shutdown cancellation doesn't interrupt in-flight operations
-				// The WaitGroup handles graceful shutdown coordination
+				// The WaitGroup handles graceful shutdown coordination.
+				// Note: Socket mode is single-tenant only, so TeamID from event is used for routing.
 				h.HandleEvent(context.Background(), e, envelopeID)
 			}
 		}
 	}
+}
+
+// HandleHTTPMultiTenant handles HTTP requests for multi-tenant mode using the handler's signing secret
+func (h *EventHandler) HandleHTTPMultiTenant(w http.ResponseWriter, r *http.Request) {
+	h.HandleHTTP(w, r, h.signingSecret)
 }
 
 // HandleHTTP handles HTTP requests from Slack Events API

@@ -1,4 +1,4 @@
-package slack
+package bot
 
 import (
 	"fmt"
@@ -22,8 +22,11 @@ type Config struct {
 	Mode          Mode
 	BotUserID     string
 
-	// API configuration
-	APIBaseURL string
+	// OAuth configuration (multi-tenant mode)
+	ClientID     string
+	ClientSecret string
+
+	// Web UI configuration
 	WebBaseURL string // Base URL for web UI (for session links)
 
 	// Server configuration
@@ -78,13 +81,7 @@ func LoadFromEnv(modeFlag, httpAddrFlag, metricsAddrFlag string, verbose, enable
 		}
 	}
 
-	// Load API configuration
-	cfg.APIBaseURL = os.Getenv("API_BASE_URL")
-	if cfg.APIBaseURL == "" {
-		cfg.APIBaseURL = "http://localhost:8080"
-	}
-
-	// Load web UI configuration (optional - if not set, "View on web" links won't be shown)
+	// Load web UI configuration (optional)
 	cfg.WebBaseURL = os.Getenv("WEB_BASE_URL")
 
 	return cfg, nil

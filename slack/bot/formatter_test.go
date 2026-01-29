@@ -1,4 +1,4 @@
-package slack
+package bot
 
 import (
 	"log/slog"
