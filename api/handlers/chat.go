@@ -50,7 +50,8 @@ type GeneratedQueryResponse struct {
 // ExecutedQueryResponse represents an executed query with results.
 type ExecutedQueryResponse struct {
 	Question string   `json:"question"`
-	SQL      string   `json:"sql"`
+	SQL      string   `json:"sql,omitempty"`
+	Cypher   string   `json:"cypher,omitempty"`
 	Columns  []string `json:"columns"`
 	Rows     [][]any  `json:"rows"`
 	Count    int      `json:"count"`
@@ -189,6 +190,7 @@ func convertWorkflowResult(result *workflow.WorkflowResult) ChatResponse {
 		eqr := ExecutedQueryResponse{
 			Question: eq.GeneratedQuery.DataQuestion.Question,
 			SQL:      eq.Result.SQL,
+			Cypher:   eq.Result.Cypher,
 			Columns:  eq.Result.Columns,
 			Count:    eq.Result.Count,
 			Error:    eq.Result.Error,

@@ -208,7 +208,7 @@ func runTest_ShortestPath(t *testing.T, llmFactory LLMClientFactory) {
 
 	foundCypher := false
 	for _, eq := range result.ExecutedQueries {
-		query := eq.Result.SQL // This field holds either SQL or Cypher
+		query := eq.Result.QueryText()
 		t.Logf("Executed query: %s", query)
 
 		// Check for SQL patterns that indicate wrong routing
@@ -342,7 +342,7 @@ func runTest_MetroToMetroShortestPath(t *testing.T, llmFactory LLMClientFactory)
 	foundOrderBy := false
 	foundLimit := false
 	for _, eq := range result.ExecutedQueries {
-		query := eq.Result.SQL // This field holds either SQL or Cypher
+		query := eq.Result.QueryText()
 		queryUpper := strings.ToUpper(query)
 		queryLower := strings.ToLower(query)
 

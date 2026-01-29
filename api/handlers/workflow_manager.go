@@ -268,12 +268,13 @@ func buildSessionMessages(
 			workflowData.ExecutedQueries = append(workflowData.ExecutedQueries, ExecutedQueryResponse{
 				Question: eq.GeneratedQuery.DataQuestion.Question,
 				SQL:      eq.Result.SQL,
+				Cypher:   eq.Result.Cypher,
 				Columns:  eq.Result.Columns,
 				Rows:     convertRowsToArray(eq.Result),
 				Count:    eq.Result.Count,
 				Error:    eq.Result.Error,
 			})
-			sqlQueries = append(sqlQueries, eq.Result.SQL)
+			sqlQueries = append(sqlQueries, eq.Result.QueryText())
 		}
 
 		assistantMsg.WorkflowData = workflowData
@@ -1206,11 +1207,10 @@ func ensureSessionExists(ctx context.Context, sessionID uuid.UUID) error {
 // During progress tracking, we only have row counts. At completion, we can add full data.
 func buildFinalSteps(steps []WorkflowStep, result *workflow.WorkflowResult) []WorkflowStep {
 	// Build a map of executed queries by query text for quick lookup
-	// Both SQL and Cypher queries use Result.SQL to store the query text
 	queryByText := make(map[string]*workflow.ExecutedQuery)
 	for i := range result.ExecutedQueries {
 		eq := &result.ExecutedQueries[i]
-		queryByText[eq.Result.SQL] = eq
+		queryByText[eq.Result.QueryText()] = eq
 	}
 
 	// Enrich query steps with full row data

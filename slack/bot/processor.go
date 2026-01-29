@@ -248,10 +248,16 @@ func formatCompletionSummary(dataQuestions []workflow.DataQuestion, executedQuer
 		}
 		n++
 		if webBaseURL != "" && n-1 < len(executedQueries) {
-			sql := executedQueries[n-1].GeneratedQuery.SQL
-			if sql != "" {
+			eq := executedQueries[n-1]
+			queryType := "sql"
+			queryText := eq.GeneratedQuery.SQL
+			if eq.GeneratedQuery.IsCypher() {
+				queryType = "cypher"
+				queryText = eq.GeneratedQuery.Cypher
+			}
+			if queryText != "" {
 				sessionID := uuid.New().String()
-				url := fmt.Sprintf("%s/query/%s?sql=%s", webBaseURL, sessionID, neturl.QueryEscape(sql))
+				url := fmt.Sprintf("%s/query/%s?%s=%s", webBaseURL, sessionID, queryType, neturl.QueryEscape(queryText))
 				sb.WriteString(fmt.Sprintf("<%s|Q%d>. %s\n", url, n, q.Question))
 				continue
 			}
@@ -462,10 +468,10 @@ func (p *Processor) ProcessMessage(
 		MessagesPostedTotal.WithLabelValues("success", "api").Inc()
 		p.log.Info("reply posted successfully", "channel", ev.Channel, "thread_ts", threadKey, "reply_ts", respTS)
 
-		// Extract SQL queries from executed queries
+		// Extract queries from executed queries
 		var executedSQL []string
 		for _, eq := range result.ExecutedQueries {
-			executedSQL = append(executedSQL, eq.GeneratedQuery.SQL)
+			executedSQL = append(executedSQL, eq.GeneratedQuery.QueryText())
 		}
 
 		// Update conversation history with the new exchange

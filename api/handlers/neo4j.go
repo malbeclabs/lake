@@ -54,7 +54,7 @@ func (q *Neo4jQuerier) Query(ctx context.Context, cypher string) (workflow.Query
 		}
 
 		return workflow.QueryResult{
-			SQL:       cypher,
+			Cypher:    cypher,
 			Columns:   columns,
 			Rows:      rows,
 			Count:     len(rows),
@@ -64,8 +64,8 @@ func (q *Neo4jQuerier) Query(ctx context.Context, cypher string) (workflow.Query
 
 	if err != nil {
 		return workflow.QueryResult{
-			SQL:   cypher,
-			Error: err.Error(),
+			Cypher: cypher,
+			Error:  err.Error(),
 		}, nil
 	}
 

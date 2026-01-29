@@ -659,11 +659,11 @@ func (p *Workflow) executeCypher(ctx context.Context, params map[string]any, sta
 						DataQuestion: workflow.DataQuestion{
 							Question: query.Question,
 						},
-						SQL: cypher, // Store Cypher in SQL field for compatibility
+						Cypher: cypher,
 					},
 					Result: workflow.QueryResult{
-						SQL:   cypher,
-						Error: err.Error(),
+						Cypher: cypher,
+						Error:  err.Error(),
 					},
 				}
 				// Emit Cypher complete with error
@@ -683,7 +683,7 @@ func (p *Workflow) executeCypher(ctx context.Context, params map[string]any, sta
 					DataQuestion: workflow.DataQuestion{
 						Question: query.Question,
 					},
-					SQL: cypher,
+					Cypher: cypher,
 				},
 				Result: queryResult,
 			}
@@ -1163,13 +1163,23 @@ func (p *Workflow) ResumeFromCheckpoint(
 	// Note: Legacy checkpoints only have SQL queries, so we emit StageSQLComplete
 	if onProgress != nil {
 		for _, eq := range checkpoint.ExecutedQueries {
-			onProgress(workflow.Progress{
-				Stage:       workflow.StageSQLComplete,
-				SQLQuestion: eq.GeneratedQuery.DataQuestion.Question,
-				SQL:         eq.Result.SQL,
-				SQLRows:     eq.Result.Count,
-				SQLError:    eq.Result.Error,
-			})
+			if eq.GeneratedQuery.IsCypher() {
+				onProgress(workflow.Progress{
+					Stage:          workflow.StageCypherComplete,
+					CypherQuestion: eq.GeneratedQuery.DataQuestion.Question,
+					Cypher:         eq.GeneratedQuery.Cypher,
+					CypherRows:     eq.Result.Count,
+					CypherError:    eq.Result.Error,
+				})
+			} else {
+				onProgress(workflow.Progress{
+					Stage:       workflow.StageSQLComplete,
+					SQLQuestion: eq.GeneratedQuery.DataQuestion.Question,
+					SQL:         eq.Result.SQL,
+					SQLRows:     eq.Result.Count,
+					SQLError:    eq.Result.Error,
+				})
+			}
 		}
 	}
 
