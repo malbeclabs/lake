@@ -3432,6 +3432,8 @@ export interface SeriesInfo {
 export interface TrafficDataResponse {
   points: TrafficPoint[]
   series: SeriesInfo[]
+  effective_bucket: string
+  truncated: boolean
 }
 
 export async function fetchTrafficData(

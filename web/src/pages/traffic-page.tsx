@@ -60,10 +60,9 @@ const timeRangeLabels: Record<TimeRange, string> = {
   '7d': 'Last 7 Days',
 }
 
-type BucketSize = 'none' | '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
+type BucketSize = '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
 
 const bucketLabels: Record<BucketSize, string> = {
-  'none': 'None (raw data)',
   '2 SECOND': '2 seconds',
   '30 SECOND': '30 seconds',
   '1 MINUTE': '1 minute',
@@ -165,15 +164,24 @@ function TimeRangeSelector({
 function BucketSelector({
   bucketValue,
   aggValue,
+  effectiveBucket,
   onBucketChange,
   onAggChange,
 }: {
   bucketValue: BucketSize
   aggValue: AggMethod
+  effectiveBucket?: string
   onBucketChange: (value: BucketSize) => void
   onAggChange: (value: AggMethod) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
+
+  // Show effective bucket if the API adjusted it
+  const wasAdjusted = effectiveBucket && effectiveBucket !== bucketValue &&
+    !(bucketValue === 'auto' && effectiveBucket)
+  const displayBucket = wasAdjusted
+    ? `${bucketLabels[bucketValue]} → ${bucketLabels[effectiveBucket as BucketSize] || effectiveBucket}`
+    : bucketLabels[bucketValue]
 
   return (
     <div className="relative inline-block">
@@ -181,7 +189,7 @@ function BucketSelector({
         onClick={() => setIsOpen(!isOpen)}
         className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
       >
-        Coalesce: {bucketLabels[bucketValue]} ({aggLabels[aggValue]})
+        Coalesce: {displayBucket} ({aggLabels[aggValue]})
         <ChevronDown className="h-4 w-4" />
       </button>
       {isOpen && (
@@ -191,7 +199,7 @@ function BucketSelector({
             <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground border-b border-border">
               Bucket Size
             </div>
-            {(['none', '2 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', 'auto'] as BucketSize[]).map((bucket) => (
+            {(['2 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', 'auto'] as BucketSize[]).map((bucket) => (
               <button
                 key={bucket}
                 onClick={() => {
@@ -706,6 +714,7 @@ export function TrafficPage() {
             <BucketSelector
               bucketValue={bucketSize}
               aggValue={aggMethod}
+              effectiveBucket={tunnelData?.effective_bucket || nonTunnelData?.effective_bucket}
               onBucketChange={handleBucketSizeChange}
               onAggChange={handleAggMethodChange}
             />
@@ -720,6 +729,13 @@ export function TrafficPage() {
             </button>
           </div>
         </div>
+
+        {/* Truncation warning */}
+        {(tunnelData?.truncated || nonTunnelData?.truncated) && (
+          <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-200">
+            Results were truncated due to data volume. Try a larger bucket size or shorter time range to see all data.
+          </div>
+        )}
 
         {/* Charts */}
         <div className={gridClass}>
