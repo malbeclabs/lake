@@ -83,11 +83,8 @@ export function Sidebar() {
     const userPref = localStorage.getItem('sidebar-user-collapsed')
     if (userPref !== null) return userPref === 'true'
 
-    // Default to collapsed on small screens
-    if (typeof window !== 'undefined' && window.innerWidth < 1024) return true
-
-    // Route-based defaults: landing, status, outages, and entity pages default to collapsed
-    return path === '/' || path === '/topology' || path === '/status' || path === '/outages' || path.startsWith('/dz/') || path.startsWith('/solana/')
+    // Default to collapsed on small screens, expanded on desktop
+    return typeof window !== 'undefined' && window.innerWidth < 1024
   })
   const [userCollapsed, setUserCollapsed] = useState<boolean | null>(() => {
     const saved = localStorage.getItem('sidebar-user-collapsed')
@@ -107,8 +104,7 @@ export function Sidebar() {
     if (isSmall) {
       setIsCollapsed(true)
     } else {
-      // Landing page, status page, and entity pages default to collapsed
-      setIsCollapsed(isLandingPage || isStatusPage || isOutagesPage || isDZRoute || isSolanaRoute)
+      setIsCollapsed(false)
     }
   }, [isLandingPage, isStatusPage, isOutagesPage, isDZRoute, isSolanaRoute, userCollapsed])
 
@@ -120,8 +116,8 @@ export function Sidebar() {
         // Always collapse on small screens
         setIsCollapsed(true)
       } else if (userCollapsed === null) {
-        // No user preference - use route-based default
-        setIsCollapsed(isLandingPage || isStatusPage || isOutagesPage || isDZRoute || isSolanaRoute)
+        // No user preference - default to expanded
+        setIsCollapsed(false)
       } else {
         // Respect user preference
         setIsCollapsed(userCollapsed)
