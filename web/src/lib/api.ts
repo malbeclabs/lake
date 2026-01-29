@@ -72,6 +72,7 @@ export interface AppConfig {
   googleClientId?: string
   sentryDsn?: string
   sentryEnvironment?: string
+  internalDomains?: string[]
 }
 
 // Cached config (fetched once at startup)

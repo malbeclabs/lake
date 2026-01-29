@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useLocation, Link, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useChatSessions, useDeleteChatSession, useRenameChatSession, useGenerateChatTitle } from '@/hooks/use-chat'
 import { useQuerySessions, useDeleteQuerySession, useRenameQuerySession, useGenerateQueryTitle } from '@/hooks/use-query-sessions'
+import { useAuth } from '@/contexts/AuthContext'
+import { fetchConfig } from '@/lib/api'
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -21,6 +24,7 @@ import {
   Building2,
   Landmark,
   Radio,
+  TrendingUp,
   Home,
   Clock,
   Search,
@@ -61,6 +65,22 @@ export function Sidebar() {
   const deleteChatSession = useDeleteChatSession()
   const renameChatSession = useRenameChatSession()
   const generateChatTitle = useGenerateChatTitle()
+
+  // Auth and config for internal user check
+  const { user, isAuthenticated } = useAuth()
+  const { data: config } = useQuery({
+    queryKey: ['app-config'],
+    queryFn: fetchConfig,
+    staleTime: Infinity,
+  })
+
+  // Check if user is internal (email domain in allowlist)
+  const isInternalUser = useMemo(() => {
+    if (!isAuthenticated || !user?.email_domain || !config?.internalDomains) {
+      return false
+    }
+    return config.internalDomains.includes(user.email_domain)
+  }, [isAuthenticated, user?.email_domain, config?.internalDomains])
 
   // Extract current session IDs from URL
   const queryMatch = location.pathname.match(/^\/query\/([^/]+)/)
@@ -173,6 +193,7 @@ export function Sidebar() {
   const isUsersRoute = location.pathname === '/dz/users'
   const isValidatorsRoute = location.pathname === '/solana/validators'
   const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
+  const isMomentumRoute = location.pathname === '/solana/momentum'
 
   // Sort sessions by updatedAt, most recent first, filter out empty sessions, and limit to 10
   // Use id as tiebreaker for stable ordering when timestamps are equal
@@ -456,7 +477,7 @@ export function Sidebar() {
               to="/solana/validators"
               className={cn(
                 'p-2 rounded transition-colors',
-                isSolanaRoute
+                isSolanaRoute && !isMomentumRoute
                   ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
                   : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
@@ -464,6 +485,22 @@ export function Sidebar() {
             >
               <Landmark className="h-4 w-4" />
             </Link>
+
+            {/* Internal Tools nav item - only for internal users */}
+            {isInternalUser && (
+              <Link
+                to="/solana/momentum"
+                className={cn(
+                  'p-2 rounded transition-colors',
+                  isMomentumRoute
+                    ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                )}
+                title="Momentum (Internal)"
+              >
+                <TrendingUp className="h-4 w-4" />
+              </Link>
+            )}
           </>
         )}
         </div>
@@ -761,6 +798,29 @@ export function Sidebar() {
             >
               <Radio className="h-4 w-4" />
               Gossip Nodes
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Internal Tools section - only shown for internal users */}
+      {isInternalUser && !isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && (
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Internal Tools</span>
+          </div>
+          <div className="space-y-1">
+            <Link
+              to="/solana/momentum"
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                isMomentumRoute
+                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+            >
+              <TrendingUp className="h-4 w-4" />
+              Momentum
             </Link>
           </div>
         </div>
