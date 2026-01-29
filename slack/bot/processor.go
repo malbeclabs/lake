@@ -182,7 +182,7 @@ func formatThinkingMessage(progress workflow.Progress) string {
 		}
 
 	case workflow.StageExecuting:
-		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Working (%d steps done)..._\n", progress.QueriesDone))
+		sb.WriteString("_:hourglass_flowing_sand: Working..._\n")
 		writeStepsList(&sb, progress)
 
 	case workflow.StageSynthesizing:
@@ -235,48 +235,32 @@ func writeStepsList(sb *strings.Builder, progress workflow.Progress) {
 	}
 }
 
-// linkClaimReferences rewrites Q1, Q2, etc. in the answer text as Slack links
-// to the web query editor, using the corresponding executed query's SQL.
-func linkClaimReferences(text string, webBaseURL string, executedQueries []workflow.ExecutedQuery) string {
-	if webBaseURL == "" || len(executedQueries) == 0 {
-		return text
-	}
-	// Build a map from Q number to SQL, skipping doc reads
-	queryIndex := 0
-	sqlByQ := make(map[int]string)
-	for _, eq := range executedQueries {
-		queryIndex++
-		sqlByQ[queryIndex] = eq.GeneratedQuery.SQL
+// formatCompletionSummary builds the "Answered by querying" completion message
+// with Q labels linked to the web query editor when webBaseURL is set.
+func formatCompletionSummary(dataQuestions []workflow.DataQuestion, executedQueries []workflow.ExecutedQuery, webBaseURL string) string {
+	var sb strings.Builder
+	sb.WriteString("_:mag: Answered by querying:_\n")
+
+	n := 0
+	for _, q := range dataQuestions {
+		if q.Rationale == "doc_read" {
+			continue
+		}
+		n++
+		if webBaseURL != "" && n-1 < len(executedQueries) {
+			sql := executedQueries[n-1].GeneratedQuery.SQL
+			if sql != "" {
+				sessionID := uuid.New().String()
+				url := fmt.Sprintf("%s/query/%s?sql=%s", webBaseURL, sessionID, neturl.QueryEscape(sql))
+				sb.WriteString(fmt.Sprintf("<%s|Q%d>", url, n))
+				sb.WriteString(fmt.Sprintf(". _%s_\n", q.Question))
+				continue
+			}
+		}
+		sb.WriteString(fmt.Sprintf("_Q%d. %s_\n", n, q.Question))
 	}
 
-	// Replace Q1, Q2, etc. with Slack links, but skip code blocks
-	claimRefRegex := regexp.MustCompile(`\bQ(\d+)\b`)
-	replaceRef := func(match string) string {
-		sub := claimRefRegex.FindStringSubmatch(match)
-		if len(sub) < 2 {
-			return match
-		}
-		n := 0
-		for _, c := range sub[1] {
-			n = n*10 + int(c-'0')
-		}
-		sql, ok := sqlByQ[n]
-		if !ok || sql == "" {
-			return match
-		}
-		sessionID := uuid.New().String()
-		url := fmt.Sprintf("%s/query/%s?sql=%s", webBaseURL, sessionID, neturl.QueryEscape(sql))
-		return fmt.Sprintf("<%s|%s>", url, match)
-	}
-
-	// Split on code fences to avoid replacing inside code blocks
-	parts := strings.Split(text, "```")
-	for i := range parts {
-		if i%2 == 0 { // outside code blocks
-			parts[i] = claimRefRegex.ReplaceAllStringFunc(parts[i], replaceRef)
-		}
-	}
-	return strings.Join(parts, "```")
+	return sb.String()
 }
 
 // ProcessMessage processes a single Slack message
@@ -443,7 +427,6 @@ func (p *Processor) ProcessMessage(
 		reply = "I didn't get a response. Please try again."
 	}
 	reply = normalizeTwoWayArrow(reply)
-	reply = linkClaimReferences(reply, p.webBaseURL, result.ExecutedQueries)
 
 	p.log.Debug("API response",
 		"reply", reply,
@@ -452,13 +435,7 @@ func (p *Processor) ProcessMessage(
 
 	// For data analysis, update thinking message with summary and session link
 	if result.Classification == workflow.ClassificationDataAnalysis && len(result.DataQuestions) > 0 && thinkingTS != "" {
-		summaryText := formatThinkingMessage(workflow.Progress{
-			Stage:          workflow.StageComplete,
-			Classification: result.Classification,
-			DataQuestions:  result.DataQuestions,
-			QueriesTotal:   len(result.DataQuestions),
-			QueriesDone:    len(result.DataQuestions),
-		})
+		summaryText := formatCompletionSummary(result.DataQuestions, result.ExecutedQueries, p.webBaseURL)
 		if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, summaryText, nil); err != nil {
 			p.log.Debug("failed to update thinking message with summary", "error", err)
 		}
