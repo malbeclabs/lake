@@ -267,7 +267,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufio.NewWriterSize(w, 32*1024)
 
-	bw.WriteString(`{"points":[`)
+	_, _ = bw.WriteString(`{"points":[`)
 
 	pointCount := 0
 	var scanErr error
@@ -280,7 +280,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if pointCount > 0 {
-			bw.WriteByte(',')
+			_ = bw.WriteByte(',')
 		}
 		pointJSON, err := json.Marshal(point)
 		if err != nil {
@@ -288,7 +288,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			scanErr = err
 			break
 		}
-		bw.Write(pointJSON)
+		_, _ = bw.Write(pointJSON)
 		pointCount++
 	}
 
@@ -299,11 +299,10 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write series, metadata, and close
-	bw.WriteString(`],"series":`)
+	_, _ = bw.WriteString(`],"series":`)
 	seriesJSON, _ := json.Marshal(series)
-	bw.Write(seriesJSON)
-	fmt.Fprintf(bw, `,"effective_bucket":%q,"truncated":%t}`, bucket, pointCount >= maxTrafficRows)
-	bw.WriteString("\n")
-	bw.Flush()
+	_, _ = bw.Write(seriesJSON)
+	_, _ = fmt.Fprintf(bw, `,"effective_bucket":%q,"truncated":%t}`, bucket, pointCount >= maxTrafficRows)
+	_, _ = bw.WriteString("\n")
+	_ = bw.Flush()
 }
-
