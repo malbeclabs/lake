@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'January 29, 2026',
+    changes: [
+      { type: 'feature', description: 'Copy button on chat responses with rich text support for Slack and Notion' },
+    ],
+  },
+  {
     date: 'January 28, 2026',
     changes: [
       { type: 'feature', description: 'Health graphs on device and link status pages' },
