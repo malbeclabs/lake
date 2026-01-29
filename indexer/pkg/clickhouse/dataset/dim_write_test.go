@@ -236,13 +236,14 @@ func TestLake_Clickhouse_Dataset_DimensionType2_LoadSnapshotIntoStaging(t *testi
 		opID := uuid.New()
 		ds, err := NewDimensionType2Dataset(log, &testSchemaMultiplePK{})
 		require.NoError(t, err)
+		cleanupStaging := false
 		err = ds.WriteBatch(ctx, conn, 1, func(i int) ([]any, error) {
 			return []any{"pk1_value", "pk2_value", "CODE1"}, nil
 		}, &DimensionType2DatasetWriteConfig{
-			OpID: opID,
+			OpID:           opID,
+			CleanupStaging: &cleanupStaging,
 		})
 		require.NoError(t, err)
-		// WriteBatch may fail during delta computation, but loadSnapshotIntoStaging should have succeeded
 
 		// Verify entity_id is generated from both PK columns in staging table
 		expectedEntityID := string(NewNaturalKey("pk1_value", "pk2_value").ToSurrogate())
@@ -254,7 +255,8 @@ func TestLake_Clickhouse_Dataset_DimensionType2_LoadSnapshotIntoStaging(t *testi
 			LIMIT 1
 		`, ds.StagingTableName())
 
-		rows, err := conn.Query(ctx, query, opID)
+		syncCtx := clickhouse.ContextWithSyncInsert(ctx)
+		rows, err := conn.Query(syncCtx, query, opID)
 		require.NoError(t, err, "should be able to query staging table")
 		defer rows.Close()
 
