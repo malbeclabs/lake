@@ -23,6 +23,10 @@ Go to **OAuth & Permissions** → **Bot Token Scopes** and add:
 | `reactions:write` | Add emoji reactions to messages |
 | `users:read` | Look up user info |
 
+## Configure App Home
+
+Go to **App Home** and enable **Allow users to send Slash commands and messages from the messages tab**. Without this, users will see "Sending messages to this app has been turned off" when they open a DM with the bot.
+
 ## Configure Event Subscriptions
 
 Go to **Event Subscriptions** → toggle **Enable Events** on.
