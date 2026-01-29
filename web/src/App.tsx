@@ -44,6 +44,7 @@ import { ContributorsPage } from '@/components/contributors-page'
 import { UsersPage } from '@/components/users-page'
 import { ValidatorsPage } from '@/components/validators-page'
 import { GossipNodesPage } from '@/components/gossip-nodes-page'
+import { MomentumPage } from '@/components/momentum-page'
 import { DeviceDetailPage } from '@/components/device-detail-page'
 import { LinkDetailPage } from '@/components/link-detail-page'
 import { MetroDetailPage } from '@/components/metro-detail-page'
@@ -654,6 +655,7 @@ function AppContent() {
             <Route path="/solana/validators/:vote_pubkey" element={<ValidatorDetailPage />} />
             <Route path="/solana/gossip-nodes" element={<GossipNodesPage />} />
             <Route path="/solana/gossip-nodes/:pubkey" element={<GossipNodeDetailPage />} />
+            <Route path="/solana/momentum" element={<MomentumPage />} />
 
             {/* Default redirect */}
             <Route path="*" element={<Navigate to="/" replace />} />
