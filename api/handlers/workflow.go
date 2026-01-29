@@ -541,10 +541,18 @@ func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 			for _, eq := range executedQueries {
 				stepID := uuid.New().String()
 				// Legacy queries are SQL queries
-				sendEvent("sql_done", map[string]any{
+				eventType := "sql_done"
+				queryField := "sql"
+				queryText := eq.Result.SQL
+				if eq.Result.Cypher != "" {
+					eventType = "cypher_done"
+					queryField = "cypher"
+					queryText = eq.Result.Cypher
+				}
+				sendEvent(eventType, map[string]any{
 					"id":       stepID,
 					"question": eq.GeneratedQuery.DataQuestion.Question,
-					"sql":      eq.Result.SQL,
+					queryField: queryText,
 					"rows":     eq.Result.Count,
 					"error":    eq.Result.Error,
 				})
@@ -576,6 +584,7 @@ func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 			response.ExecutedQueries = append(response.ExecutedQueries, ExecutedQueryResponse{
 				Question: eq.GeneratedQuery.DataQuestion.Question,
 				SQL:      eq.Result.SQL,
+				Cypher:   eq.Result.Cypher,
 				Columns:  eq.Result.Columns,
 				Rows:     convertRowsToArray(eq.Result),
 				Count:    eq.Result.Count,
@@ -615,6 +624,7 @@ func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 					response.ExecutedQueries = append(response.ExecutedQueries, ExecutedQueryResponse{
 						Question: eq.GeneratedQuery.DataQuestion.Question,
 						SQL:      eq.Result.SQL,
+						Cypher:   eq.Result.Cypher,
 						Columns:  eq.Result.Columns,
 						Rows:     convertRowsToArray(eq.Result),
 						Count:    eq.Result.Count,

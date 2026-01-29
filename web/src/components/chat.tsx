@@ -221,6 +221,36 @@ function CodeBlock({ language, children, isDark }: { language: string; children:
   )
 }
 
+function CopyResponseButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    const { marked } = await import('marked')
+    const html = await marked(content, { gfm: true })
+    const blob = new Blob([html], { type: 'text/html' })
+    const textBlob = new Blob([content], { type: 'text/plain' })
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'text/html': blob, 'text/plain': textBlob }),
+    ])
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="mt-2 p-1.5 rounded border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:bg-accent-orange-20 transition-colors"
+      title="Copy response"
+    >
+      {copied ? (
+        <Check className="h-4 w-4 text-accent" />
+      ) : (
+        <Copy className="h-4 w-4" />
+      )}
+    </button>
+  )
+}
+
 // Processing timeline component - shows thinking and query steps
 interface ProcessingTimelineProps {
   steps: ProcessingStep[]
@@ -963,6 +993,9 @@ export function Chat({ messages, isPending, processingSteps, onSendMessage, onAb
                           {msg.content}
                         </ReactMarkdown>
                       </div>
+                      {msg.status === 'complete' && (
+                        <CopyResponseButton content={msg.content} />
+                      )}
                       {/* Follow-up suggestions */}
                       {msg.workflowData?.followUpQuestions && msg.workflowData.followUpQuestions.length > 0 && (
                         <div className="mt-4 flex flex-wrap gap-2">

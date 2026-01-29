@@ -134,11 +134,26 @@ func getAllowedDomains() []string {
 	return strings.Split(domains, ",")
 }
 
-// isDomainAllowed checks if an email domain is in the allowed list
-func isDomainAllowed(domain string) bool {
-	allowed := getAllowedDomains()
-	for _, d := range allowed {
+// getAllowedEmails returns the list of individually allowed email addresses
+func getAllowedEmails() []string {
+	emails := os.Getenv("AUTH_ALLOWED_EMAILS")
+	if emails == "" {
+		return nil
+	}
+	return strings.Split(emails, ",")
+}
+
+// isEmailAllowed checks if an email is allowed by domain or individual allowlist
+func isEmailAllowed(email, domain string) bool {
+	// Check domain allowlist
+	for _, d := range getAllowedDomains() {
 		if strings.EqualFold(strings.TrimSpace(d), domain) {
+			return true
+		}
+	}
+	// Check individual email allowlist
+	for _, e := range getAllowedEmails() {
+		if strings.EqualFold(strings.TrimSpace(e), email) {
 			return true
 		}
 	}
@@ -533,11 +548,11 @@ func PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if email domain is allowed
+	// Check if email is allowed (by domain or individual email)
 	emailDomain := extractEmailDomain(claims.Email)
-	if !isDomainAllowed(emailDomain) {
-		slog.Warn("Email domain not allowed", "email", claims.Email, "domain", emailDomain)
-		http.Error(w, "Email domain not authorized", http.StatusForbidden)
+	if !isEmailAllowed(claims.Email, emailDomain) {
+		slog.Warn("Email not allowed", "email", claims.Email, "domain", emailDomain)
+		http.Error(w, "Email not authorized", http.StatusForbidden)
 		return
 	}
 

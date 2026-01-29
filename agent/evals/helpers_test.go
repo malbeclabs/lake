@@ -386,7 +386,7 @@ func NewNeo4jQuerier(client neo4j.Client) *Neo4jQuerier {
 func (q *Neo4jQuerier) Query(ctx context.Context, cypher string) (workflow.QueryResult, error) {
 	session, err := q.client.Session(ctx)
 	if err != nil {
-		return workflow.QueryResult{SQL: cypher, Error: fmt.Sprintf("session error: %v", err)}, nil
+		return workflow.QueryResult{Cypher: cypher, Error: fmt.Sprintf("session error: %v", err)}, nil
 	}
 	defer session.Close(ctx)
 
@@ -419,7 +419,7 @@ func (q *Neo4jQuerier) Query(ctx context.Context, cypher string) (workflow.Query
 		}
 
 		return workflow.QueryResult{
-			SQL:     cypher,
+			Cypher:  cypher,
 			Columns: columns,
 			Rows:    rows,
 			Count:   len(rows),
@@ -427,7 +427,7 @@ func (q *Neo4jQuerier) Query(ctx context.Context, cypher string) (workflow.Query
 	})
 
 	if err != nil {
-		return workflow.QueryResult{SQL: cypher, Error: err.Error()}, nil
+		return workflow.QueryResult{Cypher: cypher, Error: err.Error()}, nil
 	}
 
 	qr := result.(workflow.QueryResult)

@@ -76,3 +76,19 @@ Output goes to `eval-runs/<timestamp>/` with:
 - Do NOT include "Co-Authored-By" lines in commit messages
 - Use the format `component: short description` (e.g., `indexer: fix flaky staging test`, `telemetry: use CLICKHOUSE_PASS env var`)
 - Keep the description lowercase (except proper nouns) and concise
+
+## Pull Requests
+
+- Use the `/pr-text` skill to generate PR descriptions
+- PR title format: `component: short description` (same as commit messages)
+- Do NOT include "Generated with Claude Code" or similar attribution lines
+- PR body structure:
+  - `## Summary of Changes` — bullet points describing the net result of the branch vs main
+  - `## Testing Verification` — how changes were tested
+- Focus on the final diff, not individual commits or intermediate work
+- Describe the "what" and "why", not the "how"
+- Keep bullet points concise — write like changelog entries, not a design doc
+- No bold text, no implementation details, no architecture explanations
+- Order bullets by most important/significant first
+- Group related changes together
+- Mention any breaking changes or migration steps if applicable

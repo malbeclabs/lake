@@ -137,6 +137,33 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+      - name: Restart PR preview deployment
+        if: github.event_name == 'pull_request'
+        run: |
+          APP="lake-pr-${{ github.event.pull_request.number }}"
+          ARGOCD="https://argocd.malbeclabs.com"
+          AUTH="Authorization: Bearer ${{ secrets.ARGOCD_PR_DEPLOYER_TOKEN }}"
+
+          # Trigger rollout restart
+          curl -sf -X POST \
+            "$ARGOCD/api/v1/applications/$APP/resource/actions?namespace=$APP&resourceName=lake-api&group=apps&version=v1&kind=Deployment" \
+            -H "$AUTH" \
+            -H "Content-Type: application/json" \
+            -d '"restart"'
+
+          # Wait for healthy status
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sf "$ARGOCD/api/v1/applications/$APP" -H "$AUTH" | jq -r '.status.health.status')
+            echo "Attempt $i: status=$STATUS"
+            if [ "$STATUS" = "Healthy" ] && [ "$i" -gt 5 ]; then
+              echo "Deployment is healthy"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for healthy status"
+          exit 1
+
       - name: Comment preview URL
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2

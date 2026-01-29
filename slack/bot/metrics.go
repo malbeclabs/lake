@@ -1,4 +1,4 @@
-package slack
+package bot
 
 import (
 	"github.com/prometheus/client_golang/prometheus"

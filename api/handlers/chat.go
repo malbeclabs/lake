@@ -50,7 +50,8 @@ type GeneratedQueryResponse struct {
 // ExecutedQueryResponse represents an executed query with results.
 type ExecutedQueryResponse struct {
 	Question string   `json:"question"`
-	SQL      string   `json:"sql"`
+	SQL      string   `json:"sql,omitempty"`
+	Cypher   string   `json:"cypher,omitempty"`
 	Columns  []string `json:"columns"`
 	Rows     [][]any  `json:"rows"`
 	Count    int      `json:"count"`
@@ -94,8 +95,9 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		slog.Error("ANTHROPIC_API_KEY is not set")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ChatResponse{Error: "Chat requires ANTHROPIC_API_KEY to be set"})
+		_ = json.NewEncoder(w).Encode(ChatResponse{Error: "AI service is not configured. Please contact the administrator."})
 		return
 	}
 
@@ -189,6 +191,7 @@ func convertWorkflowResult(result *workflow.WorkflowResult) ChatResponse {
 		eqr := ExecutedQueryResponse{
 			Question: eq.GeneratedQuery.DataQuestion.Question,
 			SQL:      eq.Result.SQL,
+			Cypher:   eq.Result.Cypher,
 			Columns:  eq.Result.Columns,
 			Count:    eq.Result.Count,
 			Error:    eq.Result.Error,
@@ -368,7 +371,8 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		sendEvent("error", map[string]string{"error": "Chat requires ANTHROPIC_API_KEY to be set"})
+		slog.Error("ANTHROPIC_API_KEY is not set")
+		sendEvent("error", map[string]string{"error": "AI service is not configured. Please contact the administrator."})
 		return
 	}
 
@@ -493,8 +497,9 @@ func Complete(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		slog.Error("ANTHROPIC_API_KEY is not set")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(CompleteResponse{Error: "Completion requires ANTHROPIC_API_KEY to be set"})
+		_ = json.NewEncoder(w).Encode(CompleteResponse{Error: "AI service is not configured. Please contact the administrator."})
 		return
 	}
 

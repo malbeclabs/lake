@@ -26,11 +26,6 @@ ENV GO_LDFLAGS="-X main.version=${BUILD_VERSION} -X main.commit=${BUILD_COMMIT} 
 ENV BIN_DIR=/lake/bin
 RUN mkdir -p ${BIN_DIR}
 
-# Build the slack bot (golang)
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 go build -ldflags "${GO_LDFLAGS}" -o ${BIN_DIR}/lake-slack-bot ./slack/cmd/slack-bot/main.go
-
 # Build lake-indexer (golang)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

@@ -40,6 +40,8 @@ function formatBandwidth(bps: number): string {
 function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: TrafficChartProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
+  const linkLookupRef = useRef(linkLookup)
+  const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
   const [searchText, setSearchText] = useState('')
@@ -131,6 +133,15 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
     }
     return map
   }, [data, series])
+
+  // Keep refs in sync for tooltip hook closure
+  useEffect(() => {
+    linkLookupRef.current = linkLookup
+  }, [linkLookup])
+
+  useEffect(() => {
+    seriesMetadataRef.current = seriesMetadata
+  }, [seriesMetadata])
 
   // Transform data for uPlot
   const { uplotData, uplotSeries } = useMemo(() => {
@@ -364,11 +375,11 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
                 })
 
                 // Get series metadata
-                const metadata = seriesMetadata.get(seriesLabel)
+                const metadata = seriesMetadataRef.current.get(seriesLabel)
                 let linkInfo: LinkLookupInfo | undefined
-                if (metadata && linkLookup) {
+                if (metadata && linkLookupRef.current) {
                   const lookupKey = `${metadata.devicePk}:${metadata.intf}`
-                  linkInfo = linkLookup.get(lookupKey)
+                  linkInfo = linkLookupRef.current.get(lookupKey)
                 }
 
                 const valueBps = value as number
@@ -427,7 +438,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
         plotRef.current = null
       }
     }
-  }, [uplotData, uplotSeries, linkLookup, seriesMetadata, stacked])
+  }, [uplotData, uplotSeries, stacked])
 
   // Separate effect for handling click to pin/unpin tooltip
   useEffect(() => {

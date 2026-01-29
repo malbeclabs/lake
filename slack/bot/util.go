@@ -1,4 +1,4 @@
-package slack
+package bot
 
 // TruncateString truncates a string to maxLen characters, adding "..." if truncated
 func TruncateString(s string, maxLen int) string {

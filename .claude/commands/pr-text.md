@@ -21,15 +21,4 @@ Then generate a PR title and description. Output as a markdown code block on its
 -
 ```
 
-PR Title guidelines:
-- Format: `<component>: <short description>` (e.g., "indexer: add ClickHouse analytics service", "telemetry: fix metrics collection")
-- Component should be the primary directory/module being changed
-- Keep the description short and lowercase (except proper nouns)
-
-Guidelines:
-- Summary should describe the net result: what does this branch add or change compared to main?
-- Ignore commit history - only describe what the final diff shows
-- Testing Verification should describe how the changes were tested (e.g., unit tests added/passing, manual testing performed, build verified)
-- Focus on the "what" and "why", not the "how"
-- Group related changes together
-- Mention any breaking changes or migration steps if applicable
+Follow the PR guidelines in CLAUDE.md for title format, body structure, and style.

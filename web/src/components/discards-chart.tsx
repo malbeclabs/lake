@@ -145,8 +145,14 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
     const timeMap = new Map<string, ChartDataPoint>()
 
     for (const point of data) {
-      const key = `${point.device}-${point.intf}`
-      if (!visibleSeries.has(key)) continue
+      const baseKey = `${point.device}-${point.intf}`
+      const inKey = `${baseKey} (In)`
+      const outKey = `${baseKey} (Out)`
+
+      // Check if either in or out series is visible
+      const inVisible = visibleSeries.has(inKey)
+      const outVisible = visibleSeries.has(outKey)
+      if (!inVisible && !outVisible) continue
 
       if (!timeMap.has(point.time)) {
         timeMap.set(point.time, {
@@ -155,8 +161,16 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
         })
       }
       const entry = timeMap.get(point.time)!
-      const totalDiscards = point.in_discards + point.out_discards
-      entry[key] = (entry[key] as number || 0) + totalDiscards
+
+      // Add in discards if visible
+      if (inVisible && point.in_discards > 0) {
+        entry[inKey] = (entry[inKey] as number || 0) + point.in_discards
+      }
+
+      // Add out discards if visible
+      if (outVisible && point.out_discards > 0) {
+        entry[outKey] = (entry[outKey] as number || 0) + point.out_discards
+      }
     }
 
     // Sort existing data by time

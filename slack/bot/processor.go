@@ -1,9 +1,10 @@
-package slack
+package bot
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	neturl "net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -21,10 +22,10 @@ const (
 // Processor processes Slack messages and generates responses
 type Processor struct {
 	slackClient *Client
-	apiClient   *APIClient
+	chatRunner  ChatRunner
 	convManager *Manager
-	webBaseURL  string
 	log         *slog.Logger
+	webBaseURL  string // Base URL for web UI (for query editor links)
 
 	// Track messages we've already responded to (by message timestamp) to prevent duplicate error messages
 	respondedMessages   map[string]time.Time
@@ -44,17 +45,17 @@ type threadLockEntry struct {
 // NewProcessor creates a new message processor
 func NewProcessor(
 	slackClient *Client,
-	apiClient *APIClient,
+	chatRunner ChatRunner,
 	convManager *Manager,
-	webBaseURL string,
 	log *slog.Logger,
+	webBaseURL string,
 ) *Processor {
 	return &Processor{
 		slackClient:       slackClient,
-		apiClient:         apiClient,
+		chatRunner:        chatRunner,
 		convManager:       convManager,
-		webBaseURL:        strings.TrimSuffix(webBaseURL, "/"),
 		log:               log,
+		webBaseURL:        webBaseURL,
 		respondedMessages: make(map[string]time.Time),
 		threadLocks:       make(map[string]*threadLockEntry),
 	}
@@ -157,13 +158,19 @@ func containsNonBotMention(text, botUserID string) bool {
 }
 
 // formatThinkingMessage formats the thinking message based on progress.
-// sessionURL is optional - when provided, it will be included as a link.
-func formatThinkingMessage(progress workflow.Progress, sessionURL string) string {
+func formatThinkingMessage(progress workflow.Progress) string {
 	var sb strings.Builder
 
 	switch progress.Stage {
 	case workflow.StageClassifying:
 		sb.WriteString("_:hourglass_flowing_sand: Understanding your question..._")
+
+	case workflow.StageThinking:
+		sb.WriteString("_:brain: Thinking..._")
+		if len(progress.DataQuestions) > 0 {
+			sb.WriteString("\n")
+			writeStepsList(&sb, progress)
+		}
 
 	case workflow.StageDecomposing:
 		sb.WriteString("_:hourglass_flowing_sand: Breaking down into queries..._")
@@ -175,26 +182,23 @@ func formatThinkingMessage(progress workflow.Progress, sessionURL string) string
 		}
 
 	case workflow.StageExecuting:
-		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Running queries (%d/%d)..._\n", progress.QueriesDone, progress.QueriesTotal))
-		for i, q := range progress.DataQuestions {
-			if i < progress.QueriesDone {
-				sb.WriteString(fmt.Sprintf("_• %s ✓_\n", q.Question))
-			} else if i == progress.QueriesDone {
-				sb.WriteString(fmt.Sprintf("_• %s :hourglass_flowing_sand:_\n", q.Question))
-			} else {
-				sb.WriteString(fmt.Sprintf("_• %s_\n", q.Question))
-			}
-		}
+		sb.WriteString("_:hourglass_flowing_sand: Working..._\n")
+		writeStepsList(&sb, progress)
 
 	case workflow.StageSynthesizing:
-		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Preparing answer (%d queries complete)..._", progress.QueriesTotal))
+		sb.WriteString(fmt.Sprintf("_:hourglass_flowing_sand: Preparing answer (%d steps complete)..._", progress.QueriesTotal))
 
 	case workflow.StageComplete:
 		// For data_analysis, show compact summary
 		if progress.Classification == workflow.ClassificationDataAnalysis && len(progress.DataQuestions) > 0 {
 			sb.WriteString("_:mag: Answered by querying:_\n")
+			n := 0
 			for _, q := range progress.DataQuestions {
-				sb.WriteString(fmt.Sprintf("_• %s_\n", q.Question))
+				if q.Rationale == "doc_read" {
+					continue
+				}
+				n++
+				sb.WriteString(fmt.Sprintf("_Q%d. %s_\n", n, q.Question))
 			}
 		}
 		// For conversational/out_of_scope, we don't show anything (just answer)
@@ -206,9 +210,59 @@ func formatThinkingMessage(progress workflow.Progress, sessionURL string) string
 		}
 	}
 
-	// Add web link to all stages (except error) if URL is provided
-	if sessionURL != "" && progress.Stage != workflow.StageError {
-		sb.WriteString(fmt.Sprintf("\n<%s|View on web>", sessionURL))
+	return sb.String()
+}
+
+// writeStepsList writes the ordered list of steps (queries and doc reads) with status indicators.
+// Queries are numbered Q1, Q2, etc. Doc reads use bullet points.
+func writeStepsList(sb *strings.Builder, progress workflow.Progress) {
+	qNum := 0
+	for i, q := range progress.DataQuestions {
+		isDocRead := q.Rationale == "doc_read"
+		prefix := "• "
+		if !isDocRead {
+			qNum++
+			prefix = fmt.Sprintf("Q%d. ", qNum)
+		}
+
+		if i < progress.QueriesDone {
+			sb.WriteString(fmt.Sprintf("_%s%s ✓_\n", prefix, q.Question))
+		} else if i == progress.QueriesDone {
+			sb.WriteString(fmt.Sprintf("_%s%s :hourglass_flowing_sand:_\n", prefix, q.Question))
+		} else {
+			sb.WriteString(fmt.Sprintf("_%s%s_\n", prefix, q.Question))
+		}
+	}
+}
+
+// formatCompletionSummary builds the "Answered by querying" completion message
+// with Q labels linked to the web query editor when webBaseURL is set.
+func formatCompletionSummary(dataQuestions []workflow.DataQuestion, executedQueries []workflow.ExecutedQuery, webBaseURL string) string {
+	var sb strings.Builder
+	sb.WriteString("_:mag: Answered by querying:_\n")
+
+	n := 0
+	for _, q := range dataQuestions {
+		if q.Rationale == "doc_read" {
+			continue
+		}
+		n++
+		if webBaseURL != "" && n-1 < len(executedQueries) {
+			eq := executedQueries[n-1]
+			queryType := "sql"
+			queryText := eq.GeneratedQuery.SQL
+			if eq.GeneratedQuery.IsCypher() {
+				queryType = "cypher"
+				queryText = eq.GeneratedQuery.Cypher
+			}
+			if queryText != "" {
+				sessionID := uuid.New().String()
+				url := fmt.Sprintf("%s/query/%s?%s=%s", webBaseURL, sessionID, queryType, neturl.QueryEscape(queryText))
+				sb.WriteString(fmt.Sprintf("<%s|Q%d>. %s\n", url, n, q.Question))
+				continue
+			}
+		}
+		sb.WriteString(fmt.Sprintf("Q%d. %s\n", n, q.Question))
 	}
 
 	return sb.String()
@@ -217,6 +271,7 @@ func formatThinkingMessage(progress workflow.Progress, sessionURL string) string
 // ProcessMessage processes a single Slack message
 func (p *Processor) ProcessMessage(
 	ctx context.Context,
+	client *Client,
 	ev *slackevents.MessageEvent,
 	messageKey string,
 	eventID string,
@@ -236,7 +291,7 @@ func (p *Processor) ProcessMessage(
 	)
 
 	// Skip processing if in a thread and message contains another user being mentioned
-	if ev.ThreadTimeStamp != "" && containsNonBotMention(ev.Text, p.slackClient.BotUserID()) {
+	if ev.ThreadTimeStamp != "" && containsNonBotMention(ev.Text, client.BotUserID()) {
 		p.log.Info("skipping message in thread that contains non-bot mention",
 			"channel", ev.Channel,
 			"user", ev.User,
@@ -265,7 +320,7 @@ func (p *Processor) ProcessMessage(
 
 	// Remove bot mention from text for cleaner processing
 	if isChannel {
-		txt = p.slackClient.RemoveBotMention(txt)
+		txt = client.RemoveBotMention(txt)
 	}
 
 	defer func() {
@@ -296,11 +351,11 @@ func (p *Processor) ProcessMessage(
 	fetcher := NewDefaultFetcher(p.log)
 	history, err := p.convManager.GetConversationHistory(
 		ctx,
-		p.slackClient.API(),
+		client.API(),
 		ev.Channel,
 		ev.TimeStamp,
 		ev.ThreadTimeStamp,
-		p.slackClient.BotUserID(),
+		client.BotUserID(),
 		fetcher,
 	)
 	if err != nil {
@@ -309,16 +364,12 @@ func (p *Processor) ProcessMessage(
 		history = []workflow.ConversationMessage{}
 	}
 
-	// Generate session ID upfront so we can show the web link immediately
+	// Generate session ID for workflow tracking
 	sessionID := uuid.New().String()
-	sessionURL := ""
-	if p.webBaseURL != "" {
-		sessionURL = fmt.Sprintf("%s/chat/%s", p.webBaseURL, sessionID)
-	}
 
-	// Post initial thinking message with web link
-	initialThinking := formatThinkingMessage(workflow.Progress{Stage: workflow.StageClassifying}, sessionURL)
-	thinkingTS, err := p.slackClient.PostMessage(ctx, ev.Channel, initialThinking, nil, threadTS)
+	// Post initial thinking message
+	initialThinking := formatThinkingMessage(workflow.Progress{Stage: workflow.StageClassifying})
+	thinkingTS, err := client.PostMessage(ctx, ev.Channel, initialThinking, nil, threadTS)
 	if err != nil {
 		p.log.Warn("failed to post thinking message", "error", err)
 		SlackAPIErrorsTotal.WithLabelValues("post_message").Inc()
@@ -347,17 +398,17 @@ func (p *Processor) ProcessMessage(
 			return
 		}
 
-		// Update thinking message with web link
+		// Update thinking message
 		if thinkingTS != "" {
-			thinkingText := formatThinkingMessage(progress, sessionURL)
-			if err := p.slackClient.UpdateMessage(ctx, ev.Channel, thinkingTS, thinkingText, nil); err != nil {
+			thinkingText := formatThinkingMessage(progress)
+			if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, thinkingText, nil); err != nil {
 				p.log.Debug("failed to update thinking message", "error", err)
 			}
 		}
 	}
 
 	// Run the API chat stream
-	result, err := p.apiClient.ChatStream(ctx, txt, history, sessionID, onProgress)
+	result, err := p.chatRunner.ChatStream(ctx, txt, history, sessionID, onProgress)
 	if err != nil {
 		AgentErrorsTotal.WithLabelValues("workflow", "api").Inc()
 		p.log.Error("API error", "error", err, "message_ts", ev.TimeStamp, "envelope_id", eventID)
@@ -367,7 +418,7 @@ func (p *Processor) ProcessMessage(
 		// Update thinking message to show error
 		if thinkingTS != "" {
 			errorText := fmt.Sprintf(":x: *Error*\n_%s_", SanitizeErrorMessage(err.Error()))
-			if err := p.slackClient.UpdateMessage(ctx, ev.Channel, thinkingTS, errorText, nil); err != nil {
+			if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, errorText, nil); err != nil {
 				p.log.Debug("failed to update thinking message with error", "error", err)
 			}
 		}
@@ -389,19 +440,13 @@ func (p *Processor) ProcessMessage(
 
 	// For data analysis, update thinking message with summary and session link
 	if result.Classification == workflow.ClassificationDataAnalysis && len(result.DataQuestions) > 0 && thinkingTS != "" {
-		summaryText := formatThinkingMessage(workflow.Progress{
-			Stage:          workflow.StageComplete,
-			Classification: result.Classification,
-			DataQuestions:  result.DataQuestions,
-			QueriesTotal:   len(result.DataQuestions),
-			QueriesDone:    len(result.DataQuestions),
-		}, sessionURL)
-		if err := p.slackClient.UpdateMessage(ctx, ev.Channel, thinkingTS, summaryText, nil); err != nil {
+		summaryText := formatCompletionSummary(result.DataQuestions, result.ExecutedQueries, p.webBaseURL)
+		if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, summaryText, nil); err != nil {
 			p.log.Debug("failed to update thinking message with summary", "error", err)
 		}
 	} else if thinkingTS != "" {
 		// For conversational/out_of_scope, delete the thinking message so only the answer shows
-		if err := p.slackClient.DeleteMessage(ctx, ev.Channel, thinkingTS); err != nil {
+		if err := client.DeleteMessage(ctx, ev.Channel, thinkingTS); err != nil {
 			p.log.Debug("failed to delete thinking message", "error", err)
 		}
 	}
@@ -411,22 +456,22 @@ func (p *Processor) ProcessMessage(
 
 	p.MarkResponded(messageKey)
 
-	respTS, err := p.slackClient.PostMessage(ctx, ev.Channel, reply, blocks, threadTS)
+	respTS, err := client.PostMessage(ctx, ev.Channel, reply, blocks, threadTS)
 
 	if err != nil {
 		SlackAPIErrorsTotal.WithLabelValues("post_message").Inc()
 		MessagesPostedTotal.WithLabelValues("error", "api").Inc()
 		errorReply := "Sorry, I encountered an error. Please try again."
 		errorReply = normalizeTwoWayArrow(errorReply)
-		_, _ = p.slackClient.PostMessage(ctx, ev.Channel, errorReply, nil, threadTS)
+		_, _ = client.PostMessage(ctx, ev.Channel, errorReply, nil, threadTS)
 	} else {
 		MessagesPostedTotal.WithLabelValues("success", "api").Inc()
 		p.log.Info("reply posted successfully", "channel", ev.Channel, "thread_ts", threadKey, "reply_ts", respTS)
 
-		// Extract SQL queries from executed queries
+		// Extract queries from executed queries
 		var executedSQL []string
 		for _, eq := range result.ExecutedQueries {
-			executedSQL = append(executedSQL, eq.GeneratedQuery.SQL)
+			executedSQL = append(executedSQL, eq.GeneratedQuery.QueryText())
 		}
 
 		// Update conversation history with the new exchange

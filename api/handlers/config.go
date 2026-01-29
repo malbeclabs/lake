@@ -11,6 +11,7 @@ type PublicConfig struct {
 	GoogleClientID    string `json:"googleClientId,omitempty"`
 	SentryDSN         string `json:"sentryDsn,omitempty"`
 	SentryEnvironment string `json:"sentryEnvironment,omitempty"`
+	SlackEnabled      bool   `json:"slackEnabled,omitempty"`
 }
 
 // GetConfig returns public configuration for the frontend
@@ -24,6 +25,7 @@ func GetConfig(w http.ResponseWriter, r *http.Request) {
 		GoogleClientID:    os.Getenv("GOOGLE_CLIENT_ID"),
 		SentryDSN:         os.Getenv("SENTRY_DSN_WEB"),
 		SentryEnvironment: sentryEnv,
+		SlackEnabled:      os.Getenv("SLACK_CLIENT_ID") != "",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
