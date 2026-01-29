@@ -252,12 +252,11 @@ func formatCompletionSummary(dataQuestions []workflow.DataQuestion, executedQuer
 			if sql != "" {
 				sessionID := uuid.New().String()
 				url := fmt.Sprintf("%s/query/%s?sql=%s", webBaseURL, sessionID, neturl.QueryEscape(sql))
-				sb.WriteString(fmt.Sprintf("<%s|Q%d>", url, n))
-				sb.WriteString(fmt.Sprintf(". _%s_\n", q.Question))
+				sb.WriteString(fmt.Sprintf("<%s|Q%d>. %s\n", url, n, q.Question))
 				continue
 			}
 		}
-		sb.WriteString(fmt.Sprintf("_Q%d. %s_\n", n, q.Question))
+		sb.WriteString(fmt.Sprintf("Q%d. %s\n", n, q.Question))
 	}
 
 	return sb.String()
