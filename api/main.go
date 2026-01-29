@@ -681,6 +681,7 @@ func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 		runner,
 		convManager,
 		slog.Default(),
+		cfg.WebBaseURL,
 	)
 	msgProcessor.StartCleanup(ctx)
 
@@ -776,6 +777,7 @@ func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux) *slackbot.EventHa
 		runner,
 		convManager,
 		slog.Default(),
+		os.Getenv("WEB_BASE_URL"),
 	)
 	msgProcessor.StartCleanup(ctx)
 

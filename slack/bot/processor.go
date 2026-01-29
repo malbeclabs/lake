@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	neturl "net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type Processor struct {
 	chatRunner  ChatRunner
 	convManager *Manager
 	log         *slog.Logger
+	webBaseURL  string // Base URL for web UI (for query editor links)
 
 	// Track messages we've already responded to (by message timestamp) to prevent duplicate error messages
 	respondedMessages   map[string]time.Time
@@ -46,12 +48,14 @@ func NewProcessor(
 	chatRunner ChatRunner,
 	convManager *Manager,
 	log *slog.Logger,
+	webBaseURL string,
 ) *Processor {
 	return &Processor{
 		slackClient:       slackClient,
 		chatRunner:        chatRunner,
 		convManager:       convManager,
 		log:               log,
+		webBaseURL:        webBaseURL,
 		respondedMessages: make(map[string]time.Time),
 		threadLocks:       make(map[string]*threadLockEntry),
 	}
@@ -210,16 +214,60 @@ func formatThinkingMessage(progress workflow.Progress) string {
 }
 
 // writeStepsList writes the ordered list of steps (queries and doc reads) with status indicators.
+// Queries are numbered Q1, Q2, etc. Doc reads use bullet points.
 func writeStepsList(sb *strings.Builder, progress workflow.Progress) {
+	qNum := 0
 	for i, q := range progress.DataQuestions {
+		isDocRead := q.Rationale == "doc_read"
+		prefix := "• "
+		if !isDocRead {
+			qNum++
+			prefix = fmt.Sprintf("Q%d. ", qNum)
+		}
+
 		if i < progress.QueriesDone {
-			sb.WriteString(fmt.Sprintf("_• %s ✓_\n", q.Question))
+			sb.WriteString(fmt.Sprintf("_%s%s ✓_\n", prefix, q.Question))
 		} else if i == progress.QueriesDone {
-			sb.WriteString(fmt.Sprintf("_• %s :hourglass_flowing_sand:_\n", q.Question))
+			sb.WriteString(fmt.Sprintf("_%s%s :hourglass_flowing_sand:_\n", prefix, q.Question))
 		} else {
-			sb.WriteString(fmt.Sprintf("_• %s_\n", q.Question))
+			sb.WriteString(fmt.Sprintf("_%s%s_\n", prefix, q.Question))
 		}
 	}
+}
+
+// linkClaimReferences rewrites Q1, Q2, etc. in the answer text as Slack links
+// to the web query editor, using the corresponding executed query's SQL.
+func linkClaimReferences(text string, webBaseURL string, executedQueries []workflow.ExecutedQuery) string {
+	if webBaseURL == "" || len(executedQueries) == 0 {
+		return text
+	}
+	// Build a map from Q number to SQL, skipping doc reads
+	queryIndex := 0
+	sqlByQ := make(map[int]string)
+	for _, eq := range executedQueries {
+		queryIndex++
+		sqlByQ[queryIndex] = eq.GeneratedQuery.SQL
+	}
+
+	// Replace Q1, Q2, etc. with Slack links
+	claimRefRegex := regexp.MustCompile(`\bQ(\d+)\b`)
+	return claimRefRegex.ReplaceAllStringFunc(text, func(match string) string {
+		sub := claimRefRegex.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		n := 0
+		for _, c := range sub[1] {
+			n = n*10 + int(c-'0')
+		}
+		sql, ok := sqlByQ[n]
+		if !ok || sql == "" {
+			return match
+		}
+		sessionID := uuid.New().String()
+		url := fmt.Sprintf("%s/query/%s?sql=%s", webBaseURL, sessionID, neturl.QueryEscape(sql))
+		return fmt.Sprintf("<%s|%s>", url, match)
+	})
 }
 
 // ProcessMessage processes a single Slack message
@@ -386,6 +434,7 @@ func (p *Processor) ProcessMessage(
 		reply = "I didn't get a response. Please try again."
 	}
 	reply = normalizeTwoWayArrow(reply)
+	reply = linkClaimReferences(reply, p.webBaseURL, result.ExecutedQueries)
 
 	p.log.Debug("API response",
 		"reply", reply,
