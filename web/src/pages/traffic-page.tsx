@@ -174,12 +174,16 @@ function BucketSelector({
 }) {
   const [isOpen, setIsOpen] = useState(false)
 
-  // Show effective bucket if the API adjusted it
-  const wasAdjusted = effectiveBucket && effectiveBucket !== bucketValue &&
-    !(bucketValue === 'auto' && effectiveBucket)
-  const displayBucket = wasAdjusted
-    ? `${bucketLabels[bucketValue]} → ${bucketLabels[effectiveBucket as BucketSize] || effectiveBucket}`
-    : bucketLabels[bucketValue]
+  // Show effective bucket: for "auto" show the resolved value, for manual show if the API adjusted it
+  const effectiveLabel = effectiveBucket ? (bucketLabels[effectiveBucket as BucketSize] || effectiveBucket) : undefined
+  let displayBucket: string
+  if (bucketValue === 'auto' && effectiveLabel) {
+    displayBucket = `Auto (${effectiveLabel})`
+  } else if (effectiveBucket && effectiveBucket !== bucketValue) {
+    displayBucket = `${bucketLabels[bucketValue]} → ${effectiveLabel}`
+  } else {
+    displayBucket = bucketLabels[bucketValue]
+  }
 
   return (
     <div className="relative inline-block">
