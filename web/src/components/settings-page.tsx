@@ -53,7 +53,10 @@ export function SettingsPage() {
       window.history.replaceState({}, '', window.location.pathname)
     } else if (slackParam === 'error') {
       const reason = params.get('reason') || 'unknown'
-      setSlackMessage({ type: 'error', text: `Slack connection failed: ${reason}` })
+      const errorText = reason === 'workspace_not_allowed'
+        ? 'This Slack workspace is not authorized to install the app.'
+        : `Slack connection failed: ${reason}`
+      setSlackMessage({ type: 'error', text: errorText })
       window.history.replaceState({}, '', window.location.pathname)
     }
   }, [])
