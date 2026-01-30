@@ -54,6 +54,7 @@ import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 import { StakePage } from '@/components/stake-page'
 import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
+import { TermsPage } from '@/components/terms-page'
 import { ConnectionError } from '@/components/ConnectionError'
 import { generateSessionTitle, recommendVisualization, fetchCatalog, fetchConfig, type AppConfig } from '@/lib/api'
 import type { TableInfo, QueryResponse, HistoryMessage, QueryMode } from '@/lib/api'
@@ -636,6 +637,9 @@ function AppContent() {
 
             {/* Changelog */}
             <Route path="/changelog" element={<ChangelogPage />} />
+
+            {/* Terms */}
+            <Route path="/terms" element={<TermsPage />} />
 
             {/* DZ entity routes */}
             <Route path="/dz/devices" element={<DevicesPage />} />

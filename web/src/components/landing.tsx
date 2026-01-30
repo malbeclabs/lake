@@ -70,7 +70,7 @@ export function Landing() {
   }
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-start px-8 py-12 overflow-auto">
+    <div className="flex-1 flex flex-col items-center justify-start px-8 pt-12 pb-4 overflow-auto">
       <div className="flex-1 flex flex-col items-center justify-center w-full">
       {/* Header */}
       <div className="text-center mb-16">
@@ -193,6 +193,10 @@ export function Landing() {
         ))}
       </div>
       </div>
+
+      <p className="text-xs text-muted-foreground/60 text-center mt-auto pb-2">
+        AI-generated responses may be incorrect. Do not share sensitive info. See <a href="/terms" className="underline hover:text-muted-foreground">Terms of Use</a>.
+      </p>
     </div>
   )
 }
