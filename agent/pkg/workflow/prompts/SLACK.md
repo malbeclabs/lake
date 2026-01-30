@@ -85,7 +85,7 @@ Consider load balancing across alternative paths.
   - Multiple data points
   - Breakdowns of issues or metrics
   - Step-by-step information
-- Avoid numbered lists unless sequence is critical (Slack renders both similarly).
+- **NEVER use numbered lists.** Use unordered (bullet) lists instead. Slack renders both similarly, and bullets are preferred.
 
 ## Threading Context
 
