@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,21 @@ import (
 )
 
 const processedEventsMaxAge = 1 * time.Hour
+
+// isTeamAllowed checks if a Slack team ID is permitted.
+// If SLACK_ALLOWED_TEAM_IDS is not set, all teams are allowed.
+func isTeamAllowed(teamID string) bool {
+	allowed := os.Getenv("SLACK_ALLOWED_TEAM_IDS")
+	if allowed == "" {
+		return true
+	}
+	for _, id := range strings.Split(allowed, ",") {
+		if strings.TrimSpace(id) == teamID {
+			return true
+		}
+	}
+	return false
+}
 
 // EventHandler handles Slack events
 type EventHandler struct {
@@ -132,6 +148,12 @@ func (h *EventHandler) cleanup() {
 func (h *EventHandler) HandleEvent(ctx context.Context, e slackevents.EventsAPIEvent, eventID string) {
 	h.log.Info("event received", "type", e.Type, "inner_event_type", e.InnerEvent.Type, "team_id", e.TeamID)
 	EventsReceivedTotal.WithLabelValues(e.Type, e.InnerEvent.Type).Inc()
+
+	// Check workspace allowlist
+	if !isTeamAllowed(e.TeamID) {
+		h.log.Warn("ignoring event from disallowed team", "team_id", e.TeamID)
+		return
+	}
 
 	// Handle app_uninstalled and tokens_revoked events
 	if e.Type == slackevents.CallbackEvent {
