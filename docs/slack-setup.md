@@ -84,6 +84,7 @@ WEB_BASE_URL=http://localhost:5173
 
 - `SLACK_REDIRECT_URL` must match the public URL users are redirected back to. Behind a tunnel or reverse proxy, the server sees `localhost` as the host, so this env var is needed to generate the correct OAuth callback URL.
 - `WEB_BASE_URL` is where the user is redirected after the OAuth flow completes. In dev, this is the Vite dev server (`http://localhost:5173`). In production where the API serves the frontend, this can be omitted.
+- `SLACK_ALLOWED_TEAM_IDS` (optional) restricts which workspaces can install the app. Set to a comma-separated list of Slack team IDs (e.g. `T01ABC,T02DEF`). If unset, any workspace can install.
 
 **Additional setup required:**
 
