@@ -78,6 +78,14 @@ export function TermsPage() {
               constitutes acceptance of the updated terms.
             </p>
           </section>
+
+          <section>
+            <h2 className="text-lg font-semibold mb-3">Full Terms</h2>
+            <p>
+              The complete terms of use are available at{' '}
+              <a href="http://malbeclabs.com/terms-of-use.pdf" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">malbeclabs.com/terms-of-use.pdf</a>.
+            </p>
+          </section>
         </div>
       </div>
     </div>
