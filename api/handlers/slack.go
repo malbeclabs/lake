@@ -20,6 +20,21 @@ import (
 // Set this to invalidate cached clients in the ClientManager.
 var OnSlackInstallationChange func(teamID string)
 
+// isSlackTeamAllowed checks if a Slack team ID is permitted to install the app.
+// If SLACK_ALLOWED_TEAM_IDS is not set, all teams are allowed.
+func isSlackTeamAllowed(teamID string) bool {
+	allowed := os.Getenv("SLACK_ALLOWED_TEAM_IDS")
+	if allowed == "" {
+		return true
+	}
+	for _, id := range strings.Split(allowed, ",") {
+		if strings.TrimSpace(id) == teamID {
+			return true
+		}
+	}
+	return false
+}
+
 // SlackInstallation represents a Slack workspace installation
 type SlackInstallation struct {
 	ID          string    `json:"id"`
@@ -230,6 +245,13 @@ func GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if !tokenResp.OK {
 		slog.Error("slack oauth token response not ok", "error", tokenResp.Error)
 		settingsRedirect(w, r, "slack=error&reason="+tokenResp.Error)
+		return
+	}
+
+	// Check workspace allowlist
+	if !isSlackTeamAllowed(tokenResp.Team.ID) {
+		slog.Warn("slack workspace not in allowlist", "team_id", tokenResp.Team.ID, "team_name", tokenResp.Team.Name)
+		settingsRedirect(w, r, "slack=error&reason=workspace_not_allowed")
 		return
 	}
 
