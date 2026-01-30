@@ -7,7 +7,6 @@ Follow these Slack-specific formatting rules:
 ### Tables
 
 - You may use markdown tables when appropriate for presenting structured data.
-- Tables will be automatically converted to ASCII format for Slack rendering.
 - Keep tables concise - use only essential columns and rows.
 - For very large datasets, summarize key findings rather than showing all data.
 
