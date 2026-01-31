@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
@@ -59,7 +61,7 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 	// Find dz_stake_attribution events
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "left_dz" {
+		if e.EventType == "validator_left_dz" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
@@ -68,7 +70,7 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "left_dz", details["action"])
+	assert.Equal(t, "validator_left_dz", details["action"])
 	assert.Equal(t, "vote-A", details["vote_pubkey"])
 
 	// DZ total stake share should be present and correct.
@@ -108,7 +110,7 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "joined_dz" {
+		if e.EventType == "validator_joined_dz" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
@@ -116,7 +118,7 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "joined_dz", details["action"])
+	assert.Equal(t, "validator_joined_dz", details["action"])
 	assert.Equal(t, "vote-B", details["vote_pubkey"])
 
 	// DZ total stake share should be present
@@ -153,7 +155,7 @@ func TestDZStakeAttribution_StakeChange(t *testing.T) {
 
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "stake_changed" {
+		if e.EventType == "validator_stake_changed" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
@@ -161,7 +163,7 @@ func TestDZStakeAttribution_StakeChange(t *testing.T) {
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "stake_changed", details["action"])
+	assert.Equal(t, "validator_stake_changed", details["action"])
 	// Contribution change: 80k - 100k = -20k SOL in lamports
 	contribChange, ok := details["contribution_change_lamports"].(float64)
 	require.True(t, ok)
@@ -203,7 +205,7 @@ func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
 
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "left_dz" {
+		if e.EventType == "validator_left_dz" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
@@ -211,7 +213,7 @@ func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "left_dz", details["action"])
+	assert.Equal(t, "validator_left_dz", details["action"])
 }
 
 func TestDZStakeAttribution_NoChange(t *testing.T) {
@@ -240,7 +242,7 @@ func TestDZStakeAttribution_NoChange(t *testing.T) {
 
 	// No dz_stake_attribution events should appear
 	for _, e := range resp.Events {
-		if e.EventType == "left_dz" || e.EventType == "joined_dz" || e.EventType == "stake_changed" {
+		if e.EventType == "validator_left_dz" || e.EventType == "validator_joined_dz" || e.EventType == "validator_stake_changed" {
 			t.Errorf("unexpected DZ stake attribution event: %s", e.EventType)
 		}
 	}
@@ -291,7 +293,7 @@ func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
 	// Find the validator_joined event for vote-Y (Solana join, not DZ join)
 	var joinedEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "validator_joined" {
+		if e.EventType == "validator_joined_solana" {
 			if details, ok := e.Details.(map[string]any); ok {
 				if details["vote_pubkey"] == "vote-Y" {
 					joinedEvents = append(joinedEvents, e)
@@ -435,10 +437,10 @@ func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	leftEvents := findEventsByType(resp.Events, "validator_left")
+	leftEvents := findEventsByType(resp.Events, "validator_left_solana")
 	require.Len(t, leftEvents, 1, "expected 1 validator_left event")
 	details := getDetails(t, leftEvents[0])
-	assert.Equal(t, "left", details["action"])
+	assert.Equal(t, "validator_left_solana", details["action"])
 	assert.Equal(t, "vote-A", details["vote_pubkey"])
 	assert.Equal(t, "validator", leftEvents[0].EntityType)
 }
@@ -485,7 +487,7 @@ func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	leftEvents := findEventsByType(resp.Events, "validator_left")
+	leftEvents := findEventsByType(resp.Events, "validator_left_solana")
 	require.GreaterOrEqual(t, len(leftEvents), 1, "expected at least 1 validator_left")
 
 	// Find vote-A left event
@@ -499,7 +501,7 @@ func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
 	assert.True(t, foundLeft, "vote-A should have a validator_left event")
 
 	// Find vote-B joined event
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_solana")
 	foundJoined := false
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
@@ -542,7 +544,7 @@ func TestVoteAccountChanges_DZMetadata(t *testing.T) {
 
 	// Both vote-A and vote-B join Solana, so they get validator_joined from queryVoteAccountChanges
 	// vote-A is on DZ IP, so it gets DZ metadata enrichment
-	solanaJoinedEvents := findEventsByType(resp.Events, "validator_joined")
+	solanaJoinedEvents := findEventsByType(resp.Events, "validator_joined_solana")
 	foundA := false
 	for _, e := range solanaJoinedEvents {
 		details := getDetails(t, e)
@@ -596,10 +598,10 @@ func TestGossipNetworkChanges_ValidatorOffline(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	offlineEvents := findEventsByType(resp.Events, "validator_offline")
-	require.Len(t, offlineEvents, 1, "expected 1 validator_offline event")
+	offlineEvents := findEventsByType(resp.Events, "validator_left_solana")
+	require.Len(t, offlineEvents, 1, "expected 1 validator_left_solana event")
 	details := getDetails(t, offlineEvents[0])
-	assert.Equal(t, "offline", details["action"])
+	assert.Equal(t, "left_solana", details["action"])
 	assert.Equal(t, "validator", offlineEvents[0].EntityType)
 }
 
@@ -629,10 +631,10 @@ func TestGossipNetworkChanges_GossipNodeOffline(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	offlineEvents := findEventsByType(resp.Events, "gossip_node_offline")
+	offlineEvents := findEventsByType(resp.Events, "gossip_node_left_solana")
 	require.Len(t, offlineEvents, 1, "expected 1 gossip_node_offline event")
 	details := getDetails(t, offlineEvents[0])
-	assert.Equal(t, "offline", details["action"])
+	assert.Equal(t, "left_solana", details["action"])
 	assert.Equal(t, "gossip_node", offlineEvents[0].EntityType)
 	votePubkey, _ := details["vote_pubkey"].(string)
 	assert.Empty(t, votePubkey, "gossip_node_offline should have empty vote_pubkey")
@@ -663,7 +665,7 @@ func TestStakeChanges_Increase(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	increased := findEventsByType(resp.Events, "stake_increased")
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
 	require.Len(t, increased, 1, "expected 1 stake_increased event")
 	assert.Equal(t, "validator", increased[0].EntityType)
 	details := getDetails(t, increased[0])
@@ -693,7 +695,7 @@ func TestStakeChanges_Decrease(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	decreased := findEventsByType(resp.Events, "stake_decreased")
+	decreased := findEventsByType(resp.Events, "validator_stake_decreased")
 	require.Len(t, decreased, 1, "expected 1 stake_decreased event")
 	assert.Equal(t, "warning", decreased[0].Severity)
 	details := getDetails(t, decreased[0])
@@ -723,8 +725,8 @@ func TestStakeChanges_BelowThreshold(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	increased := findEventsByType(resp.Events, "stake_increased")
-	decreased := findEventsByType(resp.Events, "stake_decreased")
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
+	decreased := findEventsByType(resp.Events, "validator_stake_decreased")
 	assert.Len(t, increased, 0, "expected 0 stake_increased events (below threshold)")
 	assert.Len(t, decreased, 0, "expected 0 stake_decreased events")
 }
@@ -752,7 +754,7 @@ func TestStakeChanges_PercentageThreshold(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	increased := findEventsByType(resp.Events, "stake_increased")
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
 	require.Len(t, increased, 1, "expected 1 stake_increased (6% above 5% threshold)")
 }
 
@@ -782,7 +784,7 @@ func TestStakeChanges_OnDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	increased := findEventsByType(resp.Events, "stake_increased")
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
 	require.Len(t, increased, 1, "expected 1 stake_increased")
 	assert.Contains(t, increased[0].Title, "DZ ", "title should start with DZ prefix for on-DZ validator")
 }
@@ -818,11 +820,11 @@ func TestValidatorEvents_JoinedDZ(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// Look for validator_joined from queryValidatorEvents (DZ user status transition)
-	joinedEvents := findEventsByType(resp.Events, "joined_dz")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_dz")
 	found := false
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
-		if details["action"] == "joined_dz" && details["kind"] == "validator" {
+		if details["action"] == "validator_joined_dz" && details["kind"] == "validator" {
 			found = true
 			assert.Equal(t, "validator", e.EntityType)
 			break
@@ -859,11 +861,11 @@ func TestValidatorEvents_LeftDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	leftEvents := findEventsByType(resp.Events, "left_dz")
+	leftEvents := findEventsByType(resp.Events, "validator_left_dz")
 	found := false
 	for _, e := range leftEvents {
 		details := getDetails(t, e)
-		if details["action"] == "left_dz" && details["kind"] == "validator" {
+		if details["action"] == "validator_left_dz" && details["kind"] == "validator" {
 			found = true
 			assert.Equal(t, "warning", e.Severity)
 			break
@@ -901,7 +903,7 @@ func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	joinedEvents := findEventsByType(resp.Events, "gossip_node_joined")
+	joinedEvents := findEventsByType(resp.Events, "gossip_node_joined_dz")
 	require.Len(t, joinedEvents, 1, "expected 1 gossip_node_joined event")
 	assert.Equal(t, "gossip_node", joinedEvents[0].EntityType)
 	details := getDetails(t, joinedEvents[0])
@@ -937,7 +939,7 @@ func TestValidatorEvents_GossipNodeLeftDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	leftEvents := findEventsByType(resp.Events, "gossip_node_left")
+	leftEvents := findEventsByType(resp.Events, "gossip_node_left_dz")
 	require.Len(t, leftEvents, 1, "expected 1 gossip_node_left event")
 	assert.Equal(t, "gossip_node", leftEvents[0].EntityType)
 	details := getDetails(t, leftEvents[0])
@@ -976,7 +978,7 @@ func TestDZFilter_OnDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	joinedEvents := findEventsByType(resp.Events, "joined_dz")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_dz")
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
 		assert.NotEqual(t, "vote-B", details["vote_pubkey"], "off-DZ validator should be filtered out with on_dz filter")
@@ -1013,7 +1015,7 @@ func TestDZFilter_OffDZ(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// vote-B joins Solana (not DZ), so it produces validator_joined
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_solana")
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
 		assert.NotEqual(t, "vote-A", details["vote_pubkey"], "on-DZ validator should be filtered out with off_dz filter")
@@ -1055,7 +1057,7 @@ func TestDZFilter_AttributionPassThrough(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	disconnected := findEventsByType(resp.Events, "left_dz")
+	disconnected := findEventsByType(resp.Events, "validator_left_dz")
 	assert.GreaterOrEqual(t, len(disconnected), 1, "left_dz events should pass through on_dz filter")
 }
 
@@ -1093,18 +1095,16 @@ func TestActionFilter_Added(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	// Should only have _joined or _created or joined_dz events
+	// Should only have _joined or _created events
 	for _, e := range resp.Events {
-		isAdded := e.EventType == "joined_dz" ||
-			len(e.EventType) > 8 && e.EventType[len(e.EventType)-7:] == "_joined" ||
-			len(e.EventType) > 8 && e.EventType[len(e.EventType)-8:] == "_created"
+		isAdded := strings.Contains(e.EventType, "_joined") || strings.Contains(e.EventType, "_created")
 		assert.True(t, isAdded, "with action=added, got unexpected event type: %s", e.EventType)
 	}
 
 	// left events should NOT be present
-	leftEvents := findEventsByType(resp.Events, "validator_left")
+	leftEvents := findEventsByType(resp.Events, "validator_left_solana")
 	assert.Len(t, leftEvents, 0, "validator_left should not appear with action=added")
-	leftDZEvents := findEventsByType(resp.Events, "left_dz")
+	leftDZEvents := findEventsByType(resp.Events, "validator_left_dz")
 	assert.Len(t, leftDZEvents, 0, "left_dz should not appear with action=added")
 }
 
@@ -1142,11 +1142,11 @@ func TestActionFilter_Removed(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// validator_joined should NOT be present (these are Solana joins, not DZ)
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_solana")
 	assert.Len(t, joinedEvents, 0, "validator_joined should not appear with action=removed")
 
 	// validator_left should be present (Solana leave)
-	leftEvents := findEventsByType(resp.Events, "validator_left")
+	leftEvents := findEventsByType(resp.Events, "validator_left_solana")
 	assert.GreaterOrEqual(t, len(leftEvents), 1, "validator_left should appear with action=removed")
 }
 
@@ -1175,12 +1175,12 @@ func TestActionFilter_Changed(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// stake_changed from attribution should match "changed" filter
-	stakeChanged := findEventsByType(resp.Events, "stake_changed")
+	stakeChanged := findEventsByType(resp.Events, "validator_stake_changed")
 	assert.GreaterOrEqual(t, len(stakeChanged), 1, "stake_changed should appear with action=changed")
 
 	// stake_increased/decreased should NOT match "changed" (they match alerting/resolved)
-	increased := findEventsByType(resp.Events, "stake_increased")
-	decreased := findEventsByType(resp.Events, "stake_decreased")
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
+	decreased := findEventsByType(resp.Events, "validator_stake_decreased")
 	assert.Len(t, increased, 0, "stake_increased should not appear with action=changed")
 	assert.Len(t, decreased, 0, "stake_decreased should not appear with action=changed")
 }
@@ -1208,7 +1208,7 @@ func TestActionFilter_AlertingIncludesStakeIncrease(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	increased := findEventsByType(resp.Events, "stake_increased")
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
 	assert.GreaterOrEqual(t, len(increased), 1, "stake_increased should appear with action=alerting")
 }
 
@@ -1248,7 +1248,7 @@ func TestMinStakePct_FiltersValidators(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_solana")
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
 		vp := details["vote_pubkey"].(string)
@@ -1375,7 +1375,7 @@ func TestEdge_NoDZUsers(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// Should still produce events, no crash
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "validator_joined_solana")
 	assert.GreaterOrEqual(t, len(joinedEvents), 1, "should produce validator_joined even without DZ users")
 }
 
@@ -1471,7 +1471,7 @@ func TestCombinedFilters(t *testing.T) {
 	// Check that vote-A is present
 	found := false
 	for _, e := range resp.Events {
-		if e.EventType == "joined_dz" {
+		if e.EventType == "validator_joined_dz" {
 			details := getDetails(t, e)
 			if details["vote_pubkey"] == "vote-A" {
 				found = true

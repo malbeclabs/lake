@@ -849,9 +849,9 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 			// Set stake share change on connect/disconnect events that don't have it
 			if details.StakeShareChangePct == 0 && details.StakeSharePct > 0 {
 				switch allEvents[i].EventType {
-				case "joined_dz":
+				case "validator_joined_dz":
 					details.StakeShareChangePct = details.StakeSharePct
-				case "left_dz":
+				case "validator_left_dz":
 					details.StakeShareChangePct = -details.StakeSharePct
 				}
 			}
@@ -903,20 +903,15 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				matched := false
 				switch action {
 				case "added":
-					// created, joined
-					matched = strings.HasSuffix(e.EventType, "_created") || strings.HasSuffix(e.EventType, "_joined") || e.EventType == "joined_dz"
+					matched = strings.Contains(e.EventType, "_created") || strings.Contains(e.EventType, "_joined")
 				case "removed":
-					// deleted, left
-					matched = strings.HasSuffix(e.EventType, "_deleted") || strings.HasSuffix(e.EventType, "_left") || e.EventType == "left_dz"
+					matched = strings.Contains(e.EventType, "_deleted") || strings.Contains(e.EventType, "_left")
 				case "changed":
-					// updated
-					matched = strings.HasSuffix(e.EventType, "_updated") || e.EventType == "stake_changed"
+					matched = strings.Contains(e.EventType, "_updated") || strings.Contains(e.EventType, "_stake_changed")
 				case "alerting":
-					// started, increased
-					matched = strings.HasSuffix(e.EventType, "_started") || strings.HasSuffix(e.EventType, "_increased")
+					matched = strings.Contains(e.EventType, "_started") || strings.Contains(e.EventType, "_stake_increased")
 				case "resolved":
-					// stopped, recovered, decreased
-					matched = strings.HasSuffix(e.EventType, "_stopped") || strings.HasSuffix(e.EventType, "_recovered") || strings.HasSuffix(e.EventType, "_decreased")
+					matched = strings.Contains(e.EventType, "_stopped") || strings.Contains(e.EventType, "_recovered") || strings.Contains(e.EventType, "_stake_decreased")
 				}
 				if matched {
 					filtered = append(filtered, e)
@@ -938,7 +933,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 					isOnDZ := details.OwnerPubkey != "" || details.DevicePK != ""
 					// Disconnect/left events represent validators that *were* on DZ, so include
 					// them in the "on_dz" filter even though current lookup shows them off DZ
-					isDZRelated := details.Action == "joined_dz" || details.Action == "left_dz" || details.Action == "stake_changed" || details.Action == "offline"
+					isDZRelated := details.Action == "validator_joined_dz" || details.Action == "validator_left_dz" || details.Action == "validator_stake_changed" || details.Action == "left_solana"
 					if params.DZFilter == "on_dz" && (isOnDZ || isDZRelated) {
 						filtered = append(filtered, e)
 					} else if params.DZFilter == "off_dz" && !isOnDZ && !isDZRelated {
@@ -986,7 +981,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		for _, e := range allEvents {
 			if e.EntityType == "validator" || e.EntityType == "gossip_node" {
 				if details, ok := e.Details.(ValidatorEventDetails); ok {
-					if e.EventType == "stake_increased" || e.EventType == "stake_decreased" {
+					if e.EventType == "validator_stake_increased" || e.EventType == "validator_stake_decreased" {
 						if math.Abs(details.StakeShareChangePct) >= params.MinStakePct {
 							filtered = append(filtered, e)
 						}
@@ -2568,8 +2563,8 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 
 		if isJoining {
 			if validatorKind == "validator" {
-				eventType = "joined_dz"
-				action = "joined_dz"
+				eventType = "validator_joined_dz"
+				action = "validator_joined_dz"
 				if stakeSol > 0 {
 					title = fmt.Sprintf("Validator joined DZ (%.0f SOL, %.2f%%)", stakeSol, stakeSharePct)
 				} else {
@@ -2577,14 +2572,14 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 				}
 			} else {
 				title = "Gossip node joined DZ"
-				eventType = "gossip_node_joined"
+				eventType = "gossip_node_joined_dz"
 				action = "joined"
 			}
 			severity = "info"
 		} else {
 			if validatorKind == "validator" {
-				eventType = "left_dz"
-				action = "left_dz"
+				eventType = "validator_left_dz"
+				action = "validator_left_dz"
 				if stakeSol > 0 {
 					title = fmt.Sprintf("Validator left DZ (%.0f SOL, %.2f%%)", stakeSol, stakeSharePct)
 				} else {
@@ -2592,7 +2587,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 				}
 			} else {
 				title = "Gossip node left DZ"
-				eventType = "gossip_node_left"
+				eventType = "gossip_node_left_dz"
 				action = "left"
 			}
 			severity = "warning"
@@ -2739,11 +2734,11 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 				} else {
 					title = "Validator left Solana network"
 				}
-				eventType = "validator_offline"
+				eventType = "validator_left_solana"
 				entityType = "validator"
 			} else {
 				title = "Gossip node left Solana network"
-				eventType = "gossip_node_offline"
+				eventType = "gossip_node_left_solana"
 				entityType = "gossip_node"
 			}
 			severity = "warning"
@@ -2777,7 +2772,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 				DeviceCode:    deviceCode,
 				MetroCode:     metroCode,
 				Kind:          map[bool]string{true: "validator", false: "gossip_only"}[isValidator],
-				Action:        "offline",
+				Action:        "left_solana",
 			},
 		})
 	}
@@ -2914,7 +2909,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			} else {
 				title = "Validator left Solana network"
 			}
-			eventType = "validator_left"
+			eventType = "validator_left_solana"
 			severity = "warning"
 		} else {
 			if stakeSol > 0 {
@@ -2922,7 +2917,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			} else {
 				title = "Validator joined Solana network"
 			}
-			eventType = "validator_joined"
+			eventType = "validator_joined_solana"
 			severity = "info"
 		}
 
@@ -2950,7 +2945,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 				DeviceCode:    deviceCode,
 				MetroCode:     metroCode,
 				Kind:          "validator",
-				Action:        changeType,
+				Action:        eventType,
 			},
 		})
 	}
@@ -3075,12 +3070,12 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 
 		if change > 0 {
 			title = fmt.Sprintf("%sValidator stake increased by %.0f SOL (%.1f%%)", dzPrefix, changeSol, changePct)
-			eventType = "stake_increased"
+			eventType = "validator_stake_increased"
 			severity = "info"
 			action = "increased"
 		} else {
 			title = fmt.Sprintf("%sValidator stake decreased by %.0f SOL (%.1f%%)", dzPrefix, -changeSol, -changePct)
-			eventType = "stake_decreased"
+			eventType = "validator_stake_decreased"
 			severity = "warning"
 			action = "decreased"
 		}
@@ -3330,8 +3325,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			switch {
 			case prev != nil && curr == nil && prevOnDZ:
 				// Validator left Solana, was on DZ
-				eventType = "left_dz"
-				action = "left_dz"
+				eventType = "validator_left_dz"
+				action = "validator_left_dz"
 				stake = prev.stake
 				stakeSol = float64(prev.stake) / 1_000_000_000
 				stakeSharePct = prev.stakeSharePct
@@ -3339,20 +3334,20 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 				title = fmt.Sprintf("Validator left Solana, was on DZ (%.0f SOL removed)", stakeSol)
 				severity = "warning"
 			case prevOnDZ && !currOnDZ:
-				eventType = "left_dz"
-				action = "left_dz"
+				eventType = "validator_left_dz"
+				action = "validator_left_dz"
 				stakeShareChangePct = -stakeSharePct
 				title = fmt.Sprintf("Validator left DZ (%.0f SOL removed)", -changeSol)
 				severity = "warning"
 			case !prevOnDZ && currOnDZ:
-				eventType = "joined_dz"
-				action = "joined_dz"
+				eventType = "validator_joined_dz"
+				action = "validator_joined_dz"
 				stakeShareChangePct = stakeSharePct
 				title = fmt.Sprintf("Validator joined DZ (%.0f SOL added)", changeSol)
 				severity = "info"
 			case currOnDZ && prevOnDZ:
-				eventType = "stake_changed"
-				action = "stake_changed"
+				eventType = "validator_stake_changed"
+				action = "validator_stake_changed"
 				if prev != nil {
 					stakeShareChangePct = stakeSharePct - prev.stakeSharePct
 				}

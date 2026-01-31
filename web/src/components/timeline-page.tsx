@@ -609,7 +609,7 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
   const changeType = changeDetails?.change_type
 
   // Extract validator/gossip node details for showing device connection prominently
-  const validatorDetails = (event.event_type.includes('validator') || event.event_type.includes('gossip_node') || event.event_type === 'stake_increased' || event.event_type === 'stake_decreased' || event.event_type === 'left_dz' || event.event_type === 'joined_dz' || event.event_type === 'stake_changed') && event.details && 'action' in event.details
+  const validatorDetails = (event.event_type.includes('validator') || event.event_type.includes('gossip_node')) && event.details && 'action' in event.details
     ? event.details as ValidatorEventDetails
     : undefined
 
@@ -716,57 +716,43 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
               </span>
             )}
             {/* Validator/Gossip node badges */}
-            {event.event_type.endsWith('_joined') && (
-              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
-                <LogIn className="h-3 w-3" />
-                Joined
-              </span>
-            )}
-            {event.event_type.endsWith('_left') && (
-              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                <LogOut className="h-3 w-3" />
-                Left
-              </span>
-            )}
-            {event.event_type.endsWith('_offline') && (
-              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                <LogOut className="h-3 w-3" />
-                Left
-              </span>
-            )}
-            {validatorDetails?.stake_share_pct !== undefined && validatorDetails.stake_share_pct > 0 && (event.event_type.endsWith('_joined') || event.event_type.endsWith('_left') || event.event_type.endsWith('_offline') || event.event_type === 'joined_dz' || event.event_type === 'left_dz') && (
-              <span className={cn(
-                'text-xs font-medium',
-                (event.event_type.endsWith('_joined') || event.event_type === 'joined_dz') ? 'text-green-600' : 'text-amber-600'
-              )}>
-                {(event.event_type.endsWith('_joined') || event.event_type === 'joined_dz') ? '+' : '−'}{validatorDetails.stake_share_pct.toFixed(3)}% stake
-              </span>
-            )}
-            {event.event_type === 'stake_increased' && (
-              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
-                <TrendingUp className="h-3 w-3" />
-                Stake Up
-              </span>
-            )}
-            {event.event_type === 'stake_decreased' && (
-              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
-                <TrendingDown className="h-3 w-3" />
-                Stake Down
-              </span>
-            )}
-            {event.event_type === 'joined_dz' && (
+            {event.event_type.includes('_joined_dz') && (
               <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
                 <LogIn className="h-3 w-3" />
                 Joined DZ
               </span>
             )}
-            {event.event_type === 'left_dz' && (
+            {event.event_type.includes('_left_dz') && (
               <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
                 <LogOut className="h-3 w-3" />
                 Left DZ
               </span>
             )}
-            {event.event_type === 'stake_changed' && (
+            {event.event_type.includes('_joined_solana') && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
+                <LogIn className="h-3 w-3" />
+                Joined Solana
+              </span>
+            )}
+            {event.event_type.includes('_left_solana') && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                <LogOut className="h-3 w-3" />
+                Left Solana
+              </span>
+            )}
+            {event.event_type.includes('_stake_increased') && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
+                <TrendingUp className="h-3 w-3" />
+                Stake Up
+              </span>
+            )}
+            {event.event_type.includes('_stake_decreased') && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                <TrendingDown className="h-3 w-3" />
+                Stake Down
+              </span>
+            )}
+            {event.event_type.includes('_stake_changed') && (
               <span className={cn(
                 'inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border',
                 validatorDetails?.contribution_change_lamports && validatorDetails.contribution_change_lamports > 0
@@ -780,7 +766,15 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
                 DZ Stake
               </span>
             )}
-            {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && !event.event_type.endsWith('_joined') && !event.event_type.endsWith('_left') && !event.event_type.endsWith('_offline') && event.event_type !== 'joined_dz' && event.event_type !== 'left_dz' && (
+            {validatorDetails?.stake_share_pct !== undefined && validatorDetails.stake_share_pct > 0 && (event.event_type.includes('_joined') || event.event_type.includes('_left')) && (
+              <span className={cn(
+                'text-xs font-medium',
+                event.event_type.includes('_joined') ? 'text-green-600' : 'text-amber-600'
+              )}>
+                {event.event_type.includes('_joined') ? '+' : '−'}{validatorDetails.stake_share_pct.toFixed(3)}% stake
+              </span>
+            )}
+            {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && !event.event_type.includes('_joined') && !event.event_type.includes('_left') && (
               <span className={cn(
                 'text-xs font-medium',
                 validatorDetails.stake_share_change_pct > 0 ? 'text-green-600' : 'text-amber-600'
