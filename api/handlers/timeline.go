@@ -2550,17 +2550,18 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			devicePK      string
 			deviceCode    string
 			metroCode     string
-			nodePubkey    string
-			votePubkey    string
-			stakeLamports int64
-			stakeSharePct float64
-			validatorKind string // "validator" or "gossip_only" based on vote account presence
+			nodePubkey       string
+			votePubkey       string
+			stakeLamportsU64 uint64
+			stakeSharePct    float64
+			validatorKind    string // "validator" or "gossip_only" based on vote account presence
 		)
 
-		if err := rows.Scan(&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &prevStatus, &dzIP, &devicePK, &deviceCode, &metroCode, &nodePubkey, &votePubkey, &stakeLamports, &stakeSharePct, &validatorKind); err != nil {
+		if err := rows.Scan(&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &prevStatus, &dzIP, &devicePK, &deviceCode, &metroCode, &nodePubkey, &votePubkey, &stakeLamportsU64, &stakeSharePct, &validatorKind); err != nil {
 			return nil, fmt.Errorf("validator event scan error: %w", err)
 		}
 
+		stakeLamports := int64(stakeLamportsU64)
 		var title string
 		var action string
 		var eventType string
@@ -2704,24 +2705,25 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			gossipIP      string
-			nodePubkey    string
-			eventTS       time.Time
-			changeType    string
-			votePubkey    string
-			stakeLamports int64
-			stakeSharePct float64
-			dzOwnerPubkey string
-			userPK        string
-			deviceCode    string
-			devicePK      string
-			metroCode     string
+			gossipIP         string
+			nodePubkey       string
+			eventTS          time.Time
+			changeType       string
+			votePubkey       string
+			stakeLamportsU64 uint64
+			stakeSharePct    float64
+			dzOwnerPubkey    string
+			userPK           string
+			deviceCode       string
+			devicePK         string
+			metroCode        string
 		)
 
-		if err := rows.Scan(&gossipIP, &nodePubkey, &eventTS, &changeType, &votePubkey, &stakeLamports, &stakeSharePct, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
+		if err := rows.Scan(&gossipIP, &nodePubkey, &eventTS, &changeType, &votePubkey, &stakeLamportsU64, &stakeSharePct, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
 			return nil, fmt.Errorf("gossip network change scan error: %w", err)
 		}
 
+		stakeLamports := int64(stakeLamportsU64)
 		stakeSol := float64(stakeLamports) / 1_000_000_000
 		isValidator := votePubkey != ""
 
@@ -2883,24 +2885,25 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			votePubkey    string
-			nodePubkey    string
-			eventTS       time.Time
-			changeType    string
-			stakeLamports int64
-			stakeSharePct float64
-			gossipIP      string
-			dzOwnerPubkey string
-			userPK        string
-			deviceCode    string
-			devicePK      string
-			metroCode     string
+			votePubkey       string
+			nodePubkey       string
+			eventTS          time.Time
+			changeType       string
+			stakeLamportsU64 uint64
+			stakeSharePct    float64
+			gossipIP         string
+			dzOwnerPubkey    string
+			userPK           string
+			deviceCode       string
+			devicePK         string
+			metroCode        string
 		)
 
-		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &changeType, &stakeLamports, &stakeSharePct, &gossipIP, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
+		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &changeType, &stakeLamportsU64, &stakeSharePct, &gossipIP, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
 			return nil, fmt.Errorf("vote account change scan error: %w", err)
 		}
 
+		stakeLamports := int64(stakeLamportsU64)
 		stakeSol := float64(stakeLamports) / 1_000_000_000
 
 		var title string
@@ -3403,14 +3406,14 @@ func queryDZTotalBySnapshot(ctx context.Context, startTime, endTime time.Time) (
 		)
 		SELECT
 			va.snapshot_ts,
-			sum(va.activated_stake_lamports) * 100.0 / NULLIF(any(ts.total), 0) as dz_total_pct
+			sum(va.activated_stake_lamports * toUInt64(COALESCE(gn.gossip_ip, '') IN (SELECT dz_ip FROM dz_ips))) * 100.0 / NULLIF(any(ts.total), 0) as dz_total_pct
 		FROM dim_solana_vote_accounts_history va
 		CROSS JOIN total_stake ts
-		JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
-		WHERE gn.gossip_ip IN (SELECT dz_ip FROM dz_ips)
-		  AND va.activated_stake_lamports > 0
+		LEFT JOIN dim_solana_gossip_nodes_history gn ON va.node_pubkey = gn.pubkey AND va.snapshot_ts = gn.snapshot_ts
+		WHERE va.activated_stake_lamports > 0
 		  AND va.snapshot_ts >= ? AND va.snapshot_ts <= ?
 		GROUP BY va.snapshot_ts
+		HAVING dz_total_pct > 0
 	`
 
 	rows, err := config.DB.Query(ctx, query, startTime, endTime)

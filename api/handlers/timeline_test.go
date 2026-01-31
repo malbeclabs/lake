@@ -30,8 +30,11 @@ func setupTimelineSchema(t *testing.T) {
 			gossip_ip String
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS dz_users_current (
+			pk String,
 			dz_ip String,
-			status String
+			status String,
+			owner_pubkey String,
+			device_pk String
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS dim_solana_vote_accounts_history (
 			vote_pubkey String,
@@ -67,7 +70,8 @@ func setupTimelineSchema(t *testing.T) {
 			public_ip String,
 			contributor_pk String,
 			metro_pk String,
-			max_users Int32
+			max_users Int32,
+			is_deleted UInt8 DEFAULT 0
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS dim_dz_links_history (
 			pk String,
@@ -88,7 +92,8 @@ func setupTimelineSchema(t *testing.T) {
 			committed_rtt_ns Int64,
 			committed_jitter_ns Int64,
 			bandwidth_bps Int64,
-			isis_delay_override_ns Int64
+			isis_delay_override_ns Int64,
+			is_deleted UInt8 DEFAULT 0
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS dim_dz_metros_history (
 			pk String,
@@ -101,7 +106,8 @@ func setupTimelineSchema(t *testing.T) {
 			code String,
 			name String,
 			longitude Float64,
-			latitude Float64
+			latitude Float64,
+			is_deleted UInt8 DEFAULT 0
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS dim_dz_contributors_history (
 			pk String,
@@ -112,7 +118,8 @@ func setupTimelineSchema(t *testing.T) {
 			ingested_at DateTime,
 			op_id UInt64,
 			code String,
-			name String
+			name String,
+			is_deleted UInt8 DEFAULT 0
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS dim_dz_users_history (
 			pk String,
@@ -127,7 +134,8 @@ func setupTimelineSchema(t *testing.T) {
 			client_ip String,
 			dz_ip String,
 			device_pk String,
-			tunnel_id Int32
+			tunnel_id Int32,
+			is_deleted UInt8 DEFAULT 0
 		) ENGINE = Memory`,
 		`CREATE TABLE IF NOT EXISTS fact_dz_device_link_latency (
 			event_ts DateTime,
@@ -249,11 +257,12 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 	assert.Equal(t, "dz_disconnected", details["action"])
 	assert.Equal(t, "vote-A", details["vote_pubkey"])
 
-	// DZ total stake share should be present
+	// DZ total stake share should be present and correct.
+	// At T2: vote-stay (100k SOL) is on DZ, total = 200k SOL (vote-A + vote-stay in current), so DZ total = 50%
 	dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
 	assert.True(t, ok, "dz_total_stake_share_pct should be a float64, got %T: %v", details["dz_total_stake_share_pct"], details["dz_total_stake_share_pct"])
 	t.Logf("dz_total_stake_share_pct = %v", dzTotal)
-	assert.Greater(t, dzTotal, float64(0), "dz_total_stake_share_pct should be > 0")
+	assert.InDelta(t, 33.33, dzTotal, 1.0, "DZ total should be ~33%% (100k history on DZ / 300k current total)")
 }
 
 func TestDZStakeAttribution_Connect(t *testing.T) {
@@ -304,6 +313,11 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "dz_connected", details["action"])
 	assert.Equal(t, "vote-B", details["vote_pubkey"])
+
+	// DZ total stake share should be present
+	dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
+	assert.True(t, ok, "dz_total_stake_share_pct should be a float64, got %T: %v", details["dz_total_stake_share_pct"], details["dz_total_stake_share_pct"])
+	assert.Greater(t, dzTotal, float64(0), "DZ total should be > 0")
 }
 
 func TestDZStakeAttribution_StakeChange(t *testing.T) {
@@ -357,6 +371,11 @@ func TestDZStakeAttribution_StakeChange(t *testing.T) {
 	contribChange, ok := details["contribution_change_lamports"].(float64)
 	require.True(t, ok)
 	assert.Less(t, contribChange, float64(0), "contribution change should be negative")
+
+	// DZ total stake share should be present
+	dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
+	assert.True(t, ok, "dz_total_stake_share_pct should be a float64, got %T: %v", details["dz_total_stake_share_pct"], details["dz_total_stake_share_pct"])
+	assert.Greater(t, dzTotal, float64(0), "DZ total should be > 0")
 }
 
 func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
@@ -446,4 +465,82 @@ func TestDZStakeAttribution_NoChange(t *testing.T) {
 			t.Errorf("unexpected DZ stake attribution event: %s", e.EventType)
 		}
 	}
+}
+
+// TestDZTotalStakeShare_OnJoinedEvent tests that validator_joined events
+// (from queryVoteAccountChanges) get dz_total_stake_share_pct populated
+// via queryDZTotalBySnapshot.
+func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupTimelineSchema(t)
+	ctx := t.Context()
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
+
+	// DZ IP
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_users_current (dz_ip, status) VALUES ('1.2.3.4', 'activated')`))
+
+	// Current tables: validator X (on DZ) and validator Y (not on DZ)
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports) VALUES
+		('vote-X', 'node-X', 100000000000000),
+		('vote-Y', 'node-Y', 100000000000000)`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO solana_gossip_nodes_current (pubkey, gossip_ip) VALUES
+		('node-X', '1.2.3.4'),
+		('node-Y', '9.9.9.9')`))
+
+	// History: validator X exists at both timestamps (on DZ), validator Y only appears at T2 (joined)
+	for _, ts := range []time.Time{t1, t2} {
+		require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+			`INSERT INTO dim_solana_vote_accounts_history (vote_pubkey, node_pubkey, activated_stake_lamports, snapshot_ts) VALUES ('vote-X', 'node-X', 100000000000000, '%s')`,
+			ts.Format("2006-01-02 15:04:05"))))
+		require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+			`INSERT INTO dim_solana_gossip_nodes_history (pubkey, gossip_ip, snapshot_ts) VALUES ('node-X', '1.2.3.4', '%s')`,
+			ts.Format("2006-01-02 15:04:05"))))
+	}
+	// Y appears only at T2 (joined event)
+	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+		`INSERT INTO dim_solana_vote_accounts_history (vote_pubkey, node_pubkey, activated_stake_lamports, snapshot_ts) VALUES ('vote-Y', 'node-Y', 100000000000000, '%s')`,
+		t2.Format("2006-01-02 15:04:05"))))
+	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+		`INSERT INTO dim_solana_gossip_nodes_history (pubkey, gossip_ip, snapshot_ts) VALUES ('node-Y', '9.9.9.9', '%s')`,
+		t2.Format("2006-01-02 15:04:05"))))
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
+		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	// Log all events for debugging
+	t.Logf("total events: %d", len(resp.Events))
+	for _, e := range resp.Events {
+		t.Logf("event: type=%s entity=%s details=%+v", e.EventType, e.EntityType, e.Details)
+	}
+
+	// Find the validator_joined event for vote-Y
+	var joinedEvents []handlers.TimelineEvent
+	for _, e := range resp.Events {
+		if e.EventType == "validator_joined" {
+			if details, ok := e.Details.(map[string]any); ok {
+				if details["vote_pubkey"] == "vote-Y" {
+					joinedEvents = append(joinedEvents, e)
+				}
+			}
+		}
+	}
+	require.Len(t, joinedEvents, 1, "expected 1 validator_joined event for vote-Y")
+
+	details, ok := joinedEvents[0].Details.(map[string]any)
+	require.True(t, ok)
+
+	// DZ total stake share should be populated via queryDZTotalBySnapshot
+	// At the snapshot: vote-X (100k SOL) is on DZ, total = 200k SOL, so DZ total = 50%
+	dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
+	assert.True(t, ok, "dz_total_stake_share_pct should be present, got %T: %v", details["dz_total_stake_share_pct"], details["dz_total_stake_share_pct"])
+	t.Logf("dz_total_stake_share_pct on validator_joined = %v", dzTotal)
+	assert.InDelta(t, 50.0, dzTotal, 1.0, "DZ total should be ~50%% (100k/200k)")
 }
