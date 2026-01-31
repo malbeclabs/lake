@@ -722,6 +722,14 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
                 Left
               </span>
             )}
+            {validatorDetails?.stake_share_pct !== undefined && validatorDetails.stake_share_pct > 0 && (event.event_type.endsWith('_joined') || event.event_type.endsWith('_left') || event.event_type.endsWith('_offline')) && (
+              <span className={cn(
+                'text-xs font-medium',
+                event.event_type.endsWith('_joined') ? 'text-green-600' : 'text-amber-600'
+              )}>
+                {event.event_type.endsWith('_joined') ? '+' : '−'}{validatorDetails.stake_share_pct.toFixed(3)}% stake
+              </span>
+            )}
             {event.event_type === 'stake_increased' && (
               <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
                 <TrendingUp className="h-3 w-3" />
