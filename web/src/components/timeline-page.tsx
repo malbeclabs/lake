@@ -863,6 +863,15 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
 
 const ALL_CATEGORIES: Category[] = ['state_change', 'packet_loss', 'interface_carrier', 'interface_errors', 'interface_discards']
 
+const presets: { label: string; params: Record<string, string> }[] = [
+  { label: 'Links added', params: { range: '7d', entities: 'link', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
+  { label: 'Devices added', params: { range: '7d', entities: 'device', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
+  { label: 'Validator changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,changed', dz: 'on_dz' } },
+  { label: 'Link/device updates', params: { range: '24h', entities: 'device,link', categories: 'state_change', actions: 'changed', dz: 'on_dz' } },
+  { label: 'Link ops', params: { range: '24h', entities: 'link,device', categories: 'packet_loss,interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
+  { label: 'Device ops', params: { range: '24h', entities: 'device', categories: 'interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
+]
+
 // Helper to parse a comma-separated URL param into a Set, with validation
 function parseSetParam<T extends string>(param: string | null, allValues: T[], defaultValues: T[]): Set<T> {
   if (!param) return new Set(defaultValues)
@@ -1394,6 +1403,41 @@ export function TimelinePage() {
           <p className="text-muted-foreground mt-1">
             Events across the DoubleZero network
           </p>
+        </div>
+
+        {/* Presets */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          {presets.map(preset => {
+            const isActive = Object.entries(preset.params).every(([k, v]) => searchParams.get(k) === v) &&
+              [...searchParams.keys()].filter(k => k !== 'search' && k !== 'internal' && k !== 'start' && k !== 'end').every(k => k in preset.params)
+            return (
+              <button
+                key={preset.label}
+                onClick={() => {
+                  const next = new URLSearchParams(preset.params)
+                  setSearchParams(next)
+                  // Sync local state from preset params
+                  setTimeRange((preset.params.range || '24h') as TimeRange | 'custom')
+                  setSelectedCategories(parseSetParam(preset.params.categories || null, ALL_CATEGORIES, ALL_CATEGORIES))
+                  setSelectedEntityTypes(parseSetParam(preset.params.entities || null, ALL_ENTITY_TYPES, DEFAULT_ENTITY_TYPES))
+                  setSelectedActions(parseSetParam(preset.params.actions || null, ALL_ACTIONS, ALL_ACTIONS))
+                  setDzFilter((preset.params.dz || 'on_dz') as DZFilter)
+                  setIncludeInternal(false)
+                  setCustomStart('')
+                  setCustomEnd('')
+                  resetSeenEvents()
+                }}
+                className={cn(
+                  'px-3 py-1 text-xs rounded-full border transition-colors',
+                  isActive
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background text-muted-foreground border-border hover:text-foreground hover:border-foreground/30'
+                )}
+              >
+                {preset.label}
+              </button>
+            )
+          })}
         </div>
 
         {/* Filters toolbar */}
