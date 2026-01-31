@@ -819,6 +819,42 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Group interface events by device + event type + timestamp
 	allEvents = groupInterfaceEvents(allEvents)
 
+	// Populate DZ total stake share for validator events by walking backwards
+	// from the current DZ total. This must run BEFORE filters so all attribution
+	// events (which carry ContributionChangeLamports) are visible for the walk.
+	// Events are sorted descending (newest first).
+	if dzTotalInfo.DZTotalPct > 0 && dzTotalInfo.TotalStakeLamports > 0 {
+		// Sort for the backfill walk
+		sort.Slice(allEvents, func(i, j int) bool {
+			if allEvents[i].Timestamp != allEvents[j].Timestamp {
+				return allEvents[i].Timestamp > allEvents[j].Timestamp
+			}
+			return allEvents[i].ID > allEvents[j].ID
+		})
+
+		runningDZTotalPct := dzTotalInfo.DZTotalPct
+		totalStake := float64(dzTotalInfo.TotalStakeLamports)
+		for i := range allEvents {
+			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
+				continue
+			}
+			details, ok := allEvents[i].Details.(ValidatorEventDetails)
+			if !ok {
+				continue
+			}
+
+			// Set the DZ total on this event (this is the total AFTER the event)
+			details.DZTotalStakeSharePct = math.Round(runningDZTotalPct*100) / 100
+			allEvents[i].Details = details
+
+			// Only attribution events carry the authoritative DZ contribution change.
+			if details.ContributionChangeLamports != 0 {
+				changePct := float64(details.ContributionChangeLamports) * 100.0 / totalStake
+				runningDZTotalPct -= changePct
+			}
+		}
+	}
+
 	// Filter by entity type if specified
 	if len(params.EntityTypes) > 0 {
 		filtered := make([]TimelineEvent, 0)
@@ -934,77 +970,6 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 		return allEvents[i].ID > allEvents[j].ID
 	})
-
-	// Populate DZ total stake share for validator events by walking backwards
-	// from the current DZ total. Events are sorted descending (newest first).
-	// For each event that changes DZ stake, we subtract the change to compute
-	// the DZ total before that event, so each event shows the total AFTER it.
-	if dzTotalInfo.DZTotalPct > 0 && dzTotalInfo.TotalStakeLamports > 0 {
-		runningDZTotalPct := dzTotalInfo.DZTotalPct
-		totalStake := float64(dzTotalInfo.TotalStakeLamports)
-
-		// Track which (entity, timestamp) pairs have already adjusted the running total
-		// to avoid double-counting when both attribution and non-attribution events
-		// exist for the same validator change.
-		type changeKey struct {
-			entityPK  string
-			timestamp string
-		}
-		adjusted := make(map[changeKey]bool)
-
-		for i := range allEvents {
-			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
-				continue
-			}
-			details, ok := allEvents[i].Details.(ValidatorEventDetails)
-			if !ok {
-				continue
-			}
-
-			// Set the DZ total on this event (this is the total AFTER the event)
-			details.DZTotalStakeSharePct = math.Round(runningDZTotalPct*100) / 100
-			allEvents[i].Details = details
-
-			// Determine the DZ stake contribution change for this event
-			var changeLamports int64
-			switch allEvents[i].EventType {
-			case "dz_connected":
-				// Validator connected to DZ — their stake was added
-				changeLamports = details.StakeLamports
-			case "dz_disconnected", "validator_left_dz":
-				// Validator disconnected from DZ — their stake was removed
-				changeLamports = -details.StakeLamports
-			case "validator_joined":
-				// Only counts if this is a DZ join (has DZ IP), not a Solana network join
-				if details.DZIP != "" {
-					changeLamports = details.StakeLamports
-				}
-			case "validator_left":
-				// Only counts if this was a DZ leave (has DZ IP or owner), not a Solana network leave
-				if details.DZIP != "" || details.OwnerPubkey != "" {
-					changeLamports = -details.StakeLamports
-				}
-			case "stake_increased", "stake_decreased":
-				// Only affects DZ total if the validator is on DZ
-				if details.DZIP != "" || details.OwnerPubkey != "" {
-					changeLamports = int64(details.StakeShareChangePct / 100.0 * totalStake)
-				}
-			case "stake_changed":
-				// Attribution: DZ validator stake changed
-				changeLamports = details.ContributionChangeLamports
-			}
-
-			// Adjust the running total backwards, deduplicating by (entity, timestamp)
-			if changeLamports != 0 {
-				key := changeKey{allEvents[i].EntityPK, allEvents[i].Timestamp}
-				if !adjusted[key] {
-					adjusted[key] = true
-					changePct := float64(changeLamports) * 100.0 / totalStake
-					runningDZTotalPct -= changePct
-				}
-			}
-		}
-	}
 
 	// Filter validator/gossip_node events by minimum stake share percentage
 	if params.MinStakePct > 0 {
@@ -3153,8 +3118,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 				va.snapshot_ts,
 				toInt64(va.activated_stake_lamports) * toInt64(COALESCE(gn.gossip_ip, '') IN (SELECT dz_ip FROM dz_ips)) as dz_contribution
 			FROM dim_solana_vote_accounts_history va
-			LEFT JOIN dim_solana_gossip_nodes_history gn
-				ON va.node_pubkey = gn.pubkey AND va.snapshot_ts = gn.snapshot_ts
+			ASOF LEFT JOIN dim_solana_gossip_nodes_history gn
+				ON va.node_pubkey = gn.pubkey AND va.snapshot_ts >= gn.snapshot_ts
 			WHERE va.activated_stake_lamports > 0
 				AND va.snapshot_ts >= ? AND va.snapshot_ts <= ?
 		),
@@ -3239,8 +3204,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			va.activated_stake_lamports * 100.0 / NULLIF(ts.total, 0) as stake_share_pct
 		FROM dim_solana_vote_accounts_history va
 		CROSS JOIN total_stake ts
-		LEFT JOIN dim_solana_gossip_nodes_history gn
-			ON va.node_pubkey = gn.pubkey AND va.snapshot_ts = gn.snapshot_ts
+		ASOF LEFT JOIN dim_solana_gossip_nodes_history gn
+			ON va.node_pubkey = gn.pubkey AND va.snapshot_ts >= gn.snapshot_ts
 		WHERE va.activated_stake_lamports > 0
 			AND va.snapshot_ts IN (%s)
 		ORDER BY va.snapshot_ts, va.vote_pubkey
