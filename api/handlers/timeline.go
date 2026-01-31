@@ -870,6 +870,39 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Deduplicate validator events: attribution events (dz_connected, dz_disconnected,
+	// stake_changed, validator_left_dz) overlap with non-attribution events
+	// (validator_joined, validator_left) for the same validator. Keep the attribution
+	// event since it carries ContributionChangeLamports for the DZ total walk.
+	{
+		// Build set of (vote_pubkey) covered by attribution events
+		attrPubkeys := make(map[string]bool)
+		for _, e := range allEvents {
+			switch e.EventType {
+			case "dz_connected", "dz_disconnected", "stake_changed", "validator_left_dz":
+				if details, ok := e.Details.(ValidatorEventDetails); ok && details.VotePubkey != "" {
+					attrPubkeys[details.VotePubkey] = true
+				}
+			}
+		}
+		// Remove non-attribution duplicates for validators that have attribution events
+		if len(attrPubkeys) > 0 {
+			filtered := make([]TimelineEvent, 0, len(allEvents))
+			for _, e := range allEvents {
+				if (e.EventType == "validator_joined" || e.EventType == "validator_left") && e.EntityType == "validator" {
+					if details, ok := e.Details.(ValidatorEventDetails); ok {
+						vp := details.VotePubkey
+						if vp != "" && attrPubkeys[vp] {
+							continue // skip, attribution event covers this validator
+						}
+					}
+				}
+				filtered = append(filtered, e)
+			}
+			allEvents = filtered
+		}
+	}
+
 	// Filter by entity type if specified
 	if len(params.EntityTypes) > 0 {
 		filtered := make([]TimelineEvent, 0)
