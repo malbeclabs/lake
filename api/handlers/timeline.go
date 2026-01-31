@@ -866,6 +866,31 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Deduplicate validator events: both queryValidatorEvents and queryDZStakeAttribution
+	// can produce validator_joined_dz/validator_left_dz for the same validator.
+	// Keep the first occurrence (from the sorted order) per vote_pubkey + event_type pair.
+	{
+		type dedupKey struct {
+			votePubkey string
+			eventType  string
+		}
+		seen := make(map[dedupKey]bool)
+		filtered := make([]TimelineEvent, 0, len(allEvents))
+		for _, e := range allEvents {
+			if strings.HasPrefix(e.EventType, "validator_") && (strings.Contains(e.EventType, "_joined_") || strings.Contains(e.EventType, "_left_") || strings.Contains(e.EventType, "_stake_changed")) {
+				if details, ok := e.Details.(ValidatorEventDetails); ok && details.VotePubkey != "" {
+					key := dedupKey{details.VotePubkey, e.EventType}
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+				}
+			}
+			filtered = append(filtered, e)
+		}
+		allEvents = filtered
+	}
+
 	// Filter by entity type if specified
 	if len(params.EntityTypes) > 0 {
 		filtered := make([]TimelineEvent, 0)
@@ -2612,15 +2637,6 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 				StakeLamports:              stakeLamports,
 				StakeSol:                   stakeSol,
 				StakeSharePct:              stakeSharePct,
-				ContributionChangeLamports: func() int64 {
-					if validatorKind != "validator" {
-						return 0
-					}
-					if isJoining {
-						return stakeLamports
-					}
-					return -stakeLamports
-				}(),
 				UserPK:     pk,
 				DevicePK:   devicePK,
 				DeviceCode: deviceCode,
