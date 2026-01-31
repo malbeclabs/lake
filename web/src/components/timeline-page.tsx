@@ -786,10 +786,10 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
                 Left Solana
               </span>
             )}
-            {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && (event.event_type === 'stake_increased' || event.event_type === 'stake_decreased') && (
+            {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && !event.event_type.endsWith('_joined') && !event.event_type.endsWith('_left') && !event.event_type.endsWith('_offline') && (
               <span className={cn(
                 'text-xs font-medium',
-                event.event_type === 'stake_increased' ? 'text-green-600' : 'text-amber-600'
+                validatorDetails.stake_share_change_pct > 0 ? 'text-green-600' : 'text-amber-600'
               )}>
                 {validatorDetails.stake_share_change_pct > 0 ? '+' : '−'}{Math.abs(validatorDetails.stake_share_change_pct).toFixed(3)}% stake
               </span>

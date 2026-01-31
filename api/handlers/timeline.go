@@ -845,6 +845,21 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 
 			// Set the DZ total on this event (this is the total AFTER the event)
 			details.DZTotalStakeSharePct = math.Round(runningDZTotalPct*100) / 100
+
+			// Set stake share change on join/leave events that don't have it
+			if details.StakeShareChangePct == 0 && details.StakeSharePct > 0 {
+				switch allEvents[i].EventType {
+				case "validator_joined":
+					if details.DZIP != "" {
+						details.StakeShareChangePct = details.StakeSharePct
+					}
+				case "validator_left":
+					if details.DZIP != "" || details.OwnerPubkey != "" {
+						details.StakeShareChangePct = -details.StakeSharePct
+					}
+				}
+			}
+
 			allEvents[i].Details = details
 
 			// Only attribution events carry the authoritative DZ contribution change.
@@ -3307,6 +3322,7 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			prevOnDZ := prev != nil && prev.isOnDZ
 			currOnDZ := curr != nil && curr.isOnDZ
 
+			var stakeShareChangePct float64
 			switch {
 			case prev != nil && curr == nil && prevOnDZ:
 				// Validator left Solana, was on DZ
@@ -3315,21 +3331,27 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 				stake = prev.stake
 				stakeSol = float64(prev.stake) / 1_000_000_000
 				stakeSharePct = prev.stakeSharePct
+				stakeShareChangePct = -prev.stakeSharePct
 				title = fmt.Sprintf("Validator left Solana, was on DZ (%.0f SOL removed)", stakeSol)
 				severity = "warning"
 			case prevOnDZ && !currOnDZ:
 				eventType = "dz_disconnected"
 				action = "dz_disconnected"
+				stakeShareChangePct = -stakeSharePct
 				title = fmt.Sprintf("Validator disconnected from DZ (%.0f SOL removed)", -changeSol)
 				severity = "warning"
 			case !prevOnDZ && currOnDZ:
 				eventType = "dz_connected"
 				action = "dz_connected"
+				stakeShareChangePct = stakeSharePct
 				title = fmt.Sprintf("Validator connected to DZ (%.0f SOL added)", changeSol)
 				severity = "info"
 			case currOnDZ && prevOnDZ:
 				eventType = "stake_changed"
 				action = "stake_changed"
+				if prev != nil {
+					stakeShareChangePct = stakeSharePct - prev.stakeSharePct
+				}
 				if contributionChange > 0 {
 					title = fmt.Sprintf("DZ validator stake increased by %.0f SOL → %.0f SOL", changeSol, stakeSol)
 				} else {
@@ -3356,7 +3378,7 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 					StakeLamports:              stake,
 					StakeSol:                   stakeSol,
 					StakeSharePct:              stakeSharePct,
-					StakeShareChangePct:        pair.dzTotalPct - pair.prevDZTotalPct,
+					StakeShareChangePct:        stakeShareChangePct,
 					DZTotalStakeSharePct:       pair.dzTotalPct,
 					Kind:                       "validator",
 					Action:                     action,
