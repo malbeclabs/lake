@@ -2008,7 +2008,9 @@ export async function fetchLinkHealth(): Promise<LinkHealthResponse> {
 
 // Version check
 export interface VersionResponse {
-  buildTimestamp: string
+  version: string
+  commit: string
+  date: string
 }
 
 export async function fetchVersion(): Promise<VersionResponse | null> {

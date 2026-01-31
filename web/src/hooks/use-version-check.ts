@@ -3,7 +3,7 @@ import { fetchVersion } from '@/lib/api'
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const SHOW_UPDATE_DELAY_MS = 120 * 1000 // 2 minutes grace period before showing update
-const LOCAL_BUILD_TIMESTAMP = __BUILD_TIMESTAMP__
+const LOCAL_BUILD_COMMIT = __BUILD_COMMIT__
 
 export function useVersionCheck() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -11,14 +11,14 @@ export function useVersionCheck() {
   const graceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const checkVersion = useCallback(async () => {
-    // Skip in development (timestamp will be regenerated on each HMR)
-    if (LOCAL_BUILD_TIMESTAMP === 'dev' || import.meta.env.DEV) {
+    // Skip in development (commit will be a real hash but API returns 'none')
+    if (LOCAL_BUILD_COMMIT === 'unknown' || import.meta.env.DEV) {
       return
     }
 
     const serverVersion = await fetchVersion()
-    if (serverVersion && serverVersion.buildTimestamp !== 'dev') {
-      const isOutdated = serverVersion.buildTimestamp !== LOCAL_BUILD_TIMESTAMP
+    if (serverVersion && serverVersion.commit !== 'none') {
+      const isOutdated = serverVersion.commit !== LOCAL_BUILD_COMMIT
 
       if (isOutdated) {
         // Track when we first detected the mismatch
