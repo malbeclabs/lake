@@ -2888,7 +2888,9 @@ export interface ValidatorEventDetails {
   device_code?: string
   metro_code?: string
   kind: 'validator' | 'gossip_only'
-  action: 'joined' | 'left'
+  action: string
+  contribution_change_lamports?: number
+  prev_gossip_ip?: string
 }
 
 export interface HistogramBucket {

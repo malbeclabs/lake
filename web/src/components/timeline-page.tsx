@@ -609,7 +609,7 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
   const changeType = changeDetails?.change_type
 
   // Extract validator/gossip node details for showing device connection prominently
-  const validatorDetails = (event.event_type.includes('validator') || event.event_type.includes('gossip_node') || event.event_type === 'stake_increased' || event.event_type === 'stake_decreased') && event.details && 'action' in event.details
+  const validatorDetails = (event.event_type.includes('validator') || event.event_type.includes('gossip_node') || event.event_type === 'stake_increased' || event.event_type === 'stake_decreased' || event.event_type === 'dz_disconnected' || event.event_type === 'dz_connected' || event.event_type === 'stake_changed') && event.details && 'action' in event.details
     ? event.details as ValidatorEventDetails
     : undefined
 
@@ -752,6 +752,38 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
               <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
                 <TrendingDown className="h-3 w-3" />
                 Stake Down
+              </span>
+            )}
+            {event.event_type === 'dz_connected' && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
+                <LogIn className="h-3 w-3" />
+                DZ Connected
+              </span>
+            )}
+            {event.event_type === 'dz_disconnected' && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                <LogOut className="h-3 w-3" />
+                DZ Disconnected
+              </span>
+            )}
+            {event.event_type === 'stake_changed' && (
+              <span className={cn(
+                'inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded border',
+                validatorDetails?.contribution_change_lamports && validatorDetails.contribution_change_lamports > 0
+                  ? 'bg-green-500/10 text-green-600 border-green-500/20'
+                  : 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+              )}>
+                {validatorDetails?.contribution_change_lamports && validatorDetails.contribution_change_lamports > 0
+                  ? <TrendingUp className="h-3 w-3" />
+                  : <TrendingDown className="h-3 w-3" />
+                }
+                DZ Stake
+              </span>
+            )}
+            {event.event_type === 'validator_left_dz' && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                <LogOut className="h-3 w-3" />
+                Left Solana
               </span>
             )}
             {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && (event.event_type === 'stake_increased' || event.event_type === 'stake_decreased') && (
