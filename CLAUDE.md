@@ -84,7 +84,7 @@ Output goes to `eval-runs/<timestamp>/` with:
 - Do NOT include "Generated with Claude Code" or similar attribution lines
 - PR body structure:
   - `## Summary of Changes` — bullet points describing the net result of the branch vs main
-  - `## Testing Verification` — how changes were tested
+  - `## Testing Verification` — how changes were tested (omit CI checks like builds, linting, or type checks)
 - Focus on the final diff, not individual commits or intermediate work
 - Describe the "what" and "why", not the "how"
 - Keep bullet points concise — write like changelog entries, not a design doc
