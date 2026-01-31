@@ -67,6 +67,18 @@ import {
 type Category = 'state_change' | 'packet_loss' | 'interface_carrier' | 'interface_errors' | 'interface_discards'
 type EntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip_node'
 type DZFilter = 'on_dz' | 'off_dz' | 'all'
+type MinStakeOption = '0' | '0.01' | '0.05' | '0.1' | '0.5' | '1' | '1.5' | '2'
+
+const minStakeOptions: { value: MinStakeOption; label: string }[] = [
+  { value: '0', label: 'Any' },
+  { value: '0.01', label: '>0.01%' },
+  { value: '0.05', label: '>0.05%' },
+  { value: '0.1', label: '>0.1%' },
+  { value: '0.5', label: '>0.5%' },
+  { value: '1', label: '>1%' },
+  { value: '1.5', label: '>1.5%' },
+  { value: '2', label: '>2%' },
+]
 
 const timeRangeOptions: { value: TimeRange | 'custom'; label: string }[] = [
   { value: '1h', label: '1h' },
@@ -742,6 +754,14 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
                 Stake Down
               </span>
             )}
+            {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && (event.event_type === 'stake_increased' || event.event_type === 'stake_decreased') && (
+              <span className={cn(
+                'text-xs font-medium',
+                event.event_type === 'stake_increased' ? 'text-green-600' : 'text-amber-600'
+              )}>
+                {validatorDetails.stake_share_change_pct > 0 ? '+' : '−'}{Math.abs(validatorDetails.stake_share_change_pct).toFixed(3)}% stake
+              </span>
+            )}
             <span
               className="text-xs text-muted-foreground flex items-center gap-1"
               title={new Date(event.timestamp).toLocaleString()}
@@ -874,8 +894,8 @@ const ALL_CATEGORIES: Category[] = ['state_change', 'packet_loss', 'interface_ca
 const presets: { label: string; params: Record<string, string> }[] = [
   { label: 'Links added', params: { range: '7d', entities: 'link', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
   { label: 'Devices added', params: { range: '7d', entities: 'device', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
-  { label: 'Validator connections', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed', dz: 'on_dz' } },
-  { label: 'DZ stake changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,alerting,resolved', dz: 'on_dz' } },
+  { label: 'Validator connections', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed', dz: 'on_dz', min_stake: '0.01' } },
+  { label: 'DZ stake changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,alerting,resolved', dz: 'on_dz', min_stake: '0.01' } },
   { label: 'Link/device updates', params: { range: '24h', entities: 'device,link', categories: 'state_change', actions: 'changed', dz: 'on_dz' } },
   { label: 'Link ops', params: { range: '24h', entities: 'link,device', categories: 'packet_loss,interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
   { label: 'Device ops', params: { range: '24h', entities: 'device', categories: 'interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
@@ -908,6 +928,7 @@ export function TimelinePage() {
   const initialEntityTypes = parseSetParam(searchParams.get('entities'), ALL_ENTITY_TYPES, DEFAULT_ENTITY_TYPES)
   const initialActions = parseSetParam(searchParams.get('actions'), ALL_ACTIONS, ALL_ACTIONS)
   const initialDzFilter = (searchParams.get('dz') || 'on_dz') as DZFilter
+  const initialMinStake = (searchParams.get('min_stake') || '0') as MinStakeOption
   const initialIncludeInternal = searchParams.get('internal') === 'true'
   const initialCustomStart = searchParams.get('start') || ''
   const initialCustomEnd = searchParams.get('end') || ''
@@ -917,6 +938,7 @@ export function TimelinePage() {
   const [selectedEntityTypes, setSelectedEntityTypes] = useState<Set<EntityType>>(initialEntityTypes)
   const [selectedActions, setSelectedActions] = useState<Set<ActionFilter>>(initialActions)
   const [dzFilter, setDzFilter] = useState<DZFilter>(initialDzFilter)
+  const [minStake, setMinStake] = useState<MinStakeOption>(initialMinStake)
   const [includeInternal, setIncludeInternal] = useState(initialIncludeInternal)
   const limit = 50
 
@@ -934,6 +956,7 @@ export function TimelinePage() {
     entities?: Set<EntityType>
     actions?: Set<ActionFilter>
     dz?: DZFilter
+    min_stake?: MinStakeOption
     internal?: boolean
     start?: string
     end?: string
@@ -987,6 +1010,15 @@ export function TimelinePage() {
           next.delete('dz')
         } else {
           next.set('dz', updates.dz)
+        }
+      }
+
+      // Min stake filter
+      if (updates.min_stake !== undefined) {
+        if (updates.min_stake !== '0') {
+          next.set('min_stake', updates.min_stake)
+        } else {
+          next.delete('min_stake')
         }
       }
 
@@ -1064,6 +1096,7 @@ export function TimelinePage() {
   // Only pass dz_filter if we have Solana entities selected
   const hasSolanaEntities = ALL_SOLANA_ENTITIES.some(e => selectedEntityTypes.has(e))
   const dzFilterParam = hasSolanaEntities && dzFilter !== 'all' ? dzFilter : undefined
+  const minStakePctParam = hasSolanaEntities && minStake !== '0' ? parseFloat(minStake) : undefined
 
   const {
     data,
@@ -1075,7 +1108,7 @@ export function TimelinePage() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ['timeline', timeRange, customStart, customEnd, categoryFilter, entityTypeFilter, actionFilter, dzFilterParam, includeInternal, searchParam],
+    queryKey: ['timeline', timeRange, customStart, customEnd, categoryFilter, entityTypeFilter, actionFilter, dzFilterParam, minStakePctParam, includeInternal, searchParam],
     queryFn: ({ pageParam = 0 }) => fetchTimeline({
       range: timeRange !== 'custom' ? timeRange : undefined,
       start: timeRange === 'custom' && customStart ? customStart : undefined,
@@ -1084,6 +1117,7 @@ export function TimelinePage() {
       entity_type: entityTypeFilter,
       action: actionFilter,
       dz_filter: dzFilterParam,
+      min_stake_pct: minStakePctParam,
       search: searchParam || undefined,
       include_internal: includeInternal,
       limit,
@@ -1168,6 +1202,7 @@ export function TimelinePage() {
     setSelectedEntityTypes(new Set(DEFAULT_ENTITY_TYPES))
     setSelectedActions(new Set(ALL_ACTIONS))
     setDzFilter('on_dz')
+    setMinStake('0')
     setIncludeInternal(false)
     setCustomStart('')
     setCustomEnd('')
@@ -1263,6 +1298,7 @@ export function TimelinePage() {
     !DEFAULT_ENTITY_TYPES.every(e => selectedEntityTypes.has(e)) ||
     selectedActions.size !== ALL_ACTIONS.length ||
     dzFilter !== 'on_dz' ||
+    minStake !== '0' ||
     includeInternal ||
     searchFilters.length > 0
 
@@ -1431,6 +1467,7 @@ export function TimelinePage() {
                   setSelectedEntityTypes(parseSetParam(preset.params.entities || null, ALL_ENTITY_TYPES, DEFAULT_ENTITY_TYPES))
                   setSelectedActions(parseSetParam(preset.params.actions || null, ALL_ACTIONS, ALL_ACTIONS))
                   setDzFilter((preset.params.dz || 'on_dz') as DZFilter)
+                  setMinStake((preset.params.min_stake || '0') as MinStakeOption)
                   setIncludeInternal(false)
                   setCustomStart('')
                   setCustomEnd('')
@@ -1478,8 +1515,7 @@ export function TimelinePage() {
                   <input
                     type="datetime-local"
                     value={customStart}
-                    min={minDate}
-                    max={customEnd || maxDate}
+                    max={maxDate}
                     onChange={(e) => {
                       setCustomStart(e.target.value)
                       updateUrlParams({ start: e.target.value })
@@ -1491,7 +1527,6 @@ export function TimelinePage() {
                   <input
                     type="datetime-local"
                     value={customEnd}
-                    min={customStart || minDate}
                     max={maxDate}
                     onChange={(e) => {
                       setCustomEnd(e.target.value)
@@ -1575,6 +1610,27 @@ export function TimelinePage() {
                     {option.label}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* Min stake filter for validator entities */}
+            {hasSolanaEntities && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground uppercase tracking-wide">DZ Stake Change</span>
+                <select
+                  value={minStake}
+                  onChange={(e) => {
+                    const value = e.target.value as MinStakeOption
+                    setMinStake(value)
+                    updateUrlParams({ min_stake: value })
+                    resetSeenEvents()
+                  }}
+                  className="px-2 py-0.5 text-xs rounded-md border border-border bg-background text-foreground cursor-pointer"
+                >
+                  {minStakeOptions.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </div>
             )}
 

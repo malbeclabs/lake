@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -156,19 +158,20 @@ type GroupedInterfaceDetails struct {
 
 // ValidatorEventDetails contains details for validator join/leave events
 type ValidatorEventDetails struct {
-	OwnerPubkey   string  `json:"owner_pubkey"`
-	DZIP          string  `json:"dz_ip,omitempty"`
-	VotePubkey    string  `json:"vote_pubkey,omitempty"`
-	NodePubkey    string  `json:"node_pubkey,omitempty"`
-	StakeLamports int64   `json:"stake_lamports,omitempty"`
-	StakeSol      float64 `json:"stake_sol,omitempty"`
-	StakeSharePct float64 `json:"stake_share_pct,omitempty"`
-	UserPK        string  `json:"user_pk,omitempty"`
-	DevicePK      string  `json:"device_pk,omitempty"`
-	DeviceCode    string  `json:"device_code,omitempty"`
-	MetroCode     string  `json:"metro_code,omitempty"`
-	Kind          string  `json:"kind"`   // "validator" or "gossip_only"
-	Action        string  `json:"action"` // "joined" or "left"
+	OwnerPubkey         string  `json:"owner_pubkey"`
+	DZIP                string  `json:"dz_ip,omitempty"`
+	VotePubkey          string  `json:"vote_pubkey,omitempty"`
+	NodePubkey          string  `json:"node_pubkey,omitempty"`
+	StakeLamports       int64   `json:"stake_lamports,omitempty"`
+	StakeSol            float64 `json:"stake_sol,omitempty"`
+	StakeSharePct       float64 `json:"stake_share_pct,omitempty"`
+	StakeShareChangePct float64 `json:"stake_share_change_pct,omitempty"`
+	UserPK              string  `json:"user_pk,omitempty"`
+	DevicePK            string  `json:"device_pk,omitempty"`
+	DeviceCode          string  `json:"device_code,omitempty"`
+	MetroCode           string  `json:"metro_code,omitempty"`
+	Kind                string  `json:"kind"`   // "validator" or "gossip_only"
+	Action              string  `json:"action"` // "joined" or "left"
 }
 
 // HistogramBucket represents a time bucket with event counts
@@ -203,6 +206,7 @@ type TimelineParams struct {
 	Severities      []string
 	Actions         []string // "added", "removed", "changed", "alerting", "resolved"
 	DZFilter        string   // "on_dz", "off_dz", or "" for all
+	MinStakePct     float64  // Minimum stake_share_pct to include (0 = no filter)
 	Search          []string // Search terms to filter by (entity codes, device codes, etc.)
 	Limit           int
 	Offset          int
@@ -346,6 +350,14 @@ func parseTimelineParams(r *http.Request) TimelineParams {
 	// Parse DZ filter for Solana events (on_dz, off_dz, or empty for all)
 	dzFilter := r.URL.Query().Get("dz_filter")
 
+	// Parse minimum stake percentage filter
+	var minStakePct float64
+	if minStakeStr := r.URL.Query().Get("min_stake_pct"); minStakeStr != "" {
+		if v, err := strconv.ParseFloat(minStakeStr, 64); err == nil && v > 0 {
+			minStakePct = v
+		}
+	}
+
 	// Parse search filter (comma-separated search terms)
 	var search []string
 	if searchStr := r.URL.Query().Get("search"); searchStr != "" {
@@ -365,6 +377,7 @@ func parseTimelineParams(r *http.Request) TimelineParams {
 		Severities:      severities,
 		Actions:         actions,
 		DZFilter:        dzFilter,
+		MinStakePct:     minStakePct,
 		Search:          search,
 		Limit:           pagination.Limit,
 		Offset:          pagination.Offset,
@@ -856,6 +869,30 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				}
 			} else {
 				// Non-Solana events pass through
+				filtered = append(filtered, e)
+			}
+		}
+		allEvents = filtered
+	}
+
+	// Filter validator/gossip_node events by minimum stake share percentage
+	// For stake change events, filter on the absolute delta; for join/leave, filter on absolute share
+	if params.MinStakePct > 0 {
+		filtered := make([]TimelineEvent, 0)
+		for _, e := range allEvents {
+			if e.EntityType == "validator" || e.EntityType == "gossip_node" {
+				if details, ok := e.Details.(ValidatorEventDetails); ok {
+					if e.EventType == "stake_increased" || e.EventType == "stake_decreased" {
+						if math.Abs(details.StakeShareChangePct) >= params.MinStakePct {
+							filtered = append(filtered, e)
+						}
+					} else if details.StakeSharePct >= params.MinStakePct {
+						filtered = append(filtered, e)
+					}
+				} else {
+					filtered = append(filtered, e)
+				}
+			} else {
 				filtered = append(filtered, e)
 			}
 		}
@@ -2874,6 +2911,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			sc.change,
 			sc.change_pct,
 			sc.stake * 100.0 / NULLIF(ts.total, 0) as stake_share_pct,
+			sc.change * 100.0 / NULLIF(ts.total, 0) as stake_share_change_pct,
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
 			gn.gossip_ip IN (SELECT dz_ip FROM dz_ips) as is_on_dz,
 			COALESCE(u.owner_pubkey, '') as dz_owner_pubkey,
@@ -2902,24 +2940,25 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			votePubkey    string
-			nodePubkey    string
-			eventTS       time.Time
-			currentStake  int64
-			prevStake     int64
-			change        int64
-			changePct     float64
-			stakeSharePct float64
-			gossipIP      string
-			isOnDZ        bool
-			dzOwnerPubkey string
-			userPK        string
-			deviceCode    string
-			devicePK      string
-			metroCode     string
+			votePubkey          string
+			nodePubkey          string
+			eventTS             time.Time
+			currentStake        int64
+			prevStake           int64
+			change              int64
+			changePct           float64
+			stakeSharePct       float64
+			stakeShareChangePct float64
+			gossipIP            string
+			isOnDZ              bool
+			dzOwnerPubkey       string
+			userPK              string
+			deviceCode          string
+			devicePK            string
+			metroCode           string
 		)
 
-		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &currentStake, &prevStake, &change, &changePct, &stakeSharePct, &gossipIP, &isOnDZ, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
+		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &currentStake, &prevStake, &change, &changePct, &stakeSharePct, &stakeShareChangePct, &gossipIP, &isOnDZ, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
 			return nil, fmt.Errorf("stake change scan error: %w", err)
 		}
 
@@ -2964,19 +3003,20 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			EntityPK:    votePubkey,
 			EntityCode:  votePubkey,
 			Details: ValidatorEventDetails{
-				OwnerPubkey:   dzOwnerPubkey,
-				DZIP:          gossipIP,
-				VotePubkey:    votePubkey,
-				NodePubkey:    nodePubkey,
-				StakeLamports: currentStake,
-				StakeSol:      currentSol,
-				StakeSharePct: stakeSharePct,
-				UserPK:        userPK,
-				DevicePK:      devicePK,
-				DeviceCode:    deviceCode,
-				MetroCode:     metroCode,
-				Kind:          "validator",
-				Action:        action,
+				OwnerPubkey:         dzOwnerPubkey,
+				DZIP:                gossipIP,
+				VotePubkey:          votePubkey,
+				NodePubkey:          nodePubkey,
+				StakeLamports:       currentStake,
+				StakeSol:            currentSol,
+				StakeSharePct:       stakeSharePct,
+				StakeShareChangePct: stakeShareChangePct,
+				UserPK:              userPK,
+				DevicePK:            devicePK,
+				DeviceCode:          deviceCode,
+				MetroCode:           metroCode,
+				Kind:                "validator",
+				Action:              action,
 			},
 		})
 	}
