@@ -747,33 +747,6 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Query current total DZ-connected stake share for running total computation
-	var dzTotalStakeSharePct float64
-	if shouldIncludeCategory("state_change") {
-		g.Go(func() error {
-			query := `
-				SELECT COALESCE(sum(va.activated_stake_lamports) * 100.0 / NULLIF(any(ts.total), 0), 0)
-				FROM solana_vote_accounts_current va
-				CROSS JOIN (SELECT sum(activated_stake_lamports) as total FROM solana_vote_accounts_current) ts
-				JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
-				JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
-			`
-			start := time.Now()
-			var result *float64
-			err := config.DB.QueryRow(ctx, query).Scan(&result)
-			metrics.RecordClickHouseQuery(time.Since(start), err)
-			if err != nil {
-				log.Printf("Error querying DZ total stake share: %v", err)
-			} else if result != nil {
-				dzTotalStakeSharePct = *result
-				log.Printf("DZ total stake share: %.4f%%", dzTotalStakeSharePct)
-			} else {
-				log.Printf("DZ total stake share query returned nil")
-			}
-			return nil
-		})
-	}
-
 	// Query stake changes (significant stake increases/decreases)
 	var stakeChangeEvents []TimelineEvent
 	if shouldIncludeCategory("state_change") {
@@ -785,6 +758,22 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 			}
 			mu.Lock()
 			stakeChangeEvents = events
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	// Query DZ total stake share per snapshot timestamp
+	var dzTotalsBySnapshot map[string]float64
+	if shouldIncludeCategory("state_change") {
+		g.Go(func() error {
+			totals, err := queryDZTotalBySnapshot(ctx, params.StartTime, params.EndTime)
+			if err != nil {
+				log.Printf("Error querying DZ total stake share: %v", err)
+				return nil
+			}
+			mu.Lock()
+			dzTotalsBySnapshot = totals
 			mu.Unlock()
 			return nil
 		})
@@ -903,8 +892,41 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		allEvents = filtered
 	}
 
+	// Filter by search terms if specified
+	if len(params.Search) > 0 {
+		filtered := make([]TimelineEvent, 0)
+		for _, e := range allEvents {
+			if eventMatchesSearch(e, params.Search) {
+				filtered = append(filtered, e)
+			}
+		}
+		allEvents = filtered
+	}
+
+	// Sort by timestamp descending, then by ID for consistent ordering
+	sort.Slice(allEvents, func(i, j int) bool {
+		if allEvents[i].Timestamp != allEvents[j].Timestamp {
+			return allEvents[i].Timestamp > allEvents[j].Timestamp
+		}
+		return allEvents[i].ID > allEvents[j].ID
+	})
+
+	// Populate DZ total stake share for validator events
+	if dzTotalsBySnapshot != nil {
+		for i := range allEvents {
+			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
+				continue
+			}
+			if details, ok := allEvents[i].Details.(ValidatorEventDetails); ok {
+				if pct, found := dzTotalsBySnapshot[allEvents[i].Timestamp]; found {
+					details.DZTotalStakeSharePct = pct
+					allEvents[i].Details = details
+				}
+			}
+		}
+	}
+
 	// Filter validator/gossip_node events by minimum stake share percentage
-	// For stake change events, filter on the absolute delta; for join/leave, filter on absolute share
 	if params.MinStakePct > 0 {
 		filtered := make([]TimelineEvent, 0)
 		for _, e := range allEvents {
@@ -925,52 +947,6 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		allEvents = filtered
-	}
-
-	// Filter by search terms if specified
-	if len(params.Search) > 0 {
-		filtered := make([]TimelineEvent, 0)
-		for _, e := range allEvents {
-			if eventMatchesSearch(e, params.Search) {
-				filtered = append(filtered, e)
-			}
-		}
-		allEvents = filtered
-	}
-
-	// Sort by timestamp descending, then by ID for consistent ordering
-	sort.Slice(allEvents, func(i, j int) bool {
-		if allEvents[i].Timestamp != allEvents[j].Timestamp {
-			return allEvents[i].Timestamp > allEvents[j].Timestamp
-		}
-		return allEvents[i].ID > allEvents[j].ID
-	})
-
-	// Compute running DZ total stake share for validator join/leave events
-	// Events are sorted newest-first, so walk forward adjusting the running total backwards
-	if dzTotalStakeSharePct > 0 {
-		runningTotal := dzTotalStakeSharePct
-		for i := range allEvents {
-			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
-				continue
-			}
-			details, ok := allEvents[i].Details.(ValidatorEventDetails)
-			if !ok {
-				continue
-			}
-			eventType := allEvents[i].EventType
-			if eventType == "stake_increased" || eventType == "stake_decreased" {
-				details.DZTotalStakeSharePct = runningTotal
-				runningTotal -= details.StakeShareChangePct
-			} else if strings.HasSuffix(eventType, "_joined") {
-				details.DZTotalStakeSharePct = runningTotal
-				runningTotal -= details.StakeSharePct
-			} else if strings.HasSuffix(eventType, "_left") || strings.HasSuffix(eventType, "_offline") {
-				details.DZTotalStakeSharePct = runningTotal
-				runningTotal += details.StakeSharePct
-			}
-			allEvents[i].Details = details
-		}
 	}
 
 	total := len(allEvents)
@@ -2755,6 +2731,10 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			SELECT sum(activated_stake_lamports) as total
 			FROM solana_vote_accounts_current
 		),
+		-- IPs that are connected to DZ (current state)
+		dz_ips AS (
+			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+		),
 		-- Current vote pubkeys (validators that are currently active)
 		current_vote_pubkeys AS (
 			SELECT DISTINCT vote_pubkey FROM solana_vote_accounts_current
@@ -3077,6 +3057,48 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 	}
 
 	return events, nil
+}
+
+// queryDZTotalBySnapshot returns DZ-connected total stake share % at each snapshot
+// timestamp in the given range, keyed by RFC3339 timestamp string.
+func queryDZTotalBySnapshot(ctx context.Context, startTime, endTime time.Time) (map[string]float64, error) {
+	query := `
+		WITH total_stake AS (
+			SELECT sum(activated_stake_lamports) as total
+			FROM solana_vote_accounts_current
+		),
+		dz_ips AS (
+			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+		)
+		SELECT
+			va.snapshot_ts,
+			sum(va.activated_stake_lamports) * 100.0 / NULLIF(any(ts.total), 0) as dz_total_pct
+		FROM dim_solana_vote_accounts_history va
+		CROSS JOIN total_stake ts
+		JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
+		WHERE gn.gossip_ip IN (SELECT dz_ip FROM dz_ips)
+		  AND va.activated_stake_lamports > 0
+		  AND va.snapshot_ts >= ? AND va.snapshot_ts <= ?
+		GROUP BY va.snapshot_ts
+	`
+
+	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var snapshotTS time.Time
+		var dzTotalPct float64
+		if err := rows.Scan(&snapshotTS, &dzTotalPct); err != nil {
+			log.Printf("Error scanning DZ total stake share: %v", err)
+			continue
+		}
+		result[snapshotTS.Format(time.RFC3339)] = dzTotalPct
+	}
+	return result, nil
 }
 
 // groupInterfaceEvents groups interface events by device, event type, and timestamp.

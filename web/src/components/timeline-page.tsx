@@ -764,7 +764,7 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
             )}
             {validatorDetails?.dz_total_stake_share_pct !== undefined && validatorDetails.dz_total_stake_share_pct > 0 && (
               <span className="text-xs text-muted-foreground">
-                → {validatorDetails.dz_total_stake_share_pct.toFixed(2)}% DZ
+                · {validatorDetails.dz_total_stake_share_pct.toFixed(2)}% DZ total
               </span>
             )}
             <span
