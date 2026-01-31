@@ -820,11 +820,10 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	allEvents = groupInterfaceEvents(allEvents)
 
 	// Populate DZ total stake share for validator events by walking backwards
-	// from the current DZ total. This must run BEFORE filters so all attribution
-	// events (which carry ContributionChangeLamports) are visible for the walk.
-	// Events are sorted descending (newest first).
+	// from the current DZ total. Only attribution events (with ContributionChangeLamports)
+	// adjust the running total. This must run BEFORE filters so all attribution
+	// events are visible for the walk. Events are sorted descending (newest first).
 	if dzTotalInfo.DZTotalPct > 0 && dzTotalInfo.TotalStakeLamports > 0 {
-		// Sort for the backfill walk
 		sort.Slice(allEvents, func(i, j int) bool {
 			if allEvents[i].Timestamp != allEvents[j].Timestamp {
 				return allEvents[i].Timestamp > allEvents[j].Timestamp
@@ -843,52 +842,70 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Set the DZ total on this event (this is the total AFTER the event)
+			// Override the DZ total from the walk (attribution query's own
+			// DZTotalStakeSharePct is unreliable for older snapshots due to
+			// ASOF JOIN gaps in gossip history).
 			details.DZTotalStakeSharePct = math.Round(runningDZTotalPct*100) / 100
-
-			// Set stake share change on connect/disconnect events that don't have it
-			if details.StakeShareChangePct == 0 && details.StakeSharePct > 0 {
-				switch allEvents[i].EventType {
-				case "validator_joined_dz":
-					details.StakeShareChangePct = details.StakeSharePct
-				case "validator_left_dz":
-					details.StakeShareChangePct = -details.StakeSharePct
-				}
-			}
-
-			allEvents[i].Details = details
 
 			// Only attribution events carry the authoritative DZ contribution change.
 			if details.ContributionChangeLamports != 0 {
 				changePct := float64(details.ContributionChangeLamports) * 100.0 / totalStake
+				if details.StakeShareChangePct == 0 {
+					details.StakeShareChangePct = math.Round(changePct*1000) / 1000
+				}
 				runningDZTotalPct -= changePct
 			}
+
+			allEvents[i].Details = details
 		}
 	}
 
 	// Deduplicate validator events: both queryValidatorEvents and queryDZStakeAttribution
-	// can produce validator_joined_dz/validator_left_dz for the same validator.
-	// Keep the first occurrence (from the sorted order) per vote_pubkey + event_type pair.
+	// can produce validator_joined_dz/validator_left_dz for the same validator at nearly
+	// the same time. Dedup by (vote_pubkey, event_type, timestamp) keeping the event with
+	// ContributionChangeLamports (from attribution) over the one without.
 	{
 		type dedupKey struct {
 			votePubkey string
 			eventType  string
+			timestamp  string
 		}
-		seen := make(map[dedupKey]bool)
-		filtered := make([]TimelineEvent, 0, len(allEvents))
-		for _, e := range allEvents {
-			if strings.HasPrefix(e.EventType, "validator_") && (strings.Contains(e.EventType, "_joined_") || strings.Contains(e.EventType, "_left_") || strings.Contains(e.EventType, "_stake_changed")) {
-				if details, ok := e.Details.(ValidatorEventDetails); ok && details.VotePubkey != "" {
-					key := dedupKey{details.VotePubkey, e.EventType}
-					if seen[key] {
-						continue
-					}
-					seen[key] = true
+		indices := make(map[dedupKey]int) // index of first seen event
+		remove := make(map[int]bool)
+		for i, e := range allEvents {
+			if !strings.HasPrefix(e.EventType, "validator_") {
+				continue
+			}
+			if !strings.Contains(e.EventType, "_joined_") && !strings.Contains(e.EventType, "_left_") && !strings.Contains(e.EventType, "_stake_changed") {
+				continue
+			}
+			details, ok := e.Details.(ValidatorEventDetails)
+			if !ok || details.VotePubkey == "" {
+				continue
+			}
+			key := dedupKey{details.VotePubkey, e.EventType, e.Timestamp}
+			if prevIdx, exists := indices[key]; exists {
+				// Keep the one with ContributionChangeLamports, remove the other
+				prevDetails := allEvents[prevIdx].Details.(ValidatorEventDetails)
+				if prevDetails.ContributionChangeLamports != 0 {
+					remove[i] = true
+				} else {
+					remove[prevIdx] = true
+					indices[key] = i
+				}
+			} else {
+				indices[key] = i
+			}
+		}
+		if len(remove) > 0 {
+			filtered := make([]TimelineEvent, 0, len(allEvents)-len(remove))
+			for i, e := range allEvents {
+				if !remove[i] {
+					filtered = append(filtered, e)
 				}
 			}
-			filtered = append(filtered, e)
+			allEvents = filtered
 		}
-		allEvents = filtered
 	}
 
 	// Filter by entity type if specified

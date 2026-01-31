@@ -314,6 +314,868 @@ func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
 	assert.InDelta(t, 50.0, dzTotal, 1.0, "DZ total should be ~50%% (100k/200k)")
 }
 
+// TestDZTotalBackfillWalk_MultipleSnapshots tests that the DZ total stake share
+// percentage walks back correctly across multiple attribution events over several
+// days. This is the scenario that was broken in production: the total drifted from
+// ~39% down to ~36% because the old dedup removed legitimate events.
+func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	// 4 timestamps over 3 days — each transition changes DZ composition
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	t3 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)
+	t4 := time.Date(2025, 1, 4, 0, 0, 0, 0, time.UTC)
+
+	dzIP := "1.2.3.4"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// Two validators: A (always on DZ, 100k SOL) and B (joins DZ at t2, changes stake at t3, leaves at t4)
+	// Total network stake: A(100k) + B(50k) + rest(850k) = 1M SOL
+
+	// Current tables reflect final state (t4): A on DZ, B NOT on DZ
+	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, "node-A", dzIP)
+	insertCurrentVoteAccount(t, "vote-B", "node-B", 80_000_000_000_000)
+	insertCurrentGossipNode(t, "node-B", "9.9.9.9") // B left DZ at t4
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 820_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	// T1: A on DZ (100k), B NOT on DZ (50k)
+	// DZ total = 100k / 1M = 10%
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-A", dzIP, t1)
+	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 850_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+
+	// T2: A on DZ (100k), B JOINS DZ (50k)
+	// DZ total = 150k / 1M = 15%
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-A", dzIP, t2)
+	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-B", dzIP, t2) // joins DZ
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 850_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+
+	// T3: A on DZ (100k), B on DZ, stake increased to 80k
+	// DZ total = 180k / 1M = 18%
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t3)
+	insertGossipNodeHistory(t, "node-A", dzIP, t3)
+	insertVoteAccountHistory(t, "vote-B", "node-B", 80_000_000_000_000, t3)
+	insertGossipNodeHistory(t, "node-B", dzIP, t3)
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 820_000_000_000_000, t3)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t3)
+
+	// T4: A on DZ (100k), B LEAVES DZ (80k)
+	// DZ total = 100k / 1M = 10%
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t4)
+	insertGossipNodeHistory(t, "node-A", dzIP, t4)
+	insertVoteAccountHistory(t, "vote-B", "node-B", 80_000_000_000_000, t4)
+	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t4) // leaves DZ
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 820_000_000_000_000, t4)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t4)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t4.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	// Collect all attribution events (they have contribution_change_lamports)
+	var attrEvents []handlers.TimelineEvent
+	for _, e := range resp.Events {
+		details := getDetailsOptional(e)
+		if details == nil {
+			continue
+		}
+		if ccl, ok := details["contribution_change_lamports"].(float64); ok && ccl != 0 {
+			attrEvents = append(attrEvents, e)
+		}
+	}
+	t.Logf("Attribution events: %d", len(attrEvents))
+	for _, e := range attrEvents {
+		d := getDetailsOptional(e)
+		t.Logf("  %s  type=%s  ccl=%.0f  dz_total=%.2f%%  vote=%s",
+			e.Timestamp, e.EventType,
+			d["contribution_change_lamports"],
+			d["dz_total_stake_share_pct"],
+			d["vote_pubkey"])
+	}
+
+	// We expect 3 attribution events for validator B:
+	// t2: joined DZ (+50k), t3: stake changed (+30k), t4: left DZ (-80k)
+	require.GreaterOrEqual(t, len(attrEvents), 3, "expected at least 3 attribution events for validator B")
+
+	// Key assertion: ALL events should have dz_total_stake_share_pct > 5%.
+	// The bug was that backfill drift caused old events to show ~0% or ~36%
+	// when they should have been around 10-18%.
+	for _, e := range resp.Events {
+		details := getDetailsOptional(e)
+		if details == nil {
+			continue
+		}
+		dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
+		if !ok || dzTotal == 0 {
+			continue
+		}
+		assert.Greater(t, dzTotal, 5.0,
+			"DZ total at %s (%s) should be > 5%% (was %.2f%%)", e.Timestamp, e.EventType, dzTotal)
+		assert.Less(t, dzTotal, 25.0,
+			"DZ total at %s (%s) should be < 25%% (was %.2f%%)", e.Timestamp, e.EventType, dzTotal)
+	}
+}
+
+// TestDZTotalBackfillWalk_StableTotal tests that when no attribution events exist
+// (DZ composition doesn't change), all events show the same DZ total.
+func TestDZTotalBackfillWalk_StableTotal(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
+	t3 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	dzIP := "1.2.3.4"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// Validator A always on DZ, same stake at all timestamps
+	for _, ts := range []time.Time{t1, t2, t3} {
+		insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, ts)
+		insertGossipNodeHistory(t, "node-A", dzIP, ts)
+		insertVoteAccountHistory(t, "vote-rest", "node-rest", 100_000_000_000_000, ts)
+		insertGossipNodeHistory(t, "node-rest", "8.8.8.8", ts)
+	}
+	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, "node-A", dzIP)
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 100_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	// Validator B joins Solana at t2 (NOT on DZ) — generates a non-attribution event
+	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+
+	// Validator C joins Solana at t3 (NOT on DZ)
+	insertVoteAccountHistory(t, "vote-C", "node-C", 30_000_000_000_000, t3)
+	insertGossipNodeHistory(t, "node-C", "7.7.7.7", t3)
+	insertCurrentVoteAccount(t, "vote-C", "node-C", 30_000_000_000_000)
+	insertCurrentGossipNode(t, "node-C", "7.7.7.7")
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t3.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	// All events with dz_total should show the same value since DZ composition
+	// didn't change. Current DZ total = 100k / (100k + 100k + 50k + 30k) ≈ 35.7%
+	var dzTotals []float64
+	for _, e := range resp.Events {
+		details := getDetailsOptional(e)
+		if details == nil {
+			continue
+		}
+		dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
+		if !ok || dzTotal == 0 {
+			continue
+		}
+		dzTotals = append(dzTotals, dzTotal)
+	}
+	require.NotEmpty(t, dzTotals, "expected some events with dz_total_stake_share_pct")
+
+	// All should be the same value (no drift)
+	for i, pct := range dzTotals {
+		assert.InDelta(t, dzTotals[0], pct, 0.01,
+			"DZ total[%d] = %.2f%% should equal DZ total[0] = %.2f%% (no drift)", i, pct, dzTotals[0])
+	}
+}
+
+// TestDedup_SameValidatorDifferentTimestamps tests that the dedup logic
+// does NOT remove events for the same validator at different timestamps.
+// This was a bug: the old dedup keyed on (vote_pubkey, event_type) globally,
+// removing legitimate stake change events at different times.
+func TestDedup_SameValidatorDifferentTimestamps(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	t3 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)
+
+	dzIP := "1.2.3.4"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// Validator A on DZ with changing stake across 3 snapshots
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-A", dzIP, t1)
+	insertVoteAccountHistory(t, "vote-A", "node-A", 120_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-A", dzIP, t2)
+	insertVoteAccountHistory(t, "vote-A", "node-A", 80_000_000_000_000, t3)
+	insertGossipNodeHistory(t, "node-A", dzIP, t3)
+
+	insertCurrentVoteAccount(t, "vote-A", "node-A", 80_000_000_000_000)
+	insertCurrentGossipNode(t, "node-A", dzIP)
+
+	// Need another validator so total stake > 0
+	for _, ts := range []time.Time{t1, t2, t3} {
+		insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, ts)
+		insertGossipNodeHistory(t, "node-rest", "8.8.8.8", ts)
+	}
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 920_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t3.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	// Count validator_stake_changed events for vote-A
+	var stakeChangedCount int
+	for _, e := range resp.Events {
+		if e.EventType != "validator_stake_changed" {
+			continue
+		}
+		details := getDetailsOptional(e)
+		if details == nil {
+			continue
+		}
+		if details["vote_pubkey"] == "vote-A" {
+			stakeChangedCount++
+			t.Logf("stake_changed at %s: ccl=%.0f", e.Timestamp, details["contribution_change_lamports"])
+		}
+	}
+	// Should have 2 stake_changed events: t1→t2 (+20k) and t2→t3 (-40k)
+	assert.Equal(t, 2, stakeChangedCount,
+		"same validator should have 2 stake_changed events at different timestamps (old dedup bug would leave only 1)")
+}
+
+// TestTimeline_FullResponse_JoinLeaveSequence tests the complete API response
+// for a validator that joins DZ, changes stake, and leaves DZ. Asserts exact
+// event types, ordering, field values, and DZ total consistency.
+func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 3, 1, 6, 0, 0, 0, time.UTC)
+	t3 := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
+	t4 := time.Date(2025, 3, 1, 18, 0, 0, 0, time.UTC)
+
+	dzIP := "10.0.0.1"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// "rest" validator provides background stake (always off DZ, stable)
+	// "base" validator always on DZ
+	// "target" validator: off DZ at t1, joins at t2, stake changes at t3, leaves at t4
+
+	const restStake int64 = 700_000_000_000_000   // 700k SOL
+	const baseStake int64 = 200_000_000_000_000   // 200k SOL
+	const targetStake1 int64 = 100_000_000_000_000 // 100k SOL
+	const targetStake2 int64 = 150_000_000_000_000 // 150k SOL
+	// Total = 1M SOL at t1-t3, 1.05M at t4 (slight variation)
+
+	// Current tables (final state: base on DZ, target off DZ)
+	insertCurrentVoteAccount(t, "vote-base", "node-base", baseStake)
+	insertCurrentGossipNode(t, "node-base", dzIP)
+	insertCurrentVoteAccount(t, "vote-target", "node-target", targetStake2)
+	insertCurrentGossipNode(t, "node-target", "9.9.9.9")
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", restStake)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	// T1: base on DZ (200k), target off DZ (100k), rest (700k)
+	for _, v := range []struct {
+		vote, node string
+		stake      int64
+		ip         string
+	}{
+		{"vote-base", "node-base", baseStake, dzIP},
+		{"vote-target", "node-target", targetStake1, "9.9.9.9"},
+		{"vote-rest", "node-rest", restStake, "8.8.8.8"},
+	} {
+		insertVoteAccountHistory(t, v.vote, v.node, v.stake, t1)
+		insertGossipNodeHistory(t, v.node, v.ip, t1)
+	}
+
+	// T2: target joins DZ
+	insertVoteAccountHistory(t, "vote-base", "node-base", baseStake, t2)
+	insertGossipNodeHistory(t, "node-base", dzIP, t2)
+	insertVoteAccountHistory(t, "vote-target", "node-target", targetStake1, t2)
+	insertGossipNodeHistory(t, "node-target", dzIP, t2) // joins DZ
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", restStake, t2)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+
+	// T3: target stake increases while on DZ
+	insertVoteAccountHistory(t, "vote-base", "node-base", baseStake, t3)
+	insertGossipNodeHistory(t, "node-base", dzIP, t3)
+	insertVoteAccountHistory(t, "vote-target", "node-target", targetStake2, t3)
+	insertGossipNodeHistory(t, "node-target", dzIP, t3) // still on DZ, more stake
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", restStake, t3)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t3)
+
+	// T4: target leaves DZ
+	insertVoteAccountHistory(t, "vote-base", "node-base", baseStake, t4)
+	insertGossipNodeHistory(t, "node-base", dzIP, t4)
+	insertVoteAccountHistory(t, "vote-target", "node-target", targetStake2, t4)
+	insertGossipNodeHistory(t, "node-target", "9.9.9.9", t4) // leaves DZ
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", restStake, t4)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t4)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t4.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	// Response metadata
+	assert.Equal(t, 500, resp.Limit)
+	assert.Equal(t, 0, resp.Offset)
+	assert.NotEmpty(t, resp.TimeRange.Start)
+	assert.NotEmpty(t, resp.TimeRange.End)
+
+	// Extract attribution events for vote-target, sorted newest first (API default)
+	type eventSummary struct {
+		eventType string
+		timestamp string
+		details   map[string]any
+	}
+	var targetEvents []eventSummary
+	for _, e := range resp.Events {
+		d := getDetailsOptional(e)
+		if d == nil {
+			continue
+		}
+		vp, _ := d["vote_pubkey"].(string)
+		if vp != "vote-target" {
+			continue
+		}
+		targetEvents = append(targetEvents, eventSummary{e.EventType, e.Timestamp, d})
+	}
+
+	// Log all events for debugging
+	for _, e := range targetEvents {
+		t.Logf("vote-target: %s  type=%-30s  ccl=%v  dz_total=%.2f%%",
+			e.timestamp, e.eventType,
+			e.details["contribution_change_lamports"],
+			e.details["dz_total_stake_share_pct"])
+	}
+
+	// Multiple query functions can produce events for the same validator:
+	// - queryDZStakeAttribution → validator_joined_dz, validator_stake_changed, validator_left_dz
+	// - queryVoteAccountChanges → validator_joined_solana (if new to Solana)
+	// - queryStakeChanges → validator_stake_increased/decreased
+	findByType := func(eventType string) *eventSummary {
+		for i, e := range targetEvents {
+			if e.eventType == eventType {
+				return &targetEvents[i]
+			}
+		}
+		return nil
+	}
+
+	// Core attribution events must exist
+	leftEvent := findByType("validator_left_dz")
+	require.NotNil(t, leftEvent, "should have validator_left_dz at t4")
+	assert.Equal(t, t4.Format(time.RFC3339), leftEvent.timestamp)
+	assert.Equal(t, "validator_left_dz", leftEvent.details["action"])
+	assert.Equal(t, "vote-target", leftEvent.details["vote_pubkey"])
+	assert.Equal(t, "node-target", leftEvent.details["node_pubkey"])
+	assert.Equal(t, "validator", leftEvent.details["kind"])
+	cclLeft, _ := leftEvent.details["contribution_change_lamports"].(float64)
+	assert.Less(t, cclLeft, float64(0), "left DZ should have negative contribution")
+
+	stakeEvent := findByType("validator_stake_changed")
+	require.NotNil(t, stakeEvent, "should have validator_stake_changed at t3")
+	assert.Equal(t, t3.Format(time.RFC3339), stakeEvent.timestamp)
+	cclStake, _ := stakeEvent.details["contribution_change_lamports"].(float64)
+	assert.Equal(t, float64(targetStake2-targetStake1), cclStake,
+		"stake change = 150k - 100k = 50k SOL in lamports")
+
+	joinEvent := findByType("validator_joined_dz")
+	require.NotNil(t, joinEvent, "should have validator_joined_dz at t2")
+	assert.Equal(t, t2.Format(time.RFC3339), joinEvent.timestamp)
+	assert.Equal(t, "validator_joined_dz", joinEvent.details["action"])
+	cclJoin, _ := joinEvent.details["contribution_change_lamports"].(float64)
+	assert.Equal(t, float64(targetStake1), cclJoin, "joining DZ adds full stake")
+
+	// DZ total assertions — verify the backfill walk produces correct values.
+	// Current DZ total: base(200k) / (200k + 150k + 700k) = 200k/1050k ≈ 19.05%
+	// After t4 (left): same as current ≈ 19.05%
+	// After t3 (stake changed): base(200k) + target(150k) = 350k/1050k ≈ 33.33%
+	// After t2 (joined): base(200k) + target(100k) = 300k/1050k ≈ 28.57%
+	dzLeft, _ := leftEvent.details["dz_total_stake_share_pct"].(float64)
+	dzStake, _ := stakeEvent.details["dz_total_stake_share_pct"].(float64)
+	dzJoin, _ := joinEvent.details["dz_total_stake_share_pct"].(float64)
+
+	assert.InDelta(t, 19.05, dzLeft, 1.0, "DZ total after left should be ~19%%")
+	assert.InDelta(t, 33.33, dzStake, 1.0, "DZ total after stake change should be ~33%%")
+	assert.InDelta(t, 28.57, dzJoin, 1.5, "DZ total after join should be ~29%%")
+
+	// DZ totals should reflect the changes correctly
+	assert.Less(t, dzLeft, dzJoin, "t4 total < t2 total (target left)")
+	assert.Less(t, dzJoin, dzStake, "t2 total < t3 total (stake increased)")
+}
+
+// TestTimeline_FullResponse_DZFilter tests that the dz_filter=on_dz parameter
+// correctly filters events to only DZ-related validators.
+func TestTimeline_FullResponse_DZFilter(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 4, 1, 6, 0, 0, 0, time.UTC)
+
+	dzIP := "10.0.0.1"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "owner-1", "device-1")
+
+	// Validator A: on DZ, joins at t2
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-A", dzIP, t2)
+	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, "node-A", dzIP)
+
+	// Validator B: NOT on DZ, joins at t2
+	insertVoteAccountHistory(t, "vote-B", "node-B", 200_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, "vote-B", "node-B", 200_000_000_000_000)
+	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+
+	// Background validator at t1
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 700_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 700_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 700_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	// Without DZ filter: both A and B should appear
+	reqAll := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rrAll := httptest.NewRecorder()
+	handlers.GetTimeline(rrAll, reqAll)
+	require.Equal(t, http.StatusOK, rrAll.Code)
+
+	var respAll handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rrAll.Body).Decode(&respAll))
+
+	allVotePubkeys := make(map[string]bool)
+	for _, e := range respAll.Events {
+		d := getDetailsOptional(e)
+		if d == nil {
+			continue
+		}
+		if vp, ok := d["vote_pubkey"].(string); ok && vp != "" {
+			allVotePubkeys[vp] = true
+		}
+	}
+	assert.True(t, allVotePubkeys["vote-A"], "vote-A should appear without DZ filter")
+	assert.True(t, allVotePubkeys["vote-B"], "vote-B should appear without DZ filter")
+
+	// With DZ filter: only A should appear
+	reqDZ := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&dz_filter=on_dz&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rrDZ := httptest.NewRecorder()
+	handlers.GetTimeline(rrDZ, reqDZ)
+	require.Equal(t, http.StatusOK, rrDZ.Code)
+
+	var respDZ handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rrDZ.Body).Decode(&respDZ))
+
+	for _, e := range respDZ.Events {
+		d := getDetailsOptional(e)
+		if d == nil {
+			continue
+		}
+		vp, _ := d["vote_pubkey"].(string)
+		assert.NotEqual(t, "vote-B", vp, "vote-B (off DZ) should be excluded by dz_filter=on_dz")
+	}
+
+	// vote-A should appear as validator_joined_dz
+	foundA := false
+	for _, e := range respDZ.Events {
+		if e.EventType == "validator_joined_dz" {
+			d := getDetailsOptional(e)
+			if d != nil && d["vote_pubkey"] == "vote-A" {
+				foundA = true
+				// Verify DZ metadata is populated
+				assert.NotEmpty(t, d["dz_ip"], "DZ validator should have dz_ip")
+				dzTotal, ok := d["dz_total_stake_share_pct"].(float64)
+				assert.True(t, ok && dzTotal > 0, "should have dz_total_stake_share_pct > 0")
+			}
+		}
+	}
+	assert.True(t, foundA, "vote-A should appear as validator_joined_dz with dz_filter=on_dz")
+}
+
+// TestTimeline_FullResponse_MinStakeFilter tests that min_stake_pct correctly
+// excludes low-stake validators from results.
+func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 5, 1, 6, 0, 0, 0, time.UTC)
+
+	dzIP := "10.0.0.1"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// Validator big: 5% of total stake (50k / 1M)
+	insertVoteAccountHistory(t, "vote-big", "node-big", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-big", dzIP, t2)
+	insertCurrentVoteAccount(t, "vote-big", "node-big", 50_000_000_000_000)
+	insertCurrentGossipNode(t, "node-big", dzIP)
+
+	// Validator small: 0.1% of total stake (1k / 1M)
+	insertVoteAccountHistory(t, "vote-small", "node-small", 1_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-small", dzIP, t2)
+	insertCurrentVoteAccount(t, "vote-small", "node-small", 1_000_000_000_000)
+	insertCurrentGossipNode(t, "node-small", dzIP)
+
+	// Background to make total ~1M
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 949_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 949_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 949_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	// min_stake_pct=1 should exclude vote-small (0.1%) but include vote-big (5%)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&min_stake_pct=1&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	foundBig := false
+	for _, e := range resp.Events {
+		d := getDetailsOptional(e)
+		if d == nil {
+			continue
+		}
+		vp, _ := d["vote_pubkey"].(string)
+		assert.NotEqual(t, "vote-small", vp,
+			"vote-small (0.1%% stake) should be excluded by min_stake_pct=1")
+		if vp == "vote-big" {
+			foundBig = true
+			ssp, _ := d["stake_share_pct"].(float64)
+			assert.InDelta(t, 5.0, ssp, 0.5, "vote-big stake_share_pct should be ~5%%")
+		}
+	}
+	assert.True(t, foundBig, "vote-big (5%% stake) should be included with min_stake_pct=1")
+}
+
+// TestTimeline_FullResponse_Pagination tests that limit and offset work correctly.
+func TestTimeline_FullResponse_Pagination(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	dzIP := "10.0.0.1"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// Create 5 validators that join at different times
+	baseTime := t1
+	for i := 0; i < 5; i++ {
+		ts := baseTime.Add(time.Duration(i) * time.Hour)
+		vote := fmt.Sprintf("vote-%d", i)
+		node := fmt.Sprintf("node-%d", i)
+		insertVoteAccountHistory(t, vote, node, int64((i+1)*10_000_000_000_000), ts)
+		insertGossipNodeHistory(t, node, dzIP, ts)
+		insertCurrentVoteAccount(t, vote, node, int64((i+1)*10_000_000_000_000))
+		insertCurrentGossipNode(t, node, dzIP)
+	}
+	// Background stake
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 900_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+
+	endTime := baseTime.Add(5 * time.Hour)
+
+	// Get all events
+	reqAll := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		endTime.Format(time.RFC3339)), nil)
+	rrAll := httptest.NewRecorder()
+	handlers.GetTimeline(rrAll, reqAll)
+	require.Equal(t, http.StatusOK, rrAll.Code)
+
+	var respAll handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rrAll.Body).Decode(&respAll))
+	totalEvents := respAll.Total
+
+	if totalEvents < 3 {
+		t.Skipf("Not enough events to test pagination (got %d)", totalEvents)
+	}
+
+	// Page 1: limit=2, offset=0
+	req1 := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=2&offset=0",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		endTime.Format(time.RFC3339)), nil)
+	rr1 := httptest.NewRecorder()
+	handlers.GetTimeline(rr1, req1)
+	require.Equal(t, http.StatusOK, rr1.Code)
+
+	var resp1 handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr1.Body).Decode(&resp1))
+	assert.Equal(t, 2, resp1.Limit)
+	assert.Equal(t, 0, resp1.Offset)
+	assert.Equal(t, totalEvents, resp1.Total, "total should be same across pages")
+	assert.Len(t, resp1.Events, 2, "page 1 should have 2 events")
+
+	// Page 2: limit=2, offset=2
+	req2 := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=2&offset=2",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		endTime.Format(time.RFC3339)), nil)
+	rr2 := httptest.NewRecorder()
+	handlers.GetTimeline(rr2, req2)
+	require.Equal(t, http.StatusOK, rr2.Code)
+
+	var resp2 handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr2.Body).Decode(&resp2))
+	assert.Equal(t, 2, resp2.Limit)
+	assert.Equal(t, 2, resp2.Offset)
+	assert.Len(t, resp2.Events, 2, "page 2 should have 2 events")
+
+	// Events across pages should not overlap
+	page1IDs := make(map[string]bool)
+	for _, e := range resp1.Events {
+		page1IDs[e.ID] = true
+	}
+	for _, e := range resp2.Events {
+		assert.False(t, page1IDs[e.ID], "page 2 event %s should not appear on page 1", e.ID)
+	}
+
+	// Events should be sorted newest first within each page
+	if len(resp1.Events) >= 2 {
+		assert.GreaterOrEqual(t, resp1.Events[0].Timestamp, resp1.Events[1].Timestamp,
+			"events should be sorted newest first")
+	}
+}
+
+// TestTimeline_FullResponse_EventFields tests that all required fields are
+// present and correctly typed on validator events.
+func TestTimeline_FullResponse_EventFields(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 7, 1, 6, 0, 0, 0, time.UTC)
+
+	dzIP := "10.0.0.1"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "owner-pub-1", "device-pk-1")
+
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-A", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-A", dzIP, t2) // joins DZ at t2
+
+	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, "node-A", dzIP)
+
+	// Background
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 900_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=500",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	// Find the validator_joined_dz event
+	var joinEvent *handlers.TimelineEvent
+	for i, e := range resp.Events {
+		if e.EventType == "validator_joined_dz" {
+			joinEvent = &resp.Events[i]
+			break
+		}
+	}
+	require.NotNil(t, joinEvent, "should have a validator_joined_dz event")
+
+	// Top-level fields
+	assert.NotEmpty(t, joinEvent.ID, "id must be set")
+	assert.Equal(t, "validator_joined_dz", joinEvent.EventType)
+	assert.Equal(t, t2.Format(time.RFC3339), joinEvent.Timestamp)
+	assert.Equal(t, "state_change", joinEvent.Category)
+	assert.Equal(t, "info", joinEvent.Severity)
+	assert.NotEmpty(t, joinEvent.Title)
+	assert.Equal(t, "validator", joinEvent.EntityType)
+	assert.Equal(t, "vote-A", joinEvent.EntityPK)
+	assert.Equal(t, "vote-A", joinEvent.EntityCode)
+
+	// Detail fields
+	d := getDetailsOptional(*joinEvent)
+	require.NotNil(t, d, "details should be present")
+
+	assert.Equal(t, "vote-A", d["vote_pubkey"])
+	assert.Equal(t, "node-A", d["node_pubkey"])
+	assert.Equal(t, "validator_joined_dz", d["action"])
+	assert.Equal(t, "validator", d["kind"])
+	assert.Equal(t, dzIP, d["dz_ip"])
+
+	// Numeric fields should be present and reasonable
+	stakeLamports, ok := d["stake_lamports"].(float64) // JSON numbers are float64
+	assert.True(t, ok, "stake_lamports should be a number")
+	assert.Equal(t, float64(100_000_000_000_000), stakeLamports)
+
+	stakeSol, ok := d["stake_sol"].(float64)
+	assert.True(t, ok, "stake_sol should be a number")
+	assert.InDelta(t, 100_000.0, stakeSol, 1.0)
+
+	stakeSharePct, ok := d["stake_share_pct"].(float64)
+	assert.True(t, ok, "stake_share_pct should be a number")
+	assert.InDelta(t, 10.0, stakeSharePct, 1.0, "100k/1M = 10%%")
+
+	dzTotal, ok := d["dz_total_stake_share_pct"].(float64)
+	assert.True(t, ok, "dz_total_stake_share_pct should be a number")
+	assert.Greater(t, dzTotal, 0.0)
+
+	cclRaw, ok := d["contribution_change_lamports"].(float64)
+	assert.True(t, ok, "contribution_change_lamports should be present on attribution events")
+	assert.Equal(t, float64(100_000_000_000_000), cclRaw, "joining DZ adds full 100k SOL")
+}
+
+// TestTimeline_FullResponse_ActionFilter tests the action filter with exact
+// expected outputs for added/removed/changed actions.
+func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 8, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 8, 1, 6, 0, 0, 0, time.UTC)
+	t3 := time.Date(2025, 8, 1, 12, 0, 0, 0, time.UTC)
+
+	dzIP := "10.0.0.1"
+	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+
+	// Validator A: joins DZ at t2 (action=added)
+	insertVoteAccountHistory(t, "vote-joiner", "node-joiner", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-joiner", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, "vote-joiner", "node-joiner", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-joiner", dzIP, t2)
+	insertCurrentVoteAccount(t, "vote-joiner", "node-joiner", 100_000_000_000_000)
+	insertCurrentGossipNode(t, "node-joiner", dzIP)
+
+	// Validator B: leaves DZ at t3 (action=removed)
+	insertVoteAccountHistory(t, "vote-leaver", "node-leaver", 80_000_000_000_000, t1)
+	insertGossipNodeHistory(t, "node-leaver", dzIP, t1)
+	insertVoteAccountHistory(t, "vote-leaver", "node-leaver", 80_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-leaver", dzIP, t2)
+	insertVoteAccountHistory(t, "vote-leaver", "node-leaver", 80_000_000_000_000, t3)
+	insertGossipNodeHistory(t, "node-leaver", "9.9.9.9", t3)
+	insertCurrentVoteAccount(t, "vote-leaver", "node-leaver", 80_000_000_000_000)
+	insertCurrentGossipNode(t, "node-leaver", "9.9.9.9")
+
+	// Background
+	for _, ts := range []time.Time{t1, t2, t3} {
+		insertVoteAccountHistory(t, "vote-rest", "node-rest", 820_000_000_000_000, ts)
+		insertGossipNodeHistory(t, "node-rest", "8.8.8.8", ts)
+	}
+	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 820_000_000_000_000)
+	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+
+	timeRange := fmt.Sprintf("start=%s&end=%s",
+		t1.Add(-time.Minute).Format(time.RFC3339),
+		t3.Add(time.Minute).Format(time.RFC3339))
+
+	// action=added: should only get join events
+	reqAdded := httptest.NewRequest(http.MethodGet,
+		"/api/timeline?"+timeRange+"&category=state_change&entity_type=validator&action=added&limit=500", nil)
+	rrAdded := httptest.NewRecorder()
+	handlers.GetTimeline(rrAdded, reqAdded)
+	require.Equal(t, http.StatusOK, rrAdded.Code)
+
+	var respAdded handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rrAdded.Body).Decode(&respAdded))
+
+	for _, e := range respAdded.Events {
+		assert.True(t,
+			strings.Contains(e.EventType, "_joined") || strings.Contains(e.EventType, "_created"),
+			"action=added should only return joined/created events, got %s", e.EventType)
+	}
+
+	// action=removed: should only get left events
+	reqRemoved := httptest.NewRequest(http.MethodGet,
+		"/api/timeline?"+timeRange+"&category=state_change&entity_type=validator&action=removed&limit=500", nil)
+	rrRemoved := httptest.NewRecorder()
+	handlers.GetTimeline(rrRemoved, reqRemoved)
+	require.Equal(t, http.StatusOK, rrRemoved.Code)
+
+	var respRemoved handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rrRemoved.Body).Decode(&respRemoved))
+
+	for _, e := range respRemoved.Events {
+		assert.True(t,
+			strings.Contains(e.EventType, "_left") || strings.Contains(e.EventType, "_deleted"),
+			"action=removed should only return left/deleted events, got %s", e.EventType)
+	}
+
+	// Verify the specific validators appear in the right filter
+	foundJoinerInAdded := false
+	for _, e := range respAdded.Events {
+		d := getDetailsOptional(e)
+		if d != nil && d["vote_pubkey"] == "vote-joiner" {
+			foundJoinerInAdded = true
+		}
+	}
+	assert.True(t, foundJoinerInAdded, "vote-joiner should appear in action=added results")
+
+	foundLeaverInRemoved := false
+	for _, e := range respRemoved.Events {
+		d := getDetailsOptional(e)
+		if d != nil && d["vote_pubkey"] == "vote-leaver" {
+			foundLeaverInRemoved = true
+		}
+	}
+	assert.True(t, foundLeaverInRemoved, "vote-leaver should appear in action=removed results")
+}
+
+// getDetailsOptional returns event details as map or nil.
+func getDetailsOptional(e handlers.TimelineEvent) map[string]any {
+	details, ok := e.Details.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return details
+}
+
 // --- Helper functions for new tests ---
 
 // tsFormat formats a time for ClickHouse DateTime64(3) columns.
