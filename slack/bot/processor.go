@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/slack-go/slack/slackevents"
+	slackmdgo "github.com/snormore/slackmd/slackgo"
 )
 
 const (
@@ -369,7 +370,8 @@ func (p *Processor) ProcessMessage(
 
 	// Post initial thinking message
 	initialThinking := formatThinkingMessage(workflow.Progress{Stage: workflow.StageClassifying})
-	thinkingTS, err := client.PostMessage(ctx, ev.Channel, initialThinking, nil, threadTS)
+	thinkingTS, err := slackmdgo.Post(ctx, client.API(), ev.Channel, initialThinking,
+		slackmdgo.WithThreadTS(threadTS), slackmdgo.WithRetry(nil))
 	if err != nil {
 		p.log.Warn("failed to post thinking message", "error", err)
 		SlackAPIErrorsTotal.WithLabelValues("post_message").Inc()
@@ -401,7 +403,7 @@ func (p *Processor) ProcessMessage(
 		// Update thinking message
 		if thinkingTS != "" {
 			thinkingText := formatThinkingMessage(progress)
-			if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, thinkingText, nil); err != nil {
+			if err := slackmdgo.Update(ctx, client.API(), ev.Channel, thinkingTS, thinkingText, slackmdgo.WithRetry(nil)); err != nil {
 				p.log.Debug("failed to update thinking message", "error", err)
 			}
 		}
@@ -418,7 +420,7 @@ func (p *Processor) ProcessMessage(
 		// Update thinking message to show error
 		if thinkingTS != "" {
 			errorText := fmt.Sprintf(":x: *Error*\n_%s_", SanitizeErrorMessage(err.Error()))
-			if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, errorText, nil); err != nil {
+			if err := slackmdgo.Update(ctx, client.API(), ev.Channel, thinkingTS, errorText, slackmdgo.WithRetry(nil)); err != nil {
 				p.log.Debug("failed to update thinking message with error", "error", err)
 			}
 		}
@@ -441,7 +443,7 @@ func (p *Processor) ProcessMessage(
 	// For data analysis, update thinking message with summary and session link
 	if result.Classification == workflow.ClassificationDataAnalysis && len(result.DataQuestions) > 0 && thinkingTS != "" {
 		summaryText := formatCompletionSummary(result.DataQuestions, result.ExecutedQueries, p.webBaseURL)
-		if err := client.UpdateMessage(ctx, ev.Channel, thinkingTS, summaryText, nil); err != nil {
+		if err := slackmdgo.Update(ctx, client.API(), ev.Channel, thinkingTS, summaryText, slackmdgo.WithRetry(nil)); err != nil {
 			p.log.Debug("failed to update thinking message with summary", "error", err)
 		}
 	} else if thinkingTS != "" {
@@ -452,18 +454,18 @@ func (p *Processor) ProcessMessage(
 	}
 
 	// Post the final answer
-	blocks := ConvertMarkdownToBlocks(reply, p.log)
-
 	p.MarkResponded(messageKey)
 
-	respTS, err := client.PostMessage(ctx, ev.Channel, reply, blocks, threadTS)
+	respTS, err := slackmdgo.Post(ctx, client.API(), ev.Channel, reply,
+		slackmdgo.WithThreadTS(threadTS), slackmdgo.WithFallbackText(reply), slackmdgo.WithRetry(nil))
 
 	if err != nil {
 		SlackAPIErrorsTotal.WithLabelValues("post_message").Inc()
 		MessagesPostedTotal.WithLabelValues("error", "api").Inc()
 		errorReply := "Sorry, I encountered an error. Please try again."
 		errorReply = normalizeTwoWayArrow(errorReply)
-		_, _ = client.PostMessage(ctx, ev.Channel, errorReply, nil, threadTS)
+		_, _ = slackmdgo.Post(ctx, client.API(), ev.Channel, errorReply,
+			slackmdgo.WithThreadTS(threadTS), slackmdgo.WithRetry(nil))
 	} else {
 		MessagesPostedTotal.WithLabelValues("success", "api").Inc()
 		p.log.Info("reply posted successfully", "channel", ev.Channel, "thread_ts", threadKey, "reply_ts", respTS)

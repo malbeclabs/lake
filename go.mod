@@ -1,6 +1,6 @@
 module github.com/malbeclabs/lake
 
-go 1.25.0
+go 1.25.6
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.42.0
@@ -26,9 +26,9 @@ require (
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/slack-go/slack v0.17.3
+	github.com/snormore/slackmd v0.2.1-0.20260131222029-402e0a9c9295
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
-	github.com/takara2314/slack-go-util v0.3.0
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/neo4j v0.40.0
@@ -142,7 +142,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tklauser/go-sysconf v0.3.15 // indirect
 	github.com/tklauser/numcpus v0.10.0 // indirect
-	github.com/yuin/goldmark v1.7.12 // indirect
+	github.com/yuin/goldmark v1.7.16 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.mongodb.org/mongo-driver v1.12.2 // indirect
