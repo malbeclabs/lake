@@ -846,17 +846,13 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 			// Set the DZ total on this event (this is the total AFTER the event)
 			details.DZTotalStakeSharePct = math.Round(runningDZTotalPct*100) / 100
 
-			// Set stake share change on join/leave events that don't have it
+			// Set stake share change on connect/disconnect events that don't have it
 			if details.StakeShareChangePct == 0 && details.StakeSharePct > 0 {
 				switch allEvents[i].EventType {
-				case "validator_joined":
-					if details.DZIP != "" {
-						details.StakeShareChangePct = details.StakeSharePct
-					}
-				case "validator_left":
-					if details.DZIP != "" || details.OwnerPubkey != "" {
-						details.StakeShareChangePct = -details.StakeSharePct
-					}
+				case "joined_dz":
+					details.StakeShareChangePct = details.StakeSharePct
+				case "left_dz":
+					details.StakeShareChangePct = -details.StakeSharePct
 				}
 			}
 
@@ -867,39 +863,6 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				changePct := float64(details.ContributionChangeLamports) * 100.0 / totalStake
 				runningDZTotalPct -= changePct
 			}
-		}
-	}
-
-	// Deduplicate validator events: attribution events (dz_connected, dz_disconnected,
-	// stake_changed, validator_left_dz) overlap with non-attribution events
-	// (validator_joined, validator_left) for the same validator. Keep the attribution
-	// event since it carries ContributionChangeLamports for the DZ total walk.
-	{
-		// Build set of (vote_pubkey) covered by attribution events
-		attrPubkeys := make(map[string]bool)
-		for _, e := range allEvents {
-			switch e.EventType {
-			case "dz_connected", "dz_disconnected", "stake_changed", "validator_left_dz":
-				if details, ok := e.Details.(ValidatorEventDetails); ok && details.VotePubkey != "" {
-					attrPubkeys[details.VotePubkey] = true
-				}
-			}
-		}
-		// Remove non-attribution duplicates for validators that have attribution events
-		if len(attrPubkeys) > 0 {
-			filtered := make([]TimelineEvent, 0, len(allEvents))
-			for _, e := range allEvents {
-				if (e.EventType == "validator_joined" || e.EventType == "validator_left") && e.EntityType == "validator" {
-					if details, ok := e.Details.(ValidatorEventDetails); ok {
-						vp := details.VotePubkey
-						if vp != "" && attrPubkeys[vp] {
-							continue // skip, attribution event covers this validator
-						}
-					}
-				}
-				filtered = append(filtered, e)
-			}
-			allEvents = filtered
 		}
 	}
 
@@ -941,10 +904,10 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				switch action {
 				case "added":
 					// created, joined
-					matched = strings.HasSuffix(e.EventType, "_created") || strings.HasSuffix(e.EventType, "_joined") || e.EventType == "dz_connected"
+					matched = strings.HasSuffix(e.EventType, "_created") || strings.HasSuffix(e.EventType, "_joined") || e.EventType == "joined_dz"
 				case "removed":
 					// deleted, left
-					matched = strings.HasSuffix(e.EventType, "_deleted") || strings.HasSuffix(e.EventType, "_left") || e.EventType == "dz_disconnected" || e.EventType == "validator_left_dz"
+					matched = strings.HasSuffix(e.EventType, "_deleted") || strings.HasSuffix(e.EventType, "_left") || e.EventType == "left_dz"
 				case "changed":
 					// updated
 					matched = strings.HasSuffix(e.EventType, "_updated") || e.EventType == "stake_changed"
@@ -973,14 +936,12 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				// Check if event has ValidatorEventDetails
 				if details, ok := e.Details.(ValidatorEventDetails); ok {
 					isOnDZ := details.OwnerPubkey != "" || details.DevicePK != ""
-					// "left" events represent validators that *were* on DZ, so include
+					// Disconnect/left events represent validators that *were* on DZ, so include
 					// them in the "on_dz" filter even though current lookup shows them off DZ
-					wasOnDZ := details.Action == "left" || details.Action == "offline"
-					// Attribution events are inherently DZ-related
-					isDZAttr := details.Action == "dz_connected" || details.Action == "dz_disconnected" || details.Action == "stake_changed" || details.Action == "validator_left_dz"
-					if params.DZFilter == "on_dz" && (isOnDZ || wasOnDZ || isDZAttr) {
+					isDZRelated := details.Action == "joined_dz" || details.Action == "left_dz" || details.Action == "stake_changed" || details.Action == "offline"
+					if params.DZFilter == "on_dz" && (isOnDZ || isDZRelated) {
 						filtered = append(filtered, e)
-					} else if params.DZFilter == "off_dz" && !isOnDZ && !wasOnDZ {
+					} else if params.DZFilter == "off_dz" && !isOnDZ && !isDZRelated {
 						filtered = append(filtered, e)
 					}
 				} else {
@@ -2606,31 +2567,33 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		isJoining := status == "activated" && (prevStatus == nil || *prevStatus != "activated")
 
 		if isJoining {
-			action = "joined"
 			if validatorKind == "validator" {
+				eventType = "joined_dz"
+				action = "joined_dz"
 				if stakeSol > 0 {
 					title = fmt.Sprintf("Validator joined DZ (%.0f SOL, %.2f%%)", stakeSol, stakeSharePct)
 				} else {
 					title = "Validator joined DZ"
 				}
-				eventType = "validator_joined"
 			} else {
 				title = "Gossip node joined DZ"
 				eventType = "gossip_node_joined"
+				action = "joined"
 			}
 			severity = "info"
 		} else {
-			action = "left"
 			if validatorKind == "validator" {
+				eventType = "left_dz"
+				action = "left_dz"
 				if stakeSol > 0 {
 					title = fmt.Sprintf("Validator left DZ (%.0f SOL, %.2f%%)", stakeSol, stakeSharePct)
 				} else {
 					title = "Validator left DZ"
 				}
-				eventType = "validator_left"
 			} else {
 				title = "Gossip node left DZ"
 				eventType = "gossip_node_left"
+				action = "left"
 			}
 			severity = "warning"
 		}
@@ -2647,19 +2610,28 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			EntityPK:    pk,
 			EntityCode:  ownerPubkey, // Full pubkey - frontend handles truncation
 			Details: ValidatorEventDetails{
-				OwnerPubkey:   ownerPubkey,
-				DZIP:          dzIP,
-				VotePubkey:    votePubkey,
-				NodePubkey:    nodePubkey,
-				StakeLamports: stakeLamports,
-				StakeSol:      stakeSol,
-				StakeSharePct: stakeSharePct,
-				UserPK:        pk,
-				DevicePK:      devicePK,
-				DeviceCode:    deviceCode,
-				MetroCode:     metroCode,
-				Kind:          validatorKind,
-				Action:        action,
+				OwnerPubkey:                ownerPubkey,
+				DZIP:                       dzIP,
+				VotePubkey:                 votePubkey,
+				NodePubkey:                 nodePubkey,
+				StakeLamports:              stakeLamports,
+				StakeSol:                   stakeSol,
+				StakeSharePct:              stakeSharePct,
+				ContributionChangeLamports: func() int64 {
+					if validatorKind != "validator" {
+						return 0
+					}
+					if isJoining {
+						return stakeLamports
+					}
+					return -stakeLamports
+				}(),
+				UserPK:     pk,
+				DevicePK:   devicePK,
+				DeviceCode: deviceCode,
+				MetroCode:  metroCode,
+				Kind:       validatorKind,
+				Action:     action,
 			},
 		})
 	}
@@ -3189,9 +3161,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 		FROM dz_totals
 		CROSS JOIN total_stake ts
 		WHERE rn > 1
-			AND abs(toInt64(dz_stake) - toInt64(prev_dz_stake)) > 10000000000000
+			AND toInt64(dz_stake) != toInt64(prev_dz_stake)
 		ORDER BY abs(toInt64(dz_stake) - toInt64(prev_dz_stake)) DESC
-		LIMIT 20
 	`
 
 	start := time.Now()
@@ -3359,8 +3330,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			switch {
 			case prev != nil && curr == nil && prevOnDZ:
 				// Validator left Solana, was on DZ
-				eventType = "validator_left_dz"
-				action = "validator_left_dz"
+				eventType = "left_dz"
+				action = "left_dz"
 				stake = prev.stake
 				stakeSol = float64(prev.stake) / 1_000_000_000
 				stakeSharePct = prev.stakeSharePct
@@ -3368,16 +3339,16 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 				title = fmt.Sprintf("Validator left Solana, was on DZ (%.0f SOL removed)", stakeSol)
 				severity = "warning"
 			case prevOnDZ && !currOnDZ:
-				eventType = "dz_disconnected"
-				action = "dz_disconnected"
+				eventType = "left_dz"
+				action = "left_dz"
 				stakeShareChangePct = -stakeSharePct
-				title = fmt.Sprintf("Validator disconnected from DZ (%.0f SOL removed)", -changeSol)
+				title = fmt.Sprintf("Validator left DZ (%.0f SOL removed)", -changeSol)
 				severity = "warning"
 			case !prevOnDZ && currOnDZ:
-				eventType = "dz_connected"
-				action = "dz_connected"
+				eventType = "joined_dz"
+				action = "joined_dz"
 				stakeShareChangePct = stakeSharePct
-				title = fmt.Sprintf("Validator connected to DZ (%.0f SOL added)", changeSol)
+				title = fmt.Sprintf("Validator joined DZ (%.0f SOL added)", changeSol)
 				severity = "info"
 			case currOnDZ && prevOnDZ:
 				eventType = "stake_changed"

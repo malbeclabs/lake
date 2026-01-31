@@ -59,16 +59,16 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 	// Find dz_stake_attribution events
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "dz_disconnected" {
+		if e.EventType == "left_dz" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
-	require.Len(t, attrEvents, 1, "expected 1 dz_disconnected event")
+	require.Len(t, attrEvents, 1, "expected 1 left_dz event")
 	assert.Equal(t, "validator", attrEvents[0].EntityType)
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "dz_disconnected", details["action"])
+	assert.Equal(t, "left_dz", details["action"])
 	assert.Equal(t, "vote-A", details["vote_pubkey"])
 
 	// DZ total stake share should be present and correct.
@@ -108,15 +108,15 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "dz_connected" {
+		if e.EventType == "joined_dz" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
-	require.Len(t, attrEvents, 1, "expected 1 dz_connected event")
+	require.Len(t, attrEvents, 1, "expected 1 joined_dz event")
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "dz_connected", details["action"])
+	assert.Equal(t, "joined_dz", details["action"])
 	assert.Equal(t, "vote-B", details["vote_pubkey"])
 
 	// DZ total stake share should be present
@@ -203,15 +203,15 @@ func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
 
 	var attrEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
-		if e.EventType == "validator_left_dz" {
+		if e.EventType == "left_dz" {
 			attrEvents = append(attrEvents, e)
 		}
 	}
-	require.Len(t, attrEvents, 1, "expected 1 validator_left_dz event")
+	require.Len(t, attrEvents, 1, "expected 1 left_dz event")
 
 	details, ok := attrEvents[0].Details.(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "validator_left_dz", details["action"])
+	assert.Equal(t, "left_dz", details["action"])
 }
 
 func TestDZStakeAttribution_NoChange(t *testing.T) {
@@ -240,7 +240,7 @@ func TestDZStakeAttribution_NoChange(t *testing.T) {
 
 	// No dz_stake_attribution events should appear
 	for _, e := range resp.Events {
-		if e.EventType == "dz_disconnected" || e.EventType == "dz_connected" || e.EventType == "stake_changed" || e.EventType == "validator_left_dz" {
+		if e.EventType == "left_dz" || e.EventType == "joined_dz" || e.EventType == "stake_changed" {
 			t.Errorf("unexpected DZ stake attribution event: %s", e.EventType)
 		}
 	}
@@ -288,7 +288,7 @@ func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
 		t.Logf("event: type=%s entity=%s details=%+v", e.EventType, e.EntityType, e.Details)
 	}
 
-	// Find the validator_joined event for vote-Y
+	// Find the validator_joined event for vote-Y (Solana join, not DZ join)
 	var joinedEvents []handlers.TimelineEvent
 	for _, e := range resp.Events {
 		if e.EventType == "validator_joined" {
@@ -540,20 +540,30 @@ func TestVoteAccountChanges_DZMetadata(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
-	require.GreaterOrEqual(t, len(joinedEvents), 2, "expected at least 2 validator_joined events")
-
-	for _, e := range joinedEvents {
+	// Both vote-A and vote-B join Solana, so they get validator_joined from queryVoteAccountChanges
+	// vote-A is on DZ IP, so it gets DZ metadata enrichment
+	solanaJoinedEvents := findEventsByType(resp.Events, "validator_joined")
+	foundA := false
+	for _, e := range solanaJoinedEvents {
 		details := getDetails(t, e)
-		vp, _ := details["vote_pubkey"].(string)
-		if vp == "vote-A" {
+		if details["vote_pubkey"] == "vote-A" {
+			foundA = true
 			assert.Equal(t, "ownerAAA", details["owner_pubkey"], "vote-A should have DZ owner_pubkey")
-		} else if vp == "vote-B" {
-			// Empty strings may be omitted from JSON (nil) or present as ""
+		}
+	}
+	assert.True(t, foundA, "vote-A should have a validator_joined event with DZ metadata")
+
+	// vote-B is NOT on DZ
+	foundB := false
+	for _, e := range solanaJoinedEvents {
+		details := getDetails(t, e)
+		if details["vote_pubkey"] == "vote-B" {
+			foundB = true
 			ownerPubkey, _ := details["owner_pubkey"].(string)
 			assert.Empty(t, ownerPubkey, "vote-B should have empty owner_pubkey")
 		}
 	}
+	assert.True(t, foundB, "vote-B should have a validator_joined event")
 }
 
 // --- queryGossipNetworkChanges tests ---
@@ -808,17 +818,17 @@ func TestValidatorEvents_JoinedDZ(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
 	// Look for validator_joined from queryValidatorEvents (DZ user status transition)
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "joined_dz")
 	found := false
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
-		if details["action"] == "joined" && details["kind"] == "validator" {
+		if details["action"] == "joined_dz" && details["kind"] == "validator" {
 			found = true
 			assert.Equal(t, "validator", e.EntityType)
 			break
 		}
 	}
-	assert.True(t, found, "expected a validator_joined event with action=joined and kind=validator")
+	assert.True(t, found, "expected a joined_dz event with action=joined_dz and kind=validator")
 }
 
 func TestValidatorEvents_LeftDZ(t *testing.T) {
@@ -849,17 +859,17 @@ func TestValidatorEvents_LeftDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	leftEvents := findEventsByType(resp.Events, "validator_left")
+	leftEvents := findEventsByType(resp.Events, "left_dz")
 	found := false
 	for _, e := range leftEvents {
 		details := getDetails(t, e)
-		if details["action"] == "left" && details["kind"] == "validator" {
+		if details["action"] == "left_dz" && details["kind"] == "validator" {
 			found = true
 			assert.Equal(t, "warning", e.Severity)
 			break
 		}
 	}
-	assert.True(t, found, "expected a validator_left event with action=left and kind=validator")
+	assert.True(t, found, "expected a left_dz event with action=left_dz and kind=validator")
 }
 
 func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
@@ -966,7 +976,7 @@ func TestDZFilter_OnDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	joinedEvents := findEventsByType(resp.Events, "validator_joined")
+	joinedEvents := findEventsByType(resp.Events, "joined_dz")
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
 		assert.NotEqual(t, "vote-B", details["vote_pubkey"], "off-DZ validator should be filtered out with on_dz filter")
@@ -1002,6 +1012,7 @@ func TestDZFilter_OffDZ(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
+	// vote-B joins Solana (not DZ), so it produces validator_joined
 	joinedEvents := findEventsByType(resp.Events, "validator_joined")
 	for _, e := range joinedEvents {
 		details := getDetails(t, e)
@@ -1027,7 +1038,7 @@ func TestDZFilter_AttributionPassThrough(t *testing.T) {
 	// DZ user
 	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
 
-	// Validator on DZ at t1, switches off DZ at t2 -> produces dz_disconnected
+	// Validator on DZ at t1, switches off DZ at t2 -> produces left_dz
 	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
 	insertCurrentGossipNode(t, "node-A", "5.5.5.5") // now off DZ
 	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
@@ -1044,8 +1055,8 @@ func TestDZFilter_AttributionPassThrough(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	disconnected := findEventsByType(resp.Events, "dz_disconnected")
-	assert.GreaterOrEqual(t, len(disconnected), 1, "dz_disconnected events should pass through on_dz filter")
+	disconnected := findEventsByType(resp.Events, "left_dz")
+	assert.GreaterOrEqual(t, len(disconnected), 1, "left_dz events should pass through on_dz filter")
 }
 
 func TestActionFilter_Added(t *testing.T) {
@@ -1082,17 +1093,19 @@ func TestActionFilter_Added(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	// Should only have _joined or _created or dz_connected events
+	// Should only have _joined or _created or joined_dz events
 	for _, e := range resp.Events {
-		isAdded := e.EventType == "dz_connected" ||
+		isAdded := e.EventType == "joined_dz" ||
 			len(e.EventType) > 8 && e.EventType[len(e.EventType)-7:] == "_joined" ||
 			len(e.EventType) > 8 && e.EventType[len(e.EventType)-8:] == "_created"
 		assert.True(t, isAdded, "with action=added, got unexpected event type: %s", e.EventType)
 	}
 
-	// validator_left should NOT be present
+	// left events should NOT be present
 	leftEvents := findEventsByType(resp.Events, "validator_left")
 	assert.Len(t, leftEvents, 0, "validator_left should not appear with action=added")
+	leftDZEvents := findEventsByType(resp.Events, "left_dz")
+	assert.Len(t, leftDZEvents, 0, "left_dz should not appear with action=added")
 }
 
 func TestActionFilter_Removed(t *testing.T) {
@@ -1128,11 +1141,11 @@ func TestActionFilter_Removed(t *testing.T) {
 	var resp handlers.TimelineResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 
-	// validator_joined should NOT be present
+	// validator_joined should NOT be present (these are Solana joins, not DZ)
 	joinedEvents := findEventsByType(resp.Events, "validator_joined")
 	assert.Len(t, joinedEvents, 0, "validator_joined should not appear with action=removed")
 
-	// validator_left should be present
+	// validator_left should be present (Solana leave)
 	leftEvents := findEventsByType(resp.Events, "validator_left")
 	assert.GreaterOrEqual(t, len(leftEvents), 1, "validator_left should appear with action=removed")
 }
@@ -1458,7 +1471,7 @@ func TestCombinedFilters(t *testing.T) {
 	// Check that vote-A is present
 	found := false
 	for _, e := range resp.Events {
-		if e.EventType == "validator_joined" {
+		if e.EventType == "joined_dz" {
 			details := getDetails(t, e)
 			if details["vote_pubkey"] == "vote-A" {
 				found = true
