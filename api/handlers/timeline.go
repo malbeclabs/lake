@@ -3367,7 +3367,7 @@ func queryDZTotalBySnapshot(ctx context.Context, startTime, endTime time.Time) (
 			sum(va.activated_stake_lamports) * 100.0 / NULLIF(any(ts.total), 0) as dz_total_pct
 		FROM dim_solana_vote_accounts_history va
 		CROSS JOIN total_stake ts
-		JOIN dim_solana_gossip_nodes_history gn ON va.node_pubkey = gn.pubkey AND va.snapshot_ts = gn.snapshot_ts
+		JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
 		WHERE gn.gossip_ip IN (SELECT dz_ip FROM dz_ips)
 		  AND va.activated_stake_lamports > 0
 		  AND va.snapshot_ts >= ? AND va.snapshot_ts <= ?

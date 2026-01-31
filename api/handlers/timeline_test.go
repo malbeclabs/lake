@@ -191,22 +191,37 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_users_current (dz_ip, status) VALUES ('1.2.3.4', 'activated')`))
 
 	// Current tables (for total stake computation)
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports) VALUES ('vote-A', 'node-A', 100000000000000)`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports) VALUES
+		('vote-A', 'node-A', 100000000000000),
+		('vote-stay', 'node-stay', 200000000000000)`))
+	// node-stay is always on DZ with gossip IP 1.2.3.4
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO solana_gossip_nodes_current (pubkey, gossip_ip) VALUES ('node-stay', '1.2.3.4')`))
 
-	// T1: validator A on DZ (gossip IP 1.2.3.4)
-	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
-		`INSERT INTO dim_solana_vote_accounts_history (vote_pubkey, node_pubkey, activated_stake_lamports, snapshot_ts) VALUES ('vote-A', 'node-A', 100000000000000, '%s')`,
-		t1.Format("2006-01-02 15:04:05"))))
-	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
-		`INSERT INTO dim_solana_gossip_nodes_history (pubkey, gossip_ip, snapshot_ts) VALUES ('node-A', '1.2.3.4', '%s')`,
-		t1.Format("2006-01-02 15:04:05"))))
+	// T1: validator A on DZ (gossip IP 1.2.3.4), validator stay also on DZ
+	for _, v := range []struct{ vote, node, ip string }{
+		{"vote-A", "node-A", "1.2.3.4"},
+		{"vote-stay", "node-stay", "1.2.3.4"},
+	} {
+		require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+			`INSERT INTO dim_solana_vote_accounts_history (vote_pubkey, node_pubkey, activated_stake_lamports, snapshot_ts) VALUES ('%s', '%s', 100000000000000, '%s')`,
+			v.vote, v.node, t1.Format("2006-01-02 15:04:05"))))
+		require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+			`INSERT INTO dim_solana_gossip_nodes_history (pubkey, gossip_ip, snapshot_ts) VALUES ('%s', '%s', '%s')`,
+			v.node, v.ip, t1.Format("2006-01-02 15:04:05"))))
+	}
 
-	// T2: validator A gossip IP changed to non-DZ
+	// T2: validator A gossip IP changed to non-DZ, validator stay still on DZ
 	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (vote_pubkey, node_pubkey, activated_stake_lamports, snapshot_ts) VALUES ('vote-A', 'node-A', 100000000000000, '%s')`,
 		t2.Format("2006-01-02 15:04:05"))))
 	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (pubkey, gossip_ip, snapshot_ts) VALUES ('node-A', '5.5.5.5', '%s')`,
+		t2.Format("2006-01-02 15:04:05"))))
+	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+		`INSERT INTO dim_solana_vote_accounts_history (vote_pubkey, node_pubkey, activated_stake_lamports, snapshot_ts) VALUES ('vote-stay', 'node-stay', 100000000000000, '%s')`,
+		t2.Format("2006-01-02 15:04:05"))))
+	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+		`INSERT INTO dim_solana_gossip_nodes_history (pubkey, gossip_ip, snapshot_ts) VALUES ('node-stay', '1.2.3.4', '%s')`,
 		t2.Format("2006-01-02 15:04:05"))))
 
 	// Query the timeline
@@ -233,6 +248,12 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "dz_disconnected", details["action"])
 	assert.Equal(t, "vote-A", details["vote_pubkey"])
+
+	// DZ total stake share should be present
+	dzTotal, ok := details["dz_total_stake_share_pct"].(float64)
+	assert.True(t, ok, "dz_total_stake_share_pct should be a float64, got %T: %v", details["dz_total_stake_share_pct"], details["dz_total_stake_share_pct"])
+	t.Logf("dz_total_stake_share_pct = %v", dzTotal)
+	assert.Greater(t, dzTotal, float64(0), "dz_total_stake_share_pct should be > 0")
 }
 
 func TestDZStakeAttribution_Connect(t *testing.T) {
