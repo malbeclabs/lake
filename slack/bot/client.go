@@ -113,40 +113,6 @@ func (c *Client) RemoveProcessingReaction(ctx context.Context, channelID, timest
 	return nil
 }
 
-// PostMessage posts a message to a channel, optionally in a thread
-func (c *Client) PostMessage(ctx context.Context, channelID string, text string, blocks []slack.Block, threadTS string) (string, error) {
-	var msgOpts []slack.MsgOption
-
-	// Always thread responses: use existing thread if available, otherwise create new thread
-	if threadTS != "" {
-		msgOpts = append(msgOpts, slack.MsgOptionTS(threadTS))
-	}
-
-	// Use blocks if provided, otherwise use plain text
-	if blocks != nil {
-		msgOpts = append(msgOpts, slack.MsgOptionBlocks(blocks...))
-	} else {
-		msgOpts = append(msgOpts, slack.MsgOptionText(text, false))
-	}
-
-	var respTS string
-	var err error
-	retryCfg := retry.DefaultConfig()
-	err = retry.Do(ctx, retryCfg, func() error {
-		_, respTS, err = c.api.PostMessageContext(ctx, channelID, msgOpts...)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-
-	if err != nil {
-		return "", fmt.Errorf("failed to post message after retries: %w", err)
-	}
-
-	return respTS, nil
-}
-
 // CheckRootMessageMentioned checks if the root message of a thread mentioned the bot
 func (c *Client) CheckRootMessageMentioned(ctx context.Context, channelID, threadTS, botUserID string) (bool, error) {
 	c.log.Info("checkRootMessageMentioned: fetching thread replies", "channel", channelID, "thread_ts", threadTS)
@@ -203,34 +169,6 @@ func (c *Client) IsBotMentioned(text string) bool {
 	mentionPattern1 := fmt.Sprintf("<@%s>", c.botUserID)
 	mentionPattern2 := fmt.Sprintf("<@%s|", c.botUserID)
 	return strings.Contains(text, mentionPattern1) || strings.Contains(text, mentionPattern2)
-}
-
-// UpdateMessage updates an existing message
-func (c *Client) UpdateMessage(ctx context.Context, channelID, timestamp string, text string, blocks []slack.Block) error {
-	var msgOpts []slack.MsgOption
-
-	// Use blocks if provided, otherwise use plain text
-	if blocks != nil {
-		msgOpts = append(msgOpts, slack.MsgOptionBlocks(blocks...))
-	} else {
-		msgOpts = append(msgOpts, slack.MsgOptionText(text, false))
-	}
-
-	var err error
-	retryCfg := retry.DefaultConfig()
-	err = retry.Do(ctx, retryCfg, func() error {
-		_, _, _, err = c.api.UpdateMessageContext(ctx, channelID, timestamp, msgOpts...)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to update message after retries: %w", err)
-	}
-
-	return nil
 }
 
 // DeleteMessage deletes an existing message
