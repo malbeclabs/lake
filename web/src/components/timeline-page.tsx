@@ -875,6 +875,7 @@ const presets: { label: string; params: Record<string, string> }[] = [
   { label: 'Links added', params: { range: '7d', entities: 'link', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
   { label: 'Devices added', params: { range: '7d', entities: 'device', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
   { label: 'Validator changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,changed', dz: 'on_dz' } },
+  { label: 'DZ stake changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,alerting,resolved', dz: 'on_dz' } },
   { label: 'Link/device updates', params: { range: '24h', entities: 'device,link', categories: 'state_change', actions: 'changed', dz: 'on_dz' } },
   { label: 'Link ops', params: { range: '24h', entities: 'link,device', categories: 'packet_loss,interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
   { label: 'Device ops', params: { range: '24h', entities: 'device', categories: 'interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
