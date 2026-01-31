@@ -935,16 +935,53 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		return allEvents[i].ID > allEvents[j].ID
 	})
 
-	// Populate DZ total stake share for validator events
+	// Populate DZ total stake share for validator events.
+	// Build a sorted list of snapshot timestamps so we can find the closest
+	// match for events whose timestamps don't exactly align.
 	if dzTotalsBySnapshot != nil {
+		sortedSnapshots := make([]time.Time, 0, len(dzTotalsBySnapshot))
+		for tsStr := range dzTotalsBySnapshot {
+			if ts, err := time.Parse(time.RFC3339, tsStr); err == nil {
+				sortedSnapshots = append(sortedSnapshots, ts)
+			}
+		}
+		sort.Slice(sortedSnapshots, func(i, j int) bool {
+			return sortedSnapshots[i].Before(sortedSnapshots[j])
+		})
+
+		findClosestDZTotal := func(eventTS string) (float64, bool) {
+			// Try exact match first
+			if pct, found := dzTotalsBySnapshot[eventTS]; found {
+				return pct, true
+			}
+			// Find closest snapshot at or before the event timestamp
+			ts, err := time.Parse(time.RFC3339, eventTS)
+			if err != nil || len(sortedSnapshots) == 0 {
+				return 0, false
+			}
+			bestIdx := -1
+			for j, snap := range sortedSnapshots {
+				if !snap.After(ts) {
+					bestIdx = j
+				}
+			}
+			if bestIdx < 0 {
+				// All snapshots are after the event; use the first one
+				bestIdx = 0
+			}
+			return dzTotalsBySnapshot[sortedSnapshots[bestIdx].Format(time.RFC3339)], true
+		}
+
 		for i := range allEvents {
 			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
 				continue
 			}
 			if details, ok := allEvents[i].Details.(ValidatorEventDetails); ok {
-				if pct, found := dzTotalsBySnapshot[allEvents[i].Timestamp]; found {
-					details.DZTotalStakeSharePct = pct
-					allEvents[i].Details = details
+				if details.DZTotalStakeSharePct == 0 {
+					if pct, found := findClosestDZTotal(allEvents[i].Timestamp); found {
+						details.DZTotalStakeSharePct = pct
+						allEvents[i].Details = details
+					}
 				}
 			}
 		}
