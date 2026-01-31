@@ -3086,7 +3086,11 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Phase 1: Find interesting snapshot pairs where DZ total changed significantly
 	querySnapshots := `
-		WITH dz_ips AS (
+		WITH total_stake AS (
+			SELECT sum(activated_stake_lamports) as total
+			FROM solana_vote_accounts_current
+		),
+		dz_ips AS (
 			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
 		),
 		per_validator AS (
@@ -3109,8 +3113,13 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			FROM per_validator
 			GROUP BY snapshot_ts
 		)
-		SELECT snapshot_ts, prev_snapshot_ts
+		SELECT
+			snapshot_ts,
+			prev_snapshot_ts,
+			dz_stake * 100.0 / NULLIF(ts.total, 0) as dz_total_pct,
+			prev_dz_stake * 100.0 / NULLIF(ts.total, 0) as prev_dz_total_pct
 		FROM dz_totals
+		CROSS JOIN total_stake ts
 		WHERE rn > 1
 			AND abs(toInt64(dz_stake) - toInt64(prev_dz_stake)) > 10000000000000
 		ORDER BY abs(toInt64(dz_stake) - toInt64(prev_dz_stake)) DESC
@@ -3126,17 +3135,20 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 
 	type snapshotPair struct {
-		currTS time.Time
-		prevTS time.Time
+		currTS         time.Time
+		prevTS         time.Time
+		dzTotalPct     float64
+		prevDZTotalPct float64
 	}
 	var pairs []snapshotPair
 	tsSet := make(map[time.Time]bool)
 	for snapRows.Next() {
 		var curr, prev time.Time
-		if err := snapRows.Scan(&curr, &prev); err != nil {
+		var dzTotalPct, prevDZTotalPct float64
+		if err := snapRows.Scan(&curr, &prev, &dzTotalPct, &prevDZTotalPct); err != nil {
 			return nil, fmt.Errorf("snapshot pair scan error: %w", err)
 		}
-		pairs = append(pairs, snapshotPair{curr, prev})
+		pairs = append(pairs, snapshotPair{curr, prev, dzTotalPct, prevDZTotalPct})
 		tsSet[curr] = true
 		tsSet[prev] = true
 	}
@@ -3324,6 +3336,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 					StakeLamports:              int64(stake),
 					StakeSol:                   stakeSol,
 					StakeSharePct:              stakeSharePct,
+					StakeShareChangePct:        pair.dzTotalPct - pair.prevDZTotalPct,
+					DZTotalStakeSharePct:       pair.dzTotalPct,
 					Kind:                       "validator",
 					Action:                     action,
 					DZIP:                       gossipIP,
