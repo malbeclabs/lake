@@ -857,13 +857,13 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				switch action {
 				case "added":
 					// created, joined
-					matched = strings.HasSuffix(e.EventType, "_created") || strings.HasSuffix(e.EventType, "_joined")
+					matched = strings.HasSuffix(e.EventType, "_created") || strings.HasSuffix(e.EventType, "_joined") || e.EventType == "dz_connected"
 				case "removed":
 					// deleted, left
-					matched = strings.HasSuffix(e.EventType, "_deleted") || strings.HasSuffix(e.EventType, "_left")
+					matched = strings.HasSuffix(e.EventType, "_deleted") || strings.HasSuffix(e.EventType, "_left") || e.EventType == "dz_disconnected" || e.EventType == "validator_left_dz"
 				case "changed":
 					// updated
-					matched = strings.HasSuffix(e.EventType, "_updated")
+					matched = strings.HasSuffix(e.EventType, "_updated") || e.EventType == "stake_changed"
 				case "alerting":
 					// started, increased
 					matched = strings.HasSuffix(e.EventType, "_started") || strings.HasSuffix(e.EventType, "_increased")
@@ -892,7 +892,9 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 					// "left" events represent validators that *were* on DZ, so include
 					// them in the "on_dz" filter even though current lookup shows them off DZ
 					wasOnDZ := details.Action == "left" || details.Action == "offline"
-					if params.DZFilter == "on_dz" && (isOnDZ || wasOnDZ) {
+					// Attribution events are inherently DZ-related
+					isDZAttr := details.Action == "dz_connected" || details.Action == "dz_disconnected" || details.Action == "stake_changed" || details.Action == "validator_left_dz"
+					if params.DZFilter == "on_dz" && (isOnDZ || wasOnDZ || isDZAttr) {
 						filtered = append(filtered, e)
 					} else if params.DZFilter == "off_dz" && !isOnDZ && !wasOnDZ {
 						filtered = append(filtered, e)
