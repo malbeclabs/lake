@@ -6,8 +6,12 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 function getGitCommit(): string {
+  // In CI, use the commit SHA passed via env var to match the API's build commit
+  if (process.env.BUILD_COMMIT) {
+    return process.env.BUILD_COMMIT
+  }
   try {
-    return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim()
+    return execSync('git rev-parse --short=8 HEAD', { encoding: 'utf-8' }).trim()
   } catch {
     return 'unknown'
   }

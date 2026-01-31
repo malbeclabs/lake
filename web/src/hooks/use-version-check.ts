@@ -4,6 +4,14 @@ import { fetchVersion } from '@/lib/api'
 const CHECK_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const SHOW_UPDATE_DELAY_MS = 120 * 1000 // 2 minutes grace period before showing update
 const LOCAL_BUILD_COMMIT = __BUILD_COMMIT__
+const VALID_SHORT_SHA = /^[0-9a-f]{7,12}$/
+
+// Expose for debugging in the browser console: `__DZ_BUILD_COMMIT__`
+;(globalThis as Record<string, unknown>).__DZ_BUILD_COMMIT__ = LOCAL_BUILD_COMMIT
+
+function isValidCommit(commit: string): boolean {
+  return VALID_SHORT_SHA.test(commit)
+}
 
 export function useVersionCheck() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -11,13 +19,13 @@ export function useVersionCheck() {
   const graceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const checkVersion = useCallback(async () => {
-    // Skip in development (commit will be a real hash but API returns 'none')
-    if (LOCAL_BUILD_COMMIT === 'unknown' || import.meta.env.DEV) {
+    // Skip in development or if the build commit isn't a valid short SHA
+    if (!isValidCommit(LOCAL_BUILD_COMMIT) || import.meta.env.DEV) {
       return
     }
 
     const serverVersion = await fetchVersion()
-    if (serverVersion && serverVersion.commit !== 'none') {
+    if (serverVersion && isValidCommit(serverVersion.commit)) {
       const isOutdated = serverVersion.commit !== LOCAL_BUILD_COMMIT
 
       if (isOutdated) {

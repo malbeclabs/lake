@@ -77,6 +77,8 @@ jobs:
           cd web
           bun install --frozen-lockfile
           bun run build
+        env:
+          BUILD_COMMIT: ${{ steps.v.outputs.short_sha }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
