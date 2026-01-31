@@ -762,6 +762,11 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
                 {validatorDetails.stake_share_change_pct > 0 ? '+' : '−'}{Math.abs(validatorDetails.stake_share_change_pct).toFixed(3)}% stake
               </span>
             )}
+            {validatorDetails?.dz_total_stake_share_pct !== undefined && validatorDetails.dz_total_stake_share_pct > 0 && (
+              <span className="text-xs text-muted-foreground">
+                → {validatorDetails.dz_total_stake_share_pct.toFixed(2)}% DZ
+              </span>
+            )}
             <span
               className="text-xs text-muted-foreground flex items-center gap-1"
               title={new Date(event.timestamp).toLocaleString()}
@@ -805,13 +810,6 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
             <div className="text-xs text-muted-foreground mt-1">
               Connected to <FilterButton value={userEntity.device_code} className="font-medium text-foreground">{userEntity.device_code}</FilterButton>
               {userEntity.metro_code && <span className="text-muted-foreground"> in <FilterButton value={userEntity.metro_code} className="text-foreground">{userEntity.metro_code}</FilterButton></span>}
-            </div>
-          )}
-
-          {/* Show total DZ stake share after this event */}
-          {validatorDetails?.dz_total_stake_share_pct !== undefined && validatorDetails.dz_total_stake_share_pct > 0 && (
-            <div className="text-xs text-muted-foreground mt-1">
-              DZ total stake: <span className="font-medium text-foreground">{validatorDetails.dz_total_stake_share_pct.toFixed(2)}%</span>
             </div>
           )}
 

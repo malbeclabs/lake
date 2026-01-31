@@ -752,17 +752,23 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
 			query := `
-				SELECT sum(va.activated_stake_lamports) * 100.0 / NULLIF(ts.total, 0)
+				SELECT COALESCE(sum(va.activated_stake_lamports) * 100.0 / NULLIF(any(ts.total), 0), 0)
 				FROM solana_vote_accounts_current va
 				CROSS JOIN (SELECT sum(activated_stake_lamports) as total FROM solana_vote_accounts_current) ts
 				JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
 				JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
 			`
 			start := time.Now()
-			err := config.DB.QueryRow(ctx, query).Scan(&dzTotalStakeSharePct)
+			var result *float64
+			err := config.DB.QueryRow(ctx, query).Scan(&result)
 			metrics.RecordClickHouseQuery(time.Since(start), err)
 			if err != nil {
 				log.Printf("Error querying DZ total stake share: %v", err)
+			} else if result != nil {
+				dzTotalStakeSharePct = *result
+				log.Printf("DZ total stake share: %.4f%%", dzTotalStakeSharePct)
+			} else {
+				log.Printf("DZ total stake share query returned nil")
 			}
 			return nil
 		})
@@ -2116,7 +2122,7 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		WHERE t.transition_type IS NOT NULL
 		  AND t.hour >= ?
-		ORDER BY t.hour DESC, t.device_pk, t.interface_name
+		ORDER BY t.hour DESC, t.link_pk
 		LIMIT 200
 	`
 
@@ -2266,7 +2272,7 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 		WHERE t.transition_type IS NOT NULL
 		  AND t.hour >= ?
 		  AND d.status = 'activated'
-		ORDER BY t.hour DESC, t.device_pk, t.interface_name
+		ORDER BY t.hour DESC, t.device_pk, t.intf
 		LIMIT 200
 	`
 
