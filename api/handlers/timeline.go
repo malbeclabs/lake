@@ -158,20 +158,21 @@ type GroupedInterfaceDetails struct {
 
 // ValidatorEventDetails contains details for validator join/leave events
 type ValidatorEventDetails struct {
-	OwnerPubkey         string  `json:"owner_pubkey"`
-	DZIP                string  `json:"dz_ip,omitempty"`
-	VotePubkey          string  `json:"vote_pubkey,omitempty"`
-	NodePubkey          string  `json:"node_pubkey,omitempty"`
-	StakeLamports       int64   `json:"stake_lamports,omitempty"`
-	StakeSol            float64 `json:"stake_sol,omitempty"`
-	StakeSharePct       float64 `json:"stake_share_pct,omitempty"`
-	StakeShareChangePct float64 `json:"stake_share_change_pct,omitempty"`
-	UserPK              string  `json:"user_pk,omitempty"`
-	DevicePK            string  `json:"device_pk,omitempty"`
-	DeviceCode          string  `json:"device_code,omitempty"`
-	MetroCode           string  `json:"metro_code,omitempty"`
-	Kind                string  `json:"kind"`   // "validator" or "gossip_only"
-	Action              string  `json:"action"` // "joined" or "left"
+	OwnerPubkey          string  `json:"owner_pubkey"`
+	DZIP                 string  `json:"dz_ip,omitempty"`
+	VotePubkey           string  `json:"vote_pubkey,omitempty"`
+	NodePubkey           string  `json:"node_pubkey,omitempty"`
+	StakeLamports        int64   `json:"stake_lamports,omitempty"`
+	StakeSol             float64 `json:"stake_sol,omitempty"`
+	StakeSharePct        float64 `json:"stake_share_pct,omitempty"`
+	StakeShareChangePct  float64 `json:"stake_share_change_pct,omitempty"`
+	DZTotalStakeSharePct float64 `json:"dz_total_stake_share_pct,omitempty"`
+	UserPK               string  `json:"user_pk,omitempty"`
+	DevicePK             string  `json:"device_pk,omitempty"`
+	DeviceCode           string  `json:"device_code,omitempty"`
+	MetroCode            string  `json:"metro_code,omitempty"`
+	Kind                 string  `json:"kind"`   // "validator" or "gossip_only"
+	Action               string  `json:"action"` // "joined" or "left"
 }
 
 // HistogramBucket represents a time bucket with event counts
@@ -746,6 +747,27 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Query current total DZ-connected stake share for running total computation
+	var dzTotalStakeSharePct float64
+	if shouldIncludeCategory("state_change") {
+		g.Go(func() error {
+			query := `
+				SELECT sum(va.activated_stake_lamports) * 100.0 / NULLIF(ts.total, 0)
+				FROM solana_vote_accounts_current va
+				CROSS JOIN (SELECT sum(activated_stake_lamports) as total FROM solana_vote_accounts_current) ts
+				JOIN solana_gossip_nodes_current gn ON va.node_pubkey = gn.pubkey
+				JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
+			`
+			start := time.Now()
+			err := config.DB.QueryRow(ctx, query).Scan(&dzTotalStakeSharePct)
+			metrics.RecordClickHouseQuery(time.Since(start), err)
+			if err != nil {
+				log.Printf("Error querying DZ total stake share: %v", err)
+			}
+			return nil
+		})
+	}
+
 	// Query stake changes (significant stake increases/decreases)
 	var stakeChangeEvents []TimelineEvent
 	if shouldIncludeCategory("state_change") {
@@ -917,6 +939,33 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 		return allEvents[i].ID > allEvents[j].ID
 	})
+
+	// Compute running DZ total stake share for validator join/leave events
+	// Events are sorted newest-first, so walk forward adjusting the running total backwards
+	if dzTotalStakeSharePct > 0 {
+		runningTotal := dzTotalStakeSharePct
+		for i := range allEvents {
+			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
+				continue
+			}
+			details, ok := allEvents[i].Details.(ValidatorEventDetails)
+			if !ok {
+				continue
+			}
+			eventType := allEvents[i].EventType
+			if eventType == "stake_increased" || eventType == "stake_decreased" {
+				details.DZTotalStakeSharePct = runningTotal
+				runningTotal -= details.StakeShareChangePct
+			} else if strings.HasSuffix(eventType, "_joined") {
+				details.DZTotalStakeSharePct = runningTotal
+				runningTotal -= details.StakeSharePct
+			} else if strings.HasSuffix(eventType, "_left") || strings.HasSuffix(eventType, "_offline") {
+				details.DZTotalStakeSharePct = runningTotal
+				runningTotal += details.StakeSharePct
+			}
+			allEvents[i].Details = details
+		}
+	}
 
 	total := len(allEvents)
 

@@ -609,7 +609,7 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
   const changeType = changeDetails?.change_type
 
   // Extract validator/gossip node details for showing device connection prominently
-  const validatorDetails = (event.event_type.includes('validator') || event.event_type.includes('gossip_node')) && event.details && 'action' in event.details
+  const validatorDetails = (event.event_type.includes('validator') || event.event_type.includes('gossip_node') || event.event_type === 'stake_increased' || event.event_type === 'stake_decreased') && event.details && 'action' in event.details
     ? event.details as ValidatorEventDetails
     : undefined
 
@@ -805,6 +805,13 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
             <div className="text-xs text-muted-foreground mt-1">
               Connected to <FilterButton value={userEntity.device_code} className="font-medium text-foreground">{userEntity.device_code}</FilterButton>
               {userEntity.metro_code && <span className="text-muted-foreground"> in <FilterButton value={userEntity.metro_code} className="text-foreground">{userEntity.metro_code}</FilterButton></span>}
+            </div>
+          )}
+
+          {/* Show total DZ stake share after this event */}
+          {validatorDetails?.dz_total_stake_share_pct !== undefined && validatorDetails.dz_total_stake_share_pct > 0 && (
+            <div className="text-xs text-muted-foreground mt-1">
+              DZ total stake: <span className="font-medium text-foreground">{validatorDetails.dz_total_stake_share_pct.toFixed(2)}%</span>
             </div>
           )}
 
@@ -1384,8 +1391,7 @@ export function TimelinePage() {
     resetSeenEvents()
   }
 
-  // Get min/max dates for date picker based on bounds
-  const minDate = bounds ? new Date(bounds.earliest_data).toISOString().slice(0, 16) : undefined
+  // Get max date for date picker
   const maxDate = new Date().toISOString().slice(0, 16)
 
   return (

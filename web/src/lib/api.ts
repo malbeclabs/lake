@@ -2882,6 +2882,7 @@ export interface ValidatorEventDetails {
   stake_sol?: number
   stake_share_pct?: number
   stake_share_change_pct?: number
+  dz_total_stake_share_pct?: number
   user_pk?: string
   device_pk?: string
   device_code?: string
