@@ -49,11 +49,6 @@ Slack bot that provides a chat interface for data queries. Users can ask questio
 CLI tool for maintenance operations:
 - Database reset
 - Data backfills (latency, usage metrics)
-- Schema migrations
-
-### migrations/
-
-ClickHouse schema migrations for dimension and fact tables. These are applied automatically by the indexer on startup.
 
 ### utils/
 
