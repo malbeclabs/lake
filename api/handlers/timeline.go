@@ -1068,7 +1068,7 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
 		  -- Exclude initial ingestion events (created at the earliest snapshot time)
 		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC
+		ORDER BY h.snapshot_ts DESC, h.entity_id
 		LIMIT 200
 	`
 
@@ -1304,7 +1304,7 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
 		  -- Exclude initial ingestion events (created at the earliest snapshot time)
 		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC
+		ORDER BY h.snapshot_ts DESC, h.entity_id
 		LIMIT 200
 	`
 
@@ -1542,7 +1542,7 @@ func queryMetroChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
 		  -- Exclude initial ingestion events (created at the earliest snapshot time)
 		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC
+		ORDER BY h.snapshot_ts DESC, h.entity_id
 		LIMIT 100
 	`
 
@@ -1685,7 +1685,7 @@ func queryContributorChanges(ctx context.Context, startTime, endTime time.Time) 
 		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
 		  -- Exclude initial ingestion events (created at the earliest snapshot time)
 		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC
+		ORDER BY h.snapshot_ts DESC, h.entity_id
 		LIMIT 100
 	`
 
@@ -1851,7 +1851,7 @@ func queryUserChanges(ctx context.Context, startTime, endTime time.Time, include
 		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
 		  -- Exclude initial ingestion events (created at the earliest snapshot time)
 		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC
+		ORDER BY h.snapshot_ts DESC, h.entity_id
 		LIMIT 200
 	`, internalFilter)
 
@@ -2067,7 +2067,7 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		WHERE t.transition_type IS NOT NULL
 		  AND t.hour >= ?
-		ORDER BY t.hour DESC
+		ORDER BY t.hour DESC, t.device_pk, t.interface_name
 		LIMIT 200
 	`
 
@@ -2217,7 +2217,7 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 		WHERE t.transition_type IS NOT NULL
 		  AND t.hour >= ?
 		  AND d.status = 'activated'
-		ORDER BY t.hour DESC
+		ORDER BY t.hour DESC, t.device_pk, t.interface_name
 		LIMIT 200
 	`
 
@@ -2426,7 +2426,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		  AND ((uc.status = 'activated' AND (uc.prev_status != 'activated' OR uc.row_num = 1))
 		       OR (uc.status != 'activated' AND uc.prev_status = 'activated'))
 		  AND uc.snapshot_ts >= ? AND uc.snapshot_ts <= ?
-		ORDER BY uc.snapshot_ts DESC
+		ORDER BY uc.snapshot_ts DESC, uc.entity_id
 		LIMIT 200
 	`, internalFilter)
 
@@ -2597,7 +2597,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 		LEFT JOIN dz_users_current u ON d.last_gossip_ip = u.dz_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
-		ORDER BY d.last_seen_ts DESC
+		ORDER BY d.last_seen_ts DESC, d.pubkey
 		LIMIT 100
 	`
 
@@ -2772,7 +2772,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
 
-		ORDER BY event_ts DESC
+		ORDER BY event_ts DESC, vote_pubkey
 		LIMIT 100
 	`
 
@@ -2925,7 +2925,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
-		ORDER BY sc.snapshot_ts DESC
+		ORDER BY sc.snapshot_ts DESC, sc.vote_pubkey
 		LIMIT 200
 	`
 
