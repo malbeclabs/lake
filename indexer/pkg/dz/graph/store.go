@@ -317,7 +317,7 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		MATCH (link)-[:CONNECTS {side: 'Z'}]->(devZ:Device)
 		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
 		       coalesce(link.bandwidth, 0) AS bandwidth,
-		       coalesce(link.isis_delay_override_ns, 0) > 0 AS is_drained
+		       (coalesce(link.isis_delay_override_ns, 0) > 0 OR link.status IN ['soft-drained', 'hard-drained']) AS is_drained
 	`
 	result, err := tx.Run(ctx, cypher, nil)
 	if err != nil {
@@ -735,7 +735,7 @@ type tunnelMapping struct {
 	neighborPK string // Device PK of the neighbor (device with this IP)
 	localPK    string // Device PK of the other side
 	bandwidth  int64  // Link bandwidth in bps
-	isDrained  bool   // Whether the link is drained (isis_delay_override_ns > 0)
+	isDrained  bool   // Whether the link is drained (isis_delay_override_ns > 0 or status is soft-drained/hard-drained)
 }
 
 // SyncISIS updates the Neo4j graph with IS-IS adjacency data.
@@ -829,7 +829,7 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		MATCH (link)-[:CONNECTS {side: 'Z'}]->(devZ:Device)
 		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
 		       coalesce(link.bandwidth, 0) AS bandwidth,
-		       coalesce(link.isis_delay_override_ns, 0) > 0 AS is_drained
+		       (coalesce(link.isis_delay_override_ns, 0) > 0 OR link.status IN ['soft-drained', 'hard-drained']) AS is_drained
 	`
 	result, err := session.Run(ctx, cypher, nil)
 	if err != nil {

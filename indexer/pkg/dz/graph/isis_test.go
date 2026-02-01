@@ -495,7 +495,7 @@ func TestStore_SyncISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
 	err = store.ReplaceDevices(ctx, devices)
 	require.NoError(t, err)
 
-	// Create a drained link (isis_delay_override_ns > 0 means soft-drained)
+	// Create a soft-drained link (status + isis_delay_override_ns)
 	links := []dzsvc.Link{
 		{PK: "link1", Status: "soft-drained", Code: "link1", TunnelNet: "172.16.0.116/31", ContributorPK: "contrib1", SideAPK: "device1", SideZPK: "device2", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 10000000000, ISISDelayOverrideNs: 1000000000},
 	}
@@ -629,6 +629,85 @@ func TestStore_SyncWithISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
 	require.NoError(t, err)
 	systemID, _ := record.Get("system_id")
 	require.Equal(t, "ac10.0001.0000.00-00", systemID, "device ISIS properties should still be set")
+}
+
+// TestStore_SyncISIS_HardDrainedLinkSkipsAdjacency verifies that hard-drained links
+// (status = "hard-drained" without isis_delay_override_ns) also skip ISIS adjacency.
+func TestStore_SyncISIS_HardDrainedLinkSkipsAdjacency(t *testing.T) {
+	chClient := testClickHouseClient(t)
+	neo4jClient := testNeo4jClient(t)
+	log := laketesting.NewLogger()
+	ctx := t.Context()
+
+	clearTestData(t, chClient)
+
+	store, err := dzsvc.NewStore(dzsvc.StoreConfig{
+		Logger:     log,
+		ClickHouse: chClient,
+	})
+	require.NoError(t, err)
+
+	contributors := []dzsvc.Contributor{
+		{PK: "contrib1", Code: "test1", Name: "Test Contributor 1"},
+	}
+	err = store.ReplaceContributors(ctx, contributors)
+	require.NoError(t, err)
+
+	metros := []dzsvc.Metro{
+		{PK: "metro1", Code: "NYC", Name: "New York", Longitude: -74.006, Latitude: 40.7128},
+	}
+	err = store.ReplaceMetros(ctx, metros)
+	require.NoError(t, err)
+
+	devices := []dzsvc.Device{
+		{PK: "device1", Status: "active", DeviceType: "router", Code: "DZ-NY7-SW01", PublicIP: "1.2.3.4", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "device2", Status: "active", DeviceType: "router", Code: "DZ-DC1-SW01", PublicIP: "1.2.3.5", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+	}
+	err = store.ReplaceDevices(ctx, devices)
+	require.NoError(t, err)
+
+	// Hard-drained link: status is "hard-drained" but no isis_delay_override_ns
+	links := []dzsvc.Link{
+		{PK: "link1", Status: "hard-drained", Code: "link1", TunnelNet: "172.16.0.116/31", ContributorPK: "contrib1", SideAPK: "device1", SideZPK: "device2", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 10000000000},
+	}
+	err = store.ReplaceLinks(ctx, links)
+	require.NoError(t, err)
+
+	graphStore, err := NewStore(StoreConfig{
+		Logger:     log,
+		Neo4j:      neo4jClient,
+		ClickHouse: chClient,
+	})
+	require.NoError(t, err)
+
+	err = graphStore.Sync(ctx)
+	require.NoError(t, err)
+
+	lsps := []isis.LSP{
+		{
+			SystemID: "ac10.0001.0000.00-00",
+			Hostname: "DZ-NY7-SW01",
+			RouterID: "172.16.0.1",
+			Neighbors: []isis.Neighbor{
+				{SystemID: "ac10.0002.0000", Metric: 1000, NeighborAddr: "172.16.0.117", AdjSIDs: []uint32{100001}},
+			},
+		},
+	}
+
+	err = graphStore.SyncISIS(ctx, lsps)
+	require.NoError(t, err)
+
+	session, err := neo4jClient.Session(ctx)
+	require.NoError(t, err)
+	defer session.Close(ctx)
+
+	// No ISIS_ADJACENT for hard-drained link
+	res, err := session.Run(ctx, "MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count", nil)
+	require.NoError(t, err)
+	record, err := res.Single(ctx)
+	require.NoError(t, err)
+	count, _ := record.Get("count")
+	require.Equal(t, int64(0), count, "expected no ISIS_ADJACENT for hard-drained link")
 }
 
 func TestParseTunnelNet31(t *testing.T) {
