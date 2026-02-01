@@ -78,7 +78,7 @@ export function TopologyPanel({ children, title, subtitle }: TopologyPanelProps)
   return (
     <div
       className="absolute top-0 bottom-0 z-[1000] bg-[var(--card)] border-r border-[var(--border)] shadow-xl flex flex-col"
-      style={{ width: panel.width, left: sidebarWidth }}
+      style={{ width: panel.width, left: 0 }}
     >
       {/* Resize handle on the right edge */}
       <div
