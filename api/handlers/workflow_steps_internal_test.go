@@ -32,7 +32,7 @@ func TestToClientFormat(t *testing.T) {
 		assert.Equal(t, "how many?", client.Question)
 		assert.Equal(t, "SELECT count() FROM t", client.SQL)
 		assert.Equal(t, "completed", client.Status)
-		assert.Equal(t, 1, client.Rows)          // Count → Rows
+		assert.Equal(t, 1, client.Rows)             // Count → Rows
 		assert.Equal(t, [][]any{{42}}, client.Data) // Rows → Data
 		assert.Equal(t, []string{"count"}, client.Columns)
 		assert.Equal(t, "devnet", client.Env)
