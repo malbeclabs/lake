@@ -543,6 +543,8 @@ export interface ChatMessage {
   id?: string // Unique message ID for deduplication (optional for backward compat)
   role: 'user' | 'assistant'
   content: string
+  // Environment this message was sent/received in
+  env?: string
   // Workflow data (only present on assistant messages)
   workflowData?: ChatWorkflowData
   // SQL queries for history transmission (extracted from workflowData for backend)

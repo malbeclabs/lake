@@ -98,6 +98,7 @@ type SessionChatMessage struct {
 	ID              string               `json:"id"`
 	Role            string               `json:"role"` // "user" or "assistant"
 	Content         string               `json:"content"`
+	Env             string               `json:"env,omitempty"` // Environment this message was sent in
 	WorkflowData    *SessionWorkflowData `json:"workflowData,omitempty"`
 	ExecutedQueries []string             `json:"executedQueries,omitempty"`
 	Status          string               `json:"status,omitempty"` // "streaming", "complete", "error"
@@ -205,6 +206,7 @@ func buildSessionMessages(
 	existingMessages []SessionChatMessage,
 	workflowID uuid.UUID,
 	question string,
+	env string,
 	answer string,
 	status string,
 	steps []WorkflowStep,
@@ -238,6 +240,7 @@ func buildSessionMessages(
 			ID:      uuid.NewString(),
 			Role:    "user",
 			Content: question,
+			Env:     env,
 		})
 	}
 
@@ -325,7 +328,7 @@ func (m *WorkflowManager) StartWorkflow(
 
 	// Initialize session content with user message and streaming assistant message
 	// Appends to existing messages to preserve conversation history
-	initialMessages := buildSessionMessages(existingMessages, run.ID, question, "", "streaming", nil, nil, nil)
+	initialMessages := buildSessionMessages(existingMessages, run.ID, question, string(workflowEnv), "", "streaming", nil, nil, nil)
 	if err := updateSessionContent(ctx, sessionID, initialMessages); err != nil {
 		slog.Warn("Failed to initialize session content", "session_id", sessionID, "error", err)
 	}
@@ -692,7 +695,7 @@ func (m *WorkflowManager) runWorkflow(
 		}
 
 		// Also update session content with current progress (preserving existing messages)
-		sessionMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, question, "", "streaming", steps, state.ExecutedQueries, nil)
+		sessionMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, question, string(rw.Env), "", "streaming", steps, state.ExecutedQueries, nil)
 		if err := updateSessionContent(ctx, rw.SessionID, sessionMessages); err != nil {
 			slog.Warn("Failed to update session content at checkpoint", "session_id", rw.SessionID, "error", err)
 		}
@@ -740,7 +743,7 @@ func (m *WorkflowManager) runWorkflow(
 	}
 
 	// Update session content with final answer and status 'complete' (preserving existing messages)
-	finalMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, question, result.Answer, "complete", finalSteps, result.ExecutedQueries, result.FollowUpQuestions)
+	finalMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, question, string(rw.Env), result.Answer, "complete", finalSteps, result.ExecutedQueries, result.FollowUpQuestions)
 	if err := updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
 		slog.Warn("Failed to update session content on completion", "session_id", rw.SessionID, "error", err)
 	}
@@ -1107,7 +1110,7 @@ func (m *WorkflowManager) resumeWorkflow(
 		}
 
 		// Also update session content with current progress (preserving existing messages)
-		sessionMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, rw.Question, "", "streaming", steps, state.ExecutedQueries, nil)
+		sessionMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, rw.Question, string(rw.Env), "", "streaming", steps, state.ExecutedQueries, nil)
 		if err := updateSessionContent(ctx, rw.SessionID, sessionMessages); err != nil {
 			slog.Warn("Failed to update session content at checkpoint", "session_id", rw.SessionID, "error", err)
 		}
@@ -1156,7 +1159,7 @@ func (m *WorkflowManager) resumeWorkflow(
 	}
 
 	// Update session content with final answer and status 'complete' (preserving existing messages)
-	finalMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, rw.Question, result.Answer, "complete", finalSteps, result.ExecutedQueries, result.FollowUpQuestions)
+	finalMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, rw.Question, string(rw.Env), result.Answer, "complete", finalSteps, result.ExecutedQueries, result.FollowUpQuestions)
 	if err := updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
 		slog.Warn("Failed to update session content on completion", "session_id", rw.SessionID, "error", err)
 	}
