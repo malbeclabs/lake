@@ -79,7 +79,9 @@ function formatDuration(seconds: number | undefined): string {
 }
 
 function formatTimeAgo(isoString: string): string {
+  if (isoString === 'unknown') return 'Unknown'
   const date = new Date(isoString)
+  if (isNaN(date.getTime()) || date.getFullYear() < 2000) return 'Unknown'
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffSecs = Math.floor(diffMs / 1000)
@@ -91,7 +93,10 @@ function formatTimeAgo(isoString: string): string {
 }
 
 function formatTimestamp(isoString: string): string {
-  return new Date(isoString).toLocaleString(undefined, {
+  if (isoString === 'unknown') return 'Unknown'
+  const date = new Date(isoString)
+  if (isNaN(date.getTime()) || date.getFullYear() < 2000) return 'Unknown'
+  return date.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

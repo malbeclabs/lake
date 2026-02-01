@@ -444,7 +444,7 @@ func fetchCurrentlyDrainedLinks(ctx context.Context, conn driver.Conn, filters [
 		newStatus := currentStatus
 
 		var startedAtStr string
-		if startedAt != nil {
+		if startedAt != nil && !startedAt.IsZero() && startedAt.Year() >= 2000 {
 			startedAtStr = startedAt.UTC().Format(time.RFC3339)
 		} else {
 			// If we can't find when it started, use a placeholder
