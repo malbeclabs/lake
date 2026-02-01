@@ -5,32 +5,13 @@ import { ArrowUp } from 'lucide-react'
 import { fetchStats } from '@/lib/api'
 import { StatCard } from '@/components/stat-card'
 import { useTheme } from '@/hooks/use-theme'
-
-const EXAMPLE_QUESTIONS = [
-  'How is the network doing?',
-  'Compare DZ to the public internet',
-  'Which validators connected recently?',
-  'Which metros have the most validators?',
-  'Show me link latency by metro pair',
-  'Which links have the highest utilization?',
-  // Graph/topology questions
-  'If the Hong Kong device goes down, what metros lose connectivity?',
-  'What metros can I reach from Singapore?',
-  'Show the paths between NYC and LON',
-]
-
-function selectRandom<T>(arr: T[], n: number): T[] {
-  const shuffled = [...arr]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
-  return shuffled.slice(0, n)
-}
+import { useEnv } from '@/contexts/EnvContext'
+import { getExampleQuestions } from '@/lib/example-questions'
 
 export function Landing() {
   const navigate = useNavigate()
   const { resolvedTheme } = useTheme()
+  const { features } = useEnv()
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -41,7 +22,7 @@ export function Landing() {
     staleTime: 10_000,
   })
 
-  const exampleQuestions = useMemo(() => selectRandom(EXAMPLE_QUESTIONS, 3), [])
+  const exampleQuestions = useMemo(() => getExampleQuestions(features, 3), [features.solana, features.neo4j]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Only auto-focus on desktop to avoid scroll-to-input on mobile
   useEffect(() => {

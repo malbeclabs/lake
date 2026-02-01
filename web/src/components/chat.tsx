@@ -7,6 +7,7 @@ import { formatQuery } from '@/lib/format-query'
 import { ArrowUp, Square, Loader2, Copy, Check, ChevronDown, ChevronRight, ExternalLink, MessageCircle, CheckCircle2, XCircle, Brain, RotateCcw } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/contexts/AuthContext'
+import { useEnv } from '@/contexts/EnvContext'
 import { LoginModal } from '@/components/auth/LoginModal'
 import { formatNeo4jValue, isNeo4jValue } from '@/lib/neo4j-utils'
 
@@ -155,36 +156,7 @@ const darkCodeTheme: { [key: string]: React.CSSProperties } = {
   italic: { fontStyle: 'italic' },
 }
 
-// Example questions for empty chat state
-const EXAMPLE_QUESTIONS = [
-  "How is the network doing?",
-  "How many Solana validators are on DZ?",
-  "Compare DZ to the public internet",
-  "Which links have the highest utilization?",
-  "What is the total stake connected to DZ?",
-  "Which metros have the most validators?",
-  "Show me link latency by metro pair",
-  "Are there any links with packet loss?",
-  "What's the average RTT for DZ links?",
-  "Which validators connected recently?",
-  "Which validators have the highest stake?",
-  "Compare validator performance on vs off DZ",
-  // Graph/topology questions
-  "If the Hong Kong device goes down, what metros lose connectivity?",
-  "What metros can I reach from Singapore?",
-  "Show the paths between NYC and LON",
-  "Show me all devices and links connected to the Singapore device",
-]
-
-// Randomly select n items from an array (Fisher-Yates shuffle, take first n)
-function selectRandom<T>(arr: T[], n: number): T[] {
-  const shuffled = [...arr]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
-  return shuffled.slice(0, n)
-}
+import { getExampleQuestions } from '@/lib/example-questions'
 
 function CodeBlock({ language, children, isDark }: { language: string; children: string; isDark: boolean }) {
   const [copied, setCopied] = useState(false)
@@ -642,6 +614,7 @@ interface ChatProps {
 }
 
 export function Chat({ messages, isPending, processingSteps, onSendMessage, onAbort, onRetry, onOpenInQueryEditor }: ChatProps) {
+  const { features } = useEnv()
   const [input, setInput] = useState('')
   const [highlightedQueries, setHighlightedQueries] = useState<Map<number, number | null>>(new Map()) // messageIndex -> queryIndex
   const [showLoginModal, setShowLoginModal] = useState(false)
@@ -674,9 +647,9 @@ export function Chat({ messages, isPending, processingSteps, onSendMessage, onAb
     return () => window.removeEventListener('refresh-chat-suggestions', handleRefresh)
   }, [])
 
-  // Randomly select example questions (changes on mount or when suggestionsKey changes)
+  // Randomly select example questions filtered by available features
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const exampleQuestions = useMemo(() => selectRandom(EXAMPLE_QUESTIONS, 4), [suggestionsKey])
+  const exampleQuestions = useMemo(() => getExampleQuestions(features, 4), [suggestionsKey, features.solana, features.neo4j])
 
   const handleAskAboutQuery = (question: string, _sql: string, rowCount: number) => {
     const prompt = `Tell me more about the "${question}" result (${rowCount} rows). What insights can you draw from this data?`
