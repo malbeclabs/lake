@@ -29,11 +29,13 @@ var (
 		"cherry":   "Cherry Servers",
 		"cdrw":     "Cumberland/DRW",
 		"glxy":     "Galaxy",
+		"laconic":  "Laconic",
 		"latitude": "Latitude",
 		"rox":      "RockawayX",
 		"s3v":      "S3V",
 		"stakefac": "Staking Facilities",
 		"tsw":      "Terraswitch",
+		"velia":    "Velia",
 	}
 )
 
