@@ -475,10 +475,8 @@ func (m *WorkflowManager) runWorkflow(
 		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
 	}
 
-	// Add env context for non-mainnet environments
-	if rw.Env != EnvMainnet {
-		cfg.EnvContext = "You are querying the DZ " + string(rw.Env) + " deployment. Neo4j, Solana, and GeoIP data are not available on this deployment."
-	}
+	// Add env context to agent
+	cfg.EnvContext = BuildEnvContext(rw.Env)
 
 	// Create workflow
 	wf, err := v3.New(cfg)
@@ -892,10 +890,8 @@ func (m *WorkflowManager) resumeWorkflow(
 		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
 	}
 
-	// Add env context for non-mainnet environments
-	if rw.Env != EnvMainnet {
-		cfg.EnvContext = "You are querying the DZ " + string(rw.Env) + " deployment. Neo4j, Solana, and GeoIP data are not available on this deployment."
-	}
+	// Add env context to agent
+	cfg.EnvContext = BuildEnvContext(rw.Env)
 
 	// Create workflow
 	wf, err := v3.New(cfg)

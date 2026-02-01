@@ -132,9 +132,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add env context to agent
-	if env != EnvMainnet {
-		cfg.EnvContext = "You are querying the DZ " + string(env) + " deployment. Neo4j, Solana, and GeoIP data are not available on this deployment."
-	}
+	cfg.EnvContext = BuildEnvContext(env)
 
 	// Create and run workflow
 	wf, err := v3.New(cfg)

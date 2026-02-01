@@ -84,6 +84,9 @@ func (r *WorkflowRunner) ChatStream(
 		FormatContext: prompts.Slack,
 	}
 
+	// Add env context so agent knows about other databases for cross-querying
+	cfg.EnvContext = handlers.BuildEnvContext(handlers.EnvMainnet)
+
 	// Add Neo4j support if available
 	if config.Neo4jClient != nil {
 		cfg.GraphQuerier = handlers.NewNeo4jQuerier()

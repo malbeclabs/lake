@@ -18,7 +18,7 @@ interface TopologyPageProps {
 
 function TopologyLoading() {
   return (
-    <div className="fixed inset-0 z-0 h-screen w-screen flex items-center justify-center bg-background">
+    <div className="absolute inset-0 z-0 flex items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">
         <Globe className="h-10 w-10 text-muted-foreground animate-pulse" />
         <div className="text-sm text-muted-foreground">Loading network topology...</div>
@@ -80,7 +80,7 @@ export function TopologyPage({ view }: TopologyPageProps) {
 
   return (
     <TopologyProvider view={view}>
-      <div className="fixed inset-0 z-0 h-screen w-screen">
+      <div className="absolute inset-0 z-0">
         {view === 'map' && data && (
           <TopologyMap
             metros={data.metros}
