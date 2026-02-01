@@ -64,8 +64,16 @@ func Up(ctx context.Context, log *slog.Logger, cfg MigrationConfig) error {
 		return err
 	}
 
-	if _, err := provider.Up(ctx); err != nil {
+	results, err := provider.Up(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	for _, r := range results {
+		log.Info("migration applied", "version", r.Source.Version, "path", r.Source.Path, "duration", r.Duration)
+	}
+	if len(results) == 0 {
+		log.Info("no pending migrations")
 	}
 
 	log.Info("ClickHouse migrations completed successfully")
