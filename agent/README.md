@@ -22,12 +22,12 @@ The agent transforms natural language questions into SQL queries, executes them 
 │   └─────────────────────────────────────────────────────────────────────┘   │
 │                          │                    │                             │
 │                          ▼                    ▼                             │
-│                    ┌──────────┐        ┌─────────────┐                      │
-│                    │  think   │        │ execute_sql │                      │
-│                    │          │        │             │                      │
-│                    │ Record   │        │ Run queries │                      │
-│                    │ reasoning│        │ against DB  │                      │
-│                    └──────────┘        └─────────────┘                      │
+│                    ┌─────────────┐     ┌─────────────────┐                  │
+│                    │ execute_sql │     │ execute_cypher  │                  │
+│                    │             │     │ (mainnet only)  │                  │
+│                    │ Run SQL vs  │     │ Run Cypher vs   │                  │
+│                    │ ClickHouse  │     │ Neo4j           │                  │
+│                    └─────────────┘     └─────────────────┘                  │
 │                          │                    │                             │
 │                          └────────────────────┘                             │
 │                                   │                                         │
@@ -89,11 +89,10 @@ Turn data into an answer:
 
 ## Tools
 
-The agent has access to two tools:
+The agent has access to these tools:
 
 | Tool | Purpose |
 |------|---------|
-| `think` | Record reasoning process (shown to users for transparency) |
 | `execute_sql` | Run SQL queries against ClickHouse and get results |
 | `execute_cypher` | Run Cypher queries against Neo4j (mainnet-beta only) |
 | `read_docs` | Look up documentation pages for domain context |
@@ -137,7 +136,7 @@ The schema includes pre-built views that the agent is instructed to prefer:
 
 1. **Flexibility**: The agent can execute as many queries as needed
 2. **Iteration**: Results inform the next step, allowing refinement
-3. **Transparency**: The `think` tool makes reasoning visible to users
+3. **Transparency**: Extended thinking makes reasoning visible to users
 4. **Natural flow**: Mirrors how a human analyst would work
 
 ### Why Dynamic Schema?
