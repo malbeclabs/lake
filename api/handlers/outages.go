@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/malbeclabs/lake/api/config"
 )
 
 // LinkOutage represents a discrete outage event on a link
@@ -177,7 +176,7 @@ func GetLinkOutages(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch status-based outages (drained states)
 	if outageType == "all" || outageType == "status" {
-		statusOutages, err := fetchStatusOutages(ctx, config.DB, duration, filters)
+		statusOutages, err := fetchStatusOutages(ctx, envDB(ctx), duration, filters)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch status outages: %v", err), http.StatusInternalServerError)
 			return
@@ -187,7 +186,7 @@ func GetLinkOutages(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch packet loss outages
 	if outageType == "all" || outageType == "loss" {
-		lossOutages, err := fetchPacketLossOutages(ctx, config.DB, duration, threshold, filters)
+		lossOutages, err := fetchPacketLossOutages(ctx, envDB(ctx), duration, threshold, filters)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch packet loss outages: %v", err), http.StatusInternalServerError)
 			return
@@ -197,7 +196,7 @@ func GetLinkOutages(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch no-data outages (links that stopped reporting telemetry)
 	if outageType == "all" || outageType == "no_data" {
-		noDataOutages, err := fetchNoDataOutages(ctx, config.DB, duration, filters)
+		noDataOutages, err := fetchNoDataOutages(ctx, envDB(ctx), duration, filters)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch no-data outages: %v", err), http.StatusInternalServerError)
 			return
@@ -1330,7 +1329,7 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 	var outages []LinkOutage
 
 	if outageType == "all" || outageType == "status" {
-		statusOutages, err := fetchStatusOutages(ctx, config.DB, duration, filters)
+		statusOutages, err := fetchStatusOutages(ctx, envDB(ctx), duration, filters)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch status outages: %v", err), http.StatusInternalServerError)
 			return
@@ -1339,7 +1338,7 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if outageType == "all" || outageType == "loss" {
-		lossOutages, err := fetchPacketLossOutages(ctx, config.DB, duration, threshold, filters)
+		lossOutages, err := fetchPacketLossOutages(ctx, envDB(ctx), duration, threshold, filters)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch packet loss outages: %v", err), http.StatusInternalServerError)
 			return
@@ -1410,7 +1409,7 @@ func fetchDefaultOutagesData(ctx context.Context) *LinkOutagesResponse {
 	var outages []LinkOutage
 
 	// Fetch status-based outages (drained states)
-	statusOutages, err := fetchStatusOutages(ctx, config.DB, duration, filters)
+	statusOutages, err := fetchStatusOutages(ctx, envDB(ctx), duration, filters)
 	if err != nil {
 		log.Printf("Cache: Failed to fetch status outages: %v", err)
 	} else {
@@ -1418,7 +1417,7 @@ func fetchDefaultOutagesData(ctx context.Context) *LinkOutagesResponse {
 	}
 
 	// Fetch packet loss outages
-	lossOutages, err := fetchPacketLossOutages(ctx, config.DB, duration, threshold, filters)
+	lossOutages, err := fetchPacketLossOutages(ctx, envDB(ctx), duration, threshold, filters)
 	if err != nil {
 		log.Printf("Cache: Failed to fetch packet loss outages: %v", err)
 	} else {
@@ -1426,7 +1425,7 @@ func fetchDefaultOutagesData(ctx context.Context) *LinkOutagesResponse {
 	}
 
 	// Fetch no-data outages
-	noDataOutages, err := fetchNoDataOutages(ctx, config.DB, duration, filters)
+	noDataOutages, err := fetchNoDataOutages(ctx, envDB(ctx), duration, filters)
 	if err != nil {
 		log.Printf("Cache: Failed to fetch no-data outages: %v", err)
 	} else {
