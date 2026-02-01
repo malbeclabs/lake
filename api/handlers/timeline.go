@@ -2607,11 +2607,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			if validatorKind == "validator" {
 				eventType = "validator_joined_dz"
 				action = "validator_joined_dz"
-				if stakeSol > 0 {
-						title = fmt.Sprintf("Validator joined DZ (%.0f SOL)", stakeSol)
-					} else {
-						title = "Validator joined DZ"
-					}
+				title = "Validator joined DZ"
 			} else {
 				title = "Gossip node joined DZ"
 				eventType = "gossip_node_joined_dz"
@@ -2622,11 +2618,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			if validatorKind == "validator" {
 				eventType = "validator_left_dz"
 				action = "validator_left_dz"
-				if stakeSol > 0 {
-						title = fmt.Sprintf("Validator left DZ (%.0f SOL)", stakeSol)
-					} else {
-						title = "Validator left DZ"
-					}
+				title = "Validator left DZ"
 			} else {
 				title = "Gossip node left DZ"
 				eventType = "gossip_node_left_dz"
@@ -2762,11 +2754,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 
 		if changeType == "offline" {
 			if isValidator {
-				if stakeSol > 0 {
-					title = fmt.Sprintf("Validator left Solana network (%.0f SOL)", stakeSol)
-				} else {
-					title = "Validator left Solana network"
-				}
+				title = "Validator left Solana network"
 				eventType = "validator_left_solana"
 				entityType = "validator"
 			} else {
@@ -2937,19 +2925,11 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 		var severity string
 
 		if changeType == "left" {
-			if stakeSol > 0 {
-				title = fmt.Sprintf("Validator left Solana network (%.0f SOL)", stakeSol)
-			} else {
-				title = "Validator left Solana network"
-			}
+			title = "Validator left Solana network"
 			eventType = "validator_left_solana"
 			severity = "warning"
 		} else {
-			if stakeSol > 0 {
-				title = fmt.Sprintf("Validator joined Solana network (%.0f SOL)", stakeSol)
-			} else {
-				title = "Validator joined Solana network"
-			}
+			title = "Validator joined Solana network"
 			eventType = "validator_joined_solana"
 			severity = "info"
 		}
@@ -3101,12 +3081,12 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 		}
 
 		if change > 0 {
-			title = fmt.Sprintf("%sValidator stake increased to %.0f SOL", dzPrefix, currentSol)
+			title = fmt.Sprintf("%sValidator stake increased", dzPrefix)
 			eventType = "validator_stake_increased"
 			severity = "info"
 			action = "increased"
 		} else {
-			title = fmt.Sprintf("%sValidator stake decreased to %.0f SOL", dzPrefix, currentSol)
+			title = fmt.Sprintf("%sValidator stake decreased", dzPrefix)
 			eventType = "validator_stake_decreased"
 			severity = "warning"
 			action = "decreased"
@@ -3359,31 +3339,19 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 				stakeSol = float64(prev.stake) / 1_000_000_000
 				stakeSharePct = prev.stakeSharePct
 				stakeShareChangePct = -prev.stakeSharePct
-				if stakeSol > 0 {
-					title = fmt.Sprintf("Validator left Solana, was on DZ (%.0f SOL)", stakeSol)
-				} else {
-					title = "Validator left Solana, was on DZ"
-				}
+				title = "Validator left Solana, was on DZ"
 				severity = "warning"
 			case prevOnDZ && !currOnDZ:
 				eventType = "validator_left_dz"
 				action = "validator_left_dz"
 				stakeShareChangePct = -stakeSharePct
-				if stakeSol > 0 {
-					title = fmt.Sprintf("Validator left DZ (%.0f SOL)", stakeSol)
-				} else {
-					title = "Validator left DZ"
-				}
+				title = "Validator left DZ"
 				severity = "warning"
 			case !prevOnDZ && currOnDZ:
 				eventType = "validator_joined_dz"
 				action = "validator_joined_dz"
 				stakeShareChangePct = stakeSharePct
-				if stakeSol > 0 {
-					title = fmt.Sprintf("Validator joined DZ (%.0f SOL)", stakeSol)
-				} else {
-					title = "Validator joined DZ"
-				}
+				title = "Validator joined DZ"
 				severity = "info"
 			case currOnDZ && prevOnDZ:
 				eventType = "validator_stake_changed"
@@ -3392,9 +3360,9 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 					stakeShareChangePct = stakeSharePct - prev.stakeSharePct
 				}
 				if contributionChange > 0 {
-					title = fmt.Sprintf("DZ validator stake increased to %.0f SOL", stakeSol)
+					title = "DZ validator stake increased"
 				} else {
-					title = fmt.Sprintf("DZ validator stake decreased to %.0f SOL", stakeSol)
+					title = "DZ validator stake decreased"
 				}
 				severity = "info"
 			default:
