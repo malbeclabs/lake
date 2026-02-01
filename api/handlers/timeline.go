@@ -2639,19 +2639,19 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			EntityPK:    pk,
 			EntityCode:  ownerPubkey, // Full pubkey - frontend handles truncation
 			Details: ValidatorEventDetails{
-				OwnerPubkey:                ownerPubkey,
-				DZIP:                       dzIP,
-				VotePubkey:                 votePubkey,
-				NodePubkey:                 nodePubkey,
-				StakeLamports:              stakeLamports,
-				StakeSol:                   stakeSol,
-				StakeSharePct:              stakeSharePct,
-				UserPK:     pk,
-				DevicePK:   devicePK,
-				DeviceCode: deviceCode,
-				MetroCode:  metroCode,
-				Kind:       validatorKind,
-				Action:     action,
+				OwnerPubkey:   ownerPubkey,
+				DZIP:          dzIP,
+				VotePubkey:    votePubkey,
+				NodePubkey:    nodePubkey,
+				StakeLamports: stakeLamports,
+				StakeSol:      stakeSol,
+				StakeSharePct: stakeSharePct,
+				UserPK:        pk,
+				DevicePK:      devicePK,
+				DeviceCode:    deviceCode,
+				MetroCode:     metroCode,
+				Kind:          validatorKind,
+				Action:        action,
 			},
 		})
 	}
@@ -3402,7 +3402,7 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 
 // dzTotalStakeInfo holds the current DZ total stake share and total network stake.
 type dzTotalStakeInfo struct {
-	DZTotalPct      float64
+	DZTotalPct         float64
 	TotalStakeLamports int64
 }
 

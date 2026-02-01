@@ -584,8 +584,8 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 	// "base" validator always on DZ
 	// "target" validator: off DZ at t1, joins at t2, stake changes at t3, leaves at t4
 
-	const restStake int64 = 700_000_000_000_000   // 700k SOL
-	const baseStake int64 = 200_000_000_000_000   // 200k SOL
+	const restStake int64 = 700_000_000_000_000    // 700k SOL
+	const baseStake int64 = 200_000_000_000_000    // 200k SOL
 	const targetStake1 int64 = 100_000_000_000_000 // 100k SOL
 	const targetStake2 int64 = 150_000_000_000_000 // 150k SOL
 	// Total = 1M SOL at t1-t3, 1.05M at t4 (slight variation)
