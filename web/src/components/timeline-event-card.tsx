@@ -68,20 +68,7 @@ const errorThresholds = { low: 10, medium: 100, high: 1000 }
 const discardThresholds = { low: 100, medium: 1000, high: 10000 }
 const carrierThresholds = { low: 1, medium: 5, high: 10 }
 
-export function formatTimeAgo(timestamp: string): string {
-  const now = new Date()
-  const then = new Date(timestamp)
-  const diffMs = now.getTime() - then.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMs / 3600000)
-  const diffDays = Math.floor(diffMs / 86400000)
-
-  if (diffMins < 1) return 'just now'
-  if (diffMins < 60) return `${diffMins}m ago`
-  if (diffHours < 24) return `${diffHours}h ago`
-  if (diffDays < 7) return `${diffDays}d ago`
-  return then.toLocaleDateString()
-}
+import { formatTimeAgo } from './timeline-constants'
 
 function formatValue(value: unknown, field: string): string {
   if (value === null || value === undefined) return '—'
@@ -325,10 +312,6 @@ export function DateSeparator({ date }: { date: string }) {
   )
 }
 
-// Get the date string (YYYY-MM-DD) for grouping
-export function getDateKey(timestamp: string): string {
-  return new Date(timestamp).toDateString()
-}
 
 export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boolean }) {
   const [expanded, setExpanded] = useState(false)

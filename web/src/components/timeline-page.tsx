@@ -17,7 +17,6 @@ import {
   type HistogramBucket,
 } from '@/lib/api'
 import {
-  TimelineFilters,
   parseSetParam,
   serializeSetParam,
   presets,
@@ -26,12 +25,14 @@ import {
   ALL_ENTITY_TYPES,
   ALL_SOLANA_ENTITIES,
   DEFAULT_ENTITY_TYPES,
+  getDateKey,
   type Category,
   type EntityType,
   type DZFilter,
   type MinStakeOption,
-} from './timeline-filters'
-import { TimelineEventCard, DateSeparator, getDateKey } from './timeline-event-card'
+} from './timeline-constants'
+import { TimelineFilters } from './timeline-filters'
+import { TimelineEventCard, DateSeparator } from './timeline-event-card'
 import { EventHistogram } from './timeline-histogram'
 
 function Skeleton({ className }: { className?: string }) {

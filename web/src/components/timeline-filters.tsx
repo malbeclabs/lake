@@ -26,13 +26,20 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TimeRange, ActionFilter } from '@/lib/api'
+import {
+  type Category,
+  type EntityType,
+  type DZFilter,
+  type MinStakeOption,
+  ALL_ACTIONS,
+  ALL_DZ_ENTITIES,
+  ALL_SOLANA_ENTITIES,
+  ALL_CATEGORIES,
+  DEFAULT_ENTITY_TYPES,
+  presets,
+} from './timeline-constants'
 
-export type Category = 'state_change' | 'packet_loss' | 'interface_carrier' | 'interface_errors' | 'interface_discards'
-export type EntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip_node'
-export type DZFilter = 'on_dz' | 'off_dz' | 'all'
-export type MinStakeOption = '0' | '0.01' | '0.05' | '0.1' | '0.5' | '1' | '1.5' | '2'
-
-export const minStakeOptions: { value: MinStakeOption; label: string }[] = [
+const minStakeOptions: { value: MinStakeOption; label: string }[] = [
   { value: '0', label: 'Any' },
   { value: '0.01', label: '>0.01%' },
   { value: '0.05', label: '>0.05%' },
@@ -43,7 +50,7 @@ export const minStakeOptions: { value: MinStakeOption; label: string }[] = [
   { value: '2', label: '>2%' },
 ]
 
-export const timeRangeOptions: { value: TimeRange | 'custom'; label: string }[] = [
+const timeRangeOptions: { value: TimeRange | 'custom'; label: string }[] = [
   { value: '1h', label: '1h' },
   { value: '6h', label: '6h' },
   { value: '12h', label: '12h' },
@@ -53,7 +60,7 @@ export const timeRangeOptions: { value: TimeRange | 'custom'; label: string }[] 
   { value: 'custom', label: 'Custom' },
 ]
 
-export const actionOptions: { value: ActionFilter; label: string; icon: typeof Plus }[] = [
+const actionOptions: { value: ActionFilter; label: string; icon: typeof Plus }[] = [
   { value: 'added', label: 'Added', icon: Plus },
   { value: 'removed', label: 'Removed', icon: Trash2 },
   { value: 'changed', label: 'Changed', icon: Pencil },
@@ -61,9 +68,7 @@ export const actionOptions: { value: ActionFilter; label: string; icon: typeof P
   { value: 'resolved', label: 'Resolved', icon: CheckCircle2 },
 ]
 
-export const ALL_ACTIONS: ActionFilter[] = ['added', 'removed', 'changed', 'alerting', 'resolved']
-
-export const categoryOptions: { value: Category; label: string; icon: typeof Server }[] = [
+const categoryOptions: { value: Category; label: string; icon: typeof Server }[] = [
   { value: 'state_change', label: 'State Changes', icon: GitCommit },
   { value: 'packet_loss', label: 'Packet Loss', icon: Wifi },
   { value: 'interface_carrier', label: 'Carrier Transitions', icon: WifiOff },
@@ -71,7 +76,7 @@ export const categoryOptions: { value: Category; label: string; icon: typeof Ser
   { value: 'interface_discards', label: 'Discards', icon: AlertTriangle },
 ]
 
-export const dzEntityOptions: { value: EntityType; label: string; icon: typeof Server }[] = [
+const dzEntityOptions: { value: EntityType; label: string; icon: typeof Server }[] = [
   { value: 'device', label: 'Devices', icon: Server },
   { value: 'link', label: 'Links', icon: Link2 },
   { value: 'metro', label: 'Metros', icon: MapPin },
@@ -79,50 +84,19 @@ export const dzEntityOptions: { value: EntityType; label: string; icon: typeof S
   { value: 'user', label: 'Users', icon: Users },
 ]
 
-export const solanaEntityOptions: { value: EntityType; label: string; icon: typeof Server }[] = [
+const solanaEntityOptions: { value: EntityType; label: string; icon: typeof Server }[] = [
   { value: 'validator', label: 'Validators', icon: Landmark },
   { value: 'gossip_node', label: 'Gossip Nodes', icon: Radio },
 ]
 
-export const ALL_DZ_ENTITIES: EntityType[] = ['device', 'link', 'metro', 'contributor', 'user']
-export const ALL_SOLANA_ENTITIES: EntityType[] = ['validator', 'gossip_node']
-export const ALL_ENTITY_TYPES: EntityType[] = [...ALL_DZ_ENTITIES, ...ALL_SOLANA_ENTITIES]
-export const DEFAULT_ENTITY_TYPES: EntityType[] = ALL_ENTITY_TYPES.filter(e => e !== 'gossip_node')
-export const ALL_CATEGORIES: Category[] = ['state_change', 'packet_loss', 'interface_carrier', 'interface_errors', 'interface_discards']
-
-export const dzFilterOptions: { value: DZFilter; label: string }[] = [
+const dzFilterOptions: { value: DZFilter; label: string }[] = [
   { value: 'on_dz', label: 'On DZ' },
   { value: 'off_dz', label: 'Off DZ' },
   { value: 'all', label: 'All' },
 ]
 
-export const presets: { label: string; params: Record<string, string> }[] = [
-  { label: 'Links added', params: { range: '7d', entities: 'link', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
-  { label: 'Devices added', params: { range: '7d', entities: 'device', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
-  { label: 'Validator connections', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed', dz: 'on_dz', min_stake: '0.01' } },
-  { label: 'DZ stake changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,changed,alerting,resolved', dz: 'on_dz', min_stake: '0.01' } },
-  { label: 'Link/device updates', params: { range: '24h', entities: 'device,link', categories: 'state_change', actions: 'changed', dz: 'on_dz' } },
-  { label: 'Link ops', params: { range: '24h', entities: 'link,device', categories: 'packet_loss,interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
-  { label: 'Device ops', params: { range: '24h', entities: 'device', categories: 'interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
-]
-
-// Helper to parse a comma-separated URL param into a Set, with validation
-export function parseSetParam<T extends string>(param: string | null, allValues: T[], defaultValues: T[]): Set<T> {
-  if (!param) return new Set(defaultValues)
-  const values = param.split(',').filter((v): v is T => allValues.includes(v as T))
-  return values.length > 0 ? new Set(values) : new Set(defaultValues)
-}
-
-// Helper to serialize a Set to comma-separated string, returning undefined if it matches default
-export function serializeSetParam<T extends string>(set: Set<T>, defaultValues: T[]): string | undefined {
-  const defaultSet = new Set(defaultValues)
-  const isDefault = set.size === defaultSet.size && [...set].every(v => defaultSet.has(v))
-  if (isDefault) return undefined
-  return Array.from(set).join(',')
-}
-
 // Compact dropdown for multi-select filters
-export function FilterDropdown<T extends string>({
+function FilterDropdown<T extends string>({
   label,
   options,
   selected,
