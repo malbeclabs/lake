@@ -80,7 +80,7 @@ Output goes to `eval-runs/<timestamp>/` with:
 ## Pull Requests
 
 - Use the `/pr-text` skill to generate PR descriptions
-- PR title format: `component: short description` (same as commit messages)
+- PR title format: `component: short description` (same as commit messages). Use a single component — don't comma-separate multiple components
 - Do NOT include "Generated with Claude Code" or similar attribution lines
 - PR body structure:
   - `## Summary of Changes` — bullet points describing the net result of the branch vs main

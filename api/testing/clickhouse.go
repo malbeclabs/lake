@@ -14,6 +14,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
+	chMigrations "github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/stretchr/testify/require"
 	tcch "github.com/testcontainers/testcontainers-go/modules/clickhouse"
 )
@@ -191,6 +192,24 @@ func SetupTestClickHouse(t *testing.T, db *ClickHouseDB) {
 		config.DB = oldDB
 		config.SetDatabase(oldDatabase)
 	})
+}
+
+// SetupTestClickHouseWithMigrations sets up a test database, runs the real
+// ClickHouse migrations from indexer/db/clickhouse/migrations, and configures
+// config.DB. This ensures tests use the same schema as production.
+func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
+	SetupTestClickHouse(t, db)
+
+	ctx := t.Context()
+	log := slog.Default()
+
+	err := chMigrations.RunMigrations(ctx, log, chMigrations.MigrationConfig{
+		Addr:     db.Addr(),
+		Database: config.Database(),
+		Username: db.Username(),
+		Password: db.Password(),
+	})
+	require.NoError(t, err, "failed to run ClickHouse migrations")
 }
 
 // createClickHouseConn creates a ClickHouse connection.

@@ -10,6 +10,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'January 31, 2026',
+    changes: [
+      { type: 'feature', description: 'Timeline preset filters and DZ stake attribution events' },
+      { type: 'improvement', description: 'Redesigned timeline page with vertical layout and collapsible filters' },
+    ],
+  },
+  {
     date: 'January 29, 2026',
     changes: [
       { type: 'feature', description: 'Copy button on chat responses with rich text support for Slack and Notion' },
