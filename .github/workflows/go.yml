@@ -44,4 +44,4 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: ./scripts/run-evals.sh --short --show-failures
+      - run: go test -short -tags evals -v ./agent/evals/...
