@@ -13,6 +13,7 @@ import (
 
 	_ "net/http/pprof"
 
+	"github.com/joho/godotenv"
 	"github.com/jonboulle/clockwork"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	flag "github.com/spf13/pflag"
@@ -30,6 +31,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/indexer/pkg/server"
+	"github.com/malbeclabs/lake/indexer/pkg/sol"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/oschwald/geoip2-golang"
 )
@@ -45,7 +47,6 @@ const (
 	defaultListenAddr                   = "0.0.0.0:3010"
 	defaultRefreshInterval              = 60 * time.Second
 	defaultMaxConcurrency               = 64
-	defaultDZEnv                        = config.EnvMainnetBeta
 	defaultMetricsAddr                  = "0.0.0.0:0"
 	defaultGeoipCityDBPath              = "/usr/share/GeoIP/GeoLite2-City.mmdb"
 	defaultGeoipASNDBPath               = "/usr/share/GeoIP/GeoLite2-ASN.mmdb"
@@ -69,6 +70,7 @@ func run() error {
 	metricsAddrFlag := flag.String("metrics-addr", defaultMetricsAddr, "Address to listen on for prometheus metrics")
 	listenAddrFlag := flag.String("listen-addr", defaultListenAddr, "HTTP server listen address")
 	migrationsEnableFlag := flag.Bool("migrations-enable", false, "enable ClickHouse migrations on startup")
+	createDatabaseFlag := flag.Bool("create-database", false, "create databases (ClickHouse, Neo4j) before startup (for dev use)")
 
 	// ClickHouse configuration
 	clickhouseAddrFlag := flag.String("clickhouse-addr", "", "ClickHouse server address (e.g., localhost:9000, or set CLICKHOUSE_ADDR_TCP env var)")
@@ -89,7 +91,7 @@ func run() error {
 	geoipASNDBPathFlag := flag.String("geoip-asn-db-path", defaultGeoipASNDBPath, "Path to MaxMind GeoIP2 ASN database file (or set MCP_GEOIP_ASN_DB_PATH env var)")
 
 	// Indexer configuration
-	dzEnvFlag := flag.String("dz-env", defaultDZEnv, "DZ ledger environment (devnet, testnet, mainnet-beta)")
+	dzEnvFlag := flag.String("dz-env", config.EnvMainnetBeta, "DZ ledger environment (devnet, testnet, mainnet-beta)")
 	solanaEnvFlag := flag.String("solana-env", config.SolanaEnvMainnetBeta, "solana environment (devnet, testnet, mainnet-beta)")
 	refreshIntervalFlag := flag.Duration("cache-ttl", defaultRefreshInterval, "cache TTL duration")
 	maxConcurrencyFlag := flag.Int("max-concurrency", defaultMaxConcurrency, "maximum number of concurrent operations")
@@ -108,11 +110,15 @@ func run() error {
 
 	flag.Parse()
 
+	// Load .env file. godotenv does not override existing env vars, so
+	// process env and explicit exports take precedence.
+	_ = godotenv.Load()
+
 	// Override flags with environment variables if set
 	if envClickhouseAddr := os.Getenv("CLICKHOUSE_ADDR_TCP"); envClickhouseAddr != "" {
 		*clickhouseAddrFlag = envClickhouseAddr
 	}
-	if envClickhouseDatabase := os.Getenv("CLICKHOUSE_DATABASE"); envClickhouseDatabase != "default" {
+	if envClickhouseDatabase := os.Getenv("CLICKHOUSE_DATABASE"); envClickhouseDatabase != "" {
 		*clickhouseDatabaseFlag = envClickhouseDatabase
 	}
 	if envClickhouseUsername := os.Getenv("CLICKHOUSE_USERNAME"); envClickhouseUsername != "default" {
@@ -163,17 +169,40 @@ func run() error {
 		*mockDeviceUsageFlag = true
 	}
 
+	// For non-mainnet envs, use the dz-env name as the ClickHouse database.
+	if *dzEnvFlag != config.EnvMainnetBeta {
+		*clickhouseDatabaseFlag = *dzEnvFlag
+	}
+
+	// Solana, GeoIP, Neo4j, and ISIS are only enabled for mainnet-beta for now.
+	solanaEnabled := *dzEnvFlag == config.EnvMainnetBeta
+	geoipEnabled := *dzEnvFlag == config.EnvMainnetBeta
+	neo4jEnabled := *dzEnvFlag == config.EnvMainnetBeta
+
 	networkConfig, err := config.NetworkConfigForEnv(*dzEnvFlag)
 	if err != nil {
 		return fmt.Errorf("failed to get network config: %w", err)
 	}
 
-	solanaNetworkConfig, err := config.SolanaNetworkConfigForEnv(*solanaEnvFlag)
-	if err != nil {
-		return fmt.Errorf("failed to get solana network config: %w", err)
+	var solanaNetworkConfig *config.SolanaNetworkConfig
+	if solanaEnabled {
+		solanaNetworkConfig, err = config.SolanaNetworkConfigForEnv(*solanaEnvFlag)
+		if err != nil {
+			return fmt.Errorf("failed to get solana network config: %w", err)
+		}
 	}
 
 	log := logger.New(*verboseFlag)
+
+	log.Info("indexer starting",
+		"version", version,
+		"commit", commit,
+		"dz_env", *dzEnvFlag,
+		"solana_env", *solanaEnvFlag,
+		"solana_enabled", solanaEnabled,
+		"geoip_enabled", geoipEnabled,
+		"neo4j_enabled", neo4jEnabled,
+	)
 
 	// Set up signal handling with detailed logging
 	sigCh := make(chan os.Signal, 1)
@@ -224,13 +253,37 @@ func run() error {
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 
-	solanaRPC := rpc.NewWithRetries(solanaNetworkConfig.RPCURL, nil)
-	defer solanaRPC.Close()
+	var solanaRPC sol.SolanaRPC
+	if solanaEnabled {
+		solanaRPCClient := rpc.NewWithRetries(solanaNetworkConfig.RPCURL, nil)
+		defer solanaRPCClient.Close()
+		solanaRPC = solanaRPCClient
+	}
 
 	// Initialize ClickHouse client (required)
 	if *clickhouseAddrFlag == "" {
 		return fmt.Errorf("clickhouse-addr is required")
 	}
+
+	// Create the ClickHouse database if requested (for dev use).
+	if *createDatabaseFlag {
+		log.Info("creating ClickHouse database", "database", *clickhouseDatabaseFlag)
+		adminClient, err := clickhouse.NewClient(ctx, log, *clickhouseAddrFlag, "default", *clickhouseUsernameFlag, *clickhousePasswordFlag, *clickhouseSecureFlag)
+		if err != nil {
+			return fmt.Errorf("failed to create admin ClickHouse client: %w", err)
+		}
+		adminConn, err := adminClient.Conn(ctx)
+		if err != nil {
+			adminClient.Close()
+			return fmt.Errorf("failed to get admin ClickHouse connection: %w", err)
+		}
+		if err := clickhouse.CreateDatabase(ctx, log, adminConn, *clickhouseDatabaseFlag); err != nil {
+			adminClient.Close()
+			return fmt.Errorf("failed to create database %s: %w", *clickhouseDatabaseFlag, err)
+		}
+		adminClient.Close()
+	}
+
 	log.Debug("clickhouse client initializing", "addr", *clickhouseAddrFlag, "database", *clickhouseDatabaseFlag, "username", *clickhouseUsernameFlag, "secure", *clickhouseSecureFlag)
 	clickhouseDB, err := clickhouse.NewClient(ctx, log, *clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag, *clickhouseSecureFlag)
 	if err != nil {
@@ -258,18 +311,23 @@ func run() error {
 		}
 	}
 
-	// Initialize GeoIP resolver
-	geoIPResolver, geoIPCloseFn, err := initializeGeoIP(geoipCityDBPath, geoipASNDBPath, log)
-	if err != nil {
-		return fmt.Errorf("failed to initialize GeoIP: %w", err)
-	}
-	defer func() {
-		if err := geoIPCloseFn(); err != nil {
-			log.Error("failed to close GeoIP resolver", "error", err)
+	// Initialize GeoIP resolver (optional)
+	var geoIPResolver geoip.Resolver
+	if geoipEnabled {
+		var geoIPCloseFn func() error
+		geoIPResolver, geoIPCloseFn, err = initializeGeoIP(geoipCityDBPath, geoipASNDBPath, log)
+		if err != nil {
+			return fmt.Errorf("failed to initialize GeoIP: %w", err)
 		}
-	}()
+		defer func() {
+			if err := geoIPCloseFn(); err != nil {
+				log.Error("failed to close GeoIP resolver", "error", err)
+			}
+		}()
+	}
 
-	// Initialize InfluxDB client from environment variables (optional)
+	// Initialize InfluxDB client from environment variables (optional, mainnet-beta only)
+	influxEnabled := *dzEnvFlag == config.EnvMainnetBeta
 	var influxDBClient dztelemusage.InfluxDBClient
 	influxURL := os.Getenv("INFLUX_URL")
 	influxToken := os.Getenv("INFLUX_TOKEN")
@@ -280,7 +338,9 @@ func run() error {
 	} else {
 		deviceUsageQueryWindow = *deviceUsageQueryWindowFlag
 	}
-	if *mockDeviceUsageFlag {
+	if !influxEnabled {
+		log.Info("device usage (InfluxDB) disabled for non-mainnet env")
+	} else if *mockDeviceUsageFlag {
 		log.Info("device usage: using mock data (--mock-device-usage enabled)")
 		influxDBClient = dztelemusage.NewMockInfluxDBClient(dztelemusage.MockInfluxDBClientConfig{
 			ClickHouse: clickhouseDB,
@@ -304,9 +364,14 @@ func run() error {
 		log.Info("device usage (InfluxDB) environment variables not set, telemetry usage view will be disabled")
 	}
 
-	// Initialize Neo4j client (optional)
+	// Initialize Neo4j client (optional, mainnet-beta only)
 	var neo4jClient neo4j.Client
-	if *neo4jURIFlag != "" {
+	if neo4jEnabled && *neo4jURIFlag != "" {
+		if *createDatabaseFlag {
+			if err := neo4j.CreateDatabase(ctx, log, *neo4jURIFlag, *neo4jUsernameFlag, *neo4jPasswordFlag, *neo4jDatabaseFlag); err != nil {
+				return fmt.Errorf("failed to create Neo4j database: %w", err)
+			}
+		}
 		neo4jClient, err = neo4j.NewClient(ctx, log, *neo4jURIFlag, *neo4jDatabaseFlag, *neo4jUsernameFlag, *neo4jPasswordFlag)
 		if err != nil {
 			return fmt.Errorf("failed to create Neo4j client: %w", err)
@@ -321,7 +386,7 @@ func run() error {
 
 		log.Info("Neo4j client initialized", "uri", *neo4jURIFlag, "database", *neo4jDatabaseFlag)
 	} else {
-		log.Info("Neo4j URI not set, graph store will be disabled")
+		log.Info("Neo4j disabled", "neo4j_enabled", neo4jEnabled, "neo4j_uri_set", *neo4jURIFlag != "")
 	}
 
 	// Initialize server
@@ -335,6 +400,7 @@ func run() error {
 			Date:    date,
 		},
 		IndexerConfig: indexer.Config{
+			DZEnv:            *dzEnvFlag,
 			Logger:           log,
 			Clock:            clockwork.NewRealClock(),
 			ClickHouse:       clickhouseDB,
@@ -382,7 +448,7 @@ func run() error {
 			},
 
 			// ISIS configuration
-			ISISEnabled:         *isisEnabledFlag,
+			ISISEnabled:         *isisEnabledFlag && neo4jEnabled,
 			ISISS3Bucket:        *isisS3BucketFlag,
 			ISISS3Region:        *isisS3RegionFlag,
 			ISISRefreshInterval: *isisRefreshIntervalFlag,

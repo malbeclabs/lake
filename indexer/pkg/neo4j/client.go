@@ -62,6 +62,28 @@ type result struct {
 	res neo4j.ResultWithContext
 }
 
+// CreateDatabase creates a Neo4j database if it doesn't already exist.
+// This connects to the "system" database to run the CREATE DATABASE command.
+func CreateDatabase(ctx context.Context, log *slog.Logger, uri, username, password, database string) error {
+	auth := neo4j.BasicAuth(username, password, "")
+	driver, err := neo4j.NewDriverWithContext(uri, auth)
+	if err != nil {
+		return fmt.Errorf("failed to create Neo4j driver: %w", err)
+	}
+	defer driver.Close(ctx)
+
+	sess := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "system"})
+	defer sess.Close(ctx)
+
+	_, err = sess.Run(ctx, "CREATE DATABASE $name IF NOT EXISTS", map[string]any{"name": database})
+	if err != nil {
+		return fmt.Errorf("failed to create database %s: %w", database, err)
+	}
+
+	log.Info("Neo4j database created", "database", database)
+	return nil
+}
+
 // NewClient creates a new Neo4j client.
 func NewClient(ctx context.Context, log *slog.Logger, uri, database, username, password string) (Client, error) {
 	return newClient(ctx, log, uri, database, username, password, false)

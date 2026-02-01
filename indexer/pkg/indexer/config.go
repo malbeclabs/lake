@@ -21,6 +21,7 @@ type Config struct {
 	Logger           *slog.Logger
 	Clock            clockwork.Clock
 	ClickHouse       clickhouse.Client
+	DZEnv            string
 	MigrationsEnable bool
 	MigrationsConfig clickhouse.MigrationConfig
 
@@ -72,6 +73,9 @@ func (c *Config) Validate() error {
 	if c.Logger == nil {
 		return errors.New("logger is required")
 	}
+	if c.DZEnv == "" {
+		return errors.New("dz-env is required")
+	}
 	if c.ClickHouse == nil {
 		return errors.New("clickhouse connection is required")
 	}
@@ -101,9 +105,9 @@ func (c *Config) Validate() error {
 		return errors.New("internet data providers are required")
 	}
 
-	// Solana configuration.
-	if c.SolanaRPC == nil {
-		return errors.New("solana rpc is required")
+	// GeoIP requires Solana (needs gossip IPs from Solana cluster info).
+	if c.GeoIPResolver != nil && c.SolanaRPC == nil {
+		return errors.New("solana rpc is required when geoip is enabled")
 	}
 
 	// Device usage configuration.

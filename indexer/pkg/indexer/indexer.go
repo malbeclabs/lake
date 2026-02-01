@@ -46,6 +46,12 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		cfg.Logger.Info("ClickHouse migrations completed")
 	}
 
+	// Check ClickHouse env lock
+	if err := checkClickHouseEnvLock(ctx, cfg.ClickHouse, cfg.DZEnv); err != nil {
+		return nil, fmt.Errorf("clickhouse env lock check failed: %w", err)
+	}
+	cfg.Logger.Info("ClickHouse env lock verified", "dz_env", cfg.DZEnv)
+
 	if cfg.Neo4jMigrationsEnable && cfg.Neo4j != nil {
 		if err := neo4j.RunMigrations(ctx, cfg.Logger, cfg.Neo4jMigrationsConfig); err != nil {
 			return nil, fmt.Errorf("failed to run Neo4j migrations: %w", err)
@@ -53,13 +59,12 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		cfg.Logger.Info("Neo4j migrations completed")
 	}
 
-	// Initialize GeoIP store
-	geoIPStore, err := mcpgeoip.NewStore(mcpgeoip.StoreConfig{
-		Logger:     cfg.Logger,
-		ClickHouse: cfg.ClickHouse,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GeoIP store: %w", err)
+	// Check Neo4j env lock if configured
+	if cfg.Neo4j != nil {
+		if err := checkNeo4jEnvLock(ctx, cfg.Neo4j, cfg.DZEnv); err != nil {
+			return nil, fmt.Errorf("neo4j env lock check failed: %w", err)
+		}
+		cfg.Logger.Info("Neo4j env lock verified", "dz_env", cfg.DZEnv)
 	}
 
 	// Initialize serviceability view
@@ -91,30 +96,44 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		return nil, fmt.Errorf("failed to create telemetry view: %w", err)
 	}
 
-	// Initialize solana view
-	solanaView, err := sol.NewView(sol.ViewConfig{
-		Logger:          cfg.Logger,
-		Clock:           cfg.Clock,
-		RPC:             cfg.SolanaRPC,
-		ClickHouse:      cfg.ClickHouse,
-		RefreshInterval: cfg.RefreshInterval,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create solana view: %w", err)
+	// Initialize solana view (optional)
+	var solanaView *sol.View
+	if cfg.SolanaRPC != nil {
+		solanaView, err = sol.NewView(sol.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			RPC:             cfg.SolanaRPC,
+			ClickHouse:      cfg.ClickHouse,
+			RefreshInterval: cfg.RefreshInterval,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create solana view: %w", err)
+		}
 	}
 
-	// Initialize geoip view
-	geoipView, err := mcpgeoip.NewView(mcpgeoip.ViewConfig{
-		Logger:              cfg.Logger,
-		Clock:               cfg.Clock,
-		GeoIPStore:          geoIPStore,
-		GeoIPResolver:       cfg.GeoIPResolver,
-		ServiceabilityStore: svcView.Store(),
-		SolanaStore:         solanaView.Store(),
-		RefreshInterval:     cfg.RefreshInterval,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create geoip view: %w", err)
+	// Initialize geoip view (optional, requires solana)
+	var geoipView *mcpgeoip.View
+	if cfg.GeoIPResolver != nil {
+		geoIPStore, err := mcpgeoip.NewStore(mcpgeoip.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GeoIP store: %w", err)
+		}
+
+		geoipView, err = mcpgeoip.NewView(mcpgeoip.ViewConfig{
+			Logger:              cfg.Logger,
+			Clock:               cfg.Clock,
+			GeoIPStore:          geoIPStore,
+			GeoIPResolver:       cfg.GeoIPResolver,
+			ServiceabilityStore: svcView.Store(),
+			SolanaStore:         solanaView.Store(),
+			RefreshInterval:     cfg.RefreshInterval,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create geoip view: %w", err)
+		}
 	}
 
 	// Initialize graph store if Neo4j is configured
@@ -187,8 +206,8 @@ func (i *Indexer) Ready() bool {
 	}
 	svcReady := i.svc.Ready()
 	telemLatencyReady := i.telemLatency.Ready()
-	solReady := i.sol.Ready()
-	geoipReady := i.geoip.Ready()
+	solReady := i.sol == nil || i.sol.Ready()
+	geoipReady := i.geoip == nil || i.geoip.Ready()
 	// Don't wait for telemUsage to be ready, it takes too long to refresh from scratch.
 	return svcReady && telemLatencyReady && solReady && geoipReady
 }
@@ -197,8 +216,12 @@ func (i *Indexer) Start(ctx context.Context) {
 	i.startedAt = i.cfg.Clock.Now()
 	i.svc.Start(ctx)
 	i.telemLatency.Start(ctx)
-	i.sol.Start(ctx)
-	i.geoip.Start(ctx)
+	if i.sol != nil {
+		i.sol.Start(ctx)
+	}
+	if i.geoip != nil {
+		i.geoip.Start(ctx)
+	}
 	if i.telemUsage != nil {
 		i.telemUsage.Start(ctx)
 	}
