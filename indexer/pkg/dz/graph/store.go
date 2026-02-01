@@ -282,6 +282,11 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 				devicesUpdated++
 			}
 
+			// Skip drained links — the adjacency is considered down
+			if mapping.isDrained {
+				continue
+			}
+
 			// Create ISIS_ADJACENT relationship
 			if err := createISISAdjacentInTx(ctx, tx, mapping.localPK, mapping.neighborPK, neighbor, mapping.bandwidth, now); err != nil {
 				s.log.Warn("graph: failed to create ISIS_ADJACENT",
@@ -311,7 +316,8 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		MATCH (link)-[:CONNECTS {side: 'A'}]->(devA:Device)
 		MATCH (link)-[:CONNECTS {side: 'Z'}]->(devZ:Device)
 		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
-		       coalesce(link.bandwidth, 0) AS bandwidth
+		       coalesce(link.bandwidth, 0) AS bandwidth,
+		       coalesce(link.isis_delay_override_ns, 0) > 0 AS is_drained
 	`
 	result, err := tx.Run(ctx, cypher, nil)
 	if err != nil {
@@ -327,6 +333,7 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		sideZPK, _ := record.Get("side_z_pk")
 		linkPK, _ := record.Get("pk")
 		bandwidth, _ := record.Get("bandwidth")
+		isDrained, _ := record.Get("is_drained")
 
 		tunnelNetStr, ok := tunnelNet.(string)
 		if !ok || tunnelNetStr == "" {
@@ -336,6 +343,7 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		sideZPKStr, _ := sideZPK.(string)
 		linkPKStr, _ := linkPK.(string)
 		bandwidthInt, _ := bandwidth.(int64)
+		isDrainedBool, _ := isDrained.(bool)
 
 		ip1, ip2, err := parseTunnelNet31(tunnelNetStr)
 		if err != nil {
@@ -350,12 +358,14 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 			neighborPK: sideAPKStr,
 			localPK:    sideZPKStr,
 			bandwidth:  bandwidthInt,
+			isDrained:  isDrainedBool,
 		}
 		tunnelMap[ip2] = tunnelMapping{
 			linkPK:     linkPKStr,
 			neighborPK: sideZPKStr,
 			localPK:    sideAPKStr,
 			bandwidth:  bandwidthInt,
+			isDrained:  isDrainedBool,
 		}
 	}
 
@@ -725,6 +735,7 @@ type tunnelMapping struct {
 	neighborPK string // Device PK of the neighbor (device with this IP)
 	localPK    string // Device PK of the other side
 	bandwidth  int64  // Link bandwidth in bps
+	isDrained  bool   // Whether the link is drained (isis_delay_override_ns > 0)
 }
 
 // SyncISIS updates the Neo4j graph with IS-IS adjacency data.
@@ -781,6 +792,11 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 				devicesUpdated++
 			}
 
+			// Skip drained links — the adjacency is considered down
+			if mapping.isDrained {
+				continue
+			}
+
 			// Create ISIS_ADJACENT relationship with bandwidth from the link
 			if err := s.createISISAdjacent(ctx, session, mapping.localPK, mapping.neighborPK, neighbor, mapping.bandwidth, now); err != nil {
 				s.log.Warn("graph: failed to create ISIS_ADJACENT",
@@ -812,7 +828,8 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		MATCH (link)-[:CONNECTS {side: 'A'}]->(devA:Device)
 		MATCH (link)-[:CONNECTS {side: 'Z'}]->(devZ:Device)
 		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
-		       coalesce(link.bandwidth, 0) AS bandwidth
+		       coalesce(link.bandwidth, 0) AS bandwidth,
+		       coalesce(link.isis_delay_override_ns, 0) > 0 AS is_drained
 	`
 	result, err := session.Run(ctx, cypher, nil)
 	if err != nil {
@@ -828,6 +845,7 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		sideZPK, _ := record.Get("side_z_pk")
 		linkPK, _ := record.Get("pk")
 		bandwidth, _ := record.Get("bandwidth")
+		isDrained, _ := record.Get("is_drained")
 
 		tunnelNetStr, ok := tunnelNet.(string)
 		if !ok || tunnelNetStr == "" {
@@ -837,6 +855,7 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		sideZPKStr, _ := sideZPK.(string)
 		linkPKStr, _ := linkPK.(string)
 		bandwidthInt, _ := bandwidth.(int64)
+		isDrainedBool, _ := isDrained.(bool)
 
 		// Parse the /31 CIDR to get both IPs
 		ip1, ip2, err := parseTunnelNet31(tunnelNetStr)
@@ -854,12 +873,14 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 			neighborPK: sideAPKStr, // Device at ip1 (lower) is side_a
 			localPK:    sideZPKStr,
 			bandwidth:  bandwidthInt,
+			isDrained:  isDrainedBool,
 		}
 		tunnelMap[ip2] = tunnelMapping{
 			linkPK:     linkPKStr,
 			neighborPK: sideZPKStr, // Device at ip2 (higher) is side_z
 			localPK:    sideAPKStr,
 			bandwidth:  bandwidthInt,
+			isDrained:  isDrainedBool,
 		}
 	}
 
