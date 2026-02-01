@@ -372,20 +372,20 @@ export function Sidebar() {
             >
               <Map className="h-4 w-4" />
             </Link>
-            <Link
-              to="/topology/graph"
-              className={cn(
-                'p-2 rounded transition-colors',
-                isTopologyGraph
-                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-              title="Graph"
-            >
-              <Network className="h-4 w-4" />
-            </Link>
             {hasNeo4j && (
               <>
+                <Link
+                  to="/topology/graph"
+                  className={cn(
+                    'p-2 rounded transition-colors',
+                    isTopologyGraph
+                      ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                  title="Graph"
+                >
+                  <Network className="h-4 w-4" />
+                </Link>
                 <Link
                   to="/topology/path-calculator"
                   className={cn(
@@ -938,20 +938,20 @@ export function Sidebar() {
               <Map className="h-4 w-4" />
               Map
             </Link>
-            <Link
-              to="/topology/graph"
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
-                isTopologyGraph
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-            >
-              <Network className="h-4 w-4" />
-              Graph
-            </Link>
             {hasNeo4j && (
               <>
+                <Link
+                  to="/topology/graph"
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    isTopologyGraph
+                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                >
+                  <Network className="h-4 w-4" />
+                  Graph
+                </Link>
                 <Link
                   to="/topology/path-calculator"
                   className={cn(

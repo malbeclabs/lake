@@ -26,6 +26,7 @@ import {
   Radio,
 } from 'lucide-react'
 import { useTopology, type TopologyMode, type PathMode } from './TopologyContext'
+import { useEnv } from '@/contexts/EnvContext'
 
 interface TopologyControlBarProps {
   // Zoom controls (view-specific)
@@ -111,6 +112,8 @@ export function TopologyControlBar({
   onReset,
 }: TopologyControlBarProps) {
   const { mode, setMode, pathMode, setPathMode, overlays, toggleOverlay, view, panel, openPanel, closePanel } = useTopology()
+  const { features } = useEnv()
+  const hasNeo4j = features.neo4j
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -220,14 +223,16 @@ export function TopologyControlBar({
             activeColor="blue"
             collapsed={collapsed}
           />
-          <NavItem
-            icon={<Network className="h-3.5 w-3.5" />}
-            label="Graph view"
-            onClick={() => switchView('graph')}
-            active={view === 'graph'}
-            activeColor="blue"
-            collapsed={collapsed}
-          />
+          {hasNeo4j && (
+            <NavItem
+              icon={<Network className="h-3.5 w-3.5" />}
+              label="Graph view"
+              onClick={() => switchView('graph')}
+              active={view === 'graph'}
+              activeColor="blue"
+              collapsed={collapsed}
+            />
+          )}
 
           {onZoomIn && (
             <NavItem
@@ -254,70 +259,78 @@ export function TopologyControlBar({
             />
           )}
 
-          {/* Find paths */}
-          <SectionHeader title="Find Paths" collapsed={collapsed} />
+          {/* Find paths (Neo4j-dependent) */}
+          {hasNeo4j && (
+            <>
+              <SectionHeader title="Find Paths" collapsed={collapsed} />
 
-          <NavItem
-            icon={<Route className="h-3.5 w-3.5" />}
-            label="Fewest hops"
-            shortcut="p"
-            onClick={() => togglePathMode('hops')}
-            active={mode === 'path' && pathMode === 'hops'}
-            activeColor="amber"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<Route className="h-3.5 w-3.5" />}
+                label="Fewest hops"
+                shortcut="p"
+                onClick={() => togglePathMode('hops')}
+                active={mode === 'path' && pathMode === 'hops'}
+                activeColor="amber"
+                collapsed={collapsed}
+              />
 
-          <NavItem
-            icon={<Route className="h-3.5 w-3.5" />}
-            label="Lowest latency"
-            shortcut="l"
-            onClick={() => togglePathMode('latency')}
-            active={mode === 'path' && pathMode === 'latency'}
-            activeColor="amber"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<Route className="h-3.5 w-3.5" />}
+                label="Lowest latency"
+                shortcut="l"
+                onClick={() => togglePathMode('latency')}
+                active={mode === 'path' && pathMode === 'latency'}
+                activeColor="amber"
+                collapsed={collapsed}
+              />
 
-          <NavItem
-            icon={<Building2 className="h-3.5 w-3.5" />}
-            label="Metro paths"
-            onClick={() => toggleMode('metro-path')}
-            active={mode === 'metro-path'}
-            activeColor="cyan"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<Building2 className="h-3.5 w-3.5" />}
+                label="Metro paths"
+                onClick={() => toggleMode('metro-path')}
+                active={mode === 'metro-path'}
+                activeColor="cyan"
+                collapsed={collapsed}
+              />
+            </>
+          )}
 
-          {/* What-if scenarios */}
-          <SectionHeader title="What-if" collapsed={collapsed} />
+          {/* What-if scenarios (Neo4j-dependent) */}
+          {hasNeo4j && (
+            <>
+              <SectionHeader title="What-if" collapsed={collapsed} />
 
-          <NavItem
-            icon={<MinusCircle className="h-3.5 w-3.5" />}
-            label="Remove link"
-            shortcut="r"
-            onClick={() => toggleMode('whatif-removal')}
-            active={mode === 'whatif-removal'}
-            activeColor="red"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<MinusCircle className="h-3.5 w-3.5" />}
+                label="Remove link"
+                shortcut="r"
+                onClick={() => toggleMode('whatif-removal')}
+                active={mode === 'whatif-removal'}
+                activeColor="red"
+                collapsed={collapsed}
+              />
 
-          <NavItem
-            icon={<PlusCircle className="h-3.5 w-3.5" />}
-            label="Add link"
-            shortcut="a"
-            onClick={() => toggleMode('whatif-addition')}
-            active={mode === 'whatif-addition'}
-            activeColor="green"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<PlusCircle className="h-3.5 w-3.5" />}
+                label="Add link"
+                shortcut="a"
+                onClick={() => toggleMode('whatif-addition')}
+                active={mode === 'whatif-addition'}
+                activeColor="green"
+                collapsed={collapsed}
+              />
 
-          <NavItem
-            icon={<Zap className="h-3.5 w-3.5" />}
-            label="Device failure"
-            shortcut="i"
-            onClick={() => toggleMode('impact')}
-            active={mode === 'impact'}
-            activeColor="purple"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<Zap className="h-3.5 w-3.5" />}
+                label="Device failure"
+                shortcut="i"
+                onClick={() => toggleMode('impact')}
+                active={mode === 'impact'}
+                activeColor="purple"
+                collapsed={collapsed}
+              />
+            </>
+          )}
 
           {/* Device Overlays */}
           <SectionHeader title="Device Overlays" collapsed={collapsed} />
@@ -404,15 +417,17 @@ export function TopologyControlBar({
             collapsed={collapsed}
           />
 
-          <NavItem
-            icon={<Shield className="h-3.5 w-3.5" />}
-            label="Criticality"
-            shortcut="c"
-            onClick={() => handleToggleOverlay('criticality')}
-            active={overlays.criticality}
-            activeColor="red"
-            collapsed={collapsed}
-          />
+          {hasNeo4j && (
+            <NavItem
+              icon={<Shield className="h-3.5 w-3.5" />}
+              label="Criticality"
+              shortcut="c"
+              onClick={() => handleToggleOverlay('criticality')}
+              active={overlays.criticality}
+              activeColor="red"
+              collapsed={collapsed}
+            />
+          )}
 
           <NavItem
             icon={<Activity className="h-3.5 w-3.5" />}
@@ -424,14 +439,16 @@ export function TopologyControlBar({
             collapsed={collapsed}
           />
 
-          <NavItem
-            icon={<GitCompare className="h-3.5 w-3.5" />}
-            label="ISIS"
-            onClick={() => handleToggleOverlay('isisHealth')}
-            active={overlays.isisHealth}
-            activeColor="green"
-            collapsed={collapsed}
-          />
+          {hasNeo4j && (
+            <NavItem
+              icon={<GitCompare className="h-3.5 w-3.5" />}
+              label="ISIS"
+              onClick={() => handleToggleOverlay('isisHealth')}
+              active={overlays.isisHealth}
+              activeColor="green"
+              collapsed={collapsed}
+            />
+          )}
 
           <NavItem
             icon={<BarChart3 className="h-3.5 w-3.5" />}
@@ -443,17 +460,21 @@ export function TopologyControlBar({
             collapsed={collapsed}
           />
 
-          {/* Multicast Trees */}
-          <SectionHeader title="Multicast Trees" collapsed={collapsed} />
+          {/* Multicast Trees (Neo4j-dependent) */}
+          {hasNeo4j && (
+            <>
+              <SectionHeader title="Multicast Trees" collapsed={collapsed} />
 
-          <NavItem
-            icon={<Radio className="h-3.5 w-3.5" />}
-            label="Multicast"
-            onClick={() => handleToggleOverlay('multicastTrees')}
-            active={overlays.multicastTrees}
-            activeColor="purple"
-            collapsed={collapsed}
-          />
+              <NavItem
+                icon={<Radio className="h-3.5 w-3.5" />}
+                label="Multicast"
+                onClick={() => handleToggleOverlay('multicastTrees')}
+                active={overlays.multicastTrees}
+                activeColor="purple"
+                collapsed={collapsed}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>
