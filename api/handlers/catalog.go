@@ -40,6 +40,7 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 		FROM system.tables
 		WHERE database = $1
 		  AND name NOT LIKE 'stg_%'
+		  AND name != '_env_lock'
 		ORDER BY type, name
 	`, config.Database())
 

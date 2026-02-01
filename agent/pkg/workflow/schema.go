@@ -113,6 +113,7 @@ func (f *HTTPSchemaFetcher) fetchColumns(ctx context.Context) ([]columnInfo, err
 		FROM system.columns
 		WHERE database = '%s'
 		  AND table NOT LIKE 'stg_%%'
+		  AND table != '_env_lock'
 		ORDER BY table, position
 		FORMAT JSON
 	`, f.Database)
@@ -141,6 +142,7 @@ func (f *HTTPSchemaFetcher) fetchViews(ctx context.Context) ([]viewInfo, error) 
 		WHERE database = '%s'
 		  AND engine = 'View'
 		  AND name NOT LIKE 'stg_%%'
+		  AND name != '_env_lock'
 		FORMAT JSON
 	`, f.Database)
 

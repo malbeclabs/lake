@@ -138,6 +138,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		FROM system.columns
 		WHERE database = $1
 		  AND table NOT LIKE 'stg_%'
+		  AND table != '_env_lock'
 		ORDER BY table, position
 	`, config.Database())
 	duration := time.Since(start)
@@ -172,6 +173,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		WHERE database = $1
 		  AND engine = 'View'
 		  AND name NOT LIKE 'stg_%'
+		  AND name != '_env_lock'
 	`, config.Database())
 	duration = time.Since(start)
 	if err != nil {
