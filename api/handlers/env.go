@@ -99,6 +99,20 @@ func isMainnet(ctx context.Context) bool {
 	return EnvFromContext(ctx) == EnvMainnet
 }
 
+// RequireNeo4jMiddleware returns 503 for non-mainnet requests on Neo4j-dependent
+// endpoints, since Neo4j only contains mainnet data.
+func RequireNeo4jMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isMainnet(r.Context()) || config.Neo4jClient == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"This feature is only available on mainnet-beta"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // EnvMiddleware extracts the X-DZ-Env header and stores the environment in the
 // request context. Defaults to mainnet-beta if not provided or invalid.
 func EnvMiddleware(next http.Handler) http.Handler {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useLocation, Link, useNavigate } from 'react-router-dom'
+import { useEnv } from '@/contexts/EnvContext'
 import { useChatSessions, useDeleteChatSession, useRenameChatSession, useGenerateChatTitle } from '@/hooks/use-chat'
 import { useQuerySessions, useDeleteQuerySession, useRenameQuerySession, useGenerateQueryTitle } from '@/hooks/use-query-sessions'
 import {
@@ -67,6 +68,9 @@ export function Sidebar() {
   const currentQuerySessionId = queryMatch?.[1] ?? ''
   const chatMatch = location.pathname.match(/^\/chat\/([^/]+)/)
   const currentChatSessionId = chatMatch?.[1] ?? ''
+  const { features } = useEnv()
+  const hasNeo4j = features.neo4j !== false
+  const hasSolana = features.solana !== false
   const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
   const isLandingPage = location.pathname === '/'
@@ -380,54 +384,58 @@ export function Sidebar() {
             >
               <Network className="h-4 w-4" />
             </Link>
-            <Link
-              to="/topology/path-calculator"
-              className={cn(
-                'p-2 rounded transition-colors',
-                isTopologyPathCalculator
-                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-              title="Path Calculator"
-            >
-              <Route className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/topology/redundancy"
-              className={cn(
-                'p-2 rounded transition-colors',
-                isTopologyRedundancy
-                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-              title="Redundancy"
-            >
-              <Shield className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/topology/metro-connectivity"
-              className={cn(
-                'p-2 rounded transition-colors',
-                isTopologyMetroConnectivity
-                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-              title="Metro Connectivity"
-            >
-              <Network className="h-4 w-4" />
-            </Link>
-            <Link
-              to="/topology/maintenance"
-              className={cn(
-                'p-2 rounded transition-colors',
-                isTopologyMaintenance
-                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-              title="Maintenance"
-            >
-              <Wrench className="h-4 w-4" />
-            </Link>
+            {hasNeo4j && (
+              <>
+                <Link
+                  to="/topology/path-calculator"
+                  className={cn(
+                    'p-2 rounded transition-colors',
+                    isTopologyPathCalculator
+                      ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                  title="Path Calculator"
+                >
+                  <Route className="h-4 w-4" />
+                </Link>
+                <Link
+                  to="/topology/redundancy"
+                  className={cn(
+                    'p-2 rounded transition-colors',
+                    isTopologyRedundancy
+                      ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                  title="Redundancy"
+                >
+                  <Shield className="h-4 w-4" />
+                </Link>
+                <Link
+                  to="/topology/metro-connectivity"
+                  className={cn(
+                    'p-2 rounded transition-colors',
+                    isTopologyMetroConnectivity
+                      ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                  title="Metro Connectivity"
+                >
+                  <Network className="h-4 w-4" />
+                </Link>
+                <Link
+                  to="/topology/maintenance"
+                  className={cn(
+                    'p-2 rounded transition-colors',
+                    isTopologyMaintenance
+                      ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                  title="Maintenance"
+                >
+                  <Wrench className="h-4 w-4" />
+                </Link>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -446,6 +454,7 @@ export function Sidebar() {
             </Link>
 
             {/* Solana nav item */}
+            {hasSolana && (
             <Link
               to="/solana/validators"
               className={cn(
@@ -458,6 +467,7 @@ export function Sidebar() {
             >
               <Landmark className="h-4 w-4" />
             </Link>
+            )}
           </>
         )}
         </div>
@@ -725,8 +735,8 @@ export function Sidebar() {
         </div>
       )}
 
-      {/* Solana section - hidden on tool pages */}
-      {!isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && (
+      {/* Solana section - hidden on tool pages and non-mainnet envs */}
+      {hasSolana && !isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && (
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Solana</span>
@@ -940,54 +950,58 @@ export function Sidebar() {
               <Network className="h-4 w-4" />
               Graph
             </Link>
-            <Link
-              to="/topology/path-calculator"
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
-                isTopologyPathCalculator
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-            >
-              <Route className="h-4 w-4" />
-              Path Calculator
-            </Link>
-            <Link
-              to="/topology/redundancy"
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
-                isTopologyRedundancy
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-            >
-              <Shield className="h-4 w-4" />
-              Redundancy
-            </Link>
-            <Link
-              to="/topology/metro-connectivity"
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
-                isTopologyMetroConnectivity
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-            >
-              <Network className="h-4 w-4" />
-              Metro Connectivity
-            </Link>
-            <Link
-              to="/topology/maintenance"
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
-                isTopologyMaintenance
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-            >
-              <Wrench className="h-4 w-4" />
-              Maintenance
-            </Link>
+            {hasNeo4j && (
+              <>
+                <Link
+                  to="/topology/path-calculator"
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    isTopologyPathCalculator
+                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                >
+                  <Route className="h-4 w-4" />
+                  Path Calculator
+                </Link>
+                <Link
+                  to="/topology/redundancy"
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    isTopologyRedundancy
+                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                >
+                  <Shield className="h-4 w-4" />
+                  Redundancy
+                </Link>
+                <Link
+                  to="/topology/metro-connectivity"
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    isTopologyMetroConnectivity
+                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                >
+                  <Network className="h-4 w-4" />
+                  Metro Connectivity
+                </Link>
+                <Link
+                  to="/topology/maintenance"
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    isTopologyMaintenance
+                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  )}
+                >
+                  <Wrench className="h-4 w-4" />
+                  Maintenance
+                </Link>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1014,18 +1028,20 @@ export function Sidebar() {
               <Zap className="h-4 w-4" />
               DZ vs Internet
             </Link>
-            <Link
-              to="/performance/path-latency"
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
-                isPerformancePathLatency
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-              )}
-            >
-              <Route className="h-4 w-4" />
-              Path Latency
-            </Link>
+            {hasNeo4j && (
+              <Link
+                to="/performance/path-latency"
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                  isPerformancePathLatency
+                    ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                )}
+              >
+                <Route className="h-4 w-4" />
+                Path Latency
+              </Link>
+            )}
           </div>
         </div>
       )}

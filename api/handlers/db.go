@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -130,7 +129,7 @@ func NewDBSchemaFetcher() *DBSchemaFetcher {
 func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	// Fetch columns
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, `
+	rows, err := envDB(ctx).Query(ctx, `
 		SELECT
 			table,
 			name,
@@ -165,7 +164,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 
 	// Fetch view definitions
 	start = time.Now()
-	viewRows, err := config.DB.Query(ctx, `
+	viewRows, err := envDB(ctx).Query(ctx, `
 		SELECT
 			name,
 			as_select
