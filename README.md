@@ -96,12 +96,14 @@ This will:
 Then start the services in separate terminals:
 
 ```bash
-# Terminal 1: Run the indexer (imports data into ClickHouse)
-set -a; . ./.env; set +a
-go run indexer/cmd/indexer/main.go --verbose --migrations-enable
+# Terminal 1: Run the mainnet indexer (imports data into ClickHouse)
+go run ./indexer/cmd/indexer/ --verbose --migrations-enable
+
+# Optional: run additional environment indexers (each in its own terminal)
+go run ./indexer/cmd/indexer/ --dz-env devnet --migrations-enable --create-database --listen-addr :3011
+go run ./indexer/cmd/indexer/ --dz-env testnet --migrations-enable --create-database --listen-addr :3012
 
 # Terminal 2: Run the API server
-set -a; . ./.env; set +a
 go run ./api/main.go
 
 # Terminal 3: Run the web dev server
