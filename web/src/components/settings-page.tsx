@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { Sun, Moon, Monitor, Wallet, Infinity as InfinityIcon, MessageSquare, Trash2, ExternalLink } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/contexts/AuthContext'
+import { useEnv } from '@/contexts/EnvContext'
 import { getSlackInstallations, removeSlackInstallation, confirmSlackInstallation, type SlackInstallation } from '@/lib/api'
-import { fetchConfig } from '@/lib/api'
+import { fetchConfig, apiFetch } from '@/lib/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
 const themeOptions = [
@@ -24,6 +25,7 @@ function formatSOL(lamports: number): string {
 export function SettingsPage() {
   const { theme, setTheme } = useTheme()
   const { user, quota } = useAuth()
+  const { env, setEnv, availableEnvs } = useEnv()
   const [slackEnabled, setSlackEnabled] = useState(false)
   const [installations, setInstallations] = useState<SlackInstallation[]>([])
   const [loadingInstallations, setLoadingInstallations] = useState(false)
@@ -234,7 +236,7 @@ export function SettingsPage() {
               <div className={`px-4 py-3 ${installations.length > 0 ? 'border-t border-border' : ''}`}>
                 <button
                   onClick={async () => {
-                    const res = await fetch('/api/slack/oauth/start', {
+                    const res = await apiFetch('/api/slack/oauth/start', {
                       headers: { 'Authorization': `Bearer ${localStorage.getItem('lake_auth_token') || ''}` },
                     })
                     if (res.ok) {
@@ -248,6 +250,36 @@ export function SettingsPage() {
                   Add to Slack
                 </button>
               </div>
+            </div>
+          </section>
+        )}
+
+        {/* Network Section */}
+        {availableEnvs.length > 1 && (
+          <section className="mb-10">
+            <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-4">
+              DoubleZero Network
+            </h2>
+            <div className="bg-card border border-border rounded-lg overflow-hidden">
+              {availableEnvs.map((e, idx) => (
+                <button
+                  key={e}
+                  onClick={() => setEnv(e)}
+                  className={`w-full flex items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/50 ${
+                    idx !== 0 ? 'border-t border-border' : ''
+                  } ${env === e ? 'bg-muted/30' : ''}`}
+                >
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-foreground">{e}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {e === 'mainnet-beta' ? 'DoubleZero production deployment' : e === 'devnet' ? 'DoubleZero devnet deployment' : 'DoubleZero testnet deployment'}
+                    </div>
+                  </div>
+                  {env === e && (
+                    <div className="w-2 h-2 rounded-full bg-primary" />
+                  )}
+                </button>
+              ))}
             </div>
           </section>
         )}

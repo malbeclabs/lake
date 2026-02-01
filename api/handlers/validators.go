@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -188,7 +187,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	// Get total count (with filter)
 	countQuery := baseQuery + `SELECT count(*) FROM validators_data WHERE 1=1` + whereFilter
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
 		log.Printf("Validators count error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -197,7 +196,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	// Get on_dz count (with filter)
 	onDZCountQuery := baseQuery + `SELECT count(*) FROM validators_data WHERE on_dz = true` + whereFilter
 	var onDZCount uint64
-	if err := config.DB.QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
 		log.Printf("Validators on_dz count error: %v", err)
 		onDZCount = 0
 	}
@@ -231,7 +230,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	`
 
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
-	rows, err := config.DB.Query(ctx, query, queryArgs...)
+	rows, err := envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -407,7 +406,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var validator ValidatorDetail
-	err := config.DB.QueryRow(ctx, query, votePubkey).Scan(
+	err := envDB(ctx).QueryRow(ctx, query, votePubkey).Scan(
 		&validator.VotePubkey,
 		&validator.NodePubkey,
 		&validator.StakeSol,

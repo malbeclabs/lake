@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/malbeclabs/lake/api/config"
 )
 
 // safeQueryRows wraps config.DB.Query and guarantees that when an error is
@@ -13,7 +12,7 @@ import (
 // the caller touches rows.Next() or rows.Close().
 // See https://github.com/ClickHouse/clickhouse-go/issues/761
 func safeQueryRows(ctx context.Context, query string, args ...any) (driver.Rows, error) {
-	rows, err := config.DB.Query(ctx, query, args...)
+	rows, err := envDB(ctx).Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

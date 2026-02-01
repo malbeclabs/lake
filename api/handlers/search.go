@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
@@ -121,7 +120,7 @@ func searchDevices(ctx context.Context, term string, limit int) ([]SearchSuggest
 
 	countQuery := `SELECT count(*) FROM dz_devices_current WHERE ` + countCondition
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -142,7 +141,7 @@ func searchDevices(ctx context.Context, term string, limit int) ([]SearchSuggest
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -177,7 +176,7 @@ func searchLinks(ctx context.Context, term string, limit int) ([]SearchSuggestio
 
 	countQuery := `SELECT count(*) FROM dz_links_current WHERE ` + countCondition
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -201,7 +200,7 @@ func searchLinks(ctx context.Context, term string, limit int) ([]SearchSuggestio
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -235,7 +234,7 @@ func searchMetros(ctx context.Context, term string, limit int) ([]SearchSuggesti
 
 	countQuery := `SELECT count(*) FROM dz_metros_current WHERE ` + condition
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -247,7 +246,7 @@ func searchMetros(ctx context.Context, term string, limit int) ([]SearchSuggesti
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(args, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(args, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -277,7 +276,7 @@ func searchContributors(ctx context.Context, term string, limit int) ([]SearchSu
 
 	countQuery := `SELECT count(*) FROM dz_contributors_current WHERE ` + condition
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -289,7 +288,7 @@ func searchContributors(ctx context.Context, term string, limit int) ([]SearchSu
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(args, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(args, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -320,7 +319,7 @@ func searchUsers(ctx context.Context, term string, limit int) ([]SearchSuggestio
 
 	countQuery := `SELECT count(*) FROM dz_users_current WHERE ` + countCondition
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -339,7 +338,7 @@ func searchUsers(ctx context.Context, term string, limit int) ([]SearchSuggestio
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -384,7 +383,7 @@ func searchValidators(ctx context.Context, term string, limit int) ([]SearchSugg
 		AND (` + countCondition + `)
 	`
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -404,7 +403,7 @@ func searchValidators(ctx context.Context, term string, limit int) ([]SearchSugg
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -447,7 +446,7 @@ func searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSug
 
 	countQuery := `SELECT count(*) FROM solana_gossip_nodes_current WHERE ` + countCondition
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -466,7 +465,7 @@ func searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSug
 		LIMIT ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}

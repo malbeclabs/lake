@@ -39,6 +39,7 @@ type Config struct {
 	MaxTokens     int64
 	MaxRetries    int    // Max retries for failed queries (default 5)
 	FormatContext string // Optional formatting context to append to synthesize/respond prompts (e.g., Slack formatting guidelines)
+	EnvContext    string // Optional environment context to prepend to system prompt (e.g., "You are querying the devnet environment.")
 
 	// Graph database support (optional)
 	GraphQuerier       Querier       // Optional Neo4j querier for execute_cypher tool

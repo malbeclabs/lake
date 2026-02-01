@@ -124,10 +124,16 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:     4096,
 	}
 
-	// Add Neo4j support if available
-	if config.Neo4jClient != nil {
+	// Add Neo4j support if available (mainnet only)
+	env := EnvFromContext(r.Context())
+	if config.Neo4jClient != nil && env == EnvMainnet {
 		cfg.GraphQuerier = NewNeo4jQuerier()
 		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
+	}
+
+	// Add env context to agent
+	if env != EnvMainnet {
+		cfg.EnvContext = "You are querying the DZ " + string(env) + " deployment. Neo4j, Solana, and GeoIP data are not available on this deployment."
 	}
 
 	// Create and run workflow
@@ -411,8 +417,8 @@ func chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.Conve
 		return
 	}
 
-	// Start the workflow in background
-	workflowID, err := Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format)
+	// Start the workflow in background with env from request context
+	workflowID, err := Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, EnvFromContext(ctx))
 	if err != nil {
 		slog.Error("Failed to start background workflow", "session_id", req.SessionID, "error", err)
 		// Don't expose internal errors to the UI

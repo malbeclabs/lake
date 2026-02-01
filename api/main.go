@@ -335,7 +335,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-DZ-Env"},
 		ExposedHeaders:   []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
 		AllowCredentials: false,
 		MaxAge:           300,
@@ -368,6 +368,9 @@ func main() {
 
 	// Apply optional auth middleware globally to attach user context
 	r.Use(handlers.OptionalAuth)
+
+	// Apply env middleware to extract X-DZ-Env header
+	r.Use(handlers.EnvMiddleware)
 
 	// Health check endpoints
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

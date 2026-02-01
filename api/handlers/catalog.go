@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -28,7 +27,7 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	rows, err := config.DB.Query(ctx, `
+	rows, err := envDB(ctx).Query(ctx, `
 		SELECT
 			name,
 			database,
@@ -42,7 +41,7 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 		  AND name NOT LIKE 'stg_%'
 		  AND name != '_env_lock'
 		ORDER BY type, name
-	`, config.Database())
+	`, DatabaseForEnvFromContext(ctx))
 
 	duration := time.Since(start)
 	if err != nil {
@@ -73,12 +72,12 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch columns for each table
 	colStart := time.Now()
-	colRows, err := config.DB.Query(ctx, `
+	colRows, err := envDB(ctx).Query(ctx, `
 		SELECT table, name
 		FROM system.columns
 		WHERE database = $1
 		ORDER BY table, position
-	`, config.Database())
+	`, DatabaseForEnvFromContext(ctx))
 
 	colDuration := time.Since(colStart)
 	if err != nil {

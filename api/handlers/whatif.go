@@ -865,7 +865,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 	`
 
 	var sideAPK, sideZPK, sideACode, sideZCode string
-	if err := config.DB.QueryRow(ctx, linkQuery, linkPK).Scan(&sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
 		log.Printf("Link lookup error for %s: %v", linkPK, err)
 		item.Code = "Link not found"
 		return item

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
@@ -123,7 +122,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 			FROM dz_metros_current
 			WHERE latitude IS NOT NULL AND longitude IS NOT NULL
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -178,7 +177,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 			WHERE d.status = 'activated'
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -263,7 +262,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 			) traffic ON l.pk = traffic.link_pk
 			WHERE l.status = 'activated'
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -338,7 +337,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 				AND geo.latitude IS NOT NULL
 				AND geo.longitude IS NOT NULL
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -478,7 +477,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		`
 	}
 
-	rows, err := config.DB.Query(ctx, query, pk)
+	rows, err := envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
 		log.Printf("Traffic query error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -696,7 +695,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		GROUP BY ` + displayBucketExpr + `
 		ORDER BY ` + displayBucketExpr
 
-	rows, err := config.DB.Query(ctx, query, pk)
+	rows, err := envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
 		log.Printf("Latency query error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -791,8 +790,8 @@ type LatencyComparisonResponse struct {
 }
 
 func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
-	// Try cache first
-	if statusCache != nil {
+	// Try cache first (cache only holds mainnet data)
+	if isMainnet(r.Context()) && statusCache != nil {
 		if cached := statusCache.GetLatencyComparison(); cached != nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
@@ -834,7 +833,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 		ORDER BY c.origin_metro, c.target_metro
 	`
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -945,7 +944,7 @@ func fetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse
 		ORDER BY c.origin_metro, c.target_metro
 	`
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1152,7 +1151,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		ORDER BY tb.bucket ASC
 	`, intervalHours, bucketMinutes, bucketMinutes, 48, bucketMinutes, bucketMinutes, intervalHours)
 
-	rows, err := config.DB.Query(ctx, query, metro1, metro2)
+	rows, err := envDB(ctx).Query(ctx, query, metro1, metro2)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

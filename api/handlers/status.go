@@ -197,8 +197,8 @@ const (
 )
 
 func GetStatus(w http.ResponseWriter, r *http.Request) {
-	// Try to serve from cache first
-	if statusCache != nil {
+	// Try to serve from cache first (cache only holds mainnet data)
+	if isMainnet(r.Context()) && statusCache != nil {
 		if cached := statusCache.GetStatus(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
@@ -209,7 +209,7 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cache miss - fetch fresh data (should only happen during startup)
+	// Cache miss - fetch fresh data
 	w.Header().Set("X-Cache", "MISS")
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -268,7 +268,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			FROM fact_dz_device_link_latency
 			WHERE event_ts > now() - INTERVAL 1 HOUR
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		var ts string
 		if err := row.Scan(&ts); err == nil && ts != "" {
 			resp.System.LastIngested = ts
@@ -286,7 +286,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			WHERE u.status = 'activated'
 			  AND va.activated_stake_lamports > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.ValidatorsOnDZ)
 	})
 
@@ -299,7 +299,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			WHERE u.status = 'activated'
 			  AND va.activated_stake_lamports > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.TotalStakeSol)
 	})
 
@@ -316,7 +316,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 					0
 				) AS stake_share_pct
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.StakeSharePct)
 	})
 
@@ -364,7 +364,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				END AS delta
 			FROM current_share, historical_share
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		var delta float64
 		if err := row.Scan(&delta); err != nil {
 			// If historical data unavailable, delta is 0
@@ -377,31 +377,31 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_users_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Users)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_devices_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Devices)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_links_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Links)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_contributors_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Contributors)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_metros_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Metros)
 	})
 
@@ -412,7 +412,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			FROM dz_links_current
 			WHERE status = 'activated'
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.BandwidthBps)
 	})
 
@@ -428,14 +428,14 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				GROUP BY device_pk, intf
 			)
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.UserInboundBps)
 	})
 
 	// Device status breakdown
 	g.Go(func() error {
 		query := `SELECT status, COUNT(*) as cnt FROM dz_devices_current GROUP BY status`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -454,7 +454,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 	// Link status breakdown
 	g.Go(func() error {
 		query := `SELECT status, COUNT(*) as cnt FROM dz_links_current GROUP BY status`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -530,7 +530,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				AND traffic_direct.link_pk IS NULL
 			WHERE l.status = 'activated'
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -697,7 +697,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				FROM earliest_issue ei
 				LEFT JOIN last_healthy lh ON ei.code = lh.code
 			`
-			issueRows, err := config.DB.Query(ctx, issueStartQuery, linkCodes, LossWarningPct, LossWarningPct)
+			issueRows, err := envDB(ctx).Query(ctx, issueStartQuery, linkCodes, LossWarningPct, LossWarningPct)
 			if err == nil {
 				defer issueRows.Close()
 				issueSince := make(map[string]time.Time)
@@ -759,7 +759,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY lls.last_seen DESC
 			LIMIT 10
 		`
-		noDataRows, err := config.DB.Query(ctx, noDataQuery)
+		noDataRows, err := envDB(ctx).Query(ctx, noDataQuery)
 		if err == nil {
 			defer noDataRows.Close()
 			for noDataRows.Next() {
@@ -805,7 +805,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			  AND lat.loss = false
 			  AND lat.rtt_us > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(
 			&resp.Performance.AvgLatencyUs,
 			&resp.Performance.P95LatencyUs,
@@ -835,7 +835,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				GROUP BY device_pk, intf
 			)
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Performance.TotalInBps, &resp.Performance.TotalOutBps)
 	})
 
@@ -861,7 +861,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY utilization DESC
 			LIMIT 100
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -912,7 +912,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY (in_errors + out_errors + in_discards + out_discards + carrier_transitions) DESC
 			LIMIT 20
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -964,7 +964,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY d.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -1007,7 +1007,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY l.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := config.DB.Query(ctx, query, delayOverrideSoftDrainedNs, delayOverrideSoftDrainedNs)
+		rows, err := envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs, delayOverrideSoftDrainedNs)
 		if err != nil {
 			return err
 		}
@@ -1108,8 +1108,8 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try to serve from cache first
-	if statusCache != nil {
+	// Try to serve from cache first (cache only holds mainnet data)
+	if isMainnet(r.Context()) && statusCache != nil {
 		if cached := statusCache.GetLinkHistory(timeRange, requestedBuckets); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
@@ -1203,7 +1203,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')
 	`
 
-	linkRows, err := config.DB.Query(ctx, linkQuery)
+	linkRows, err := envDB(ctx).Query(ctx, linkQuery)
 	if err != nil {
 		return nil, fmt.Errorf("link history query error: %w", err)
 	}
@@ -1276,7 +1276,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		ORDER BY f.link_pk, bucket, direction
 	`
 
-	historyRows, err := config.DB.Query(ctx, historyQuery)
+	historyRows, err := envDB(ctx).Query(ctx, historyQuery)
 	if err != nil {
 		return nil, fmt.Errorf("link history stats query error: %w", err)
 	}
@@ -1380,7 +1380,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		ORDER BY link_pk, link_side, bucket
 	`
 
-	interfaceRows, err := config.DB.Query(ctx, interfaceQuery, totalHours)
+	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("link interface query error: %w", err)
 	}
@@ -1441,7 +1441,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		ORDER BY link_pk, bucket
 	`
 
-	utilizationRows, err := config.DB.Query(ctx, utilizationQuery, totalHours)
+	utilizationRows, err := envDB(ctx).Query(ctx, utilizationQuery, totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("link utilization query error: %w", err)
 	}
@@ -1915,8 +1915,8 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try to serve from cache first
-	if statusCache != nil {
+	// Try to serve from cache first (cache only holds mainnet data)
+	if isMainnet(r.Context()) && statusCache != nil {
 		if cached := statusCache.GetDeviceHistory(timeRange, requestedBuckets); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
@@ -2001,7 +2001,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		WHERE d.status IN ('activated', 'soft-drained', 'hard-drained', 'suspended')
 	`
 
-	deviceRows, err := config.DB.Query(ctx, deviceQuery)
+	deviceRows, err := envDB(ctx).Query(ctx, deviceQuery)
 	if err != nil {
 		return nil, fmt.Errorf("device history query error: %w", err)
 	}
@@ -2047,7 +2047,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		ORDER BY device_pk, bucket
 	`
 
-	interfaceRows, err := config.DB.Query(ctx, interfaceQuery, totalHours)
+	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("device interface query error: %w", err)
 	}
@@ -2360,7 +2360,7 @@ func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]In
 		LIMIT 50
 	`, hours)
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -2513,7 +2513,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 		ORDER BY c.intf, bucket
 	`
 
-	rows, err := config.DB.Query(ctx, query, devicePK, totalHours)
+	rows, err := envDB(ctx).Query(ctx, query, devicePK, totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("interface history query error: %w", err)
 	}
@@ -2724,7 +2724,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	var bandwidthBps int64
 	var committedRttUs float64
 	var sideAPK, sideZPK, sideAIface, sideZIface string
-	err := config.DB.QueryRow(ctx, linkQuery, linkPK).Scan(&code, &bandwidthBps, &committedRttUs, &sideAPK, &sideZPK, &sideAIface, &sideZIface)
+	err := envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&code, &bandwidthBps, &committedRttUs, &sideAPK, &sideZPK, &sideAIface, &sideZIface)
 	if err != nil {
 		return nil, nil // Link not found
 	}
@@ -2762,7 +2762,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		GROUP BY bucket, direction
 		ORDER BY bucket, direction
 	`
-	latencyRows, err := config.DB.Query(ctx, latencyQuery, sideAPK, linkPK, sideAPK, sideAPK, linkPK)
+	latencyRows, err := envDB(ctx).Query(ctx, latencyQuery, sideAPK, linkPK, sideAPK, sideAPK, linkPK)
 	if err != nil {
 		return nil, fmt.Errorf("latency query error: %w", err)
 	}
@@ -2818,7 +2818,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		GROUP BY bucket, side
 		ORDER BY bucket, side
 	`
-	ifaceRows, err := config.DB.Query(ctx, interfaceQuery, sideAPK, linkPK, totalHours)
+	ifaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, sideAPK, linkPK, totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("interface query error: %w", err)
 	}
@@ -3055,7 +3055,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 	`
 	var code, deviceType, contributor, metro, status string
 	var maxUsers int32
-	err := config.DB.QueryRow(ctx, deviceQuery, devicePK).Scan(&code, &deviceType, &contributor, &metro, &maxUsers, &status)
+	err := envDB(ctx).QueryRow(ctx, deviceQuery, devicePK).Scan(&code, &deviceType, &contributor, &metro, &maxUsers, &status)
 	if err != nil {
 		return nil, nil // Device not found
 	}
@@ -3082,7 +3082,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		ORDER BY bucket
 	`
 
-	interfaceRows, err := config.DB.Query(ctx, interfaceQuery, devicePK, totalHours)
+	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, devicePK, totalHours)
 	if err != nil {
 		return nil, fmt.Errorf("device interface query error: %w", err)
 	}
@@ -3138,7 +3138,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		ORDER BY bucket
 	`
 
-	statusRows, err := config.DB.Query(ctx, statusHistoryQuery, devicePK, totalHours)
+	statusRows, err := envDB(ctx).Query(ctx, statusHistoryQuery, devicePK, totalHours)
 	if err != nil {
 		log.Printf("Device status history query error: %v", err)
 		// Non-fatal - continue without historical status

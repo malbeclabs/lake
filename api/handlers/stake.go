@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
@@ -74,7 +73,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			  AND va.epoch_vote_account = 'true'
 			  AND va.activated_stake_lamports > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol, &overview.ValidatorCount)
 	})
 
@@ -86,7 +85,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			WHERE epoch_vote_account = 'true'
 			  AND activated_stake_lamports > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.TotalStakeSol)
 	})
 
@@ -136,7 +135,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 				CASE WHEN ts.total > 0 THEN dz.dz_total * 100.0 / ts.total ELSE 0 END
 			FROM dz_stake dz, total_stake ts
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol24hAgo, &overview.StakeSharePct24hAgo)
 	})
 
@@ -186,7 +185,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 				CASE WHEN ts.total > 0 THEN dz.dz_total * 100.0 / ts.total ELSE 0 END
 			FROM dz_stake dz, total_stake ts
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol7dAgo, &overview.StakeSharePct7dAgo)
 	})
 
@@ -288,7 +287,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 		LIMIT 200
 	`
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -438,7 +437,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 			ORDER BY stake_sol DESC
 			LIMIT 100
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -501,7 +500,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 			ORDER BY stake_sol DESC
 			LIMIT 100
 		`
-		rows, err := config.DB.Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -600,7 +599,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 
 	// Get total stake first
 	var totalStake float64
-	err := config.DB.QueryRow(ctx, `
+	err := envDB(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(activated_stake_lamports), 0) / 1e9
 		FROM solana_vote_accounts_current
 		WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
@@ -705,7 +704,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 			LIMIT ` + strconv.Itoa(limit)
 	}
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -108,7 +107,7 @@ func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

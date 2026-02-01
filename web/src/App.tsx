@@ -56,6 +56,8 @@ import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
 import { ConnectionError } from '@/components/ConnectionError'
+import { EnvBanner } from '@/components/env-banner'
+import { EnvProvider } from '@/contexts/EnvContext'
 import { generateSessionTitle, recommendVisualization, fetchCatalog, fetchConfig, type AppConfig } from '@/lib/api'
 import type { TableInfo, QueryResponse, HistoryMessage, QueryMode } from '@/lib/api'
 import { type QuerySession, type ChatSession } from '@/lib/sessions'
@@ -579,7 +581,9 @@ function AppContent() {
   }
 
   return (
-    <div className="h-dvh flex">
+    <div className="h-dvh flex flex-col">
+      <EnvBanner />
+      <div className="flex-1 flex min-h-0">
       {/* Sidebar */}
       <Sidebar />
 
@@ -667,6 +671,7 @@ function AppContent() {
       {/* Search spotlight */}
       <SearchSpotlight isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
     </div>
+    </div>
   )
 }
 
@@ -726,9 +731,11 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <WalletProviderWrapper>
-        <AuthWrapper config={config}>
-          <AppContent />
-        </AuthWrapper>
+        <EnvProvider config={config}>
+          <AuthWrapper config={config}>
+            <AppContent />
+          </AuthWrapper>
+        </EnvProvider>
       </WalletProviderWrapper>
     </QueryClientProvider>
   )

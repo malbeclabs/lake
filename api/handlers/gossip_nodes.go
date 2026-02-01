@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -119,7 +118,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	// Get total count (with filter)
 	countQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE 1=1` + whereFilter
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
 		log.Printf("GossipNodes count error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -128,7 +127,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	// Get on_dz count (with filter)
 	onDZCountQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE on_dz = true` + whereFilter
 	var onDZCount uint64
-	if err := config.DB.QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
 		log.Printf("GossipNodes on_dz count error: %v", err)
 		onDZCount = 0
 	}
@@ -136,7 +135,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	// Get validator count (with filter)
 	validatorCountQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE is_validator = true` + whereFilter
 	var validatorCount uint64
-	if err := config.DB.QueryRow(ctx, validatorCountQuery, filterArgs...).Scan(&validatorCount); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, validatorCountQuery, filterArgs...).Scan(&validatorCount); err != nil {
 		log.Printf("GossipNodes validator count error: %v", err)
 		validatorCount = 0
 	}
@@ -152,7 +151,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	`
 
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
-	rows, err := config.DB.Query(ctx, query, queryArgs...)
+	rows, err := envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -311,7 +310,7 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var node GossipNodeDetail
-	err := config.DB.QueryRow(ctx, query, pubkey).Scan(
+	err := envDB(ctx).QueryRow(ctx, query, pubkey).Scan(
 		&node.Pubkey,
 		&node.GossipIP,
 		&node.GossipPort,

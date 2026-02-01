@@ -73,6 +73,23 @@ export interface AppConfig {
   sentryDsn?: string
   sentryEnvironment?: string
   slackEnabled?: boolean
+  env?: string
+  availableEnvs?: string[]
+  features?: Record<string, boolean>
+}
+
+// Environment storage key
+const DZ_ENV_KEY = 'dz_env'
+
+// Get the current environment from localStorage
+export function getEnv(): string {
+  return localStorage.getItem(DZ_ENV_KEY) || 'mainnet-beta'
+}
+
+// Set the current environment in localStorage and invalidate config cache
+export function setEnv(env: string): void {
+  localStorage.setItem(DZ_ENV_KEY, env)
+  cachedConfig = null // Force re-fetch on next config request
 }
 
 // Cached config (fetched once at startup)
@@ -84,7 +101,9 @@ export async function fetchConfig(): Promise<AppConfig> {
     return cachedConfig
   }
 
-  const response = await fetch('/api/config')
+  const response = await fetch('/api/config', {
+    headers: { 'X-DZ-Env': getEnv() },
+  })
   if (!response.ok) {
     console.warn('Failed to fetch config, using defaults')
     return {}
@@ -92,6 +111,20 @@ export async function fetchConfig(): Promise<AppConfig> {
 
   cachedConfig = await response.json()
   return cachedConfig!
+}
+
+// Simple fetch wrapper that adds auth + env headers to all API requests.
+// Use this instead of bare fetch() for any /api/ call.
+export function apiFetch(url: string, options?: RequestInit): Promise<Response> {
+  const authHeaders = getAuthHeaders()
+  return fetch(url, {
+    ...options,
+    headers: {
+      'X-DZ-Env': getEnv(),
+      ...authHeaders,
+      ...options?.headers,
+    },
+  })
 }
 
 // Retry configuration
@@ -126,11 +159,12 @@ async function fetchWithRetry(
   let lastError: unknown
   let lastStatus: number | undefined
 
-  // Add auth headers to all requests
+  // Add auth and env headers to all requests
   const authHeaders = getAuthHeaders()
   const mergedOptions: RequestInit = {
     ...options,
     headers: {
+      'X-DZ-Env': getEnv(),
       ...authHeaders,
       ...options?.headers,
     },
@@ -280,7 +314,7 @@ export async function generateAutoStream(
 
   for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
     try {
-      res = await fetch('/api/auto/generate/stream', {
+      res = await apiFetch('/api/auto/generate/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, currentQuery }),
@@ -398,7 +432,7 @@ async function generateQueryStream(
 
   for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
     try {
-      res = await fetch(endpoint, {
+      res = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, currentQuery, history }),
@@ -773,7 +807,7 @@ export async function sendChatMessageStream(
         if (!getAuthToken()) {
           chatBody.anonymous_id = getAnonymousId()
         }
-        res = await fetch('/api/chat/stream', {
+        res = await apiFetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify(chatBody),
@@ -1636,7 +1670,7 @@ export interface PathResponse {
 export type PathMode = 'hops' | 'latency'
 
 export async function fetchISISPath(fromPK: string, toPK: string, mode: PathMode = 'hops'): Promise<PathResponse> {
-  const res = await fetch(`/api/topology/path?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&mode=${mode}`)
+  const res = await apiFetch(`/api/topology/path?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&mode=${mode}`)
   if (!res.ok) {
     throw new Error('Failed to fetch path')
   }
@@ -1672,7 +1706,7 @@ export interface MultiPathResponse {
 }
 
 export async function fetchISISPaths(fromPK: string, toPK: string, k: number = 5, mode: 'hops' | 'latency' = 'hops'): Promise<MultiPathResponse> {
-  const res = await fetch(`/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}&mode=${mode}`)
+  const res = await apiFetch(`/api/topology/paths?from=${encodeURIComponent(fromPK)}&to=${encodeURIComponent(toPK)}&k=${k}&mode=${mode}`)
   if (!res.ok) {
     throw new Error('Failed to fetch paths')
   }
@@ -1715,7 +1749,7 @@ export async function fetchMetroDevicePaths(
   toMetroPK: string,
   mode: PathMode = 'hops'
 ): Promise<MetroDevicePathsResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/topology/metro-device-paths?from=${encodeURIComponent(fromMetroPK)}&to=${encodeURIComponent(toMetroPK)}&mode=${mode}`
   )
   if (!res.ok) {
@@ -1754,7 +1788,7 @@ export interface MulticastGroupDetail extends MulticastGroupListItem {
 }
 
 export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> {
-  const res = await fetch('/api/dz/multicast-groups')
+  const res = await apiFetch('/api/dz/multicast-groups')
   if (!res.ok) {
     throw new Error('Failed to fetch multicast groups')
   }
@@ -1762,7 +1796,7 @@ export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> 
 }
 
 export async function fetchMulticastGroup(code: string): Promise<MulticastGroupDetail> {
-  const res = await fetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}`)
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast group')
   }
@@ -1797,7 +1831,7 @@ export interface MulticastTreeResponse {
 }
 
 export async function fetchMulticastTreePaths(code: string): Promise<MulticastTreeResponse> {
-  const res = await fetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}/tree-paths`)
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}/tree-paths`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast tree paths')
   }
@@ -1820,7 +1854,7 @@ export interface CriticalLinksResponse {
 }
 
 export async function fetchCriticalLinks(): Promise<CriticalLinksResponse> {
-  const res = await fetch('/api/topology/critical-links')
+  const res = await apiFetch('/api/topology/critical-links')
   if (!res.ok) {
     throw new Error('Failed to fetch critical links')
   }
@@ -1859,7 +1893,7 @@ export interface RedundancyReportResponse {
 }
 
 export async function fetchRedundancyReport(): Promise<RedundancyReportResponse> {
-  const res = await fetch('/api/topology/redundancy-report')
+  const res = await apiFetch('/api/topology/redundancy-report')
   if (!res.ok) {
     throw new Error('Failed to fetch redundancy report')
   }
@@ -1889,7 +1923,7 @@ export interface TopologyCompareResponse {
 }
 
 export async function fetchTopologyCompare(): Promise<TopologyCompareResponse> {
-  const res = await fetch('/api/topology/compare')
+  const res = await apiFetch('/api/topology/compare')
   if (!res.ok) {
     throw new Error('Failed to fetch topology comparison')
   }
@@ -1937,7 +1971,7 @@ export interface FailureImpactResponse {
 }
 
 export async function fetchFailureImpact(devicePK: string): Promise<FailureImpactResponse> {
-  const res = await fetch(`/api/topology/impact/${encodeURIComponent(devicePK)}`)
+  const res = await apiFetch(`/api/topology/impact/${encodeURIComponent(devicePK)}`)
   if (!res.ok) {
     throw new Error('Failed to fetch failure impact')
   }
@@ -1974,7 +2008,7 @@ export async function fetchSimulateLinkRemoval(
   sourcePK: string,
   targetPK: string
 ): Promise<SimulateLinkRemovalResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/topology/simulate-link-removal?sourcePK=${encodeURIComponent(sourcePK)}&targetPK=${encodeURIComponent(targetPK)}`
   )
   if (!res.ok) {
@@ -2022,7 +2056,7 @@ export async function fetchSimulateLinkAddition(
   targetPK: string,
   metric: number = 1000
 ): Promise<SimulateLinkAdditionResponse> {
-  const res = await fetch(
+  const res = await apiFetch(
     `/api/topology/simulate-link-addition?sourcePK=${encodeURIComponent(sourcePK)}&targetPK=${encodeURIComponent(targetPK)}&metric=${metric}`
   )
   if (!res.ok) {
@@ -2059,7 +2093,7 @@ export interface LinkHealthResponse {
 }
 
 export async function fetchLinkHealth(): Promise<LinkHealthResponse> {
-  const res = await fetch('/api/dz/links-health')
+  const res = await apiFetch('/api/dz/links-health')
   if (!res.ok) {
     throw new Error('Failed to fetch link health')
   }
@@ -2075,7 +2109,7 @@ export interface VersionResponse {
 
 export async function fetchVersion(): Promise<VersionResponse | null> {
   try {
-    const res = await fetch('/api/version')
+    const res = await apiFetch('/api/version')
     if (!res.ok) return null
     return res.json()
   } catch {
@@ -2310,7 +2344,7 @@ export interface WorkflowRun {
 
 // Get a workflow run by ID
 export async function getWorkflow(workflowId: string): Promise<WorkflowRun | null> {
-  const res = await fetch(`/api/workflows/${workflowId}`)
+  const res = await apiFetch(`/api/workflows/${workflowId}`)
   if (res.status === 404) {
     return null
   }
@@ -2322,7 +2356,7 @@ export async function getWorkflow(workflowId: string): Promise<WorkflowRun | nul
 
 // Get the latest workflow for a session (running, completed, or failed)
 export async function getLatestWorkflowForSession(sessionId: string): Promise<WorkflowRun | null> {
-  const res = await fetch(`/api/sessions/${sessionId}/workflow`)
+  const res = await apiFetch(`/api/sessions/${sessionId}/workflow`)
   if (res.status === 204 || res.status === 404) {
     return null // No workflow
   }
@@ -2358,7 +2392,7 @@ export async function reconnectToWorkflow(
   callbacks: WorkflowReconnectCallbacks,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(`/api/workflows/${workflowId}/stream`, { signal })
+  const res = await apiFetch(`/api/workflows/${workflowId}/stream`, { signal })
 
   if (!res.ok) {
     if (res.status === 404) {
@@ -3054,7 +3088,7 @@ export interface MetroConnectivityResponse {
 }
 
 export async function fetchMetroConnectivity(): Promise<MetroConnectivityResponse> {
-  const res = await fetch('/api/topology/metro-connectivity')
+  const res = await apiFetch('/api/topology/metro-connectivity')
   if (!res.ok) {
     throw new Error('Failed to fetch metro connectivity')
   }
@@ -3093,7 +3127,7 @@ export interface LatencyComparisonResponse {
 }
 
 export async function fetchLatencyComparison(): Promise<LatencyComparisonResponse> {
-  const res = await fetch('/api/topology/latency-comparison')
+  const res = await apiFetch('/api/topology/latency-comparison')
   if (!res.ok) {
     throw new Error('Failed to fetch latency comparison')
   }
@@ -3123,7 +3157,7 @@ export async function fetchLatencyHistory(
   timeRange?: string
 ): Promise<LatencyHistoryResponse> {
   const params = timeRange ? `?range=${timeRange}` : ''
-  const res = await fetch(`/api/topology/latency-history/${originCode}/${targetCode}${params}`)
+  const res = await apiFetch(`/api/topology/latency-history/${originCode}/${targetCode}${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch latency history')
   }
@@ -3158,7 +3192,7 @@ export interface MetroPathLatencyResponse {
 }
 
 export async function fetchMetroPathLatency(optimize: PathOptimizeMode = 'latency'): Promise<MetroPathLatencyResponse> {
-  const res = await fetch(`/api/topology/metro-path-latency?optimize=${optimize}`)
+  const res = await apiFetch(`/api/topology/metro-path-latency?optimize=${optimize}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path latency')
   }
@@ -3194,7 +3228,7 @@ export async function fetchMetroPathDetail(
   to: string,
   optimize: PathOptimizeMode = 'latency'
 ): Promise<MetroPathDetailResponse> {
-  const res = await fetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}`)
+  const res = await apiFetch(`/api/topology/metro-path-detail?from=${from}&to=${to}&optimize=${optimize}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro path detail')
   }
@@ -3228,7 +3262,7 @@ export async function fetchMetroPaths(
   toPK: string,
   k: number = 5
 ): Promise<MetroPathsResponse> {
-  const res = await fetch(`/api/topology/metro-paths?from=${fromPK}&to=${toPK}&k=${k}`)
+  const res = await apiFetch(`/api/topology/metro-paths?from=${fromPK}&to=${toPK}&k=${k}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metro paths')
   }
@@ -3292,7 +3326,7 @@ export async function fetchMaintenanceImpact(
   devices: string[],
   links: string[]
 ): Promise<MaintenanceImpactResponse> {
-  const res = await fetch('/api/topology/maintenance-impact', {
+  const res = await apiFetch('/api/topology/maintenance-impact', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ devices, links }),
@@ -3340,7 +3374,7 @@ export async function fetchWhatIfRemoval(
   devices: string[],
   links: string[]
 ): Promise<WhatIfRemovalResponse> {
-  const res = await fetch('/api/topology/whatif-removal', {
+  const res = await apiFetch('/api/topology/whatif-removal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ devices, links }),
@@ -3749,7 +3783,7 @@ export async function logout(): Promise<void> {
 
 // Get nonce for wallet signing
 export async function getWalletNonce(): Promise<string> {
-  const res = await fetch('/api/auth/nonce')
+  const res = await apiFetch('/api/auth/nonce')
   if (!res.ok) {
     throw new Error('Failed to get nonce')
   }
@@ -3766,7 +3800,7 @@ export async function authenticateWallet(
   // Include anonymous_id for session migration
   const anonymousId = localStorage.getItem(ANONYMOUS_ID_KEY)
 
-  const res = await fetch('/api/auth/wallet', {
+  const res = await apiFetch('/api/auth/wallet', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -3790,7 +3824,7 @@ export async function authenticateGoogle(idToken: string): Promise<GoogleAuthRes
   // Include anonymous_id for session migration
   const anonymousId = localStorage.getItem(ANONYMOUS_ID_KEY)
 
-  const res = await fetch('/api/auth/google', {
+  const res = await apiFetch('/api/auth/google', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

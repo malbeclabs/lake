@@ -1,0 +1,73 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/malbeclabs/lake/api/config"
+)
+
+// DZEnv represents a DoubleZero network environment.
+type DZEnv string
+
+const (
+	EnvMainnet DZEnv = "mainnet-beta"
+	EnvDevnet  DZEnv = "devnet"
+	EnvTestnet DZEnv = "testnet"
+)
+
+// ValidEnvs contains all recognized environment values.
+var ValidEnvs = map[DZEnv]bool{
+	EnvMainnet: true,
+	EnvDevnet:  true,
+	EnvTestnet: true,
+}
+
+type envContextKey struct{}
+
+// ContextWithEnv returns a new context with the given environment.
+func ContextWithEnv(ctx context.Context, env DZEnv) context.Context {
+	return context.WithValue(ctx, envContextKey{}, env)
+}
+
+// EnvFromContext returns the environment from the context, defaulting to mainnet.
+func EnvFromContext(ctx context.Context) DZEnv {
+	if env, ok := ctx.Value(envContextKey{}).(DZEnv); ok {
+		return env
+	}
+	return EnvMainnet
+}
+
+// envDB returns the ClickHouse connection pool for the environment in the context.
+func envDB(ctx context.Context) driver.Conn {
+	return config.DBForEnv(string(EnvFromContext(ctx)))
+}
+
+// DatabaseForEnvFromContext returns the database name for the environment in the context.
+func DatabaseForEnvFromContext(ctx context.Context) string {
+	env := EnvFromContext(ctx)
+	db, ok := config.DatabaseForEnv(string(env))
+	if !ok {
+		return config.Database()
+	}
+	return db
+}
+
+// isMainnet returns true if the request context is for the mainnet-beta environment.
+func isMainnet(ctx context.Context) bool {
+	return EnvFromContext(ctx) == EnvMainnet
+}
+
+// EnvMiddleware extracts the X-DZ-Env header and stores the environment in the
+// request context. Defaults to mainnet-beta if not provided or invalid.
+func EnvMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		env := DZEnv(r.Header.Get("X-DZ-Env"))
+		if !ValidEnvs[env] {
+			env = EnvMainnet
+		}
+		ctx := ContextWithEnv(r.Context(), env)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}

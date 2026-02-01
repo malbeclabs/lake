@@ -25,7 +25,7 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 	sql = strings.TrimSuffix(strings.TrimSpace(sql), ";")
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, sql)
+	rows, err := envDB(ctx).Query(ctx, sql)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
@@ -140,7 +140,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		  AND table NOT LIKE 'stg_%'
 		  AND table != '_env_lock'
 		ORDER BY table, position
-	`, config.Database())
+	`, DatabaseForEnvFromContext(ctx))
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
@@ -174,7 +174,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		  AND engine = 'View'
 		  AND name NOT LIKE 'stg_%'
 		  AND name != '_env_lock'
-	`, config.Database())
+	`, DatabaseForEnvFromContext(ctx))
 	duration = time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

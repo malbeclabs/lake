@@ -33,6 +33,7 @@ type runningWorkflow struct {
 	SessionID        uuid.UUID
 	Question         string
 	Format           string // Output format: "slack" for Slack-specific formatting
+	Env              DZEnv  // Environment for this workflow
 	Cancel           context.CancelFunc
 	ExistingMessages []SessionChatMessage // Messages that existed before this workflow started
 	subscribers      map[*WorkflowSubscriber]struct{}
@@ -293,8 +294,15 @@ func (m *WorkflowManager) StartWorkflow(
 	question string,
 	history []workflow.ConversationMessage,
 	format string,
+	env ...DZEnv,
 ) (uuid.UUID, error) {
 	ctx := context.Background()
+
+	// Determine environment (default to mainnet)
+	workflowEnv := EnvMainnet
+	if len(env) > 0 {
+		workflowEnv = env[0]
+	}
 
 	// Ensure session exists (auto-create if needed for workflow persistence)
 	if err := ensureSessionExists(ctx, sessionID); err != nil {
@@ -310,7 +318,7 @@ func (m *WorkflowManager) StartWorkflow(
 	}
 
 	// Create workflow run in database
-	run, err := CreateWorkflowRun(ctx, sessionID, question)
+	run, err := CreateWorkflowRun(ctx, sessionID, question, string(workflowEnv))
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to create workflow: %w", err)
 	}
@@ -325,6 +333,7 @@ func (m *WorkflowManager) StartWorkflow(
 	// Create cancellable context for the workflow with session/workflow IDs for tracing
 	workflowCtx, cancel := context.WithCancel(context.Background())
 	workflowCtx = workflow.ContextWithWorkflowIDs(workflowCtx, sessionID.String(), run.ID.String())
+	workflowCtx = ContextWithEnv(workflowCtx, workflowEnv)
 
 	// Track the running workflow
 	rw := &runningWorkflow{
@@ -332,6 +341,7 @@ func (m *WorkflowManager) StartWorkflow(
 		SessionID:        sessionID,
 		Question:         question,
 		Format:           format,
+		Env:              workflowEnv,
 		Cancel:           cancel,
 		ExistingMessages: existingMessages,
 		subscribers:      make(map[*WorkflowSubscriber]struct{}),
@@ -459,10 +469,15 @@ func (m *WorkflowManager) runWorkflow(
 		cfg.FormatContext = prompts.Slack
 	}
 
-	// Add Neo4j support if available
-	if config.Neo4jClient != nil {
+	// Add Neo4j support if available (mainnet only)
+	if config.Neo4jClient != nil && rw.Env == EnvMainnet {
 		cfg.GraphQuerier = NewNeo4jQuerier()
 		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
+	}
+
+	// Add env context for non-mainnet environments
+	if rw.Env != EnvMainnet {
+		cfg.EnvContext = "You are querying the DZ " + string(rw.Env) + " deployment. Neo4j, Solana, and GeoIP data are not available on this deployment."
 	}
 
 	// Create workflow
@@ -795,14 +810,20 @@ func (m *WorkflowManager) ResumeWorkflowBackground(run *WorkflowRun) error {
 		existingMessages = nil
 	}
 
-	// Create cancellable context
+	// Create cancellable context with env from persisted workflow
 	workflowCtx, cancel := context.WithCancel(context.Background())
+	resumeEnv := DZEnv(run.Env)
+	if !ValidEnvs[resumeEnv] {
+		resumeEnv = EnvMainnet
+	}
+	workflowCtx = ContextWithEnv(workflowCtx, resumeEnv)
 
 	// Track the running workflow
 	rw := &runningWorkflow{
 		ID:               run.ID,
 		SessionID:        run.SessionID,
 		Question:         run.UserQuestion,
+		Env:              resumeEnv,
 		Cancel:           cancel,
 		ExistingMessages: existingMessages,
 		subscribers:      make(map[*WorkflowSubscriber]struct{}),
@@ -865,10 +886,15 @@ func (m *WorkflowManager) resumeWorkflow(
 		cfg.FormatContext = prompts.Slack
 	}
 
-	// Add Neo4j support if available
-	if config.Neo4jClient != nil {
+	// Add Neo4j support if available (mainnet only)
+	if config.Neo4jClient != nil && rw.Env == EnvMainnet {
 		cfg.GraphQuerier = NewNeo4jQuerier()
 		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
+	}
+
+	// Add env context for non-mainnet environments
+	if rw.Env != EnvMainnet {
+		cfg.EnvContext = "You are querying the DZ " + string(rw.Env) + " deployment. Neo4j, Solana, and GeoIP data are not available on this deployment."
 	}
 
 	// Create workflow

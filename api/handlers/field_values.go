@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -100,7 +99,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	query := "SELECT DISTINCT " + fieldCfg.column + " AS val FROM " + fieldCfg.table + " WHERE " + fieldCfg.column + " IS NOT NULL AND " + fieldCfg.column + " != '' ORDER BY val LIMIT 100"
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -50,7 +49,7 @@ func GetLinks(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_links_current`
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		log.Printf("Links count error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -119,7 +118,7 @@ func GetLinks(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -274,7 +273,7 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 		WHERE l.side_a_pk != '' AND l.side_z_pk != ''
 	`
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -394,7 +393,7 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 	query := linkDetailQuery(linkDetailSelectsDefault, true)
 
 	var link LinkDetail
-	err := config.DB.QueryRow(ctx, query, pk).Scan(
+	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&link.PK,
 		&link.Code,
 		&link.Status,
@@ -445,7 +444,7 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Link query missing columns (pk=%s). Retrying with fallback.", pk)
 			start = time.Now()
 			fallbackQuery := linkDetailQuery(fallbackSelects, !missingDirection)
-			err = config.DB.QueryRow(ctx, fallbackQuery, pk).Scan(
+			err = envDB(ctx).QueryRow(ctx, fallbackQuery, pk).Scan(
 				&link.PK,
 				&link.Code,
 				&link.Status,

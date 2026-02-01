@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -32,7 +31,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_contributors_current`
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		log.Printf("Contributors count error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -82,7 +81,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -232,7 +231,7 @@ func GetContributor(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var contributor ContributorDetail
-	err := config.DB.QueryRow(ctx, query, pk).Scan(
+	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&contributor.PK,
 		&contributor.Code,
 		&contributor.Name,

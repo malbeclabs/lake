@@ -140,7 +140,7 @@ func (p *Workflow) RunWithProgress(ctx context.Context, userQuestion string, his
 	}
 
 	// Build system prompt with schemas (format context is applied only during synthesis)
-	systemPrompt := BuildSystemPromptWithGraph(p.prompts.System, sqlSchema, graphSchema, p.prompts.CypherContext, "")
+	systemPrompt := BuildSystemPromptWithGraph(p.prompts.System, sqlSchema, graphSchema, p.prompts.CypherContext, "", p.cfg.EnvContext)
 
 	// Build initial messages
 	messages := p.buildMessages(userQuestion, history)
@@ -919,7 +919,7 @@ func (p *Workflow) RunWithCheckpoint(
 	}
 
 	// Build system prompt with schemas (format context is applied only during synthesis)
-	systemPrompt := BuildSystemPromptWithGraph(p.prompts.System, sqlSchema, graphSchema, p.prompts.CypherContext, "")
+	systemPrompt := BuildSystemPromptWithGraph(p.prompts.System, sqlSchema, graphSchema, p.prompts.CypherContext, "", p.cfg.EnvContext)
 
 	// Build initial messages
 	messages := p.buildMessages(userQuestion, history)
@@ -1143,7 +1143,7 @@ func (p *Workflow) ResumeFromCheckpoint(
 	}
 
 	// Build system prompt with schemas (format context is applied only during synthesis)
-	systemPrompt := BuildSystemPromptWithGraph(p.prompts.System, sqlSchema, graphSchema, p.prompts.CypherContext, "")
+	systemPrompt := BuildSystemPromptWithGraph(p.prompts.System, sqlSchema, graphSchema, p.prompts.CypherContext, "", p.cfg.EnvContext)
 
 	// Restore messages from checkpoint
 	messages := checkpoint.Messages

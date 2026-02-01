@@ -1,3 +1,5 @@
+import { apiFetch } from '@/lib/api'
+
 // Shared utility functions for topology components
 
 // Format bandwidth for display
@@ -58,7 +60,7 @@ export async function fetchTrafficHistory(
   type: 'link' | 'device' | 'validator',
   pk: string
 ): Promise<{ time: string; avgIn: number; avgOut: number; peakIn: number; peakOut: number }[]> {
-  const res = await fetch(`/api/topology/traffic?type=${type}&pk=${encodeURIComponent(pk)}`)
+  const res = await apiFetch(`/api/topology/traffic?type=${type}&pk=${encodeURIComponent(pk)}`)
   if (!res.ok) return []
   const data = await res.json()
   return data.points || []
@@ -104,7 +106,7 @@ export async function fetchLatencyHistory(
     }
   }
 
-  const res = await fetch(`/api/topology/link-latency?${params.toString()}`)
+  const res = await apiFetch(`/api/topology/link-latency?${params.toString()}`)
   if (!res.ok) return []
   const data = await res.json()
   return data.points || []

@@ -76,6 +76,9 @@ type WorkflowRun struct {
 	ClaimedBy *string    `json:"claimed_by,omitempty"`
 	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
 
+	// Environment
+	Env string `json:"env"`
+
 	// Error tracking
 	Error *string `json:"error,omitempty"`
 }
@@ -95,19 +98,23 @@ type WorkflowCheckpoint struct {
 }
 
 // CreateWorkflowRun creates a new workflow run in the database.
-func CreateWorkflowRun(ctx context.Context, sessionID uuid.UUID, question string) (*WorkflowRun, error) {
+func CreateWorkflowRun(ctx context.Context, sessionID uuid.UUID, question string, env ...string) (*WorkflowRun, error) {
+	workflowEnv := "mainnet-beta"
+	if len(env) > 0 && env[0] != "" {
+		workflowEnv = env[0]
+	}
 	var run WorkflowRun
 	err := config.PgPool.QueryRow(ctx, `
-		INSERT INTO workflow_runs (session_id, user_question)
-		VALUES ($1, $2)
+		INSERT INTO workflow_runs (session_id, user_question, env)
+		VALUES ($1, $2, $3)
 		RETURNING id, session_id, status, user_question, iteration, messages, thinking_steps,
 		          executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
-		          started_at, updated_at, completed_at, claimed_by, claimed_at, error
-	`, sessionID, question).Scan(
+		          started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
+	`, sessionID, question, workflowEnv).Scan(
 		&run.ID, &run.SessionID, &run.Status, &run.UserQuestion,
 		&run.Iteration, &run.Messages, &run.ThinkingSteps, &run.ExecutedQueries, &run.Steps,
 		&run.FinalAnswer, &run.LLMCalls, &run.InputTokens, &run.OutputTokens,
-		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Error,
+		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Env, &run.Error,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create workflow run: %w", err)
@@ -212,14 +219,14 @@ func GetWorkflowRun(ctx context.Context, id uuid.UUID) (*WorkflowRun, error) {
 	err := config.PgPool.QueryRow(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
-		       started_at, updated_at, completed_at, claimed_by, claimed_at, error
+		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
 		FROM workflow_runs
 		WHERE id = $1
 	`, id).Scan(
 		&run.ID, &run.SessionID, &run.Status, &run.UserQuestion,
 		&run.Iteration, &run.Messages, &run.ThinkingSteps, &run.ExecutedQueries, &run.Steps,
 		&run.FinalAnswer, &run.LLMCalls, &run.InputTokens, &run.OutputTokens,
-		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Error,
+		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Env, &run.Error,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -257,12 +264,12 @@ func ClaimIncompleteWorkflow(ctx context.Context, serverID string, staleTimeout 
 		)
 		RETURNING id, session_id, status, user_question, iteration, messages, thinking_steps,
 		          executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
-		          started_at, updated_at, completed_at, claimed_by, claimed_at, error
+		          started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
 	`, serverID, staleTimeout).Scan(
 		&run.ID, &run.SessionID, &run.Status, &run.UserQuestion,
 		&run.Iteration, &run.Messages, &run.ThinkingSteps, &run.ExecutedQueries, &run.Steps,
 		&run.FinalAnswer, &run.LLMCalls, &run.InputTokens, &run.OutputTokens,
-		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Error,
+		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Env, &run.Error,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -279,7 +286,7 @@ func GetIncompleteWorkflows(ctx context.Context) ([]WorkflowRun, error) {
 	rows, err := config.PgPool.Query(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
-		       started_at, updated_at, completed_at, claimed_by, claimed_at, error
+		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
 		FROM workflow_runs
 		WHERE status = 'running'
 		ORDER BY started_at ASC
@@ -296,7 +303,7 @@ func GetIncompleteWorkflows(ctx context.Context) ([]WorkflowRun, error) {
 			&run.ID, &run.SessionID, &run.Status, &run.UserQuestion,
 			&run.Iteration, &run.Messages, &run.ThinkingSteps, &run.ExecutedQueries, &run.Steps,
 			&run.FinalAnswer, &run.LLMCalls, &run.InputTokens, &run.OutputTokens,
-			&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Error,
+			&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Env, &run.Error,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan workflow run: %w", err)
 		}
@@ -314,7 +321,7 @@ func GetRunningWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*Wo
 	err := config.PgPool.QueryRow(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
-		       started_at, updated_at, completed_at, claimed_by, claimed_at, error
+		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
 		FROM workflow_runs
 		WHERE session_id = $1 AND status = 'running'
 		ORDER BY started_at DESC
@@ -323,7 +330,7 @@ func GetRunningWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*Wo
 		&run.ID, &run.SessionID, &run.Status, &run.UserQuestion,
 		&run.Iteration, &run.Messages, &run.ThinkingSteps, &run.ExecutedQueries, &run.Steps,
 		&run.FinalAnswer, &run.LLMCalls, &run.InputTokens, &run.OutputTokens,
-		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Error,
+		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Env, &run.Error,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -340,7 +347,7 @@ func GetLatestWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*Wor
 	err := config.PgPool.QueryRow(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
-		       started_at, updated_at, completed_at, claimed_by, claimed_at, error
+		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
 		FROM workflow_runs
 		WHERE session_id = $1
 		ORDER BY started_at DESC
@@ -349,7 +356,7 @@ func GetLatestWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*Wor
 		&run.ID, &run.SessionID, &run.Status, &run.UserQuestion,
 		&run.Iteration, &run.Messages, &run.ThinkingSteps, &run.ExecutedQueries, &run.Steps,
 		&run.FinalAnswer, &run.LLMCalls, &run.InputTokens, &run.OutputTokens,
-		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Error,
+		&run.StartedAt, &run.UpdatedAt, &run.CompletedAt, &run.ClaimedBy, &run.ClaimedAt, &run.Env, &run.Error,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {

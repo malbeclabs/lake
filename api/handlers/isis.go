@@ -1198,7 +1198,7 @@ func enrichPathsWithMeasuredLatency(ctx context.Context, response *MultiPathResp
 		GROUP BY l.side_a_pk, l.side_z_pk
 	`
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	if err != nil {
 		return fmt.Errorf("enrichPathsWithMeasuredLatency query error: %w", err)
 	}
@@ -1899,8 +1899,8 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try cache first
-	if statusCache != nil {
+	// Try cache first (cache only holds mainnet data)
+	if isMainnet(r.Context()) && statusCache != nil {
 		if cached := statusCache.GetMetroPathLatency(optimize); cached != nil {
 			w.Header().Set("X-Cache", "HIT")
 			writeJSON(w, cached)
@@ -2522,7 +2522,7 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var internetLatency float64
-	row := config.DB.QueryRow(ctx, internetQuery, fromCode, toCode)
+	row := envDB(ctx).QueryRow(ctx, internetQuery, fromCode, toCode)
 	if err := row.Scan(&internetLatency); err == nil && internetLatency > 0 {
 		response.InternetLatencyMs = internetLatency
 		if response.TotalLatencyMs > 0 {
@@ -2860,7 +2860,7 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 func getLinkEndpoints(ctx context.Context, linkPK string) string {
 	query := `SELECT side_a_pk, side_z_pk FROM dz_links_current WHERE pk = $1`
 	var sideA, sideZ string
-	if err := config.DB.QueryRow(ctx, query, linkPK).Scan(&sideA, &sideZ); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, query, linkPK).Scan(&sideA, &sideZ); err != nil {
 		return ""
 	}
 	if sideA == "" || sideZ == "" {
@@ -3002,7 +3002,7 @@ func analyzeLinksImpactBatch(ctx context.Context, session neo4j.Session, linkPKs
 	`
 
 	// For ClickHouse we need to pass as a tuple
-	rows, err := config.DB.Query(ctx, linkQuery, linkPKs)
+	rows, err := envDB(ctx).Query(ctx, linkQuery, linkPKs)
 	if err != nil {
 		return nil, fmt.Errorf("batch link lookup error: %w", err)
 	}

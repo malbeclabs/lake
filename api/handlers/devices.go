@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -40,7 +39,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_devices_current`
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		log.Printf("Devices count error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -113,7 +112,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -303,7 +302,7 @@ func GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	var device DeviceDetail
 	var interfacesJSON string
-	err := config.DB.QueryRow(ctx, query, pk).Scan(
+	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&device.PK,
 		&device.Code,
 		&device.Status,

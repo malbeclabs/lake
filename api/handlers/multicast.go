@@ -43,7 +43,7 @@ func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 		ORDER BY code
 	`
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -142,7 +142,7 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var group MulticastGroupDetail
-	err := config.DB.QueryRow(ctx, groupQuery, code).Scan(
+	err := envDB(ctx).QueryRow(ctx, groupQuery, code).Scan(
 		&group.PK,
 		&group.Code,
 		&group.MulticastIP,
@@ -188,7 +188,7 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		ORDER BY mode DESC, d.code
 	`
 
-	rows, err := config.DB.Query(ctx, membersQuery, group.PK, group.PK, group.PK, group.PK, group.PK)
+	rows, err := envDB(ctx).Query(ctx, membersQuery, group.PK, group.PK, group.PK, group.PK, group.PK)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -290,7 +290,7 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	groupQuery := `
 		SELECT pk FROM dz_multicast_groups_current WHERE code = ?
 	`
-	err := config.DB.QueryRow(ctx, groupQuery, code).Scan(&response.GroupPK)
+	err := envDB(ctx).QueryRow(ctx, groupQuery, code).Scan(&response.GroupPK)
 	if err != nil {
 		log.Printf("MulticastTreePaths group query error: %v", err)
 		response.Error = "multicast group not found"
@@ -318,7 +318,7 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 			)
 	`
 
-	rows, err := config.DB.Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
+	rows, err := envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

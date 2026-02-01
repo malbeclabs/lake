@@ -14,7 +14,6 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -350,7 +349,7 @@ func validateQuery(sql string) string {
 	defer cancel()
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, explainQuery)
+	rows, err := envDB(ctx).Query(ctx, explainQuery)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

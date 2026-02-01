@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
@@ -28,8 +27,8 @@ type StatsResponse struct {
 }
 
 func GetStats(w http.ResponseWriter, r *http.Request) {
-	// Try to derive stats from the status cache
-	if statusCache != nil {
+	// Try to derive stats from the status cache (cache only holds mainnet data)
+	if isMainnet(r.Context()) && statusCache != nil {
 		if cached := statusCache.GetStatus(); cached != nil {
 			stats := StatsResponse{
 				ValidatorsOnDZ: cached.Network.ValidatorsOnDZ,
@@ -76,7 +75,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 			WHERE u.status = 'activated'
 			  AND va.activated_stake_lamports > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.ValidatorsOnDZ)
 	})
 
@@ -90,7 +89,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 			WHERE u.status = 'activated'
 			  AND va.activated_stake_lamports > 0
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.TotalStakeSol)
 	})
 
@@ -108,42 +107,42 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 					0
 				) AS stake_share_pct
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.StakeSharePct)
 	})
 
 	// Count users
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_users_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.Users)
 	})
 
 	// Count devices
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_devices_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.Devices)
 	})
 
 	// Count links
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_links_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.Links)
 	})
 
 	// Count contributors
 	g.Go(func() error {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_contributors_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.Contributors)
 	})
 
 	// Count metros
 	g.Go(func() error {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_metros_current`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.Metros)
 	})
 
@@ -154,7 +153,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 			FROM dz_links_current
 			WHERE status = 'activated'
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.BandwidthBps)
 	})
 
@@ -171,7 +170,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 				GROUP BY device_pk, intf
 			)
 		`
-		row := config.DB.QueryRow(ctx, query)
+		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.UserInboundBps)
 	})
 

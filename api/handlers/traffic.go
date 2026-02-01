@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -190,7 +189,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		LIMIT %d
 	`, rangeInterval, intfFilter, bucketInterval, aggFunc, aggFunc, maxTrafficRows)
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -224,7 +223,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		ORDER BY d.code, c.intf
 	`, rangeInterval, intfFilter)
 
-	meanRows, err := config.DB.Query(ctx, meanQuery)
+	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
 	metrics.RecordClickHouseQuery(meanDuration, err)
 	if err != nil {
@@ -428,7 +427,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		`, bucket, rangeInterval)
 	}
 
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

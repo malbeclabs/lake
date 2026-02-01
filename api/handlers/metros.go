@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
@@ -33,7 +32,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_metros_current`
 	var total uint64
-	if err := config.DB.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		log.Printf("Metros count error: %v", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
@@ -68,7 +67,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := config.DB.Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -210,7 +209,7 @@ func GetMetro(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var metro MetroDetail
-	err := config.DB.QueryRow(ctx, query, pk).Scan(
+	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&metro.PK,
 		&metro.Code,
 		&metro.Name,

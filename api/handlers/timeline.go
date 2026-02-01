@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
@@ -248,7 +247,7 @@ func GetTimelineBounds(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var earliest, latest time.Time
-	err := config.DB.QueryRow(ctx, query).Scan(&earliest, &latest)
+	err := envDB(ctx).QueryRow(ctx, query).Scan(&earliest, &latest)
 	if err != nil {
 		http.Error(w, "Failed to get timeline bounds", http.StatusInternalServerError)
 		return
@@ -538,7 +537,7 @@ func isDefaultTimelineRequest(r *http.Request) bool {
 // GetTimeline returns timeline events across the network
 func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
-	if isDefaultTimelineRequest(r) && statusCache != nil {
+	if isMainnet(r.Context()) && isDefaultTimelineRequest(r) && statusCache != nil {
 		if cached := statusCache.GetTimeline(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
@@ -1036,7 +1035,7 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1272,7 +1271,7 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,7 +1509,7 @@ func queryMetroChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1653,7 +1652,7 @@ func queryContributorChanges(ctx context.Context, startTime, endTime time.Time) 
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1819,7 +1818,7 @@ func queryUserChanges(ctx context.Context, startTime, endTime time.Time, include
 	`, internalFilter)
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2035,7 +2034,7 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, lookbackStart, endTime, startTime)
+	rows, err := envDB(ctx).Query(ctx, query, lookbackStart, endTime, startTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2185,7 +2184,7 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, lookbackStart, endTime, startTime)
+	rows, err := envDB(ctx).Query(ctx, query, lookbackStart, endTime, startTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2395,7 +2394,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 
 	start := time.Now()
 	// Query has 4 pairs of time parameters: gossip_ips, latest_gossip, latest_vote, and final WHERE
-	rows, err := config.DB.Query(ctx, query,
+	rows, err := envDB(ctx).Query(ctx, query,
 		startTime, endTime, // gossip_ips CTE
 		startTime, endTime, // latest_gossip CTE
 		startTime, endTime, // latest_vote CTE
@@ -2565,7 +2564,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2740,7 +2739,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2892,7 +2891,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 	`
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, query, startTime, endTime)
+	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
