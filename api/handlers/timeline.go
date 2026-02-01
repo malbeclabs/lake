@@ -2544,8 +2544,8 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		-- Historical gossip/vote info (for validators who have left)
 		LEFT JOIN latest_gossip gn_hist ON uc.dz_ip = gn_hist.gossip_ip
 		LEFT JOIN latest_vote va_hist ON gn_hist.pubkey = va_hist.node_pubkey
-		WHERE (uc.attrs_hash != uc.prev_attrs_hash OR uc.row_num = 1)
-		  AND ((uc.status = 'activated' AND (uc.prev_status != 'activated' OR uc.row_num = 1))
+		WHERE (uc.attrs_hash != uc.prev_attrs_hash OR uc.prev_attrs_hash = '')
+		  AND ((uc.status = 'activated' AND uc.prev_status != 'activated')
 		       OR (uc.status != 'activated' AND uc.prev_status = 'activated'))
 		  AND uc.snapshot_ts >= ? AND uc.snapshot_ts <= ?
 		ORDER BY uc.snapshot_ts DESC, uc.entity_id

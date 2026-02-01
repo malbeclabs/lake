@@ -766,22 +766,26 @@ function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNew?: boo
                 DZ Stake
               </span>
             )}
-            {validatorDetails?.stake_share_pct !== undefined && validatorDetails.stake_share_pct > 0 && (event.event_type.includes('_joined') || event.event_type.includes('_left')) && (
-              <span className={cn(
-                'text-xs font-medium',
-                event.event_type.includes('_joined') ? 'text-green-600' : 'text-amber-600'
-              )}>
-                {event.event_type.includes('_joined') ? '+' : '−'}{validatorDetails.stake_share_pct.toFixed(3)}% stake
-              </span>
-            )}
-            {validatorDetails?.stake_share_change_pct !== undefined && validatorDetails.stake_share_change_pct !== 0 && !event.event_type.includes('_joined') && !event.event_type.includes('_left') && (
-              <span className={cn(
-                'text-xs font-medium',
-                validatorDetails.stake_share_change_pct > 0 ? 'text-green-600' : 'text-amber-600'
-              )}>
-                {validatorDetails.stake_share_change_pct > 0 ? '+' : '−'}{Math.abs(validatorDetails.stake_share_change_pct).toFixed(3)}% stake
-              </span>
-            )}
+            {(() => {
+              // Use stake_share_change_pct if available (real change data from attribution),
+              // otherwise fall back to stake_share_pct for join/leave events
+              const changePct = validatorDetails?.stake_share_change_pct && validatorDetails.stake_share_change_pct !== 0
+                ? validatorDetails.stake_share_change_pct
+                : (event.event_type.includes('_joined') || event.event_type.includes('_left'))
+                  ? (validatorDetails?.stake_share_pct && validatorDetails.stake_share_pct > 0
+                    ? (event.event_type.includes('_joined') ? validatorDetails.stake_share_pct : -validatorDetails.stake_share_pct)
+                    : null)
+                  : null
+              if (changePct == null) return null
+              return (
+                <span className={cn(
+                  'text-xs font-medium',
+                  changePct > 0 ? 'text-green-600' : 'text-amber-600'
+                )}>
+                  {changePct > 0 ? '+' : '−'}{Math.abs(changePct).toFixed(3)}% stake
+                </span>
+              )
+            })()}
             {validatorDetails?.dz_total_stake_share_pct !== undefined && validatorDetails.dz_total_stake_share_pct > 0 && (
               <span className="text-xs text-muted-foreground">
                 · {validatorDetails.dz_total_stake_share_pct.toFixed(2)}% DZ total
