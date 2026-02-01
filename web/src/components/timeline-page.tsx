@@ -974,6 +974,23 @@ export function TimelinePage() {
   const [customStart, setCustomStart] = useState<string>(initialCustomStart)
   const [customEnd, setCustomEnd] = useState<string>(initialCustomEnd)
 
+  // Sync local state when URL params change (e.g. sidebar nav click clears params).
+  // Use the serialized URL string as the dependency to avoid re-running on every render
+  // due to new Set objects being created.
+  const searchParamsString = searchParams.toString()
+  useEffect(() => {
+    setTimeRange((searchParams.get('range') || '24h') as TimeRange | 'custom')
+    setSelectedCategories(parseSetParam(searchParams.get('categories'), ALL_CATEGORIES, ALL_CATEGORIES))
+    setSelectedEntityTypes(parseSetParam(searchParams.get('entities'), ALL_ENTITY_TYPES, DEFAULT_ENTITY_TYPES))
+    setSelectedActions(parseSetParam(searchParams.get('actions'), ALL_ACTIONS, ALL_ACTIONS))
+    setDzFilter((searchParams.get('dz') || 'on_dz') as DZFilter)
+    setMinStake((searchParams.get('min_stake') || '0') as MinStakeOption)
+    setIncludeInternal(searchParams.get('internal') === 'true')
+    setCustomStart(searchParams.get('start') || '')
+    setCustomEnd(searchParams.get('end') || '')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParamsString])
+
   // Sync filter state to URL params
   const updateUrlParams = (updates: {
     range?: TimeRange | 'custom'
