@@ -95,6 +95,8 @@ The agent has access to two tools:
 |------|---------|
 | `think` | Record reasoning process (shown to users for transparency) |
 | `execute_sql` | Run SQL queries against ClickHouse and get results |
+| `execute_cypher` | Run Cypher queries against Neo4j (mainnet-beta only) |
+| `read_docs` | Look up documentation pages for domain context |
 
 ## Question Types
 
@@ -143,6 +145,14 @@ The schema includes pre-built views that the agent is instructed to prefer:
 - Schemas evolve; static schema would require redeployment
 - Sample values help the LLM use correct enum values
 - View definitions provide query hints
+
+### Multi-Environment
+
+The agent supports querying different DZ network environments (devnet, testnet, mainnet-beta). When configured with an `EnvContext`, the system prompt tells the agent:
+
+- Which environment and database it is querying
+- That Neo4j graph queries and Solana data are only available on mainnet-beta
+- How to cross-query other environments using fully-qualified `database.table` syntax
 
 ### Why Claim Attribution?
 

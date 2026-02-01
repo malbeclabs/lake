@@ -118,7 +118,7 @@ lake/indexer/
 
 | Flag | Description |
 |------|-------------|
-| `--dz-env` | DZ ledger environment (devnet, testnet, mainnet-beta) |
+| `--dz-env` | DZ ledger environment (devnet, testnet, mainnet-beta). Controls which subsystems are enabled and locks the database to prevent cross-env data corruption. |
 | `--solana-env` | Solana environment: devnet, testnet, mainnet-beta (determines Solana mainnet RPC URL) |
 | `--clickhouse-addr` | ClickHouse server address (host:port) |
 | `--clickhouse-database` | ClickHouse database name |
@@ -150,6 +150,15 @@ lake/indexer/
 Schema migrations are managed with goose and embedded in the binary. They run automatically on startup.
 
 Migrations live in `migrations/` and follow the naming convention `YYYYMMDDHHMMSS_description.sql`.
+
+## Multi-Environment
+
+The indexer supports running against different DZ network environments (devnet, testnet, mainnet-beta). The `--dz-env` flag controls:
+
+- **Subsystem gating**: Solana, GeoIP, Neo4j, and ISIS are only enabled on mainnet-beta. On devnet/testnet, only network topology (serviceability) and telemetry views run.
+- **Environment lock**: On first startup, the indexer writes the configured environment to an `_env_lock` table in ClickHouse (and an `_EnvLock` node in Neo4j when enabled). Subsequent startups verify the lock matches, preventing accidental cross-env writes to the same database.
+
+Each environment should use a separate ClickHouse database (e.g., `dz_mainnet`, `dz_devnet`).
 
 ## Admin CLI
 
