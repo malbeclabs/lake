@@ -206,9 +206,11 @@ export function FilterDropdown<T extends string>({
 function PresetsDropdown({
   searchParams,
   onApplyPreset,
+  onResetAll,
 }: {
   searchParams: URLSearchParams
   onApplyPreset: (preset: typeof presets[0]) => void
+  onResetAll: () => void
 }) {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -252,7 +254,11 @@ function PresetsDropdown({
               <button
                 key={preset.label}
                 onClick={() => {
-                  onApplyPreset(preset)
+                  if (isActive) {
+                    onResetAll()
+                  } else {
+                    onApplyPreset(preset)
+                  }
                   setOpen(false)
                 }}
                 className={cn(
@@ -420,7 +426,7 @@ export function TimelineFilters({
         <div className="flex-1" />
 
         {/* Presets dropdown */}
-        <PresetsDropdown searchParams={searchParams} onApplyPreset={onApplyPreset} />
+        <PresetsDropdown searchParams={searchParams} onApplyPreset={onApplyPreset} onResetAll={onResetAll} />
 
         {/* Search button */}
         <button
