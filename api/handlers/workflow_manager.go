@@ -703,15 +703,9 @@ func (m *WorkflowManager) runWorkflow(
 	// Build final steps with full row data from result
 	finalSteps := buildFinalSteps(steps, result)
 
-	// Build and broadcast the done event with steps
-	response := convertWorkflowResult(result)
-	response.Steps = finalSteps
-	rw.broadcast(WorkflowEvent{
-		Type: "done",
-		Data: response,
-	})
-
 	// Mark workflow as completed (preserve metrics from last checkpoint)
+	// These DB writes must happen before broadcasting 'done' so that clients
+	// fetching fresh session data after receiving the event see the final state.
 	finalCheckpoint := &WorkflowCheckpoint{
 		Iteration:       0,
 		Messages:        nil,
@@ -731,6 +725,15 @@ func (m *WorkflowManager) runWorkflow(
 	if err := updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
 		slog.Warn("Failed to update session content on completion", "session_id", rw.SessionID, "error", err)
 	}
+
+	// Build and broadcast the done event with steps
+	// This is sent after DB writes so clients can immediately fetch the persisted state.
+	response := convertWorkflowResult(result)
+	response.Steps = finalSteps
+	rw.broadcast(WorkflowEvent{
+		Type: "done",
+		Data: response,
+	})
 
 	slog.Info("Background workflow completed",
 		"workflow_id", rw.ID,

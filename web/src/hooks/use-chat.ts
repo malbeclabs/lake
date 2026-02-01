@@ -423,7 +423,6 @@ export function useChatStream(sessionId: string | undefined) {
               if (!converted.name && converted.messages.length <= 3) {
                 generateChatSessionTitle(converted.messages).then(result => {
                   if (result.title) {
-                    queryClient.invalidateQueries({ queryKey: chatKeys.detail(sessionId) })
                     queryClient.invalidateQueries({ queryKey: chatKeys.list() })
                   }
                 }).catch(() => {})
