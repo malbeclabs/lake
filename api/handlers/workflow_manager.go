@@ -143,6 +143,9 @@ type ClientProcessingStep struct {
 
 	// For read_docs steps
 	Page string `json:"page,omitempty"`
+
+	// Environment this step was executed in
+	Env string `json:"env,omitempty"`
 }
 
 // toClientFormat converts a WorkflowStep to ClientProcessingStep format.
@@ -162,6 +165,7 @@ func (s WorkflowStep) toClientFormat() ClientProcessingStep {
 		Nodes:    s.Nodes,
 		Edges:    s.Edges,
 		Page:     s.Page,
+		Env:      s.Env,
 	}
 }
 
@@ -534,6 +538,7 @@ func (m *WorkflowManager) runWorkflow(
 			if progress.SQLError != "" {
 				status = "error"
 			}
+			envStr := string(rw.Env)
 			steps = append(steps, WorkflowStep{
 				ID:       stepID,
 				Type:     "sql_query",
@@ -542,6 +547,7 @@ func (m *WorkflowManager) runWorkflow(
 				Status:   status,
 				Count:    progress.SQLRows,
 				Error:    progress.SQLError,
+				Env:      envStr,
 			})
 			rw.broadcast(WorkflowEvent{
 				Type: "sql_done",
@@ -551,6 +557,7 @@ func (m *WorkflowManager) runWorkflow(
 					"sql":      progress.SQL,
 					"rows":     progress.SQLRows,
 					"error":    progress.SQLError,
+					"env":      envStr,
 				},
 			})
 
@@ -572,6 +579,7 @@ func (m *WorkflowManager) runWorkflow(
 			if progress.CypherError != "" {
 				status = "error"
 			}
+			envStr := string(rw.Env)
 			steps = append(steps, WorkflowStep{
 				ID:       stepID,
 				Type:     "cypher_query",
@@ -580,6 +588,7 @@ func (m *WorkflowManager) runWorkflow(
 				Status:   status,
 				Count:    progress.CypherRows,
 				Error:    progress.CypherError,
+				Env:      envStr,
 			})
 			rw.broadcast(WorkflowEvent{
 				Type: "cypher_done",
@@ -589,6 +598,7 @@ func (m *WorkflowManager) runWorkflow(
 					"cypher":   progress.Cypher,
 					"rows":     progress.CypherRows,
 					"error":    progress.CypherError,
+					"env":      envStr,
 				},
 			})
 
@@ -651,6 +661,7 @@ func (m *WorkflowManager) runWorkflow(
 			if progress.QueryError != "" {
 				status = "error"
 			}
+			envStr := string(rw.Env)
 			steps = append(steps, WorkflowStep{
 				ID:       stepID,
 				Type:     "sql_query",
@@ -659,6 +670,7 @@ func (m *WorkflowManager) runWorkflow(
 				Status:   status,
 				Count:    progress.QueryRows,
 				Error:    progress.QueryError,
+				Env:      envStr,
 			})
 			rw.broadcast(WorkflowEvent{
 				Type: "sql_done",
@@ -668,6 +680,7 @@ func (m *WorkflowManager) runWorkflow(
 					"sql":      progress.QuerySQL,
 					"rows":     progress.QueryRows,
 					"error":    progress.QueryError,
+					"env":      envStr,
 				},
 			})
 		}
@@ -949,6 +962,7 @@ func (m *WorkflowManager) resumeWorkflow(
 			if progress.SQLError != "" {
 				status = "error"
 			}
+			envStr := string(rw.Env)
 			steps = append(steps, WorkflowStep{
 				ID:       stepID,
 				Type:     "sql_query",
@@ -957,6 +971,7 @@ func (m *WorkflowManager) resumeWorkflow(
 				Status:   status,
 				Count:    progress.SQLRows,
 				Error:    progress.SQLError,
+				Env:      envStr,
 			})
 			rw.broadcast(WorkflowEvent{
 				Type: "sql_done",
@@ -966,6 +981,7 @@ func (m *WorkflowManager) resumeWorkflow(
 					"sql":      progress.SQL,
 					"rows":     progress.SQLRows,
 					"error":    progress.SQLError,
+					"env":      envStr,
 				},
 			})
 
@@ -987,6 +1003,7 @@ func (m *WorkflowManager) resumeWorkflow(
 			if progress.CypherError != "" {
 				status = "error"
 			}
+			envStr := string(rw.Env)
 			steps = append(steps, WorkflowStep{
 				ID:       stepID,
 				Type:     "cypher_query",
@@ -995,6 +1012,7 @@ func (m *WorkflowManager) resumeWorkflow(
 				Status:   status,
 				Count:    progress.CypherRows,
 				Error:    progress.CypherError,
+				Env:      envStr,
 			})
 			rw.broadcast(WorkflowEvent{
 				Type: "cypher_done",
@@ -1004,6 +1022,7 @@ func (m *WorkflowManager) resumeWorkflow(
 					"cypher":   progress.Cypher,
 					"rows":     progress.CypherRows,
 					"error":    progress.CypherError,
+					"env":      envStr,
 				},
 			})
 
@@ -1066,6 +1085,7 @@ func (m *WorkflowManager) resumeWorkflow(
 			if progress.QueryError != "" {
 				status = "error"
 			}
+			envStr := string(rw.Env)
 			steps = append(steps, WorkflowStep{
 				ID:       stepID,
 				Type:     "sql_query",
@@ -1074,6 +1094,7 @@ func (m *WorkflowManager) resumeWorkflow(
 				Status:   status,
 				Count:    progress.QueryRows,
 				Error:    progress.QueryError,
+				Env:      envStr,
 			})
 			rw.broadcast(WorkflowEvent{
 				Type: "sql_done",
@@ -1083,6 +1104,7 @@ func (m *WorkflowManager) resumeWorkflow(
 					"sql":      progress.QuerySQL,
 					"rows":     progress.QueryRows,
 					"error":    progress.QueryError,
+					"env":      envStr,
 				},
 			})
 		}
@@ -1278,6 +1300,7 @@ func buildFinalSteps(steps []WorkflowStep, result *workflow.WorkflowResult) []Wo
 					Rows:     rows,
 					Count:    eq.Result.Count,
 					Error:    step.Error,
+					Env:      step.Env,
 				}
 			} else {
 				finalSteps[i] = step
@@ -1303,6 +1326,7 @@ func buildFinalSteps(steps []WorkflowStep, result *workflow.WorkflowResult) []Wo
 					Rows:     rows,
 					Count:    eq.Result.Count,
 					Error:    step.Error,
+					Env:      step.Env,
 				}
 			} else {
 				finalSteps[i] = step

@@ -227,7 +227,7 @@ function CopyResponseButton({ content }: { content: string }) {
 interface ProcessingTimelineProps {
   steps: ProcessingStep[]
   isStreaming?: boolean
-  onOpenInQueryEditor?: (query: string, type: 'sql' | 'cypher') => void
+  onOpenInQueryEditor?: (query: string, type: 'sql' | 'cypher', env?: string) => void
   onAskAboutQuery?: (question: string, sql: string, rowCount: number) => void
   highlightedQuery?: number | null
   onHighlightClear?: () => void
@@ -452,7 +452,7 @@ function ProcessingTimeline({
                         )}
                         {onOpenInQueryEditor && (
                           <button
-                            onClick={() => onOpenInQueryEditor(queryCode, step.type === 'sql_query' ? 'sql' : 'cypher')}
+                            onClick={() => onOpenInQueryEditor(queryCode, step.type === 'sql_query' ? 'sql' : 'cypher', step.env)}
                             className="p-1.5 rounded border border-border bg-card/80 text-muted-foreground hover:text-foreground hover:bg-accent-orange-20 transition-colors flex items-center gap-1 text-xs"
                             title="Open in Query Editor"
                           >
@@ -610,7 +610,7 @@ interface ChatProps {
   onSendMessage: (message: string) => void
   onAbort: () => void
   onRetry?: () => void
-  onOpenInQueryEditor?: (query: string, type: 'sql' | 'cypher') => void
+  onOpenInQueryEditor?: (query: string, type: 'sql' | 'cypher', env?: string) => void
 }
 
 export function Chat({ messages, isPending, processingSteps, onSendMessage, onAbort, onRetry, onOpenInQueryEditor }: ChatProps) {

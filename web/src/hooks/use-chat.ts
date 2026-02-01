@@ -276,7 +276,7 @@ export function useChatStream(sessionId: string | undefined) {
                   ...prev,
                   processingSteps: prev.processingSteps.map((step, i) =>
                     i === existingIndex
-                      ? { ...step, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined }
+                      ? { ...step, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined, env: data.env }
                       : step
                   ),
                 }
@@ -292,6 +292,7 @@ export function useChatStream(sessionId: string | undefined) {
                     status: data.error ? 'error' : 'completed',
                     rows: data.rows,
                     error: data.error || undefined,
+                    env: data.env,
                   }],
                 }
               }
@@ -321,7 +322,7 @@ export function useChatStream(sessionId: string | undefined) {
                   ...prev,
                   processingSteps: prev.processingSteps.map((step, i) =>
                     i === existingIndex
-                      ? { ...step, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined }
+                      ? { ...step, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined, env: data.env }
                       : step
                   ),
                 }
@@ -337,6 +338,7 @@ export function useChatStream(sessionId: string | undefined) {
                     status: data.error ? 'error' : 'completed',
                     rows: data.rows,
                     error: data.error || undefined,
+                    env: data.env,
                   }],
                 }
               }

@@ -45,6 +45,9 @@ type WorkflowStep struct {
 
 	// For read_docs steps
 	Page string `json:"page,omitempty"`
+
+	// Environment this step was executed in
+	Env string `json:"env,omitempty"`
 }
 
 // WorkflowRun represents a persistent workflow execution.

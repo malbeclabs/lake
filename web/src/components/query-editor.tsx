@@ -15,6 +15,7 @@ import { cypher } from '@/lib/cypher-lang'
 import { keymap } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
 import type { GenerationRecord } from './session-history'
+import { useEnv } from '@/contexts/EnvContext'
 
 interface QueryEditorProps {
   query: string
@@ -28,6 +29,8 @@ interface QueryEditorProps {
   onModeChange?: (mode: QueryMode) => void
   activeMode?: 'sql' | 'cypher'
   onActiveModeChange?: (mode: 'sql' | 'cypher') => void
+  // Optional env override for running queries against a specific environment
+  queryEnv?: string
 }
 
 export interface QueryEditorHandle {
@@ -59,7 +62,9 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
     onModeChange,
     activeMode: externalActiveMode,
     onActiveModeChange,
+    queryEnv,
   }, ref) => {
+    const { env: currentEnv } = useEnv()
     const [error, setError] = useState<string | null>(null)
     const [isOpen, setIsOpen] = useState(true)
     const lastRecordedSqlRef = useRef<string>('')
@@ -99,7 +104,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
 
     // SQL mutation
     const sqlMutation = useMutation({
-      mutationFn: executeSqlQuery,
+      mutationFn: (q: string) => executeSqlQuery(q, queryEnv),
       onSuccess: (data) => {
         if (data.error) {
           setError(data.error)
@@ -115,7 +120,7 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
 
     // Cypher mutation
     const cypherMutation = useMutation({
-      mutationFn: executeCypherQuery,
+      mutationFn: (q: string) => executeCypherQuery(q, queryEnv),
       onSuccess: (data) => {
         if (data.error) {
           setError(data.error)
@@ -225,6 +230,13 @@ export const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(
               <ChevronRight className="h-4 w-4" />
             )}
           </button>
+
+          {/* Env badge - shown when query runs against a different env */}
+          {queryEnv && queryEnv !== currentEnv && (
+            <span className="ml-2 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+              {queryEnv}
+            </span>
+          )}
 
           {/* Mode selector - shown when onModeChange is provided */}
           {onModeChange && (

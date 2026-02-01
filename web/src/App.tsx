@@ -166,12 +166,16 @@ function QueryEditorView() {
   // Track pending query to run (from URL param or session history)
   const [pendingRun, setPendingRun] = useState<string | null>(null)
 
+  // Env override from URL param (when opening a query from chat that ran on a different env)
+  const [queryEnv, setQueryEnv] = useState<string | undefined>(undefined)
+
   // Handle URL param immediately on mount/navigation (don't wait for session)
   const urlParamHandledRef = useRef<string | null>(null)
   useEffect(() => {
     if (!sessionId || urlParamHandledRef.current === sessionId) return
     const pendingSql = searchParams.get('sql')
     const pendingCypher = searchParams.get('cypher')
+    const envParam = searchParams.get('env')
     if (pendingSql) {
       urlParamHandledRef.current = sessionId
       const formatted = formatQueryByType(pendingSql, 'sql')
@@ -180,6 +184,7 @@ function QueryEditorView() {
       setPendingRun(formatted)
       setMode('sql')
       setActiveMode('sql')
+      if (envParam) setQueryEnv(envParam)
       setSearchParams({}, { replace: true })
     } else if (pendingCypher) {
       urlParamHandledRef.current = sessionId
@@ -189,6 +194,7 @@ function QueryEditorView() {
       setPendingRun(formatted)
       setMode('cypher')
       setActiveMode('cypher')
+      if (envParam) setQueryEnv(envParam)
       setSearchParams({}, { replace: true })
     }
   }, [sessionId, searchParams, setSearchParams])
@@ -293,10 +299,17 @@ function QueryEditorView() {
     setQuery(`SELECT * FROM ${table.name} LIMIT 100`)
   }
 
+  const handleQueryChange = (newQuery: string) => {
+    setQuery(newQuery)
+    // Clear env override when user edits the query
+    if (queryEnv) setQueryEnv(undefined)
+  }
+
   const handleClear = () => {
     setQuery('')
     setResults(null)
     setRecommendedConfig(null)
+    setQueryEnv(undefined)
   }
 
   // Handle query results (no auto-visualization)
@@ -423,7 +436,7 @@ function QueryEditorView() {
           <QueryEditor
             ref={queryEditorRef}
             query={query}
-            onQueryChange={setQuery}
+            onQueryChange={handleQueryChange}
             onResults={handleResults}
             onClear={handleClear}
             onManualRun={handleManualRun}
@@ -432,6 +445,7 @@ function QueryEditorView() {
             onModeChange={setMode}
             activeMode={activeMode}
             onActiveModeChange={setActiveMode}
+            queryEnv={queryEnv}
           />
           <ResultsView
             results={results}

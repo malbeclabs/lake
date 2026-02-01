@@ -191,10 +191,11 @@ export function SimplifiedChatView() {
   }, [abort])
 
   // Handle opening query in query editor
-  const handleOpenInQueryEditor = useCallback((query: string, type: 'sql' | 'cypher') => {
+  const handleOpenInQueryEditor = useCallback((query: string, type: 'sql' | 'cypher', env?: string) => {
     // Navigate to query editor with query in URL param
     const newSessionId = crypto.randomUUID()
-    navigate(`/query/${newSessionId}?${type}=${encodeURIComponent(query)}`)
+    const envParam = env ? `&env=${encodeURIComponent(env)}` : ''
+    navigate(`/query/${newSessionId}?${type}=${encodeURIComponent(query)}${envParam}`)
   }, [navigate])
 
   // New chat (no sessionId) or creating session - show Chat with pending state

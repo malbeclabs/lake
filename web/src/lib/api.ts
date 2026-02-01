@@ -214,10 +214,14 @@ export async function fetchCatalog(): Promise<CatalogResponse> {
 }
 
 // SQL query execution (uses new /api/sql/query endpoint)
-export async function executeSqlQuery(query: string): Promise<QueryResponse> {
+export async function executeSqlQuery(query: string, env?: string): Promise<QueryResponse> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (env) {
+    headers['X-DZ-Env'] = env
+  }
   const res = await fetchWithRetry('/api/sql/query', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ query }),
   })
   if (!res.ok) {
@@ -228,10 +232,14 @@ export async function executeSqlQuery(query: string): Promise<QueryResponse> {
 }
 
 // Cypher query execution
-export async function executeCypherQuery(query: string): Promise<CypherQueryResponse> {
+export async function executeCypherQuery(query: string, env?: string): Promise<CypherQueryResponse> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (env) {
+    headers['X-DZ-Env'] = env
+  }
   const res = await fetchWithRetry('/api/cypher/query', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ query }),
   })
   if (!res.ok) {
@@ -603,6 +611,7 @@ export interface SqlQueryStep {
   columns?: string[]
   data?: unknown[][]
   error?: string
+  env?: string
 }
 
 export interface CypherQueryStep {
@@ -617,6 +626,7 @@ export interface CypherQueryStep {
   nodes?: unknown[]
   edges?: unknown[]
   error?: string
+  env?: string
 }
 
 export interface ReadDocsStep {
@@ -626,6 +636,7 @@ export interface ReadDocsStep {
   status: 'running' | 'completed' | 'error'
   content?: string
   error?: string
+  env?: string
 }
 
 export interface SynthesizingStep {
@@ -664,6 +675,8 @@ export interface ServerWorkflowStep {
   edges?: unknown[]
   // For read_docs steps
   page?: string
+  // Environment this step was executed in
+  env?: string
 }
 
 export interface ChatResponse {
@@ -749,10 +762,10 @@ export interface ChatStreamCallbacks {
   onThinking: (data: { id: string; content: string }) => void
   // SQL query events
   onSqlStarted: (data: { id: string; question: string; sql: string }) => void
-  onSqlDone: (data: { id: string; question: string; sql: string; rows: number; error: string }) => void
+  onSqlDone: (data: { id: string; question: string; sql: string; rows: number; error: string; env?: string }) => void
   // Cypher query events
   onCypherStarted?: (data: { id: string; question: string; cypher: string }) => void
-  onCypherDone?: (data: { id: string; question: string; cypher: string; rows: number; error: string }) => void
+  onCypherDone?: (data: { id: string; question: string; cypher: string; rows: number; error: string; env?: string }) => void
   // ReadDocs events
   onReadDocsStarted?: (data: { id: string; page: string }) => void
   onReadDocsDone?: (data: { id: string; page: string; content: string; error: string }) => void
@@ -2375,9 +2388,9 @@ export const getRunningWorkflowForSession = getLatestWorkflowForSession
 export interface WorkflowReconnectCallbacks {
   onThinking: (data: { id: string; content: string }) => void
   // SQL query events
-  onSqlDone: (data: { id: string; question: string; sql: string; rows: number; error: string }) => void
+  onSqlDone: (data: { id: string; question: string; sql: string; rows: number; error: string; env?: string }) => void
   // Cypher query events
-  onCypherDone?: (data: { id: string; question: string; cypher: string; rows: number; error: string }) => void
+  onCypherDone?: (data: { id: string; question: string; cypher: string; rows: number; error: string; env?: string }) => void
   // ReadDocs events
   onReadDocsDone?: (data: { id: string; page: string; content: string; error: string }) => void
   onSynthesizing?: () => void
