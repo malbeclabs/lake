@@ -442,14 +442,14 @@ function ProcessingTimeline({
                       <CheckCircle2 className="w-4 h-4 text-green-500" />
                     )}
                     {step.status === 'error' && (
-                      <XCircle className="w-4 h-4 text-red-500" />
+                      <XCircle className="w-4 h-4 text-muted-foreground" />
                     )}
                   </div>
                   <span className="text-sm truncate flex-1">
                     {step.question}
                   </span>
                   {step.status !== 'running' && (
-                    <span className={`text-xs ${step.error ? 'text-red-500' : 'text-green-600'}`}>
+                    <span className={`text-xs ${step.error ? 'text-muted-foreground' : 'text-green-600'}`}>
                       {step.error ? 'error' : `${step.rows ?? 0} rows`}
                     </span>
                   )}
@@ -486,7 +486,7 @@ function ProcessingTimeline({
                       </div>
                     </div>
                     {step.error && (
-                      <div className="text-sm text-red-500 mt-2">{step.error}</div>
+                      <div className="text-sm text-muted-foreground mt-2">{step.error}</div>
                     )}
                     {!step.error && step.data && step.data.length > 0 && step.columns && (
                       <div className="mt-2 overflow-x-auto">
