@@ -139,6 +139,7 @@ Some answers require refinement:
 - Adjust filters after seeing real distributions
 - Query for specific identifiers if you only got aggregates
 - If results contradict expectations, investigate before proceeding
+- If a query fails with a database error, try rewriting the query using an alternative approach rather than skipping that part of the analysis
 
 # Question Types
 

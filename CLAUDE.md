@@ -48,6 +48,11 @@ Output goes to `eval-runs/<timestamp>/` with:
 
 **IMPORTANT:** Do not run the full eval suite without asking the user first. Running all evals takes several minutes and costs money. When you need to verify changes, run specific tests with `-f 'TestName'` or use `-s` for short mode. Only run the full suite when the user explicitly requests it.
 
+**Short mode does not exercise prompts with the agent** — it only validates code, setup, and test infrastructure. To run all evals in short mode, prefer `go test` over the shell script as it parallelises better:
+```bash
+go test -tags evals -short ./agent/evals/ -v -count=1
+```
+
 **Do NOT run OllamaLocal evals.** The OllamaLocal tests skip when Ollama isn't available, which makes them appear to pass. Only run the Anthropic evals (filter with `-f 'Anthropic'` if needed).
 
 **Evals are the source of truth for agent quality.** The agent system prompt and evals work together:
