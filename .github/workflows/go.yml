@@ -35,3 +35,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
+  evals-short:
+    runs-on: ubuntu-latest
+    needs: go-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: ./scripts/run-evals.sh --short --show-failures
