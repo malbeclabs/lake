@@ -25,6 +25,12 @@ const changelog: ChangelogEntry[] = [
     ],
   },
   {
+    date: 'February 1, 2026',
+    changes: [
+      { type: 'feature', description: 'Multi-environment support for querying devnet and testnet data' },
+    ],
+  },
+  {
     date: 'January 31, 2026',
     changes: [
       { type: 'fix', description: 'Version check always showing update available' },
