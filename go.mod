@@ -18,7 +18,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/joho/godotenv v1.5.1
 	github.com/jonboulle/clockwork v0.5.0
-	github.com/lmittmann/tint v1.1.2
+	github.com/lmittmann/tint v1.1.3
 	github.com/malbeclabs/doublezero v0.0.0-20260127003248-a7973ff42f73
 	github.com/mr-tron/base58 v1.2.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
