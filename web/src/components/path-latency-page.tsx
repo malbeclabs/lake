@@ -394,13 +394,13 @@ export function PathLatencyPage() {
             <thead>
               <tr>
                 {/* Top-left corner (empty) */}
-                <th className="bg-muted sticky -top-0.5 left-0 z-30 border border-border min-w-[48px]" />
+                <th className="relative bg-muted sticky top-0 left-0 z-30 min-w-[48px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]" />
 
                 {/* Column headers */}
                 {metros.map(metro => (
                   <th
                     key={`col-${metro.pk}`}
-                    className="bg-muted px-1 py-2 text-xs font-medium text-center sticky -top-0.5 z-20 border border-border min-w-[48px] max-w-[60px]"
+                    className="relative bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 min-w-[48px] max-w-[60px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]"
                     title={metro.name}
                   >
                     <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap inline-block">
@@ -416,7 +416,7 @@ export function PathLatencyPage() {
                 <tr key={`row-${fromMetro.pk}`}>
                   {/* Row header */}
                   <th
-                    className="bg-muted px-2 py-1 text-xs font-medium text-right sticky left-0 z-10 border border-border whitespace-nowrap"
+                    className="bg-muted px-2 py-1 text-xs font-medium text-right sticky left-0 z-10 whitespace-nowrap shadow-[inset_0_0_0_1px_hsl(var(--border))] [backface-visibility:hidden] [transform:translateZ(0)]"
                     title={fromMetro.name}
                   >
                     {fromMetro.code}
