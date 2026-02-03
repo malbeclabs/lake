@@ -1698,7 +1698,31 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// First, get all metros that have ISIS-enabled devices
+	// First, get metros that have at least one device with max_users > 0
+	// This filters out metros that are not user-facing (e.g., internal infrastructure)
+	validMetroPKs := make(map[string]bool)
+	chQuery := `
+		SELECT DISTINCT metro_pk
+		FROM dz_devices_current
+		WHERE metro_pk != '' AND max_users > 0
+	`
+	chRows, err := config.DB.Query(ctx, chQuery)
+	if err != nil {
+		log.Printf("Metro connectivity ClickHouse query error: %v", err)
+		response.Error = dberror.UserMessage(err)
+		writeJSON(w, response)
+		return
+	}
+	for chRows.Next() {
+		var metroPK string
+		if err := chRows.Scan(&metroPK); err != nil {
+			continue
+		}
+		validMetroPKs[metroPK] = true
+	}
+	chRows.Close()
+
+	// Get all metros that have ISIS-enabled devices
 	metroCypher := `
 		MATCH (m:Metro)<-[:LOCATED_IN]-(d:Device)
 		WHERE d.isis_system_id IS NOT NULL
@@ -1722,8 +1746,14 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 		code, _ := record.Get("code")
 		name, _ := record.Get("name")
 
+		pkStr := asString(pk)
+		// Skip metros that don't have any devices with max_users > 0
+		if !validMetroPKs[pkStr] {
+			continue
+		}
+
 		metro := MetroInfo{
-			PK:   asString(pk),
+			PK:   pkStr,
 			Code: asString(code),
 			Name: asString(name),
 		}
@@ -1776,6 +1806,14 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 		pathCount, _ := record.Get("pathCount")
 		maxBottleneckBw, _ := record.Get("maxBottleneckBw")
 
+		fromPKStr := asString(fromPK)
+		toPKStr := asString(toPK)
+
+		// Skip connections involving metros without max_users > 0 devices
+		if !validMetroPKs[fromPKStr] || !validMetroPKs[toPKStr] {
+			continue
+		}
+
 		// Convert bandwidth from bps to Gbps, handle sentinel value
 		bottleneckBwGbps := 0.0
 		bwBps := asFloat64(maxBottleneckBw)
@@ -1785,10 +1823,10 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 		// Add both directions (matrix is symmetric)
 		conn := MetroConnectivity{
-			FromMetroPK:      asString(fromPK),
+			FromMetroPK:      fromPKStr,
 			FromMetroCode:    asString(fromCode),
 			FromMetroName:    asString(fromName),
-			ToMetroPK:        asString(toPK),
+			ToMetroPK:        toPKStr,
 			ToMetroCode:      asString(toCode),
 			ToMetroName:      asString(toName),
 			PathCount:        int(asInt64(pathCount)),
@@ -1800,10 +1838,10 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 		// Add reverse direction
 		connReverse := MetroConnectivity{
-			FromMetroPK:      asString(toPK),
+			FromMetroPK:      toPKStr,
 			FromMetroCode:    asString(toCode),
 			FromMetroName:    asString(toName),
-			ToMetroPK:        asString(fromPK),
+			ToMetroPK:        fromPKStr,
 			ToMetroCode:      asString(fromCode),
 			ToMetroName:      asString(fromName),
 			PathCount:        int(asInt64(pathCount)),

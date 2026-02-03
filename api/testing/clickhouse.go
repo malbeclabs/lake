@@ -14,6 +14,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
+	chmigrations "github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/stretchr/testify/require"
 	tcch "github.com/testcontainers/testcontainers-go/modules/clickhouse"
 )
@@ -226,6 +227,52 @@ func createClickHouseConn(ctx context.Context, addr, database, username, passwor
 	}
 
 	return conn, nil
+}
+
+// SetupTestClickHouseWithMigrations sets up a test database with full schema migrations.
+// Use this when your test needs the actual table schemas from the indexer migrations.
+func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
+	ctx := t.Context()
+
+	// Create a unique database for this test
+	randomSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
+	databaseName := fmt.Sprintf("test_%s", randomSuffix)
+
+	// Create admin connection
+	adminConn, err := createClickHouseConn(ctx, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password)
+	require.NoError(t, err, "failed to create ClickHouse admin connection")
+
+	// Create test database
+	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
+	require.NoError(t, err, "failed to create test database")
+
+	// Run migrations
+	err = chmigrations.RunMigrations(ctx, slog.Default(), chmigrations.MigrationConfig{
+		Addr:     db.addr,
+		Database: databaseName,
+		Username: db.cfg.Username,
+		Password: db.cfg.Password,
+	})
+	require.NoError(t, err, "failed to run ClickHouse migrations")
+
+	// Create test connection
+	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
+	require.NoError(t, err, "failed to create ClickHouse test connection")
+
+	// Save old config and swap
+	oldDB := config.DB
+	oldDatabase := config.Database()
+	config.DB = testConn
+	config.SetDatabase(databaseName)
+
+	t.Cleanup(func() {
+		testConn.Close()
+		// Drop the test database
+		_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+		adminConn.Close()
+		config.DB = oldDB
+		config.SetDatabase(oldDatabase)
+	})
 }
 
 // SetupTestClickHouseWithSecure sets up a test database with TLS support.
