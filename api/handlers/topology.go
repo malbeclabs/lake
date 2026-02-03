@@ -45,27 +45,27 @@ type Device struct {
 }
 
 type Link struct {
-	PK              string  `json:"pk"`
-	Code            string  `json:"code"`
-	Status          string  `json:"status"`
-	LinkType        string  `json:"link_type"`
-	BandwidthBps    int64   `json:"bandwidth_bps"`
-	SideAPK         string  `json:"side_a_pk"`
-	SideACode       string  `json:"side_a_code"`
-	SideAIfaceName  string  `json:"side_a_iface_name"`
-	SideAIP         string  `json:"side_a_ip"`
-	SideZPK         string  `json:"side_z_pk"`
-	SideZCode       string  `json:"side_z_code"`
-	SideZIfaceName  string  `json:"side_z_iface_name"`
-	SideZIP         string  `json:"side_z_ip"`
-	ContributorPK   string  `json:"contributor_pk"`
-	ContributorCode string  `json:"contributor_code"`
-	LatencyUs       float64 `json:"latency_us"`
-	JitterUs        float64 `json:"jitter_us"`
-	LatencyAtoZUs   float64 `json:"latency_a_to_z_us"`
-	JitterAtoZUs    float64 `json:"jitter_a_to_z_us"`
-	LatencyZtoAUs   float64 `json:"latency_z_to_a_us"`
-	JitterZtoAUs    float64 `json:"jitter_z_to_a_us"`
+	PK                  string  `json:"pk"`
+	Code                string  `json:"code"`
+	Status              string  `json:"status"`
+	LinkType            string  `json:"link_type"`
+	BandwidthBps        int64   `json:"bandwidth_bps"`
+	SideAPK             string  `json:"side_a_pk"`
+	SideACode           string  `json:"side_a_code"`
+	SideAIfaceName      string  `json:"side_a_iface_name"`
+	SideAIP             string  `json:"side_a_ip"`
+	SideZPK             string  `json:"side_z_pk"`
+	SideZCode           string  `json:"side_z_code"`
+	SideZIfaceName      string  `json:"side_z_iface_name"`
+	SideZIP             string  `json:"side_z_ip"`
+	ContributorPK       string  `json:"contributor_pk"`
+	ContributorCode     string  `json:"contributor_code"`
+	LatencyUs           float64 `json:"latency_us"`
+	JitterUs            float64 `json:"jitter_us"`
+	LatencyAtoZUs       float64 `json:"latency_a_to_z_us"`
+	JitterAtoZUs        float64 `json:"jitter_a_to_z_us"`
+	LatencyZtoAUs       float64 `json:"latency_z_to_a_us"`
+	JitterZtoAUs        float64 `json:"jitter_z_to_a_us"`
 	LossPercent         float64 `json:"loss_percent"`
 	SampleCount         uint64  `json:"sample_count"`
 	InBps               float64 `json:"in_bps"`

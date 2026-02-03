@@ -432,11 +432,15 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		missingIP, missingIface, missingDirection := detectMissingLinkColumns(err)
-		if missingIP || missingIface || missingDirection {
-			fallbackSelects := linkDetailSelectsNoIP
-			if missingIface {
+		missingIP, missingIface, missingDirection, missingLatency := detectMissingLinkColumns(err)
+		if missingIP || missingIface || missingDirection || missingLatency {
+			var fallbackSelects linkDetailSelects
+			if missingLatency {
+				fallbackSelects = linkDetailSelectsNoLatency
+			} else if missingIface {
 				fallbackSelects = linkDetailSelectsNoIfaceOrIP
+			} else {
+				fallbackSelects = linkDetailSelectsNoIP
 			}
 			log.Printf("Link query missing columns (pk=%s). Retrying with fallback.", pk)
 			start = time.Now()
@@ -498,31 +502,48 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 }
 
 type linkDetailSelects struct {
-	SideAIfaceName string
-	SideAIP        string
-	SideZIfaceName string
-	SideZIP        string
+	SideAIfaceName      string
+	SideAIP             string
+	SideZIfaceName      string
+	SideZIP             string
+	CommittedRttNs      string
+	ISISDelayOverrideNs string
 }
 
 var linkDetailSelectsDefault = linkDetailSelects{
-	SideAIfaceName: "COALESCE(l.side_a_iface_name, '')",
-	SideAIP:        "COALESCE(l.side_a_ip, '')",
-	SideZIfaceName: "COALESCE(l.side_z_iface_name, '')",
-	SideZIP:        "COALESCE(l.side_z_ip, '')",
+	SideAIfaceName:      "COALESCE(l.side_a_iface_name, '')",
+	SideAIP:             "COALESCE(l.side_a_ip, '')",
+	SideZIfaceName:      "COALESCE(l.side_z_iface_name, '')",
+	SideZIP:             "COALESCE(l.side_z_ip, '')",
+	CommittedRttNs:      "COALESCE(l.committed_rtt_ns, 0)",
+	ISISDelayOverrideNs: "COALESCE(l.isis_delay_override_ns, 0)",
 }
 
 var linkDetailSelectsNoIP = linkDetailSelects{
-	SideAIfaceName: "COALESCE(l.side_a_iface_name, '')",
-	SideAIP:        "''",
-	SideZIfaceName: "COALESCE(l.side_z_iface_name, '')",
-	SideZIP:        "''",
+	SideAIfaceName:      "COALESCE(l.side_a_iface_name, '')",
+	SideAIP:             "''",
+	SideZIfaceName:      "COALESCE(l.side_z_iface_name, '')",
+	SideZIP:             "''",
+	CommittedRttNs:      "COALESCE(l.committed_rtt_ns, 0)",
+	ISISDelayOverrideNs: "COALESCE(l.isis_delay_override_ns, 0)",
 }
 
 var linkDetailSelectsNoIfaceOrIP = linkDetailSelects{
-	SideAIfaceName: "''",
-	SideAIP:        "''",
-	SideZIfaceName: "''",
-	SideZIP:        "''",
+	SideAIfaceName:      "''",
+	SideAIP:             "''",
+	SideZIfaceName:      "''",
+	SideZIP:             "''",
+	CommittedRttNs:      "COALESCE(l.committed_rtt_ns, 0)",
+	ISISDelayOverrideNs: "COALESCE(l.isis_delay_override_ns, 0)",
+}
+
+var linkDetailSelectsNoLatency = linkDetailSelects{
+	SideAIfaceName:      "COALESCE(l.side_a_iface_name, '')",
+	SideAIP:             "COALESCE(l.side_a_ip, '')",
+	SideZIfaceName:      "COALESCE(l.side_z_iface_name, '')",
+	SideZIP:             "COALESCE(l.side_z_ip, '')",
+	CommittedRttNs:      "toInt64(0)",
+	ISISDelayOverrideNs: "toInt64(0)",
 }
 
 func linkDetailQuery(selects linkDetailSelects, includeDirectional bool) string {
@@ -639,8 +660,8 @@ func linkDetailQuery(selects linkDetailSelects, includeDirectional bool) string 
 			COALESCE(ls.loss_percent, 0) as loss_percent,
 			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
 			COALESCE(pr.peak_out_bps, 0) as peak_out_bps,
-			COALESCE(l.committed_rtt_ns, 0) as committed_rtt_ns,
-			COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns
+			%s as committed_rtt_ns,
+			%s as isis_delay_override_ns
 		FROM dz_links_current l
 		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
@@ -659,20 +680,23 @@ func linkDetailQuery(selects linkDetailSelects, includeDirectional bool) string 
 		selects.SideZIfaceName,
 		selects.SideZIP,
 		latencyPerDirectionFields,
+		selects.CommittedRttNs,
+		selects.ISISDelayOverrideNs,
 		latencyPerDirectionJoin,
 	)
 }
 
-func detectMissingLinkColumns(err error) (missingIP bool, missingIface bool, missingDirection bool) {
+func detectMissingLinkColumns(err error) (missingIP bool, missingIface bool, missingDirection bool, missingLatency bool) {
 	if err == nil {
-		return false, false, false
+		return false, false, false, false
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "Unknown") && !strings.Contains(msg, "Missing") && !strings.Contains(msg, "identifier") {
-		return false, false, false
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "unknown") && !strings.Contains(msg, "missing") && !strings.Contains(msg, "identifier") {
+		return false, false, false, false
 	}
 	missingIP = strings.Contains(msg, "side_a_ip") || strings.Contains(msg, "side_z_ip")
 	missingIface = strings.Contains(msg, "side_a_iface_name") || strings.Contains(msg, "side_z_iface_name")
 	missingDirection = strings.Contains(msg, "direction")
-	return missingIP, missingIface, missingDirection
+	missingLatency = strings.Contains(msg, "committed_rtt_ns") || strings.Contains(msg, "isis_delay_override_ns")
+	return missingIP, missingIface, missingDirection, missingLatency
 }
