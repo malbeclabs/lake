@@ -314,7 +314,7 @@ func (s *Store) ShortestPath(ctx context.Context, fromPK, toPK string, weightBy 
 				CASE WHEN n:Device THEN {type: 'device', pk: n.pk, code: n.code, status: n.status}
 				     WHEN n:Link THEN {type: 'link', pk: n.pk, code: n.code, status: n.status,
 				                       rtt_ns: n.committed_rtt_ns, bandwidth: n.bandwidth,
-				                       is_drained: n.isis_delay_override_ns > 0}
+				                       is_drained: n.status IN ['soft-drained', 'hard-drained']}
 				END
 			] AS segments
 		`
@@ -327,7 +327,7 @@ func (s *Store) ShortestPath(ctx context.Context, fromPK, toPK string, weightBy 
 				CASE WHEN n:Device THEN {type: 'device', pk: n.pk, code: n.code, status: n.status}
 				     WHEN n:Link THEN {type: 'link', pk: n.pk, code: n.code, status: n.status,
 				                       rtt_ns: n.committed_rtt_ns, bandwidth: n.bandwidth,
-				                       is_drained: n.isis_delay_override_ns > 0}
+				                       is_drained: n.status IN ['soft-drained', 'hard-drained']}
 				END
 			] AS segments
 		`
@@ -339,7 +339,7 @@ func (s *Store) ShortestPath(ctx context.Context, fromPK, toPK string, weightBy 
 				CASE WHEN n:Device THEN {type: 'device', pk: n.pk, code: n.code, status: n.status}
 				     WHEN n:Link THEN {type: 'link', pk: n.pk, code: n.code, status: n.status,
 				                       rtt_ns: n.committed_rtt_ns, bandwidth: n.bandwidth,
-				                       is_drained: n.isis_delay_override_ns > 0}
+				                       is_drained: n.status IN ['soft-drained', 'hard-drained']}
 				END
 			] AS segments
 		`
@@ -396,7 +396,7 @@ func (s *Store) ExplainRoute(ctx context.Context, fromPK, toPK string) ([]RouteH
 				rtt_ns: n.committed_rtt_ns,
 				jitter_ns: n.committed_jitter_ns,
 				bandwidth: n.bandwidth,
-				is_drained: n.isis_delay_override_ns > 0
+				is_drained: n.status IN ['soft-drained', 'hard-drained']
 			}
 			END
 		] AS route
@@ -458,7 +458,7 @@ func (s *Store) NetworkAroundDevice(ctx context.Context, devicePK string, hops i
 			CASE WHEN node:Device THEN node.device_type ELSE null END AS device_type,
 			CASE WHEN node:Link THEN node.committed_rtt_ns ELSE null END AS rtt_ns,
 			CASE WHEN node:Link THEN node.bandwidth ELSE null END AS bandwidth,
-			CASE WHEN node:Link THEN node.isis_delay_override_ns > 0 ELSE null END AS is_drained,
+			CASE WHEN node:Link THEN node.status IN ['soft-drained', 'hard-drained'] ELSE null END AS is_drained,
 			CASE WHEN node:Link THEN
 				[(node)-[:CONNECTS]->(d:Device) | d.pk]
 			ELSE null END AS connected_devices
