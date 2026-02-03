@@ -381,6 +381,15 @@ export function useChatStream(sessionId: string | undefined) {
               }
             })
           },
+          onSynthesizing: () => {
+            setStreamState(prev => ({
+              ...prev,
+              processingSteps: [...prev.processingSteps, {
+                type: 'synthesizing' as const,
+                id: 'synthesizing',
+              }],
+            }))
+          },
           onWorkflowStarted: (data) => {
             setStreamState(prev => ({ ...prev, workflowId: data.workflow_id }))
             // Update streaming message with workflow ID
@@ -578,6 +587,14 @@ export function useWorkflowReconnect(
                 status: data.error ? 'error' : 'completed',
                 content: data.content,
                 error: data.error || undefined,
+              }],
+            })
+          },
+          onSynthesizing: () => {
+            onStreamUpdate({
+              processingSteps: [{
+                type: 'synthesizing',
+                id: 'synthesizing',
               }],
             })
           },

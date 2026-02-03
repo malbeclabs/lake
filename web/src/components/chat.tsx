@@ -328,9 +328,11 @@ function ProcessingTimeline({
   }
 
   // Build summary text
+  const isSynthesizing = steps.some(s => s.type === 'synthesizing')
   const getSummary = () => {
     if (isStreaming && steps.length === 0) return 'Processing...'
     if (isStreaming) {
+      if (isSynthesizing) return 'Synthesizing answer...'
       if (totalQueries === 0 && thinkingSteps.length > 0) return 'Thinking...'
       if (totalQueries > 0) return `Running ${totalQueries} ${totalQueries === 1 ? 'query' : 'queries'}...`
       if (docsSteps.length > 0) return 'Reading documentation...'
@@ -418,6 +420,9 @@ function ProcessingTimeline({
                 </div>
               )
             }
+
+            // Synthesizing step is shown in the summary, not as an individual step
+            if (step.type === 'synthesizing') return null
 
             // Query step (sql_query or cypher_query) - find its index among query steps for highlighting
             const queryIndex = querySteps.findIndex(q => q === step)

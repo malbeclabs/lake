@@ -253,6 +253,7 @@ func (p *Workflow) RunWithProgress(ctx context.Context, userQuestion string, his
 
 	// Synthesis phase: generate the final user-facing answer
 	if len(state.ExecutedQueries) > 0 {
+		notify(workflow.StageSynthesizing)
 		// Data analysis: run synthesis to produce clean answer from query results
 		state.FinalAnswer, err = p.synthesizeAnswer(ctx, toolLLM, systemPrompt, messages, state, userQuestion)
 		if err != nil {
@@ -1034,6 +1035,7 @@ func (p *Workflow) RunWithCheckpoint(
 
 	// Synthesis phase: generate the final user-facing answer
 	if len(state.ExecutedQueries) > 0 {
+		notify(workflow.StageSynthesizing)
 		// Data analysis: run synthesis to produce clean answer from query results
 		state.FinalAnswer, err = p.synthesizeAnswer(ctx, toolLLM, systemPrompt, messages, state, userQuestion)
 		if err != nil {
@@ -1283,6 +1285,7 @@ func (p *Workflow) ResumeFromCheckpoint(
 
 	// Synthesis phase: generate the final user-facing answer
 	if len(state.ExecutedQueries) > 0 {
+		notify(workflow.StageSynthesizing)
 		// Data analysis: run synthesis to produce clean answer from query results
 		state.FinalAnswer, err = p.synthesizeAnswer(ctx, toolLLM, systemPrompt, messages, state, userQuestion)
 		if err != nil {

@@ -592,7 +592,12 @@ export interface ReadDocsStep {
   error?: string
 }
 
-export type ProcessingStep = ThinkingStep | SqlQueryStep | CypherQueryStep | ReadDocsStep
+export interface SynthesizingStep {
+  type: 'synthesizing'
+  id: string
+}
+
+export type ProcessingStep = ThinkingStep | SqlQueryStep | CypherQueryStep | ReadDocsStep | SynthesizingStep
 
 export interface ChatWorkflowData {
   dataQuestions: DataQuestion[]
@@ -668,6 +673,7 @@ export interface ChatStreamCallbacks {
   onReadDocsDone?: (data: { id: string; page: string; content: string; error: string }) => void
   // Workflow events
   onWorkflowStarted?: (data: { workflow_id: string }) => void
+  onSynthesizing?: () => void
   // Completion events
   onDone: (response: ChatResponse) => void
   onError: (error: string) => void
@@ -817,6 +823,9 @@ export async function sendChatMessageStream(
                 break
               case 'workflow_started':
                 callbacks.onWorkflowStarted?.(parsed)
+                break
+              case 'synthesizing':
+                callbacks.onSynthesizing?.()
                 break
               case 'status':
               case 'heartbeat':
@@ -2284,6 +2293,7 @@ export interface WorkflowReconnectCallbacks {
   onCypherDone?: (data: { id: string; question: string; cypher: string; rows: number; error: string }) => void
   // ReadDocs events
   onReadDocsDone?: (data: { id: string; page: string; content: string; error: string }) => void
+  onSynthesizing?: () => void
   onDone: (response: ChatResponse) => void
   onError: (error: string) => void
   onStatus?: (data: { status: string; iteration: number }) => void
@@ -2347,6 +2357,9 @@ export async function reconnectToWorkflow(
             // ReadDocs events
             case 'read_docs_done':
               callbacks.onReadDocsDone?.(parsed)
+              break
+            case 'synthesizing':
+              callbacks.onSynthesizing?.()
               break
             case 'done':
               callbacks.onDone(parsed)

@@ -611,6 +611,12 @@ func (m *WorkflowManager) runWorkflow(
 				},
 			})
 
+		case workflow.StageSynthesizing:
+			rw.broadcast(WorkflowEvent{
+				Type: "synthesizing",
+				Data: map[string]string{},
+			})
+
 		// Legacy stages (for backwards compatibility during transition)
 		case workflow.StageQueryStarted:
 			stepID := uuid.New().String()
@@ -1009,6 +1015,12 @@ func (m *WorkflowManager) resumeWorkflow(
 					"content": progress.DocsContent,
 					"error":   progress.DocsError,
 				},
+			})
+
+		case workflow.StageSynthesizing:
+			rw.broadcast(WorkflowEvent{
+				Type: "synthesizing",
+				Data: map[string]string{},
 			})
 
 		// Legacy stages (for backwards compatibility during transition)
