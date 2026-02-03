@@ -1237,24 +1237,46 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		return nil, fmt.Errorf("link rows iteration error: %w", err)
 	}
 
-	// Get stats for the configured time range, grouped by direction (A→Z vs Z→A)
-	// direction = 'A' means origin is side_a (A→Z), direction = 'Z' means origin is side_z (Z→A)
+	// Get stats for the configured time range, grouped by direction (A→Z vs Z→A).
+	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
+	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
+	lossBucketInterval := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d MINUTE)", min(bucketMinutes, 5))
+	timeFilterExpr := fmt.Sprintf("f.event_ts > now() - INTERVAL %d HOUR", totalHours)
 	historyQuery := `
+		WITH loss_sub AS (
+			SELECT
+				f.link_pk,
+				` + bucketInterval + ` as display_bucket,
+				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
+				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
+			FROM fact_dz_device_link_latency f
+			JOIN dz_links_current l ON f.link_pk = l.pk
+			WHERE ` + timeFilterExpr + `
+			GROUP BY f.link_pk, display_bucket, direction, ` + lossBucketInterval + `
+		),
+		loss_max AS (
+			SELECT link_pk, display_bucket, direction, max(loss_pct) as loss_pct
+			FROM loss_sub
+			GROUP BY link_pk, display_bucket, direction
+		)
 		SELECT
 			f.link_pk,
 			` + bucketInterval + ` as bucket,
 			if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 			avg(f.rtt_us) as avg_latency,
-			countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct,
+			max(lm.loss_pct) as loss_pct,
 			count(*) as samples
 		FROM fact_dz_device_link_latency f
 		JOIN dz_links_current l ON f.link_pk = l.pk
-		WHERE f.event_ts > now() - INTERVAL ? HOUR
+		LEFT JOIN loss_max lm ON f.link_pk = lm.link_pk
+			AND ` + bucketInterval + ` = lm.display_bucket
+			AND if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') = lm.direction
+		WHERE ` + timeFilterExpr + `
 		GROUP BY f.link_pk, bucket, direction
 		ORDER BY f.link_pk, bucket, direction
 	`
 
-	historyRows, err := config.DB.Query(ctx, historyQuery, totalHours)
+	historyRows, err := config.DB.Query(ctx, historyQuery)
 	if err != nil {
 		return nil, fmt.Errorf("link history stats query error: %w", err)
 	}
@@ -2707,20 +2729,40 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		return nil, nil // Link not found
 	}
 
-	// Get latency/loss stats per direction
+	// Get latency/loss stats per direction.
+	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
+	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
+	singleLossBucket := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE)", min(bucketMinutes, 5))
+	singleTimeFilter := fmt.Sprintf("event_ts > now() - INTERVAL %d HOUR", totalHours)
 	latencyQuery := `
+		WITH loss_sub AS (
+			SELECT
+				` + bucketInterval + ` as display_bucket,
+				if(origin_device_pk = ?, 'A', 'Z') as direction,
+				countIf(loss OR rtt_us = 0) * 100.0 / count(*) as loss_pct
+			FROM fact_dz_device_link_latency
+			WHERE link_pk = ? AND ` + singleTimeFilter + `
+			GROUP BY display_bucket, direction, ` + singleLossBucket + `
+		),
+		loss_max AS (
+			SELECT display_bucket, direction, max(loss_pct) as loss_pct
+			FROM loss_sub
+			GROUP BY display_bucket, direction
+		)
 		SELECT
 			` + bucketInterval + ` as bucket,
 			if(origin_device_pk = ?, 'A', 'Z') as direction,
 			avg(rtt_us) as avg_latency,
-			countIf(loss OR rtt_us = 0) * 100.0 / count(*) as loss_pct,
+			max(lm.loss_pct) as loss_pct,
 			count(*) as samples
-		FROM fact_dz_device_link_latency
-		WHERE link_pk = ? AND event_ts > now() - INTERVAL ? HOUR
+		FROM fact_dz_device_link_latency f
+		LEFT JOIN loss_max lm ON ` + bucketInterval + ` = lm.display_bucket
+			AND if(origin_device_pk = ?, 'A', 'Z') = lm.direction
+		WHERE link_pk = ? AND ` + singleTimeFilter + `
 		GROUP BY bucket, direction
 		ORDER BY bucket, direction
 	`
-	latencyRows, err := config.DB.Query(ctx, latencyQuery, sideAPK, linkPK, totalHours)
+	latencyRows, err := config.DB.Query(ctx, latencyQuery, sideAPK, linkPK, sideAPK, sideAPK, linkPK)
 	if err != nil {
 		return nil, fmt.Errorf("latency query error: %w", err)
 	}

@@ -651,16 +651,33 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Get latency stats for a link with per-direction breakdown
-	// Build query parts separately to avoid fmt.Sprintf interpreting % in timeFormat
-	intervalExpr := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d SECOND)", bucketSeconds)
+	// Get latency stats for a link with per-direction breakdown.
+	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
+	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
+	displayBucketExpr := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d SECOND)", bucketSeconds)
+	lossBucketExpr := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d SECOND)", min(bucketSeconds, 300))
 	query := `
+		WITH loss_sub AS (
+			SELECT
+				` + displayBucketExpr + ` as display_bucket,
+				countIf(f.loss) * 100.0 / count(*) as loss_pct
+			FROM fact_dz_device_link_latency f
+			JOIN dz_links_current l ON f.link_pk = l.pk
+			WHERE ` + timeFilter + `
+				AND f.link_pk = $1
+			GROUP BY display_bucket, ` + lossBucketExpr + `
+		),
+		loss_max AS (
+			SELECT display_bucket, max(loss_pct) as loss_pct
+			FROM loss_sub
+			GROUP BY display_bucket
+		)
 		SELECT
-			formatDateTime(` + intervalExpr + `, '` + timeFormat + `') as time_bucket,
+			formatDateTime(` + displayBucketExpr + `, '` + timeFormat + `') as time_bucket,
 			avg(f.rtt_us) / 1000.0 as avg_rtt_ms,
 			quantile(0.95)(f.rtt_us) / 1000.0 as p95_rtt_ms,
 			avg(abs(f.ipdv_us)) / 1000.0 as avg_jitter_ms,
-			countIf(f.loss) * 100.0 / count(*) as loss_pct,
+			COALESCE(max(lm.loss_pct), 0) as loss_pct,
 			avgIf(f.rtt_us, f.origin_device_pk = l.side_a_pk) / 1000.0 as avg_rtt_a_to_z_ms,
 			quantileIf(0.95)(f.rtt_us, f.origin_device_pk = l.side_a_pk) / 1000.0 as p95_rtt_a_to_z_ms,
 			avgIf(f.rtt_us, f.origin_device_pk = l.side_z_pk) / 1000.0 as avg_rtt_z_to_a_ms,
@@ -669,10 +686,11 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			avgIf(abs(f.ipdv_us), f.origin_device_pk = l.side_z_pk) / 1000.0 as jitter_z_to_a_ms
 		FROM fact_dz_device_link_latency f
 		JOIN dz_links_current l ON f.link_pk = l.pk
+		LEFT JOIN loss_max lm ON lm.display_bucket = ` + displayBucketExpr + `
 		WHERE ` + timeFilter + `
 			AND f.link_pk = $1
-		GROUP BY ` + intervalExpr + `
-		ORDER BY ` + intervalExpr
+		GROUP BY ` + displayBucketExpr + `
+		ORDER BY ` + displayBucketExpr
 
 	rows, err := config.DB.Query(ctx, query, pk)
 	if err != nil {
