@@ -195,21 +195,6 @@ export function PathLatencyPage() {
     staleTime: 60000,
   })
 
-  // Fetch path detail when a cell is selected
-  const { data: pathDetailData, isLoading: pathDetailLoading } = useQuery({
-    queryKey: ['metro-path-detail', selectedCell?.from, selectedCell?.to, optimizeMode],
-    queryFn: () => {
-      if (!selectedCell || !connectivityData) return Promise.resolve(null)
-      // Find the metro codes for the selected PKs
-      const fromMetro = connectivityData.metros.find(m => m.pk === selectedCell.from)
-      const toMetro = connectivityData.metros.find(m => m.pk === selectedCell.to)
-      if (!fromMetro || !toMetro) return Promise.resolve(null)
-      return fetchMetroPathDetail(fromMetro.code, toMetro.code, optimizeMode)
-    },
-    staleTime: 60000,
-    enabled: selectedCell !== null,
-  })
-
   // Build path latency lookup map (by metro PKs)
   const pathLatencyMap = useMemo(() => {
     if (!pathLatencyData) return new Map<string, MetroPathLatency>()
@@ -225,6 +210,17 @@ export function PathLatencyPage() {
     if (!selectedCell) return null
     return pathLatencyMap.get(`${selectedCell.from}:${selectedCell.to}`) ?? null
   }, [selectedCell, pathLatencyMap])
+
+  // Fetch path detail when a cell is selected
+  const { data: pathDetailData, isLoading: pathDetailLoading } = useQuery({
+    queryKey: ['metro-path-detail', selectedPathLatency?.fromMetroCode, selectedPathLatency?.toMetroCode, optimizeMode],
+    queryFn: () => {
+      if (!selectedPathLatency) return Promise.resolve(null)
+      return fetchMetroPathDetail(selectedPathLatency.fromMetroCode, selectedPathLatency.toMetroCode, optimizeMode)
+    },
+    staleTime: 60000,
+    enabled: selectedPathLatency !== null,
+  })
 
   // Export to CSV
   const handleExport = () => {
@@ -433,8 +429,8 @@ export function PathLatencyPage() {
           {selectedPathLatency && selectedCell && (
             <div className="w-80 flex-shrink-0">
               <PathLatencyDetail
-                fromCode={connectivityData.metros.find(m => m.pk === selectedCell.from)?.code || ''}
-                toCode={connectivityData.metros.find(m => m.pk === selectedCell.to)?.code || ''}
+                fromCode={selectedPathLatency.fromMetroCode}
+                toCode={selectedPathLatency.toMetroCode}
                 pathLatency={selectedPathLatency}
                 pathDetail={pathDetailData ?? null}
                 isLoadingDetail={pathDetailLoading}
