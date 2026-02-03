@@ -399,13 +399,13 @@ export function PathLatencyPage() {
               }}
             >
               {/* Top-left corner (empty) */}
-              <div className="bg-background sticky top-0 left-0 z-20" />
+              <div className="bg-muted sticky top-0 left-0 z-30" />
 
               {/* Column headers */}
               {metros.map(metro => (
                 <div
                   key={`col-${metro.pk}`}
-                  className="bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-10 flex items-end justify-center"
+                  className="bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 flex items-end justify-center"
                   title={metro.name}
                 >
                   <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap">
