@@ -1060,23 +1060,19 @@ export function Chat({ messages, isPending, processingSteps, streamError, onSend
             })()}
             {/* Stream error display */}
             {streamError && !isPending && (
-              <div className="px-1 mt-3">
-                <div className="flex items-start gap-3 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                  <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-red-600 dark:text-red-400">{formatStreamError(streamError)}</p>
-                    {onRetry && (
-                      <button
-                        onClick={onRetry}
-                        disabled={isPending}
-                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        Retry
-                      </button>
-                    )}
-                  </div>
-                </div>
+              <div className="px-1 mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                <span>{formatStreamError(streamError)}</span>
+                {onRetry && (
+                  <button
+                    onClick={onRetry}
+                    disabled={isPending}
+                    className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Retry</span>
+                  </button>
+                )}
               </div>
             )}
             <div ref={messagesEndRef} />
