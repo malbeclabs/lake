@@ -1477,6 +1477,8 @@ export interface TopologyLink {
   sample_count: number
   in_bps: number
   out_bps: number
+  committed_rtt_ns: number
+  isis_delay_override_ns: number
 }
 
 export interface TopologyValidator {
@@ -2518,6 +2520,8 @@ export async function fetchLinks(limit = 100, offset = 0): Promise<PaginatedResp
 export interface LinkDetail extends Link {
   peak_in_bps: number
   peak_out_bps: number
+  committed_rtt_ns: number
+  isis_delay_override_ns: number
 }
 
 export async function fetchLink(pk: string): Promise<LinkDetail> {

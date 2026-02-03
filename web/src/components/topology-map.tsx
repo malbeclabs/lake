@@ -155,6 +155,8 @@ interface HoveredLinkInfo {
   contributorPk: string
   contributorCode: string
   sampleCount: number
+  committedRttNs: number
+  isisDelayOverrideNs: number
   health?: {
     status: string
     committedRttNs: number
@@ -1882,6 +1884,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       contributorPk: link.contributor_pk,
       contributorCode: link.contributor_code,
       sampleCount: link.sample_count ?? 0,
+      committedRttNs: link.committed_rtt_ns,
+      isisDelayOverrideNs: link.isis_delay_override_ns,
       health: healthInfo ? {
         status: healthInfo.status,
         committedRttNs: healthInfo.committedRttNs,
@@ -2368,6 +2372,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           contributorPk: '',
           contributorCode: '',
           sampleCount: 0,
+          committedRttNs: 0,
+          isisDelayOverrideNs: 0,
           isInterMetro: true,
           linkCount: props.linkCount || 0,
           avgLatencyUs: props.avgLatencyUs || 0,

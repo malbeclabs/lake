@@ -36,6 +36,8 @@ export interface LinkInfoData {
   lossPercent: number
   peakInBps?: number
   peakOutBps?: number
+  committedRttNs?: number
+  isisDelayOverrideNs?: number
 }
 
 interface LinkInfoContentProps {
@@ -59,6 +61,13 @@ function formatBps(bps: number): string {
 
 function formatLatencyUs(us: number): string {
   if (us === 0) return '—'
+  if (us >= 1000) return `${(us / 1000).toFixed(2)} ms`
+  return `${us.toFixed(0)} µs`
+}
+
+function formatLatencyNs(ns: number): string {
+  if (ns === 0) return '—'
+  const us = ns / 1000
   if (us >= 1000) return `${(us / 1000).toFixed(2)} ms`
   return `${us.toFixed(0)} µs`
 }
@@ -134,6 +143,25 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             )}
           </div>
         </div>
+
+        {/* Committed latency */}
+        {link.committedRttNs !== undefined && (
+          <div className="text-center p-2 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium tabular-nums tracking-tight">
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? (
+                <div>
+                  <div className="line-through text-muted-foreground text-sm">{formatLatencyNs(link.committedRttNs)}</div>
+                  <div>{formatLatencyNs(link.isisDelayOverrideNs)}</div>
+                </div>
+              ) : (
+                formatLatencyNs(link.committedRttNs)
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Override Latency' : 'Committed Latency'}
+            </div>
+          </div>
+        )}
 
         {/* Combined latency (average of both directions) - shown when no directional data */}
         {!hasDirectionalData && (
@@ -299,6 +327,23 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             <div className="text-center p-3 bg-muted/30 rounded-lg">
               <div className="text-base font-medium tabular-nums">{formatBps(link.peakOutBps)}</div>
               <div className="text-xs text-muted-foreground">Peak Out (1h)</div>
+            </div>
+          )}
+          {link.committedRttNs !== undefined && (
+            <div className="text-center p-3 bg-muted/30 rounded-lg">
+              <div className="text-base font-medium tabular-nums">
+                {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? (
+                  <div>
+                    <div className="line-through text-muted-foreground">{formatLatencyNs(link.committedRttNs)}</div>
+                    <div>{formatLatencyNs(link.isisDelayOverrideNs)}</div>
+                  </div>
+                ) : (
+                  formatLatencyNs(link.committedRttNs)
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Override Latency' : 'Committed Latency'}
+              </div>
             </div>
           )}
           {!hasDirectionalData && (

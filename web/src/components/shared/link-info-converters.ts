@@ -36,6 +36,8 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     lossPercent: link.loss_percent,
     peakInBps: link.peak_in_bps,
     peakOutBps: link.peak_out_bps,
+    committedRttNs: link.committed_rtt_ns,
+    isisDelayOverrideNs: link.isis_delay_override_ns,
   }
 }
 
@@ -66,6 +68,8 @@ export function topologyLinkToInfo(link: {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  committedRttNs: number
+  isisDelayOverrideNs: number
 }): LinkInfoData {
   return {
     pk: link.pk,
@@ -96,5 +100,7 @@ export function topologyLinkToInfo(link: {
     latencyZtoAUs: link.latencyZtoAUs,
     jitterZtoAUs: link.jitterZtoAUs,
     lossPercent: link.lossPercent,
+    committedRttNs: link.committedRttNs,
+    isisDelayOverrideNs: link.isisDelayOverrideNs,
   }
 }
