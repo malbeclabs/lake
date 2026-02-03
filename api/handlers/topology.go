@@ -66,10 +66,12 @@ type Link struct {
 	JitterAtoZUs    float64 `json:"jitter_a_to_z_us"`
 	LatencyZtoAUs   float64 `json:"latency_z_to_a_us"`
 	JitterZtoAUs    float64 `json:"jitter_z_to_a_us"`
-	LossPercent     float64 `json:"loss_percent"`
-	SampleCount     uint64  `json:"sample_count"`
-	InBps           float64 `json:"in_bps"`
-	OutBps          float64 `json:"out_bps"`
+	LossPercent         float64 `json:"loss_percent"`
+	SampleCount         uint64  `json:"sample_count"`
+	InBps               float64 `json:"in_bps"`
+	OutBps              float64 `json:"out_bps"`
+	CommittedRttNs      int64   `json:"committed_rtt_ns"`
+	ISISDelayOverrideNs int64   `json:"isis_delay_override_ns"`
 }
 
 type Validator struct {
@@ -214,7 +216,9 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 				COALESCE(lat.loss_percent, 0) as loss_percent,
 				COALESCE(lat.sample_count, 0) as sample_count,
 				COALESCE(traffic.in_bps, 0) as in_bps,
-				COALESCE(traffic.out_bps, 0) as out_bps
+				COALESCE(traffic.out_bps, 0) as out_bps,
+				COALESCE(l.committed_rtt_ns, 0) as committed_rtt_ns,
+				COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns
 			FROM dz_links_current l
 			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
@@ -267,7 +271,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 
 		for rows.Next() {
 			var l Link
-			if err := rows.Scan(&l.PK, &l.Code, &l.Status, &l.LinkType, &l.BandwidthBps, &l.SideAPK, &l.SideACode, &l.SideAIfaceName, &l.SideAIP, &l.SideZPK, &l.SideZCode, &l.SideZIfaceName, &l.SideZIP, &l.ContributorPK, &l.ContributorCode, &l.LatencyUs, &l.JitterUs, &l.LatencyAtoZUs, &l.JitterAtoZUs, &l.LatencyZtoAUs, &l.JitterZtoAUs, &l.LossPercent, &l.SampleCount, &l.InBps, &l.OutBps); err != nil {
+			if err := rows.Scan(&l.PK, &l.Code, &l.Status, &l.LinkType, &l.BandwidthBps, &l.SideAPK, &l.SideACode, &l.SideAIfaceName, &l.SideAIP, &l.SideZPK, &l.SideZCode, &l.SideZIfaceName, &l.SideZIP, &l.ContributorPK, &l.ContributorCode, &l.LatencyUs, &l.JitterUs, &l.LatencyAtoZUs, &l.JitterAtoZUs, &l.LatencyZtoAUs, &l.JitterZtoAUs, &l.LossPercent, &l.SampleCount, &l.InBps, &l.OutBps, &l.CommittedRttNs, &l.ISISDelayOverrideNs); err != nil {
 				return err
 			}
 			links = append(links, l)

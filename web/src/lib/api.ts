@@ -1477,6 +1477,8 @@ export interface TopologyLink {
   sample_count: number
   in_bps: number
   out_bps: number
+  committed_rtt_ns: number
+  isis_delay_override_ns: number
 }
 
 export interface TopologyValidator {

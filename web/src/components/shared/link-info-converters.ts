@@ -68,6 +68,8 @@ export function topologyLinkToInfo(link: {
   interfaceZIP: string
   contributorPk: string
   contributorCode: string
+  committedRttNs: number
+  isisDelayOverrideNs: number
 }): LinkInfoData {
   return {
     pk: link.pk,
@@ -98,5 +100,7 @@ export function topologyLinkToInfo(link: {
     latencyZtoAUs: link.latencyZtoAUs,
     jitterZtoAUs: link.jitterZtoAUs,
     lossPercent: link.lossPercent,
+    committedRttNs: link.committedRttNs,
+    isisDelayOverrideNs: link.isisDelayOverrideNs,
   }
 }

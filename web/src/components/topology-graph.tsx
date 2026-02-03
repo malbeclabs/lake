@@ -501,6 +501,8 @@ export function TopologyGraph({
         contributorPk: link.contributor_pk || '',
         contributorCode: link.contributor_code || '',
         sampleCount: link.sample_count ?? 0,
+        committedRttNs: link.committed_rtt_ns ?? 0,
+        isisDelayOverrideNs: link.isis_delay_override_ns ?? 0,
       })
     }
     return map

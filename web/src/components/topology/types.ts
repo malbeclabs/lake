@@ -26,6 +26,8 @@ export interface LinkInfo {
   contributorPk: string
   contributorCode: string
   sampleCount: number
+  committedRttNs: number
+  isisDelayOverrideNs: number
   health?: {
     status: string
     committedRttNs: number
