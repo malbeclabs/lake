@@ -2990,7 +2990,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   </>
                 ) : (
                   <>
-                    <div>Latency: <span className="text-foreground">{hoveredLink.sampleCount > 0 ? `${(hoveredLink.latencyUs / 1000).toFixed(2)} ms` : 'N/A'}</span></div>
+                    <div>Latency: <span className="text-foreground">{hoveredLink.latencyUs > 0 ? `${(hoveredLink.latencyUs / 1000).toFixed(2)} ms` : 'N/A'}</span></div>
                     <div>Bandwidth: <span className="text-foreground">{formatBandwidth(hoveredLink.bandwidthBps)}</span></div>
                   </>
                 )}
