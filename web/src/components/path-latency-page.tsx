@@ -394,13 +394,13 @@ export function PathLatencyPage() {
             <thead>
               <tr>
                 {/* Top-left corner (empty) */}
-                <th className="bg-muted sticky -top-px left-0 z-30 border border-border min-w-[48px]" />
+                <th className="bg-muted sticky -top-0.5 left-0 z-30 border border-border min-w-[48px]" />
 
                 {/* Column headers */}
                 {metros.map(metro => (
                   <th
                     key={`col-${metro.pk}`}
-                    className="bg-muted px-1 py-2 text-xs font-medium text-center sticky -top-px z-20 border border-border min-w-[48px] max-w-[60px]"
+                    className="bg-muted px-1 py-2 text-xs font-medium text-center sticky -top-0.5 z-20 border border-border min-w-[48px] max-w-[60px]"
                     title={metro.name}
                   >
                     <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap inline-block">
