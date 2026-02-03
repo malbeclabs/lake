@@ -387,9 +387,9 @@ export function PathLatencyPage() {
       </div>
 
       {/* Matrix grid */}
-      <div className="flex-1 overflow-auto px-6 pb-6">
-        <div className="flex gap-6">
-          {/* Matrix */}
+      <div className="flex-1 flex gap-6 px-6 pb-6 min-h-0">
+        {/* Scrollable table area */}
+        <div className="flex-1 overflow-auto min-w-0">
           <table className="border-separate border-spacing-0">
             <thead>
               <tr>
@@ -453,24 +453,26 @@ export function PathLatencyPage() {
               ))}
             </tbody>
           </table>
-
-          {/* Detail panel */}
-          {selectedPathLatency && selectedCell && (
-            <div className="w-80 flex-shrink-0">
-              <PathLatencyDetail
-                fromCode={selectedPathLatency.fromMetroCode}
-                toCode={selectedPathLatency.toMetroCode}
-                pathLatency={selectedPathLatency}
-                pathDetail={pathDetailData ?? null}
-                isLoadingDetail={pathDetailLoading}
-                onClose={() => setSelectedCell(null)}
-              />
-            </div>
-          )}
         </div>
 
-        {/* Legend */}
-        <div className="mt-6 flex items-center gap-6 text-xs text-muted-foreground">
+        {/* Detail panel */}
+        {selectedPathLatency && selectedCell && (
+          <div className="w-80 flex-shrink-0">
+            <PathLatencyDetail
+              fromCode={selectedPathLatency.fromMetroCode}
+              toCode={selectedPathLatency.toMetroCode}
+              pathLatency={selectedPathLatency}
+              pathDetail={pathDetailData ?? null}
+              isLoadingDetail={pathDetailLoading}
+              onClose={() => setSelectedCell(null)}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Legend */}
+      <div className="px-6 pb-6">
+        <div className="flex items-center gap-6 text-xs text-muted-foreground">
           <span className="font-medium">Legend (DZ Path vs Internet):</span>
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded bg-green-100 dark:bg-green-900/40 border border-green-200 dark:border-green-800" />
