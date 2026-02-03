@@ -11,7 +11,7 @@ import { useEnv } from '@/contexts/EnvContext'
 import { LoginModal } from '@/components/auth/LoginModal'
 import { formatNeo4jValue, isNeo4jValue } from '@/lib/neo4j-utils'
 
-// Format error message for display
+// Format error message for display (used for message.status === 'error')
 function formatErrorMessage(content: string): { message: string; isQuotaError: boolean; resetsAt?: Date } {
   try {
     const parsed = JSON.parse(content)
@@ -28,6 +28,44 @@ function formatErrorMessage(content: string): { message: string; isQuotaError: b
     // Not JSON, return as-is
   }
   return { message: content, isQuotaError: false }
+}
+
+// Format stream error into user-friendly message
+function formatStreamError(error: string): string {
+  const lower = error.toLowerCase()
+
+  // Authentication errors (invalid API key, etc.)
+  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('authentication_error') || lower.includes('invalid') && lower.includes('api-key')) {
+    return 'Unable to connect to AI service. Please try again later.'
+  }
+
+  // Rate limiting
+  if (lower.includes('429') || lower.includes('rate_limit') || lower.includes('too many requests')) {
+    return 'The AI service is busy. Please wait a moment and try again.'
+  }
+
+  // Overloaded
+  if (lower.includes('overloaded') || lower.includes('529')) {
+    return 'The AI service is temporarily overloaded. Please try again in a few minutes.'
+  }
+
+  // Server errors
+  if (lower.includes('500') || lower.includes('502') || lower.includes('503') || lower.includes('504') || lower.includes('internal server error')) {
+    return 'The AI service is experiencing issues. Please try again later.'
+  }
+
+  // Connection/network errors
+  if (lower.includes('connection') || lower.includes('network') || lower.includes('fetch') || lower.includes('timeout')) {
+    return 'Connection lost. Please check your network and try again.'
+  }
+
+  // Quota errors
+  if (lower.includes('quota') || lower.includes('limit exceeded')) {
+    return 'Daily question limit reached. Please try again tomorrow.'
+  }
+
+  // Default: show a generic message
+  return 'Something went wrong. Please try again.'
 }
 
 // Format reset time for display
@@ -1026,7 +1064,7 @@ export function Chat({ messages, isPending, processingSteps, streamError, onSend
                 <div className="flex items-start gap-3 px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-lg">
                   <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-red-600 dark:text-red-400">{streamError}</p>
+                    <p className="text-sm text-red-600 dark:text-red-400">{formatStreamError(streamError)}</p>
                     {onRetry && (
                       <button
                         onClick={onRetry}
