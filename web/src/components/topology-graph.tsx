@@ -3742,7 +3742,7 @@ export function TopologyGraph({
                 {hoveredEdge.contributorCode && (
                   <div>Contributor: <span className="text-foreground">{hoveredEdge.contributorCode}</span></div>
                 )}
-                <div>Latency: <span className="text-foreground">{hoveredEdge.latencyMs || (hoveredEdge.metric ? `${(hoveredEdge.metric / 1000).toFixed(2)}ms` : 'N/A')}</span></div>
+                <div>Latency: <span className="text-foreground">{hoveredEdge.latencyMs || 'N/A'}</span></div>
                 <div>Bandwidth: <span className="text-foreground">{hoveredEdge.bandwidth || 'N/A'}</span></div>
               </div>
             </div>
