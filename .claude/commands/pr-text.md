@@ -22,3 +22,5 @@ Then generate a PR title and description. Output as a markdown code block on its
 ```
 
 Follow the PR guidelines in CLAUDE.md for title format, body structure, and style.
+
+For Testing Verification: describe tests that were added/extended, or manual testing that was performed. Do NOT include CI checks (builds, linting, type checking). If no tests were added and no manual testing applies, say "N/A - <reason>" (e.g., "N/A - static content change").
