@@ -135,7 +135,7 @@ func TestGetStats_WithData(t *testing.T) {
 	assert.Equal(t, uint64(4), response.Links) // All links, not just activated
 	assert.Equal(t, uint64(2), response.Contributors)
 	assert.Equal(t, uint64(3), response.Metros)
-	assert.Equal(t, int64(13000000000), response.BandwidthBps) // All activated links (WAN + PNI)
+	assert.Equal(t, int64(13500000000), response.BandwidthBps) // All links (WAN + PNI)
 	assert.NotEmpty(t, response.FetchedAt)
 }
 
