@@ -1021,9 +1021,9 @@ function formatBandwidth(bps: number): string {
   if (bps >= 1e9) {
     return `${(bps / 1e9).toFixed(1)} Gbps`
   } else if (bps >= 1e6) {
-    return `${(bps / 1e6).toFixed(0)} Mbps`
+    return `${(bps / 1e6).toFixed(1)} Mbps`
   } else if (bps >= 1e3) {
-    return `${(bps / 1e3).toFixed(0)} Kbps`
+    return `${(bps / 1e3).toFixed(1)} Kbps`
   }
   return `${bps.toFixed(0)} bps`
 }

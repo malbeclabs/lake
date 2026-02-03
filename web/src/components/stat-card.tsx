@@ -64,11 +64,11 @@ function formatValue(
         return `${(gbps / 1000).toFixed(1)} Tbps`
       }
       if (gbps >= 1) {
-        return `${gbps.toFixed(0)} Gbps`
+        return `${gbps.toFixed(1)} Gbps`
       }
       // Less than 1 Gbps, show in Mbps
       const mbps = value / 1_000_000
-      return `${mbps.toFixed(0)} Mbps`
+      return `${mbps.toFixed(1)} Mbps`
     }
     case 'percent':
       return `${value.toFixed(1)}%`
