@@ -1863,13 +1863,13 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 // MetroPathLatency represents path-based latency between two metros
 type MetroPathLatency struct {
-	FromMetroPK       string  `json:"fromMetroPK"`
-	FromMetroCode     string  `json:"fromMetroCode"`
-	ToMetroPK         string  `json:"toMetroPK"`
-	ToMetroCode       string  `json:"toMetroCode"`
-	PathLatencyMs     float64 `json:"pathLatencyMs"`     // Sum of link metrics along path (in ms)
-	HopCount          int     `json:"hopCount"`          // Number of hops
-	BottleneckBwGbps  float64 `json:"bottleneckBwGbps"`  // Min bandwidth along path (Gbps)
+	FromMetroPK       string   `json:"fromMetroPK"`
+	FromMetroCode     string   `json:"fromMetroCode"`
+	ToMetroPK         string   `json:"toMetroPK"`
+	ToMetroCode       string   `json:"toMetroCode"`
+	PathLatencyMs     float64  `json:"pathLatencyMs"`     // Sum of link metrics along path (in ms)
+	HopCount          int      `json:"hopCount"`          // Number of hops
+	BottleneckBwGbps  float64  `json:"bottleneckBwGbps"`  // Min bandwidth along path (Gbps)
 	InternetLatencyMs float64  `json:"internetLatencyMs"` // Internet latency for comparison (0 if not available)
 	ImprovementPct    *float64 `json:"improvementPct"`    // Improvement vs internet (nil if no internet data)
 }
@@ -2072,6 +2072,9 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	rows, err := safeQueryRows(ctx, internetQuery)
 	if err != nil {
 		log.Printf("Metro path latency internet query error: %v", err)
+		response.Error = "failed to fetch internet latency data"
+		writeJSON(w, response)
+		return
 	}
 	if rows != nil {
 		defer rows.Close()
@@ -2288,7 +2291,7 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 
 	rows, err := safeQueryRows(ctx, internetQuery)
 	if err != nil {
-		log.Printf("Metro path latency internet query error: %v", err)
+		return nil, fmt.Errorf("internet latency query failed: %w", err)
 	}
 	if rows != nil {
 		defer rows.Close()
