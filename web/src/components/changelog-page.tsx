@@ -12,7 +12,29 @@ const changelog: ChangelogEntry[] = [
   {
     date: 'February 3, 2026',
     changes: [
+      { type: 'feature', description: 'Committed latency and override latency columns on links page' },
       { type: 'improvement', description: 'Chat shows "Preparing answer..." during synthesis instead of appearing idle' },
+      { type: 'improvement', description: 'Sticky headers and improved drawer behavior on path latency page' },
+      { type: 'fix', description: 'Latency showing 0ms when there is 100% packet loss' },
+    ],
+  },
+  {
+    date: 'February 2, 2026',
+    changes: [
+      { type: 'fix', description: 'Chat responses intermittently disappearing after streaming' },
+    ],
+  },
+  {
+    date: 'January 31, 2026',
+    changes: [
+      { type: 'fix', description: 'Version check always showing update available' },
+    ],
+  },
+  {
+    date: 'January 30, 2026',
+    changes: [
+      { type: 'feature', description: 'Terms of use page and chat disclaimer' },
+      { type: 'feature', description: 'Discards graph on traffic page' },
     ],
   },
   {
