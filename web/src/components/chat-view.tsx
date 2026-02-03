@@ -26,7 +26,7 @@ export function SimplifiedChatView() {
 
 
   // Streaming state (only when we have a sessionId)
-  const { sendMessage, abort, isStreaming, processingSteps } = useChatStream(sessionId)
+  const { sendMessage, abort, isStreaming, processingSteps, error: streamError } = useChatStream(sessionId)
 
   // Handle workflow reconnection for incomplete messages
   const [reconnectState, setReconnectState] = useState<Partial<ChatStreamState>>({})
@@ -89,6 +89,9 @@ export function SimplifiedChatView() {
   const activeProcessingSteps = processingSteps.length > 0
     ? processingSteps
     : reconnectState.processingSteps ?? []
+
+  // Combined error from active stream or reconnect
+  const error = streamError || reconnectState.error || null
 
   // Handle initial question from URL param (when we have a sessionId)
   // Use a ref to track which session+question combos we've handled
@@ -223,6 +226,7 @@ export function SimplifiedChatView() {
       messages={session?.messages ?? []}
       isPending={isPending}
       processingSteps={activeProcessingSteps}
+      streamError={error}
       onSendMessage={handleSendMessage}
       onAbort={handleAbort}
       onRetry={handleRetry}
