@@ -36,6 +36,8 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
     lossPercent: link.loss_percent,
     peakInBps: link.peak_in_bps,
     peakOutBps: link.peak_out_bps,
+    committedRttNs: link.committed_rtt_ns,
+    isisDelayOverrideNs: link.isis_delay_override_ns,
   }
 }
 

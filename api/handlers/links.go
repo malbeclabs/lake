@@ -187,36 +187,38 @@ func GetLinks(w http.ResponseWriter, r *http.Request) {
 }
 
 type LinkDetail struct {
-	PK              string  `json:"pk"`
-	Code            string  `json:"code"`
-	Status          string  `json:"status"`
-	LinkType        string  `json:"link_type"`
-	BandwidthBps    int64   `json:"bandwidth_bps"`
-	SideAPK         string  `json:"side_a_pk"`
-	SideACode       string  `json:"side_a_code"`
-	SideAMetro      string  `json:"side_a_metro"`
-	SideAIfaceName  string  `json:"side_a_iface_name"`
-	SideAIP         string  `json:"side_a_ip"`
-	SideZPK         string  `json:"side_z_pk"`
-	SideZCode       string  `json:"side_z_code"`
-	SideZMetro      string  `json:"side_z_metro"`
-	SideZIfaceName  string  `json:"side_z_iface_name"`
-	SideZIP         string  `json:"side_z_ip"`
-	ContributorPK   string  `json:"contributor_pk"`
-	ContributorCode string  `json:"contributor_code"`
-	InBps           float64 `json:"in_bps"`
-	OutBps          float64 `json:"out_bps"`
-	UtilizationIn   float64 `json:"utilization_in"`
-	UtilizationOut  float64 `json:"utilization_out"`
-	LatencyUs       float64 `json:"latency_us"`
-	JitterUs        float64 `json:"jitter_us"`
-	LatencyAtoZUs   float64 `json:"latency_a_to_z_us"`
-	JitterAtoZUs    float64 `json:"jitter_a_to_z_us"`
-	LatencyZtoAUs   float64 `json:"latency_z_to_a_us"`
-	JitterZtoAUs    float64 `json:"jitter_z_to_a_us"`
-	LossPercent     float64 `json:"loss_percent"`
-	PeakInBps       float64 `json:"peak_in_bps"`
-	PeakOutBps      float64 `json:"peak_out_bps"`
+	PK                  string  `json:"pk"`
+	Code                string  `json:"code"`
+	Status              string  `json:"status"`
+	LinkType            string  `json:"link_type"`
+	BandwidthBps        int64   `json:"bandwidth_bps"`
+	SideAPK             string  `json:"side_a_pk"`
+	SideACode           string  `json:"side_a_code"`
+	SideAMetro          string  `json:"side_a_metro"`
+	SideAIfaceName      string  `json:"side_a_iface_name"`
+	SideAIP             string  `json:"side_a_ip"`
+	SideZPK             string  `json:"side_z_pk"`
+	SideZCode           string  `json:"side_z_code"`
+	SideZMetro          string  `json:"side_z_metro"`
+	SideZIfaceName      string  `json:"side_z_iface_name"`
+	SideZIP             string  `json:"side_z_ip"`
+	ContributorPK       string  `json:"contributor_pk"`
+	ContributorCode     string  `json:"contributor_code"`
+	InBps               float64 `json:"in_bps"`
+	OutBps              float64 `json:"out_bps"`
+	UtilizationIn       float64 `json:"utilization_in"`
+	UtilizationOut      float64 `json:"utilization_out"`
+	LatencyUs           float64 `json:"latency_us"`
+	JitterUs            float64 `json:"jitter_us"`
+	LatencyAtoZUs       float64 `json:"latency_a_to_z_us"`
+	JitterAtoZUs        float64 `json:"jitter_a_to_z_us"`
+	LatencyZtoAUs       float64 `json:"latency_z_to_a_us"`
+	JitterZtoAUs        float64 `json:"jitter_z_to_a_us"`
+	LossPercent         float64 `json:"loss_percent"`
+	PeakInBps           float64 `json:"peak_in_bps"`
+	PeakOutBps          float64 `json:"peak_out_bps"`
+	CommittedRttNs      int64   `json:"committed_rtt_ns"`
+	ISISDelayOverrideNs int64   `json:"isis_delay_override_ns"`
 }
 
 // TopologyLinkHealth represents the SLA health status of a link for topology overlay
@@ -423,6 +425,8 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 		&link.LossPercent,
 		&link.PeakInBps,
 		&link.PeakOutBps,
+		&link.CommittedRttNs,
+		&link.ISISDelayOverrideNs,
 	)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
@@ -468,6 +472,8 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 				&link.LossPercent,
 				&link.PeakInBps,
 				&link.PeakOutBps,
+				&link.CommittedRttNs,
+				&link.ISISDelayOverrideNs,
 			)
 			duration = time.Since(start)
 			metrics.RecordClickHouseQuery(duration, err)
@@ -632,7 +638,9 @@ func linkDetailQuery(selects linkDetailSelects, includeDirectional bool) string 
 			%s
 			COALESCE(ls.loss_percent, 0) as loss_percent,
 			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
-			COALESCE(pr.peak_out_bps, 0) as peak_out_bps
+			COALESCE(pr.peak_out_bps, 0) as peak_out_bps,
+			COALESCE(l.committed_rtt_ns, 0) as committed_rtt_ns,
+			COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns
 		FROM dz_links_current l
 		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
