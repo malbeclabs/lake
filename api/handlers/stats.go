@@ -146,13 +146,9 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 		return row.Scan(&stats.Metros)
 	})
 
-	// Sum total bandwidth for activated links
+	// Sum total bandwidth for all links
 	g.Go(func() error {
-		query := `
-			SELECT COALESCE(SUM(bandwidth_bps), 0)
-			FROM dz_links_current
-			WHERE status = 'activated'
-		`
+		query := `SELECT COALESCE(SUM(bandwidth_bps), 0) FROM dz_links_current`
 		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.BandwidthBps)
 	})
