@@ -132,7 +132,7 @@ function PathLatencyDetail({
       </div>
 
       {/* Internet comparison */}
-      {hasInternet && (
+      {hasInternet && pathLatency.improvementPct !== null && (
         <div className={`rounded-lg p-3 ${colors.bg} mb-4`}>
           <div className="text-xs text-muted-foreground mb-1">vs Internet ({pathLatency.internetLatencyMs.toFixed(1)}ms)</div>
           <div className={`text-xl font-bold ${colors.text}`}>
@@ -262,7 +262,7 @@ export function PathLatencyPage() {
       pl.pathLatencyMs.toFixed(1),
       pl.hopCount.toString(),
       pl.internetLatencyMs > 0 ? pl.internetLatencyMs.toFixed(1) : '-',
-      pl.improvementPct > 0 ? pl.improvementPct.toFixed(1) : '-',
+      pl.improvementPct !== null ? pl.improvementPct.toFixed(1) : '-',
       pl.bottleneckBwGbps > 0 ? pl.bottleneckBwGbps.toFixed(1) : '-',
     ])
 

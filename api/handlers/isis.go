@@ -1870,8 +1870,8 @@ type MetroPathLatency struct {
 	PathLatencyMs     float64 `json:"pathLatencyMs"`     // Sum of link metrics along path (in ms)
 	HopCount          int     `json:"hopCount"`          // Number of hops
 	BottleneckBwGbps  float64 `json:"bottleneckBwGbps"`  // Min bandwidth along path (Gbps)
-	InternetLatencyMs float64 `json:"internetLatencyMs"` // Internet latency for comparison (0 if not available)
-	ImprovementPct    float64 `json:"improvementPct"`    // Improvement vs internet (0 if no internet data)
+	InternetLatencyMs float64  `json:"internetLatencyMs"` // Internet latency for comparison (0 if not available)
+	ImprovementPct    *float64 `json:"improvementPct"`    // Improvement vs internet (nil if no internet data)
 }
 
 // MetroPathLatencyResponse is the response for the metro path latency endpoint
@@ -2089,13 +2089,15 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 			if p, ok := pathMap[key1]; ok {
 				p.InternetLatencyMs = avgRttMs
 				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					p.ImprovementPct = (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					p.ImprovementPct = &pct
 				}
 			}
 			if p, ok := pathMap[key2]; ok {
 				p.InternetLatencyMs = avgRttMs
 				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					p.ImprovementPct = (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					p.ImprovementPct = &pct
 				}
 			}
 		}
@@ -2108,11 +2110,11 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 	for _, path := range pathMap {
 		response.Paths = append(response.Paths, *path)
-		if path.InternetLatencyMs > 0 {
+		if path.ImprovementPct != nil {
 			pairsWithInternet++
-			totalImprovement += path.ImprovementPct
-			if path.ImprovementPct > maxImprovement {
-				maxImprovement = path.ImprovementPct
+			totalImprovement += *path.ImprovementPct
+			if *path.ImprovementPct > maxImprovement {
+				maxImprovement = *path.ImprovementPct
 			}
 		}
 	}
@@ -2302,13 +2304,15 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 			if p, ok := pathMap[key1]; ok {
 				p.InternetLatencyMs = avgRttMs
 				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					p.ImprovementPct = (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					p.ImprovementPct = &pct
 				}
 			}
 			if p, ok := pathMap[key2]; ok {
 				p.InternetLatencyMs = avgRttMs
 				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					p.ImprovementPct = (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
+					p.ImprovementPct = &pct
 				}
 			}
 		}
@@ -2321,11 +2325,11 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 
 	for _, path := range pathMap {
 		response.Paths = append(response.Paths, *path)
-		if path.InternetLatencyMs > 0 {
+		if path.ImprovementPct != nil {
 			pairsWithInternet++
-			totalImprovement += path.ImprovementPct
-			if path.ImprovementPct > maxImprovement {
-				maxImprovement = path.ImprovementPct
+			totalImprovement += *path.ImprovementPct
+			if *path.ImprovementPct > maxImprovement {
+				maxImprovement = *path.ImprovementPct
 			}
 		}
 	}
@@ -2364,7 +2368,7 @@ type MetroPathDetailResponse struct {
 	TotalHops         int                  `json:"totalHops"`
 	BottleneckBwGbps  float64              `json:"bottleneckBwGbps"`
 	InternetLatencyMs float64              `json:"internetLatencyMs"`
-	ImprovementPct    float64              `json:"improvementPct"`
+	ImprovementPct    *float64             `json:"improvementPct"`
 	Hops              []MetroPathDetailHop `json:"hops"`
 	Error             string               `json:"error,omitempty"`
 }
@@ -2519,7 +2523,8 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	if err := row.Scan(&internetLatency); err == nil && internetLatency > 0 {
 		response.InternetLatencyMs = internetLatency
 		if response.TotalLatencyMs > 0 {
-			response.ImprovementPct = (internetLatency - response.TotalLatencyMs) / internetLatency * 100
+			pct := (internetLatency - response.TotalLatencyMs) / internetLatency * 100
+			response.ImprovementPct = &pct
 		}
 	}
 

@@ -3142,7 +3142,7 @@ export interface MetroPathLatency {
   hopCount: number
   bottleneckBwGbps: number
   internetLatencyMs: number
-  improvementPct: number
+  improvementPct: number | null
 }
 
 export interface MetroPathLatencyResponse {
@@ -3184,7 +3184,7 @@ export interface MetroPathDetailResponse {
   totalHops: number
   bottleneckBwGbps: number
   internetLatencyMs: number
-  improvementPct: number
+  improvementPct: number | null
   hops: MetroPathDetailHop[]
   error?: string
 }
