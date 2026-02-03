@@ -387,44 +387,40 @@ export function PathLatencyPage() {
       </div>
 
       {/* Matrix grid */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 overflow-auto px-6 pb-6">
         <div className="flex gap-6">
           {/* Matrix */}
-          <div>
-            <div
-              className="grid gap-px bg-border"
-              style={{
-                gridTemplateColumns: `auto repeat(${metros.length}, minmax(48px, 60px))`,
-                gridTemplateRows: `auto repeat(${metros.length}, minmax(40px, 48px))`,
-              }}
-            >
-              {/* Top-left corner (empty) */}
-              <div className="bg-muted sticky top-0 left-0 z-30" />
+          <table className="border-separate border-spacing-0">
+            <thead>
+              <tr>
+                {/* Top-left corner (empty) */}
+                <th className="bg-muted sticky -top-px left-0 z-30 border border-border min-w-[48px]" />
 
-              {/* Column headers */}
-              {metros.map(metro => (
-                <div
-                  key={`col-${metro.pk}`}
-                  className="bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 flex items-end justify-center"
-                  title={metro.name}
-                >
-                  <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap">
-                    {metro.code}
-                  </span>
-                </div>
-              ))}
-
+                {/* Column headers */}
+                {metros.map(metro => (
+                  <th
+                    key={`col-${metro.pk}`}
+                    className="bg-muted px-1 py-2 text-xs font-medium text-center sticky -top-px z-20 border border-border min-w-[48px] max-w-[60px]"
+                    title={metro.name}
+                  >
+                    <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap inline-block">
+                      {metro.code}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
               {/* Rows */}
               {metros.map(fromMetro => (
-                <>
+                <tr key={`row-${fromMetro.pk}`}>
                   {/* Row header */}
-                  <div
-                    key={`row-${fromMetro.pk}`}
-                    className="bg-muted px-2 py-1 text-xs font-medium flex items-center justify-end sticky left-0 z-10"
+                  <th
+                    className="bg-muted px-2 py-1 text-xs font-medium text-right sticky left-0 z-10 border border-border whitespace-nowrap"
                     title={fromMetro.name}
                   >
                     {fromMetro.code}
-                  </div>
+                  </th>
 
                   {/* Cells */}
                   {metros.map(toMetro => {
@@ -433,9 +429,9 @@ export function PathLatencyPage() {
                     const isSelected = selectedCell?.from === fromMetro.pk && selectedCell?.to === toMetro.pk
 
                     return (
-                      <div
+                      <td
                         key={`cell-${fromMetro.pk}-${toMetro.pk}`}
-                        className="bg-background"
+                        className="border border-border p-0 min-w-[48px] max-w-[60px] h-[40px]"
                       >
                         <PathLatencyCell
                           pathLatency={pathLatency}
@@ -450,13 +446,13 @@ export function PathLatencyPage() {
                           }}
                           isSelected={isSelected}
                         />
-                      </div>
+                      </td>
                     )
                   })}
-                </>
+                </tr>
               ))}
-            </div>
-          </div>
+            </tbody>
+          </table>
 
           {/* Detail panel */}
           {selectedPathLatency && selectedCell && (
