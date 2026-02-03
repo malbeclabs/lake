@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'February 3, 2026',
+    changes: [
+      { type: 'improvement', description: 'Chat shows "Preparing answer..." during synthesis instead of appearing idle' },
+    ],
+  },
+  {
     date: 'January 29, 2026',
     changes: [
       { type: 'feature', description: 'Copy button on chat responses with rich text support for Slack and Notion' },

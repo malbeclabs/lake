@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useRef, useState, useEffect } from 'react'
-import type { ChatMessage, ProcessingStep } from '@/lib/api'
+import type { ChatMessage, ProcessingStep, ChatResponse } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   listSessionsWithContent,
@@ -12,6 +12,7 @@ import {
   reconnectToWorkflow,
   generateMessageId,
   generateChatSessionTitle,
+  serverStepsToProcessingSteps,
 } from '@/lib/api'
 import { serverToChatSession, type ChatSession } from '@/lib/sessions'
 
@@ -405,47 +406,53 @@ export function useChatStream(sessionId: string | undefined) {
             // Refresh auth to update quota now that server has accepted the request
             refreshAuth()
           },
-          onDone: async () => {
-            // Fetch fresh data from server and update cache before clearing streaming state
-            // This ensures the complete message is in the cache before we hide the streaming UI
-            try {
-              const freshSession = await getSession<ChatMessage[]>(sessionId)
-              const converted = serverToChatSession(freshSession)
-
-              // Update cache and clear streaming state together
-              // React will batch these updates into one render
-              // Note: We don't clear processingSteps here - they're kept around so the UI
-              // can show them until the message's own workflowData takes over. This prevents
-              // a flash when transitioning from streaming to complete state.
-              queryClient.setQueryData<ChatSession>(chatKeys.detail(sessionId), converted)
-              setStreamState(prev => ({
-                isStreaming: false,
-                workflowId: null,
-                processingSteps: prev.processingSteps, // Keep steps for smooth transition
-                error: null,
-              }))
-
-              queryClient.invalidateQueries({ queryKey: chatKeys.list() })
-              refreshAuth()
-
-              // Generate title for new sessions
-              if (!converted.name && converted.messages.length <= 3) {
-                generateChatSessionTitle(converted.messages).then(result => {
-                  if (result.title) {
-                    queryClient.invalidateQueries({ queryKey: chatKeys.list() })
-                  }
-                }).catch(() => {})
+          onDone: (response: ChatResponse) => {
+            // Update the streaming message in cache directly from the response
+            // This avoids an extra round-trip to fetch the session
+            const updated = queryClient.setQueryData<ChatSession>(chatKeys.detail(sessionId), (old) => {
+              if (!old) return old
+              return {
+                ...old,
+                updatedAt: new Date(),
+                messages: old.messages.map(msg =>
+                  msg.status === 'streaming'
+                    ? {
+                        ...msg,
+                        content: response.answer,
+                        status: 'complete' as const,
+                        workflowData: {
+                          dataQuestions: response.dataQuestions ?? [],
+                          generatedQueries: response.generatedQueries ?? [],
+                          executedQueries: response.executedQueries ?? [],
+                          followUpQuestions: response.followUpQuestions,
+                          processingSteps: response.steps ? serverStepsToProcessingSteps(response.steps) : [],
+                        },
+                      }
+                    : msg
+                ),
               }
-            } catch {
-              // If fetch fails, just invalidate to trigger a refetch
-              queryClient.invalidateQueries({ queryKey: chatKeys.detail(sessionId) })
-              queryClient.invalidateQueries({ queryKey: chatKeys.list() })
-              setStreamState({
-                isStreaming: false,
-                workflowId: null,
-                processingSteps: [],
-                error: null,
-              })
+            })
+
+            // Clear streaming state
+            // Keep processingSteps around so the UI can show them until the message's
+            // own workflowData takes over (prevents flash during transition)
+            setStreamState(prev => ({
+              isStreaming: false,
+              workflowId: null,
+              processingSteps: prev.processingSteps,
+              error: null,
+            }))
+
+            queryClient.invalidateQueries({ queryKey: chatKeys.list() })
+            refreshAuth()
+
+            // Generate title for new sessions
+            if (updated && !updated.name && updated.messages.length <= 3) {
+              generateChatSessionTitle(updated.messages).then(result => {
+                if (result.title) {
+                  queryClient.invalidateQueries({ queryKey: chatKeys.list() })
+                }
+              }).catch(() => {})
             }
           },
           onError: (error) => {

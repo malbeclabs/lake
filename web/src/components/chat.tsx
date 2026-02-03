@@ -332,7 +332,7 @@ function ProcessingTimeline({
   const getSummary = () => {
     if (isStreaming && steps.length === 0) return 'Processing...'
     if (isStreaming) {
-      if (isSynthesizing) return 'Synthesizing answer...'
+      if (isSynthesizing) return 'Preparing answer...'
       if (totalQueries === 0 && thinkingSteps.length > 0) return 'Thinking...'
       if (totalQueries > 0) return `Running ${totalQueries} ${totalQueries === 1 ? 'query' : 'queries'}...`
       if (docsSteps.length > 0) return 'Reading documentation...'

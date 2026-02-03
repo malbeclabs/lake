@@ -641,6 +641,55 @@ export interface ChatResponse {
   error?: string
 }
 
+// Convert server workflow steps to client processing steps format
+export function serverStepsToProcessingSteps(steps: ServerWorkflowStep[]): ProcessingStep[] {
+  return steps.map(step => {
+    switch (step.type) {
+      case 'thinking':
+        return {
+          type: 'thinking' as const,
+          id: step.id,
+          content: step.content ?? '',
+        }
+      case 'sql_query':
+        return {
+          type: 'sql_query' as const,
+          id: step.id,
+          question: step.question ?? '',
+          sql: step.sql ?? '',
+          status: step.status ?? 'completed',
+          rows: step.count,
+          columns: step.columns,
+          data: step.rows,
+          error: step.error,
+        }
+      case 'cypher_query':
+        return {
+          type: 'cypher_query' as const,
+          id: step.id,
+          question: step.question ?? '',
+          cypher: step.cypher ?? '',
+          status: step.status ?? 'completed',
+          rows: step.count,
+          columns: step.columns,
+          data: step.rows,
+          nodes: step.nodes,
+          edges: step.edges,
+          error: step.error,
+        }
+      case 'read_docs':
+        return {
+          type: 'read_docs' as const,
+          id: step.id,
+          page: step.page ?? '',
+          status: step.status ?? 'completed',
+          content: step.content,
+          error: step.error,
+        }
+    }
+  })
+}
+
 export async function sendChatMessage(
   message: string,
   history: ChatMessage[],
