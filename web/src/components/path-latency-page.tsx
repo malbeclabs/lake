@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { Loader2, Route, Download, ArrowRight, ChevronDown } from 'lucide-react'
@@ -174,7 +174,10 @@ export function PathLatencyPage() {
   const optimizeParam = searchParams.get('optimize') as PathOptimizeMode | null
   const optimizeMode: PathOptimizeMode = optimizeParam || 'latency'
 
-  const [selectedCell, setSelectedCell] = useState<{ from: string; to: string } | null>(null)
+  // Read selection from URL params (metro codes for readability)
+  const fromCodeParam = searchParams.get('from')
+  const toCodeParam = searchParams.get('to')
+
   const queryClient = useQueryClient()
 
   // Fetch metro connectivity for the matrix structure (metros list)
@@ -185,6 +188,32 @@ export function PathLatencyPage() {
     retry: 2,
   })
 
+  // Derive selectedCell from URL params by looking up metro PKs (case-insensitive)
+  const selectedCell = useMemo(() => {
+    if (!fromCodeParam || !toCodeParam || !connectivityData) return null
+    const fromUpper = fromCodeParam.toUpperCase()
+    const toUpper = toCodeParam.toUpperCase()
+    const fromMetro = connectivityData.metros.find(m => m.code.toUpperCase() === fromUpper)
+    const toMetro = connectivityData.metros.find(m => m.code.toUpperCase() === toUpper)
+    if (!fromMetro || !toMetro) return null
+    return { from: fromMetro.pk, to: toMetro.pk }
+  }, [fromCodeParam, toCodeParam, connectivityData])
+
+  // Update selection in URL params (uppercase for consistency)
+  const setSelectedCell = useCallback((cell: { from: string; to: string } | null, fromCode?: string, toCode?: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (cell && fromCode && toCode) {
+        next.set('from', fromCode.toUpperCase())
+        next.set('to', toCode.toUpperCase())
+      } else {
+        next.delete('from')
+        next.delete('to')
+      }
+      return next
+    })
+  }, [setSearchParams])
+
   // Delay showing loading spinner to avoid flash on fast loads
   const showLoading = useDelayedLoading(connectivityLoading)
 
@@ -193,21 +222,6 @@ export function PathLatencyPage() {
     queryKey: ['metro-path-latency', optimizeMode],
     queryFn: () => fetchMetroPathLatency(optimizeMode),
     staleTime: 60000,
-  })
-
-  // Fetch path detail when a cell is selected
-  const { data: pathDetailData, isLoading: pathDetailLoading } = useQuery({
-    queryKey: ['metro-path-detail', selectedCell?.from, selectedCell?.to, optimizeMode],
-    queryFn: () => {
-      if (!selectedCell || !connectivityData) return Promise.resolve(null)
-      // Find the metro codes for the selected PKs
-      const fromMetro = connectivityData.metros.find(m => m.pk === selectedCell.from)
-      const toMetro = connectivityData.metros.find(m => m.pk === selectedCell.to)
-      if (!fromMetro || !toMetro) return Promise.resolve(null)
-      return fetchMetroPathDetail(fromMetro.code, toMetro.code, optimizeMode)
-    },
-    staleTime: 60000,
-    enabled: selectedCell !== null,
   })
 
   // Build path latency lookup map (by metro PKs)
@@ -225,6 +239,17 @@ export function PathLatencyPage() {
     if (!selectedCell) return null
     return pathLatencyMap.get(`${selectedCell.from}:${selectedCell.to}`) ?? null
   }, [selectedCell, pathLatencyMap])
+
+  // Fetch path detail when a cell is selected
+  const { data: pathDetailData, isLoading: pathDetailLoading } = useQuery({
+    queryKey: ['metro-path-detail', selectedPathLatency?.fromMetroCode, selectedPathLatency?.toMetroCode, optimizeMode],
+    queryFn: () => {
+      if (!selectedPathLatency) return Promise.resolve(null)
+      return fetchMetroPathDetail(selectedPathLatency.fromMetroCode, selectedPathLatency.toMetroCode, optimizeMode)
+    },
+    staleTime: 60000,
+    enabled: selectedPathLatency !== null,
+  })
 
   // Export to CSV
   const handleExport = () => {
@@ -362,44 +387,40 @@ export function PathLatencyPage() {
       </div>
 
       {/* Matrix grid */}
-      <div className="flex-1 overflow-auto p-6">
-        <div className="flex gap-6">
-          {/* Matrix */}
-          <div className="overflow-auto">
-            <div
-              className="grid gap-px bg-border"
-              style={{
-                gridTemplateColumns: `auto repeat(${metros.length}, minmax(48px, 60px))`,
-                gridTemplateRows: `auto repeat(${metros.length}, minmax(40px, 48px))`,
-              }}
-            >
-              {/* Top-left corner (empty) */}
-              <div className="bg-background sticky top-0 left-0 z-20" />
+      <div className="flex-1 flex gap-6 px-6 pb-6 min-h-0">
+        {/* Scrollable table area */}
+        <div className="flex-1 overflow-auto min-w-0">
+          <table className="border-separate border-spacing-0">
+            <thead>
+              <tr>
+                {/* Top-left corner (empty) */}
+                <th className="relative bg-muted sticky top-0 left-0 z-30 min-w-[48px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]" />
 
-              {/* Column headers */}
-              {metros.map(metro => (
-                <div
-                  key={`col-${metro.pk}`}
-                  className="bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-10 flex items-end justify-center"
-                  title={metro.name}
-                >
-                  <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap">
-                    {metro.code}
-                  </span>
-                </div>
-              ))}
-
+                {/* Column headers */}
+                {metros.map(metro => (
+                  <th
+                    key={`col-${metro.pk}`}
+                    className="relative bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 min-w-[48px] max-w-[60px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]"
+                    title={metro.name}
+                  >
+                    <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap inline-block">
+                      {metro.code}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
               {/* Rows */}
               {metros.map(fromMetro => (
-                <>
+                <tr key={`row-${fromMetro.pk}`}>
                   {/* Row header */}
-                  <div
-                    key={`row-${fromMetro.pk}`}
-                    className="bg-muted px-2 py-1 text-xs font-medium flex items-center justify-end sticky left-0 z-10"
+                  <th
+                    className="bg-muted px-2 py-1 text-xs font-medium text-right sticky left-0 z-10 whitespace-nowrap shadow-[inset_0_0_0_1px_hsl(var(--border))] [backface-visibility:hidden] [transform:translateZ(0)]"
                     title={fromMetro.name}
                   >
                     {fromMetro.code}
-                  </div>
+                  </th>
 
                   {/* Cells */}
                   {metros.map(toMetro => {
@@ -408,44 +429,50 @@ export function PathLatencyPage() {
                     const isSelected = selectedCell?.from === fromMetro.pk && selectedCell?.to === toMetro.pk
 
                     return (
-                      <div
+                      <td
                         key={`cell-${fromMetro.pk}-${toMetro.pk}`}
-                        className="bg-background"
+                        className="border border-border p-0 min-w-[48px] max-w-[60px] h-[40px]"
                       >
                         <PathLatencyCell
                           pathLatency={pathLatency}
                           onClick={() => {
                             if (!isSame && pathLatency) {
-                              setSelectedCell(isSelected ? null : { from: fromMetro.pk, to: toMetro.pk })
+                              if (isSelected) {
+                                setSelectedCell(null)
+                              } else {
+                                setSelectedCell({ from: fromMetro.pk, to: toMetro.pk }, fromMetro.code, toMetro.code)
+                              }
                             }
                           }}
                           isSelected={isSelected}
                         />
-                      </div>
+                      </td>
                     )
                   })}
-                </>
+                </tr>
               ))}
-            </div>
-          </div>
-
-          {/* Detail panel */}
-          {selectedPathLatency && selectedCell && (
-            <div className="w-80 flex-shrink-0">
-              <PathLatencyDetail
-                fromCode={connectivityData.metros.find(m => m.pk === selectedCell.from)?.code || ''}
-                toCode={connectivityData.metros.find(m => m.pk === selectedCell.to)?.code || ''}
-                pathLatency={selectedPathLatency}
-                pathDetail={pathDetailData ?? null}
-                isLoadingDetail={pathDetailLoading}
-                onClose={() => setSelectedCell(null)}
-              />
-            </div>
-          )}
+            </tbody>
+          </table>
         </div>
 
-        {/* Legend */}
-        <div className="mt-6 flex items-center gap-6 text-xs text-muted-foreground">
+        {/* Detail panel */}
+        {selectedPathLatency && selectedCell && (
+          <div className="w-80 flex-shrink-0">
+            <PathLatencyDetail
+              fromCode={selectedPathLatency.fromMetroCode}
+              toCode={selectedPathLatency.toMetroCode}
+              pathLatency={selectedPathLatency}
+              pathDetail={pathDetailData ?? null}
+              isLoadingDetail={pathDetailLoading}
+              onClose={() => setSelectedCell(null)}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Legend */}
+      <div className="px-6 pb-6">
+        <div className="flex items-center gap-6 text-xs text-muted-foreground">
           <span className="font-medium">Legend (DZ Path vs Internet):</span>
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded bg-green-100 dark:bg-green-900/40 border border-green-200 dark:border-green-800" />
