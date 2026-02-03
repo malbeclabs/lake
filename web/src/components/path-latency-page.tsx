@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { Loader2, Route, Download, ArrowRight, ChevronDown } from 'lucide-react'
@@ -174,7 +174,10 @@ export function PathLatencyPage() {
   const optimizeParam = searchParams.get('optimize') as PathOptimizeMode | null
   const optimizeMode: PathOptimizeMode = optimizeParam || 'latency'
 
-  const [selectedCell, setSelectedCell] = useState<{ from: string; to: string } | null>(null)
+  // Read selection from URL params (metro codes for readability)
+  const fromCodeParam = searchParams.get('from')
+  const toCodeParam = searchParams.get('to')
+
   const queryClient = useQueryClient()
 
   // Fetch metro connectivity for the matrix structure (metros list)
@@ -184,6 +187,32 @@ export function PathLatencyPage() {
     staleTime: 60000,
     retry: 2,
   })
+
+  // Derive selectedCell from URL params by looking up metro PKs (case-insensitive)
+  const selectedCell = useMemo(() => {
+    if (!fromCodeParam || !toCodeParam || !connectivityData) return null
+    const fromUpper = fromCodeParam.toUpperCase()
+    const toUpper = toCodeParam.toUpperCase()
+    const fromMetro = connectivityData.metros.find(m => m.code.toUpperCase() === fromUpper)
+    const toMetro = connectivityData.metros.find(m => m.code.toUpperCase() === toUpper)
+    if (!fromMetro || !toMetro) return null
+    return { from: fromMetro.pk, to: toMetro.pk }
+  }, [fromCodeParam, toCodeParam, connectivityData])
+
+  // Update selection in URL params (uppercase for consistency)
+  const setSelectedCell = useCallback((cell: { from: string; to: string } | null, fromCode?: string, toCode?: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (cell && fromCode && toCode) {
+        next.set('from', fromCode.toUpperCase())
+        next.set('to', toCode.toUpperCase())
+      } else {
+        next.delete('from')
+        next.delete('to')
+      }
+      return next
+    })
+  }, [setSearchParams])
 
   // Delay showing loading spinner to avoid flash on fast loads
   const showLoading = useDelayedLoading(connectivityLoading)
@@ -412,7 +441,11 @@ export function PathLatencyPage() {
                           pathLatency={pathLatency}
                           onClick={() => {
                             if (!isSame && pathLatency) {
-                              setSelectedCell(isSelected ? null : { from: fromMetro.pk, to: toMetro.pk })
+                              if (isSelected) {
+                                setSelectedCell(null)
+                              } else {
+                                setSelectedCell({ from: fromMetro.pk, to: toMetro.pk }, fromMetro.code, toMetro.code)
+                              }
                             }
                           }}
                           isSelected={isSelected}
