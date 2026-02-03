@@ -390,7 +390,7 @@ export function PathLatencyPage() {
       <div className="flex-1 overflow-auto p-6">
         <div className="flex gap-6">
           {/* Matrix */}
-          <div className="overflow-auto">
+          <div>
             <div
               className="grid gap-px bg-border"
               style={{
