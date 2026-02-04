@@ -370,7 +370,13 @@ ORDER BY in_errors + out_errors DESC;
 ```
 
 ### Bandwidth & Utilization (CRITICAL)
-**NEVER combine in and out traffic for utilization calculations.** Network interfaces are full-duplex.
+**Utilization is UNIDIRECTIONAL.** Network interfaces are full-duplex, meaning in and out are independent directions.
+
+**NEVER combine in and out traffic for utilization calculations:**
+- Combining directions (e.g., "total utilization = in% + out%") is meaningless
+- A link at 80% out and 10% in is NOT "90% utilized" - it's 80% utilized in one direction
+- Report utilization PER DIRECTION (in_utilization, out_utilization) or highlight the highest direction
+- When asked about "highest utilization", report the single highest directional utilization, not a sum
 
 **Bandwidth rate calculation:**
 ```sql

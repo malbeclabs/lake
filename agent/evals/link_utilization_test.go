@@ -100,6 +100,7 @@ func runTest_LinkUtilization(t *testing.T, llmFactory LLMClientFactory) {
 	// 1. Response should mention the high-utilization link (chi-nyc-1 at ~80%)
 	// 2. Response should report in/out separately OR mention the highest direction
 	// 3. Should NOT aggregate across links or combine directions incorrectly
+	// 4. Should NOT report a "total" utilization that sums directions (utilization is unidirectional)
 	expectations := []Expectation{
 		{
 			Description:   "Response mentions chi-nyc-1 link with high utilization",
@@ -110,6 +111,11 @@ func runTest_LinkUtilization(t *testing.T, llmFactory LLMClientFactory) {
 			Description:   "Response reports utilization percentages",
 			ExpectedValue: "utilization percentages are shown (e.g., 80%, 10%, or similar values)",
 			Rationale:     "Link utilization should be expressed as percentage of capacity",
+		},
+		{
+			Description:   "Response does NOT report a combined/total utilization summing directions",
+			ExpectedValue: "No mention of 'total utilization' summing in+out (e.g., should NOT say '90% total' from 80%+10%)",
+			Rationale:     "Utilization is unidirectional - summing in and out is meaningless for full-duplex links",
 		},
 	}
 	isCorrect, err := evaluateResponse(t, ctx, question, response, expectations...)
