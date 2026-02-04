@@ -429,6 +429,7 @@ export function TopologyGraph({
           code: d.code,
           deviceType: d.device_type,
           metro: metro?.code,
+          metroName: metro?.name,
         }
       })
       .sort((a, b) => a.code.localeCompare(b.code))

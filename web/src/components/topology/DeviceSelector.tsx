@@ -6,6 +6,7 @@ export interface DeviceOption {
   code: string
   deviceType?: string
   metro?: string
+  metroName?: string
 }
 
 interface DeviceSelectorProps {
@@ -37,12 +38,16 @@ export function DeviceSelector({
   // Find selected device
   const selectedDevice = value ? devices.find(d => d.pk === value) : null
 
-  // Filter devices by search
+  // Filter devices by search (code, metro code, or metro name)
   const filteredDevices = search
-    ? devices.filter(d =>
-        d.code.toLowerCase().includes(search.toLowerCase()) ||
-        d.metro?.toLowerCase().includes(search.toLowerCase())
-      )
+    ? devices.filter(d => {
+        const q = search.toLowerCase()
+        return (
+          d.code.toLowerCase().includes(q) ||
+          d.metro?.toLowerCase().includes(q) ||
+          d.metroName?.toLowerCase().includes(q)
+        )
+      })
     : devices
 
   // Sort filtered devices: exact match first, then by code
