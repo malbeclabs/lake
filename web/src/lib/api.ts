@@ -2996,12 +2996,16 @@ export interface ValidatorEventDetails {
   stake_lamports?: number
   stake_sol?: number
   stake_share_pct?: number
+  stake_share_change_pct?: number
+  dz_total_stake_share_pct?: number
   user_pk?: string
   device_pk?: string
   device_code?: string
   metro_code?: string
   kind: 'validator' | 'gossip_only'
-  action: 'joined' | 'left'
+  action: string
+  contribution_change_lamports?: number
+  prev_gossip_ip?: string
 }
 
 export interface HistogramBucket {
@@ -3034,6 +3038,7 @@ export interface TimelineParams {
   severity?: string
   action?: string // Comma-separated action filters
   dz_filter?: 'on_dz' | 'off_dz' // Filter Solana events by DZ connection
+  min_stake_pct?: number // Minimum stake share percentage to include
   search?: string // Comma-separated search terms to filter by entity codes, device codes, etc.
   limit?: number
   offset?: number
@@ -3063,6 +3068,7 @@ export async function fetchTimeline(params: TimelineParams = {}): Promise<Timeli
   if (params.severity) searchParams.set('severity', params.severity)
   if (params.action) searchParams.set('action', params.action)
   if (params.dz_filter) searchParams.set('dz_filter', params.dz_filter)
+  if (params.min_stake_pct) searchParams.set('min_stake_pct', params.min_stake_pct.toString())
   if (params.search) searchParams.set('search', params.search)
   if (params.limit) searchParams.set('limit', params.limit.toString())
   if (params.offset) searchParams.set('offset', params.offset.toString())
