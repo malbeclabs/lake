@@ -110,11 +110,11 @@ export function MCPDocsPage() {
           </div>
         </section>
 
-        {/* Claude Desktop */}
+        {/* Desktop Apps */}
         <section className="mb-10">
-          <h2 className="text-lg font-medium mb-3">Claude Desktop</h2>
+          <h2 className="text-lg font-medium mb-3">Claude Desktop & Codex Desktop</h2>
           <ol className="list-decimal list-inside space-y-2 text-muted-foreground mb-4">
-            <li>Open Claude Desktop and go to <span className="text-foreground">Settings</span></li>
+            <li>Go to <span className="text-foreground">Settings</span></li>
             <li>Click <span className="text-foreground">Manage Connectors</span></li>
             <li>Click <span className="text-foreground">Add Custom Connector</span></li>
             <li>Enter the endpoint URL above</li>
