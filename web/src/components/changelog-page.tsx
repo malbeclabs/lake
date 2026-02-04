@@ -33,6 +33,8 @@ const changelog: ChangelogEntry[] = [
   {
     date: 'January 31, 2026',
     changes: [
+      { type: 'feature', description: 'Timeline preset filters and DZ stake attribution events' },
+      { type: 'improvement', description: 'Redesigned timeline page with vertical layout and collapsible filters' },
       { type: 'fix', description: 'Version check always showing update available' },
     ],
   },
