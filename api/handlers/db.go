@@ -3,13 +3,29 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/malbeclabs/lake/api/metrics"
 )
+
+// Schema cache configuration
+const schemaCacheTTL = 5 * time.Minute
+
+// schemaCache holds cached schema strings per database/environment
+var (
+	schemaCache   = make(map[string]*schemaCacheEntry)
+	schemaCacheMu sync.RWMutex
+)
+
+type schemaCacheEntry struct {
+	schema    string
+	fetchedAt time.Time
+}
 
 // DBQuerier implements workflow.Querier using the global connection pool.
 type DBQuerier struct{}
@@ -126,7 +142,21 @@ func NewDBSchemaFetcher() *DBSchemaFetcher {
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.
+// Results are cached per database/environment with a 5-minute TTL to reduce latency.
 func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
+	database := DatabaseForEnvFromContext(ctx)
+
+	// Check cache first
+	schemaCacheMu.RLock()
+	if entry, ok := schemaCache[database]; ok && time.Since(entry.fetchedAt) < schemaCacheTTL {
+		schemaCacheMu.RUnlock()
+		slog.Debug("Schema cache hit", "database", database, "age", time.Since(entry.fetchedAt))
+		return entry.schema, nil
+	}
+	schemaCacheMu.RUnlock()
+
+	slog.Info("Schema cache miss, fetching from ClickHouse", "database", database)
+
 	// Fetch columns
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, `
@@ -216,5 +246,16 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		sb.WriteString("  Definition: " + def + "\n")
 	}
 
-	return sb.String(), nil
+	schema := sb.String()
+
+	// Cache the result
+	schemaCacheMu.Lock()
+	schemaCache[database] = &schemaCacheEntry{
+		schema:    schema,
+		fetchedAt: time.Now(),
+	}
+	schemaCacheMu.Unlock()
+	slog.Info("Schema cached", "database", database, "size", len(schema))
+
+	return schema, nil
 }

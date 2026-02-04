@@ -240,8 +240,8 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 		})
 	}
 
-	// Make the API call
-	msg, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
+	// Build params for the API call
+	params := anthropic.MessageNewParams{
 		Model:     c.model,
 		MaxTokens: c.maxTokens,
 		System: []anthropic.TextBlockParam{
@@ -249,7 +249,15 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 		},
 		Messages: anthropicMessages,
 		Tools:    anthropicTools,
-	})
+	}
+
+	// Use streaming if a callback is provided
+	if options.OnTextDelta != nil {
+		return c.completeWithToolsStreaming(ctx, params, options, span, start)
+	}
+
+	// Non-streaming path (original implementation)
+	msg, err := c.client.Messages.New(ctx, params)
 
 	duration := time.Since(start)
 	if err != nil {
@@ -288,7 +296,85 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 	}
 	span.Status = sentry.SpanStatusOK
 
-	// Convert response to our format
+	return c.convertMessageToResponse(msg), nil
+}
+
+// completeWithToolsStreaming handles streaming LLM requests.
+// It calls the OnTextDelta callback as text tokens arrive, reducing perceived latency.
+func (c *AnthropicLLMClient) completeWithToolsStreaming(
+	ctx context.Context,
+	params anthropic.MessageNewParams,
+	options *CompleteOptions,
+	span *sentry.Span,
+	start time.Time,
+) (*ToolLLMResponse, error) {
+	slog.Info("Anthropic API call starting (streaming)", "phase", c.name)
+
+	stream := c.client.Messages.NewStreaming(ctx, params)
+
+	// Accumulate the full message from stream events
+	msg := anthropic.Message{}
+	for stream.Next() {
+		event := stream.Current()
+		if err := msg.Accumulate(event); err != nil {
+			slog.Warn("Failed to accumulate stream event", "error", err)
+			continue
+		}
+
+		// Call the text delta callback when we receive text
+		switch eventVariant := event.AsAny().(type) {
+		case anthropic.ContentBlockDeltaEvent:
+			switch deltaVariant := eventVariant.Delta.AsAny().(type) {
+			case anthropic.TextDelta:
+				if options.OnTextDelta != nil && deltaVariant.Text != "" {
+					options.OnTextDelta(deltaVariant.Text)
+				}
+			}
+		}
+	}
+
+	duration := time.Since(start)
+	if err := stream.Err(); err != nil {
+		slog.Error("Anthropic API streaming failed", "phase", c.name, "duration", duration, "error", err)
+		metrics.RecordAnthropicRequest(c.name, duration, err)
+		span.Status = sentry.SpanStatusInternalError
+		return nil, fmt.Errorf("anthropic streaming error: %w", err)
+	}
+
+	// Log completion
+	slog.Info("Anthropic API call completed (streaming)",
+		"phase", c.name,
+		"duration", duration,
+		"stopReason", msg.StopReason,
+		"inputTokens", msg.Usage.InputTokens,
+		"outputTokens", msg.Usage.OutputTokens,
+		"cacheCreationInputTokens", msg.Usage.CacheCreationInputTokens,
+		"cacheReadInputTokens", msg.Usage.CacheReadInputTokens,
+	)
+
+	// Record metrics
+	metrics.RecordAnthropicRequest(c.name, duration, nil)
+	metrics.RecordAnthropicTokensWithCache(
+		msg.Usage.InputTokens,
+		msg.Usage.OutputTokens,
+		msg.Usage.CacheCreationInputTokens,
+		msg.Usage.CacheReadInputTokens,
+	)
+
+	// Record Sentry metrics
+	span.SetData("gen_ai.usage.input_tokens", msg.Usage.InputTokens)
+	span.SetData("gen_ai.usage.output_tokens", msg.Usage.OutputTokens)
+	span.SetData("gen_ai.usage.total_tokens", msg.Usage.InputTokens+msg.Usage.OutputTokens)
+	if msg.Usage.CacheReadInputTokens > 0 {
+		span.SetData("gen_ai.usage.input_tokens.cached", msg.Usage.CacheReadInputTokens)
+	}
+	span.Status = sentry.SpanStatusOK
+
+	return c.convertMessageToResponse(&msg), nil
+}
+
+// convertMessageToResponse converts an Anthropic Message to our ToolLLMResponse format.
+func (c *AnthropicLLMClient) convertMessageToResponse(msg *anthropic.Message) *ToolLLMResponse {
 	response := &ToolLLMResponse{
 		StopReason:   string(msg.StopReason),
 		InputTokens:  int(msg.Usage.InputTokens),
@@ -304,7 +390,6 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 			})
 		case "tool_use":
 			// Parse the input JSON
-			// Debug: log raw input from API to diagnose parsing issues
 			rawInput := string(block.Input)
 			if len(rawInput) > 500 {
 				slog.Info("DEBUG: Raw tool input from API (truncated)", "name", block.Name, "raw", rawInput[:500]+"...")
@@ -327,5 +412,5 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 		}
 	}
 
-	return response, nil
+	return response
 }
