@@ -24,6 +24,21 @@ const (
 	DefaultMaxIterations = 10
 )
 
+// shouldEmitThinking returns true when accumulated text should be emitted as a thinking event.
+// This prevents emitting every single token and instead batches into meaningful chunks.
+func shouldEmitThinking(text string) bool {
+	if len(text) == 0 {
+		return false
+	}
+	// Emit at sentence boundaries
+	lastChar := text[len(text)-1]
+	if lastChar == '.' || lastChar == '!' || lastChar == '?' || lastChar == '\n' {
+		return true
+	}
+	// Also emit if we've accumulated enough text (prevents long waits)
+	return len(text) >= 80
+}
+
 // Workflow orchestrates the v3 tool-calling workflow.
 type Workflow struct {
 	cfg           *workflow.Config
@@ -168,16 +183,18 @@ func (p *Workflow) RunWithProgress(ctx context.Context, userQuestion string, his
 			return nil, ctx.Err()
 		}
 
-		// Build streaming callback to emit thinking events as text arrives
-		var streamedText strings.Builder
+		// Build streaming callback that accumulates text and emits at natural breaks
+		var pendingText strings.Builder
 		streamCallback := func(textDelta string) {
-			streamedText.WriteString(textDelta)
-			// Emit thinking progress for each chunk so UI updates in real-time
-			if onProgress != nil {
+			pendingText.WriteString(textDelta)
+			// Emit thinking at sentence boundaries or after accumulating enough text
+			text := pendingText.String()
+			if shouldEmitThinking(text) && onProgress != nil {
 				onProgress(workflow.Progress{
 					Stage:           workflow.StageThinking,
-					ThinkingContent: textDelta,
+					ThinkingContent: text,
 				})
+				pendingText.Reset()
 			}
 		}
 
@@ -187,6 +204,14 @@ func (p *Workflow) RunWithProgress(ctx context.Context, userQuestion string, his
 			workflow.WithCacheControl(),
 			workflow.WithStreaming(streamCallback),
 		)
+
+		// Emit any remaining accumulated text
+		if pendingText.Len() > 0 && onProgress != nil {
+			onProgress(workflow.Progress{
+				Stage:           workflow.StageThinking,
+				ThinkingContent: pendingText.String(),
+			})
+		}
 		state.Metrics.LLMDuration += time.Since(llmStart)
 		state.Metrics.LLMCalls++
 
@@ -957,16 +982,18 @@ func (p *Workflow) RunWithCheckpoint(
 			return nil, ctx.Err()
 		}
 
-		// Build streaming callback to emit thinking events as text arrives
-		var streamedText strings.Builder
+		// Build streaming callback that accumulates text and emits at natural breaks
+		var pendingText strings.Builder
 		streamCallback := func(textDelta string) {
-			streamedText.WriteString(textDelta)
-			// Emit thinking progress for each chunk so UI updates in real-time
-			if onProgress != nil {
+			pendingText.WriteString(textDelta)
+			// Emit thinking at sentence boundaries or after accumulating enough text
+			text := pendingText.String()
+			if shouldEmitThinking(text) && onProgress != nil {
 				onProgress(workflow.Progress{
 					Stage:           workflow.StageThinking,
-					ThinkingContent: textDelta,
+					ThinkingContent: text,
 				})
+				pendingText.Reset()
 			}
 		}
 
@@ -976,6 +1003,14 @@ func (p *Workflow) RunWithCheckpoint(
 			workflow.WithCacheControl(),
 			workflow.WithStreaming(streamCallback),
 		)
+
+		// Emit any remaining accumulated text
+		if pendingText.Len() > 0 && onProgress != nil {
+			onProgress(workflow.Progress{
+				Stage:           workflow.StageThinking,
+				ThinkingContent: pendingText.String(),
+			})
+		}
 		state.Metrics.LLMDuration += time.Since(llmStart)
 		state.Metrics.LLMCalls++
 
@@ -1218,16 +1253,18 @@ func (p *Workflow) ResumeFromCheckpoint(
 			return nil, ctx.Err()
 		}
 
-		// Build streaming callback to emit thinking events as text arrives
-		var streamedText strings.Builder
+		// Build streaming callback that accumulates text and emits at natural breaks
+		var pendingText strings.Builder
 		streamCallback := func(textDelta string) {
-			streamedText.WriteString(textDelta)
-			// Emit thinking progress for each chunk so UI updates in real-time
-			if onProgress != nil {
+			pendingText.WriteString(textDelta)
+			// Emit thinking at sentence boundaries or after accumulating enough text
+			text := pendingText.String()
+			if shouldEmitThinking(text) && onProgress != nil {
 				onProgress(workflow.Progress{
 					Stage:           workflow.StageThinking,
-					ThinkingContent: textDelta,
+					ThinkingContent: text,
 				})
+				pendingText.Reset()
 			}
 		}
 
@@ -1237,6 +1274,14 @@ func (p *Workflow) ResumeFromCheckpoint(
 			workflow.WithCacheControl(),
 			workflow.WithStreaming(streamCallback),
 		)
+
+		// Emit any remaining accumulated text
+		if pendingText.Len() > 0 && onProgress != nil {
+			onProgress(workflow.Progress{
+				Stage:           workflow.StageThinking,
+				ThinkingContent: pendingText.String(),
+			})
+		}
 		state.Metrics.LLMDuration += time.Since(llmStart)
 		state.Metrics.LLMCalls++
 
