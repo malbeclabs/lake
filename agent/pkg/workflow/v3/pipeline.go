@@ -24,16 +24,6 @@ const (
 	DefaultMaxIterations = 10
 )
 
-// shouldEmitThinking returns true when accumulated text should be emitted as a thinking event.
-// This prevents emitting every single token and instead batches into complete sentences.
-func shouldEmitThinking(text string) bool {
-	if len(text) == 0 {
-		return false
-	}
-	// Only emit at sentence boundaries - remaining text is flushed at end of stream
-	lastChar := text[len(text)-1]
-	return lastChar == '.' || lastChar == '!' || lastChar == '?' || lastChar == '\n'
-}
 
 // Workflow orchestrates the v3 tool-calling workflow.
 type Workflow struct {
@@ -179,35 +169,18 @@ func (p *Workflow) RunWithProgress(ctx context.Context, userQuestion string, his
 			return nil, ctx.Err()
 		}
 
-		// Build streaming callback that accumulates text and emits at natural breaks
-		var pendingText strings.Builder
+		// Build streaming callback that accumulates text (emitted as one thinking event after)
+		var streamedText strings.Builder
 		streamCallback := func(textDelta string) {
-			pendingText.WriteString(textDelta)
-			// Emit thinking at sentence boundaries or after accumulating enough text
-			text := pendingText.String()
-			if shouldEmitThinking(text) && onProgress != nil {
-				onProgress(workflow.Progress{
-					Stage:           workflow.StageThinking,
-					ThinkingContent: text,
-				})
-				pendingText.Reset()
-			}
+			streamedText.WriteString(textDelta)
 		}
 
-		// Call LLM with tools (uses streaming when callback is provided)
+		// Call LLM with tools (uses streaming for faster response)
 		llmStart := time.Now()
 		response, err := toolLLM.CompleteWithTools(ctx, systemPrompt, messages, p.tools,
 			workflow.WithCacheControl(),
 			workflow.WithStreaming(streamCallback),
 		)
-
-		// Emit any remaining accumulated text
-		if pendingText.Len() > 0 && onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:           workflow.StageThinking,
-				ThinkingContent: pendingText.String(),
-			})
-		}
 		state.Metrics.LLMDuration += time.Since(llmStart)
 		state.Metrics.LLMCalls++
 
@@ -230,7 +203,13 @@ func (p *Workflow) RunWithProgress(ctx context.Context, userQuestion string, his
 		// Track text output (for conversational responses without queries)
 		if text := response.Text(); text != "" {
 			lastTextResponse = text
-			// Note: thinking events were already streamed via the callback above
+			// Emit thinking progress for text output during working phase
+			if response.HasToolCalls() && onProgress != nil {
+				onProgress(workflow.Progress{
+					Stage:           workflow.StageThinking,
+					ThinkingContent: text,
+				})
+			}
 		}
 
 		// Check if model is done (no tool calls)
@@ -978,35 +957,18 @@ func (p *Workflow) RunWithCheckpoint(
 			return nil, ctx.Err()
 		}
 
-		// Build streaming callback that accumulates text and emits at natural breaks
-		var pendingText strings.Builder
+		// Build streaming callback that accumulates text (emitted as one thinking event after)
+		var streamedText strings.Builder
 		streamCallback := func(textDelta string) {
-			pendingText.WriteString(textDelta)
-			// Emit thinking at sentence boundaries or after accumulating enough text
-			text := pendingText.String()
-			if shouldEmitThinking(text) && onProgress != nil {
-				onProgress(workflow.Progress{
-					Stage:           workflow.StageThinking,
-					ThinkingContent: text,
-				})
-				pendingText.Reset()
-			}
+			streamedText.WriteString(textDelta)
 		}
 
-		// Call LLM with tools (uses streaming when callback is provided)
+		// Call LLM with tools (uses streaming for faster response)
 		llmStart := time.Now()
 		response, err := toolLLM.CompleteWithTools(ctx, systemPrompt, messages, p.tools,
 			workflow.WithCacheControl(),
 			workflow.WithStreaming(streamCallback),
 		)
-
-		// Emit any remaining accumulated text
-		if pendingText.Len() > 0 && onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:           workflow.StageThinking,
-				ThinkingContent: pendingText.String(),
-			})
-		}
 		state.Metrics.LLMDuration += time.Since(llmStart)
 		state.Metrics.LLMCalls++
 
@@ -1029,7 +991,13 @@ func (p *Workflow) RunWithCheckpoint(
 		// Track text output (for conversational responses without queries)
 		if text := response.Text(); text != "" {
 			lastTextResponse = text
-			// Note: thinking events were already streamed via the callback above
+			// Emit thinking progress for text output during working phase
+			if response.HasToolCalls() && onProgress != nil {
+				onProgress(workflow.Progress{
+					Stage:           workflow.StageThinking,
+					ThinkingContent: text,
+				})
+			}
 		}
 
 		// Check if model is done (no tool calls)
@@ -1249,35 +1217,18 @@ func (p *Workflow) ResumeFromCheckpoint(
 			return nil, ctx.Err()
 		}
 
-		// Build streaming callback that accumulates text and emits at natural breaks
-		var pendingText strings.Builder
+		// Build streaming callback that accumulates text (emitted as one thinking event after)
+		var streamedText strings.Builder
 		streamCallback := func(textDelta string) {
-			pendingText.WriteString(textDelta)
-			// Emit thinking at sentence boundaries or after accumulating enough text
-			text := pendingText.String()
-			if shouldEmitThinking(text) && onProgress != nil {
-				onProgress(workflow.Progress{
-					Stage:           workflow.StageThinking,
-					ThinkingContent: text,
-				})
-				pendingText.Reset()
-			}
+			streamedText.WriteString(textDelta)
 		}
 
-		// Call LLM with tools (uses streaming when callback is provided)
+		// Call LLM with tools (uses streaming for faster response)
 		llmStart := time.Now()
 		response, err := toolLLM.CompleteWithTools(ctx, systemPrompt, messages, p.tools,
 			workflow.WithCacheControl(),
 			workflow.WithStreaming(streamCallback),
 		)
-
-		// Emit any remaining accumulated text
-		if pendingText.Len() > 0 && onProgress != nil {
-			onProgress(workflow.Progress{
-				Stage:           workflow.StageThinking,
-				ThinkingContent: pendingText.String(),
-			})
-		}
 		state.Metrics.LLMDuration += time.Since(llmStart)
 		state.Metrics.LLMCalls++
 
@@ -1300,7 +1251,13 @@ func (p *Workflow) ResumeFromCheckpoint(
 		// Track text output (for conversational responses without queries)
 		if text := response.Text(); text != "" {
 			lastTextResponse = text
-			// Note: thinking events were already streamed via the callback above
+			// Emit thinking progress for text output during working phase
+			if response.HasToolCalls() && onProgress != nil {
+				onProgress(workflow.Progress{
+					Stage:           workflow.StageThinking,
+					ThinkingContent: text,
+				})
+			}
 		}
 
 		// Check if model is done (no tool calls)
