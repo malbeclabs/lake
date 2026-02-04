@@ -490,7 +490,7 @@ func registerCypherContextResource(server *mcp.Server) {
 // registerAnalyzeDataPrompt registers a prompt for data analysis.
 func registerAnalyzeDataPrompt(server *mcp.Server) {
 	server.AddPrompt(&mcp.Prompt{
-		Name:        "analyze-data",
+		Name:        "analyze_data",
 		Description: "Analyze DoubleZero network data by asking a natural language question. References resources for schema and query patterns.",
 		Arguments: []*mcp.PromptArgument{
 			{
