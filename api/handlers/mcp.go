@@ -41,7 +41,9 @@ func createMCPServer(r *http.Request) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "doublezero",
 		Version: "1.0.0",
-	}, nil)
+	}, &mcp.ServerOptions{
+		Instructions: "IMPORTANT: Always call get_schema before writing SQL or Cypher queries to understand the available tables, columns, and their types. Do not assume table or column names.",
+	})
 
 	ctx := r.Context()
 	env := EnvFromContext(ctx)
@@ -88,6 +90,7 @@ func registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "execute_sql",
+		Title:       "Execute SQL",
 		Description: "Execute a SQL query directly against the ClickHouse database. Returns raw query results. Use this when you already know the exact SQL query you want to run. For natural language questions, use ask_question instead. Always provide a brief 'description' parameter summarizing what the query does.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ExecuteSQLInput) (*mcp.CallToolResult, ExecuteSQLOutput, error) {
 		// Check rate limit
@@ -193,6 +196,7 @@ func registerExecuteCypherTool(server *mcp.Server, r *http.Request) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "execute_cypher",
+		Title:       "Execute Cypher",
 		Description: "Execute a Cypher query against the Neo4j graph database. Use this for topology questions, path finding, reachability analysis, relationship traversal, and latency between metros (finds the network path since SQL only has directly-connected pairs). Only available on mainnet-beta. Always provide a brief 'description' parameter summarizing what the query does.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ExecuteCypherInput) (*mcp.CallToolResult, ExecuteCypherOutput, error) {
 		// Check rate limit
@@ -305,6 +309,7 @@ const docsBaseURL = "https://raw.githubusercontent.com/malbeclabs/docs/main/docs
 func registerReadDocsTool(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "read_docs",
+		Title:       "Read Docs",
 		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. Available pages include: index, architecture, setup, troubleshooting, connect, connect-multicast, contribute, contribute-overview, contribute-operations, users-overview, paying-fees, multicast-admin.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ReadDocsInput) (*mcp.CallToolResult, ReadDocsOutput, error) {
 		page := strings.TrimSpace(input.Page)
@@ -372,6 +377,7 @@ func registerGetSchemaTool(server *mcp.Server, r *http.Request) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_schema",
+		Title:       "Get Schema",
 		Description: "Get the database schema for the current environment. Returns all available tables, columns, types, and view definitions from ClickHouse. Use this to understand what data is available before writing SQL queries.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input GetSchemaInput) (*mcp.CallToolResult, GetSchemaOutput, error) {
 		// Check rate limit
