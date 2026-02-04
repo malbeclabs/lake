@@ -10,6 +10,12 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'February 4, 2026',
+    changes: [
+      { type: 'fix', description: 'Chat no longer incorrectly sums in+out when reporting link utilization' },
+    ],
+  },
+  {
     date: 'February 3, 2026',
     changes: [
       { type: 'feature', description: 'Committed latency and override latency columns on links page' },
