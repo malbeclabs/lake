@@ -72,19 +72,22 @@ var (
 	// ReadDocsTool allows the model to read DoubleZero documentation.
 	ReadDocsTool = Tool{
 		Name:        "read_docs",
-		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions.",
+		Description: "Read DoubleZero documentation to answer questions about concepts, architecture, setup, troubleshooting, or how the network works. Use this when users ask 'what is DZ', 'how do I set up', 'why isn't X working', or similar conceptual/procedural questions. Available pages include: index, architecture, setup, troubleshooting, connect, connect-multicast, contribute, contribute-overview, contribute-operations, users-overview, paying-fees, multicast-admin.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"page": {
 					"type": "string",
-					"enum": ["index", "architecture", "setup", "troubleshooting", "connect", "connect-multicast", "contribute", "contribute-overview", "contribute-operations", "contribute-provisioning", "users-overview", "paying-fees", "paying-fees2z", "Swapping-sol-to-2z", "DZ RPC-Connection", "DZ Testnet Connection", "DZ Mainnet-beta Connection", "mainnet-beta-migration", "multicast-admin"],
-					"description": "The documentation page to read"
+					"pattern": "^[a-zA-Z0-9][a-zA-Z0-9\\- ]*$",
+					"description": "The documentation page to read (e.g., 'index', 'architecture', 'setup', 'troubleshooting')"
 				}
 			},
 			"required": ["page"]
 		}`),
 	}
+
+	// validPageNameRegex validates documentation page names to prevent path traversal.
+	validPageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\- ]*$`)
 )
 
 // DefaultTools returns the default set of tools for the v3 workflow.
@@ -107,6 +110,10 @@ func ParseReadDocsInput(params map[string]any) (*ReadDocsInput, error) {
 	page, ok := params["page"].(string)
 	if !ok || page == "" {
 		return nil, fmt.Errorf("missing or invalid 'page' parameter")
+	}
+	page = strings.TrimSpace(page)
+	if !validPageNameRegex.MatchString(page) {
+		return nil, fmt.Errorf("invalid page name: %s", page)
 	}
 	return &ReadDocsInput{Page: page}, nil
 }
