@@ -13,6 +13,7 @@ const changelog: ChangelogEntry[] = [
     date: 'February 4, 2026',
     changes: [
       { type: 'fix', description: 'Chat no longer incorrectly sums in+out when reporting link utilization' },
+      { type: 'improvement', description: 'Device selector in path finder now searches by metro name (e.g. "Tokyo") in addition to metro code' },
     ],
   },
   {
