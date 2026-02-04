@@ -11,3 +11,54 @@ updates:
     - "**/*"
     schedule:
       interval: "weekly"
+    groups:
+      aws:
+        patterns:
+        - "github.com/aws/*"
+      testcontainers:
+        patterns:
+        - "github.com/testcontainers/*"
+      chi:
+        patterns:
+        - "github.com/go-chi/*"
+      prometheus:
+        patterns:
+        - "github.com/prometheus/*"
+
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+    groups:
+      react:
+        patterns:
+        - "react"
+        - "react-dom"
+        - "@types/react"
+        - "@types/react-dom"
+      solana:
+        patterns:
+        - "@solana/*"
+      tailwind:
+        patterns:
+        - "tailwindcss"
+        - "@tailwindcss/*"
+        - "tailwind-merge"
+      tanstack:
+        patterns:
+        - "@tanstack/*"
+      testing:
+        patterns:
+        - "vitest"
+        - "@testing-library/*"
+        - "jsdom"
+      linting:
+        patterns:
+        - "eslint"
+        - "eslint-plugin-*"
+        - "@eslint/*"
+        - "typescript-eslint"
+      vite:
+        patterns:
+        - "vite"
+        - "@vitejs/*"
