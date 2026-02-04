@@ -25,18 +25,14 @@ const (
 )
 
 // shouldEmitThinking returns true when accumulated text should be emitted as a thinking event.
-// This prevents emitting every single token and instead batches into meaningful chunks.
+// This prevents emitting every single token and instead batches into complete sentences.
 func shouldEmitThinking(text string) bool {
 	if len(text) == 0 {
 		return false
 	}
-	// Emit at sentence boundaries
+	// Only emit at sentence boundaries - remaining text is flushed at end of stream
 	lastChar := text[len(text)-1]
-	if lastChar == '.' || lastChar == '!' || lastChar == '?' || lastChar == '\n' {
-		return true
-	}
-	// Also emit if we've accumulated enough text (prevents long waits)
-	return len(text) >= 80
+	return lastChar == '.' || lastChar == '!' || lastChar == '?' || lastChar == '\n'
 }
 
 // Workflow orchestrates the v3 tool-calling workflow.
