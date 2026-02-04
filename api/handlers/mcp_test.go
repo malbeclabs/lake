@@ -290,7 +290,7 @@ func TestMCPHandler_ListPrompts(t *testing.T) {
 		promptNames[promptMap["name"].(string)] = true
 	}
 
-	assert.True(t, promptNames["analyze-data"], "should have analyze-data prompt")
+	assert.True(t, promptNames["analyze_data"], "should have analyze_data prompt")
 }
 
 // mcpSession initializes an MCP session and returns the handler and session ID.
