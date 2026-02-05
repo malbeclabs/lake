@@ -824,11 +824,12 @@ type graphDevice struct {
 }
 
 type graphLink struct {
-	PK      string
-	Code    string
-	Status  string
-	SideAPK string
-	SideZPK string
+	PK             string
+	Code           string
+	Status         string
+	SideAPK        string
+	SideZPK        string
+	CommittedRTTNs int64 // Optional: committed RTT in nanoseconds (0 = not set)
 }
 
 // seedGraphData seeds the Neo4j graph with topology data
@@ -879,18 +880,19 @@ func seedGraphData(t *testing.T, ctx context.Context, client neo4j.Client, metro
 		_, err := session.ExecuteWrite(ctx, func(tx neo4j.Transaction) (any, error) {
 			_, err := tx.Run(ctx, `
 				MERGE (l:Link {pk: $pk})
-				SET l.code = $code, l.status = $status
+				SET l.code = $code, l.status = $status, l.committed_rtt_ns = $committed_rtt_ns
 				WITH l
 				MATCH (da:Device {pk: $side_a_pk})
 				MATCH (dz:Device {pk: $side_z_pk})
 				MERGE (l)-[:CONNECTS {side: 'A'}]->(da)
 				MERGE (l)-[:CONNECTS {side: 'Z'}]->(dz)
 			`, map[string]any{
-				"pk":        link.PK,
-				"code":      link.Code,
-				"status":    link.Status,
-				"side_a_pk": link.SideAPK,
-				"side_z_pk": link.SideZPK,
+				"pk":               link.PK,
+				"code":             link.Code,
+				"status":           link.Status,
+				"committed_rtt_ns": link.CommittedRTTNs,
+				"side_a_pk":        link.SideAPK,
+				"side_z_pk":        link.SideZPK,
 			})
 			return nil, err
 		})
