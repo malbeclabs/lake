@@ -64,7 +64,8 @@ func createMCPServer(r *http.Request) *mcp.Server {
 	registerCypherContextResource(server)
 
 	// Register prompts
-	registerAnalyzeDataPrompt(server)
+	cypherAvailable := config.Neo4jClient != nil && env == EnvMainnet
+	registerAnalyzeDataPrompt(server, cypherAvailable)
 
 	return server
 }
@@ -321,8 +322,8 @@ func registerReadDocsTool(server *mcp.Server) {
 		}
 
 		// Validate page name format to prevent path traversal
-		// Allow alphanumeric, hyphens, and spaces (some docs use spaces in names)
-		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\- ]*$`).MatchString(page) {
+		// Allow alphanumeric and hyphens only (docs use slug format)
+		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\-]*$`).MatchString(page) {
 			return nil, ReadDocsOutput{}, fmt.Errorf("invalid page name: %s", page)
 		}
 
@@ -407,8 +408,9 @@ func registerGetSchemaTool(server *mcp.Server, r *http.Request) {
 
 // registerSchemaResource registers the dynamic schema as an MCP resource.
 func registerSchemaResource(server *mcp.Server, r *http.Request) {
-	// Capture env from original request for use in handler
+	// Capture env and IP from original request for use in handler
 	env := EnvFromContext(r.Context())
+	ip := GetIPFromRequest(r)
 
 	server.AddResource(&mcp.Resource{
 		URI:         "doublezero://schema",
@@ -416,6 +418,11 @@ func registerSchemaResource(server *mcp.Server, r *http.Request) {
 		Description: "Dynamic database schema from ClickHouse including all tables, columns, types, and view definitions",
 		MIMEType:    "text/plain",
 	}, func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		// Check rate limit (same as get_schema tool)
+		if errMsg := CheckRateLimit(QueryRateLimiter, ip); errMsg != "" {
+			return nil, errors.New(errMsg)
+		}
+
 		// Transfer env to handler context (r.Context() may be canceled in streamable HTTP)
 		ctx = ContextWithEnv(ctx, env)
 
@@ -498,7 +505,7 @@ func registerCypherContextResource(server *mcp.Server) {
 }
 
 // registerAnalyzeDataPrompt registers a prompt for data analysis.
-func registerAnalyzeDataPrompt(server *mcp.Server) {
+func registerAnalyzeDataPrompt(server *mcp.Server, cypherAvailable bool) {
 	server.AddPrompt(&mcp.Prompt{
 		Name:        "analyze_data",
 		Description: "Analyze DoubleZero network data by asking a natural language question. References resources for schema and query patterns.",
@@ -517,18 +524,22 @@ func registerAnalyzeDataPrompt(server *mcp.Server) {
 			}
 		}
 
+		cypherStep := ""
+		if cypherAvailable {
+			cypherStep = "\n4. For topology or path-finding questions, also read doublezero://cypher-context and use the execute_cypher tool"
+		}
+
 		promptText := fmt.Sprintf(`You are a data analyst for the DoubleZero (DZ) network.
 
 To answer the question below:
 
 1. Read the doublezero://schema resource to understand available tables and columns
 2. Read the doublezero://sql-context resource for SQL patterns, ClickHouse specifics, and business rules
-3. Use the execute_sql tool to run queries against ClickHouse
-4. For topology or path-finding questions, also read doublezero://cypher-context and use the execute_cypher tool
+3. Use the execute_sql tool to run queries against ClickHouse%s
 
 Question: %s
 
-Please analyze this question and provide a data-driven answer.`, question)
+Please analyze this question and provide a data-driven answer.`, cypherStep, question)
 
 		return &mcp.GetPromptResult{
 			Description: "Analyze DoubleZero data: " + question,
