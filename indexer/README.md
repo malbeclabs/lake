@@ -158,7 +158,7 @@ The indexer supports running against different DZ network environments (devnet, 
 - **Subsystem gating**: Solana, GeoIP, Neo4j, and ISIS are only enabled on mainnet-beta. On devnet/testnet, only network topology (serviceability) and telemetry views run.
 - **Environment lock**: On first startup, the indexer writes the configured environment to an `_env_lock` table in ClickHouse (and an `_EnvLock` node in Neo4j when enabled). Subsequent startups verify the lock matches, preventing accidental cross-env writes to the same database.
 
-Each environment should use a separate ClickHouse database (e.g., `dz_mainnet`, `dz_devnet`).
+Each environment should use a separate ClickHouse database (e.g., `lake_mainnet`, `lake_devnet`).
 
 ## Admin CLI
 

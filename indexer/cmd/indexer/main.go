@@ -169,9 +169,9 @@ func run() error {
 		*mockDeviceUsageFlag = true
 	}
 
-	// For non-mainnet envs, use the dz-env name as the ClickHouse database.
+	// For non-mainnet envs, use "lake_<env>" as the ClickHouse database.
 	if *dzEnvFlag != config.EnvMainnetBeta {
-		*clickhouseDatabaseFlag = *dzEnvFlag
+		*clickhouseDatabaseFlag = "lake_" + *dzEnvFlag
 	}
 
 	// Solana, GeoIP, Neo4j, and ISIS are only enabled for mainnet-beta for now.

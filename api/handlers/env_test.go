@@ -32,16 +32,16 @@ func TestEnvFromContext(t *testing.T) {
 }
 
 func TestDatabaseForEnvFromContext(t *testing.T) {
-	t.Parallel()
+	// Not parallel: modifies global config.EnvDatabases
 
 	// Set up env databases for the test
 	origEnvDatabases := config.EnvDatabases
 	config.EnvDatabases = map[string]string{
-		"mainnet-beta": "dz_mainnet",
-		"devnet":       "dz_devnet",
-		"testnet":      "dz_testnet",
+		"mainnet-beta": "lake_mainnet",
+		"devnet":       "lake_devnet",
+		"testnet":      "lake_testnet",
 	}
-	config.SetDatabase("dz_mainnet")
+	config.SetDatabase("lake_mainnet")
 	t.Cleanup(func() {
 		config.EnvDatabases = origEnvDatabases
 	})
@@ -51,9 +51,9 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 		env      handlers.DZEnv
 		expected string
 	}{
-		{"mainnet", handlers.EnvMainnet, "dz_mainnet"},
-		{"devnet", handlers.EnvDevnet, "dz_devnet"},
-		{"testnet", handlers.EnvTestnet, "dz_testnet"},
+		{"mainnet", handlers.EnvMainnet, "lake_mainnet"},
+		{"devnet", handlers.EnvDevnet, "lake_devnet"},
+		{"testnet", handlers.EnvTestnet, "lake_testnet"},
 	}
 
 	for _, tt := range tests {
@@ -65,13 +65,13 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 }
 
 func TestBuildEnvContext(t *testing.T) {
-	t.Parallel()
+	// Not parallel: modifies global config.EnvDatabases
 
 	// Set up env databases for the test
 	origEnvDatabases := config.EnvDatabases
 	config.EnvDatabases = map[string]string{
-		"mainnet-beta": "dz_mainnet",
-		"devnet":       "dz_devnet",
+		"mainnet-beta": "lake_mainnet",
+		"devnet":       "lake_devnet",
 	}
 	t.Cleanup(func() {
 		config.EnvDatabases = origEnvDatabases
