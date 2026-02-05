@@ -72,31 +72,37 @@ func runTest_MultiHopLatency(t *testing.T, llmFactory LLMClientFactory) {
 	require.NotEmpty(t, result.ExecutedQueries, "Should have executed at least one query")
 
 	foundCypher := false
+	cypherQueryIndex := -1
 	queryCount := 0
-	for _, eq := range result.ExecutedQueries {
+	for i, eq := range result.ExecutedQueries {
 		query := eq.Result.QueryText()
 		queryUpper := strings.ToUpper(query)
 		queryCount++
 
 		if debug {
 			if debugLevel == 1 {
-				t.Logf("Executed query: %s", truncate(query, 200))
+				t.Logf("Query %d: %s", i+1, truncate(query, 200))
 			} else {
-				t.Logf("Executed query: %s", query)
+				t.Logf("Query %d: %s", i+1, query)
 			}
 		}
 
-		if strings.Contains(queryUpper, "MATCH") {
+		if strings.Contains(queryUpper, "MATCH") && cypherQueryIndex == -1 {
 			foundCypher = true
+			cypherQueryIndex = i
 		}
 	}
 
 	// The agent must use Cypher to find the path (since there's no direct TYO-AMS link)
 	require.True(t, foundCypher, "Should have used Cypher to find the path between non-directly-connected metros")
 
+	// Cypher should be used early - within the first 2 queries
+	// If the agent tries SQL first, it's following incorrect guidance
+	require.LessOrEqual(t, cypherQueryIndex, 1, "Cypher should be used within the first 2 queries (agent shouldn't fumble with SQL first)")
+
 	// Agent shouldn't need excessive queries - if it's fumbling, it will do many
 	// A good agent: 1-2 Cypher queries to find path, maybe 1 SQL to check for telemetry
-	t.Logf("Total queries executed: %d", queryCount)
+	t.Logf("Total queries executed: %d (Cypher at query %d)", queryCount, cypherQueryIndex+1)
 	if queryCount > 5 {
 		t.Logf("WARNING: Agent executed %d queries - may be fumbling", queryCount)
 	}
