@@ -116,28 +116,34 @@ RETURN [n IN nodes(path) |
 ] AS segments
 ```
 
-### Find Shortest Path Between Metros
+### Find Lowest-Latency Path Between Metros
 
-When finding the shortest path between two metros (not specific devices), you must find the overall shortest path among all device pairs. This requires ordering by path length and limiting to 1.
+When finding the path between two metros, order by total latency to get the lowest-latency path. Use hop count as a tiebreaker when latencies are equal (or when committed_rtt_ns is not set).
 
 ```cypher
 MATCH (ma:Metro {code: 'nyc'})<-[:LOCATED_IN]-(da:Device)
 MATCH (mz:Metro {code: 'lon'})<-[:LOCATED_IN]-(dz:Device)
 MATCH path = shortestPath((da)-[:CONNECTS*]-(dz))
-WITH path, length(path) AS pathLength
-ORDER BY pathLength
+WITH path,
+     length(path) AS pathLength,
+     reduce(totalRtt = 0, n IN nodes(path) |
+       CASE WHEN n:Link THEN totalRtt + coalesce(n.committed_rtt_ns, 0) ELSE totalRtt END
+     ) AS totalRttNs
+ORDER BY totalRttNs, pathLength
 LIMIT 1
 RETURN [n IN nodes(path) |
   CASE WHEN n:Device THEN {type: 'device', code: n.code, status: n.status}
-       WHEN n:Link THEN {type: 'link', code: n.code, status: n.status}
+       WHEN n:Link THEN {type: 'link', code: n.code, committed_rtt_ms: n.committed_rtt_ns / 1000000.0}
   END
-] AS segments
+] AS segments,
+pathLength AS hops,
+totalRttNs / 1000000.0 AS total_rtt_ms
 ```
 
 **Key points:**
-- Without `ORDER BY length(path) LIMIT 1`, the query returns an arbitrary path from one device pair
-- The `shortestPath()` function finds the shortest path between a single pair, but with multiple devices per metro you need to compare across all pairs
-- Use `length(path)` to get the number of relationships in the path
+- Order by `totalRttNs, pathLength` - latency first, hop count as tiebreaker
+- Use `reduce()` to sum `committed_rtt_ns` from Link nodes
+- With multiple devices per metro, compare paths across all device pairs
 
 ### Find ALL Paths Between Metros
 
