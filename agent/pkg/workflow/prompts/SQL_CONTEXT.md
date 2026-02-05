@@ -127,7 +127,7 @@ SELECT MAX(peak) FROM per_window
 | `solana_validators_new_connections` | Recently connected validators with device_code, device_metro_code |
 | `dz_links_health_current` | Current link health (status, packet loss, latency vs committed, is_dark) |
 | `dz_link_status_changes` | Link status transitions with timestamps (previous_status, new_status, changed_ts) |
-| `dz_vs_internet_latency_comparison` | Compare DZ vs public internet latency per metro pair |
+| `dz_vs_internet_latency_comparison` | Compare DZ vs public internet latency for **directly-connected** metro pairs only. For latency between non-adjacent metros (e.g., NYC-TYO), use `execute_cypher` to find the path first. |
 
 ### Time Windows
 When the question says "recently" or "recent", default to **past 24 hours** unless context suggests otherwise.

@@ -399,113 +399,120 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// Lightweight endpoints (no rate limiting)
 	r.Get("/api/config", handlers.GetConfig)
-	r.Get("/api/catalog", handlers.GetCatalog)
-	r.Get("/api/stats", handlers.GetStats)
-	r.Get("/api/status", handlers.GetStatus)
-	r.Get("/api/status/link-history", handlers.GetLinkHistory)
-	r.Get("/api/status/device-history", handlers.GetDeviceHistory)
-	r.Get("/api/status/interface-issues", handlers.GetInterfaceIssues)
-	r.Get("/api/status/devices/{pk}/interface-history", handlers.GetDeviceInterfaceHistory)
-	r.Get("/api/status/devices/{pk}/history", handlers.GetSingleDeviceHistory)
-	r.Get("/api/status/links/{pk}/history", handlers.GetSingleLinkHistory)
-	r.Get("/api/timeline", handlers.GetTimeline)
-	r.Get("/api/timeline/bounds", handlers.GetTimelineBounds)
-
-	// Outage routes
-	r.Get("/api/outages/links", handlers.GetLinkOutages)
-	r.Get("/api/outages/links/csv", handlers.GetLinkOutagesCSV)
-
-	// Search routes
-	r.Get("/api/search", handlers.Search)
-	r.Get("/api/search/autocomplete", handlers.SearchAutocomplete)
-
-	// DZ entity routes
-	r.Get("/api/dz/devices", handlers.GetDevices)
-	r.Get("/api/dz/devices/{pk}", handlers.GetDevice)
-	r.Get("/api/dz/links", handlers.GetLinks)
-	r.Get("/api/dz/links/{pk}", handlers.GetLink)
-	r.Get("/api/dz/links-health", handlers.GetLinkHealth)
-	r.Get("/api/dz/metros", handlers.GetMetros)
-	r.Get("/api/dz/metros/{pk}", handlers.GetMetro)
-	r.Get("/api/dz/contributors", handlers.GetContributors)
-	r.Get("/api/dz/contributors/{pk}", handlers.GetContributor)
-	r.Get("/api/dz/users", handlers.GetUsers)
-	r.Get("/api/dz/users/{pk}", handlers.GetUser)
-	r.Get("/api/dz/multicast-groups", handlers.GetMulticastGroups)
-	r.Get("/api/dz/multicast-groups/{code}", handlers.GetMulticastGroup)
-	r.Get("/api/dz/multicast-groups/{code}/tree-paths", handlers.GetMulticastTreePaths)
-	r.Get("/api/dz/field-values", handlers.GetFieldValues)
-
-	// Solana entity routes
-	r.Get("/api/solana/validators", handlers.GetValidators)
-	r.Get("/api/solana/validators/{vote_pubkey}", handlers.GetValidator)
-	r.Get("/api/solana/gossip-nodes", handlers.GetGossipNodes)
-	r.Get("/api/solana/gossip-nodes/{pubkey}", handlers.GetGossipNode)
-
-	// Stake analytics routes
-	r.Get("/api/stake/overview", handlers.GetStakeOverview)
-	r.Get("/api/stake/history", handlers.GetStakeHistory)
-	r.Get("/api/stake/changes", handlers.GetStakeChanges)
-	r.Get("/api/stake/validators", handlers.GetStakeValidators)
-
-	// Traffic analytics routes
-	r.Get("/api/traffic/data", handlers.GetTrafficData)
-	r.Get("/api/traffic/discards", handlers.GetDiscardsData)
-
-	// Topology endpoints (ClickHouse only)
-	r.Get("/api/topology", handlers.GetTopology)
-	r.Get("/api/topology/traffic", handlers.GetTopologyTraffic)
-	r.Get("/api/topology/link-latency", handlers.GetLinkLatencyHistory)
-	r.Get("/api/topology/latency-comparison", handlers.GetLatencyComparison)
-	r.Get("/api/topology/latency-history/{origin}/{target}", handlers.GetLatencyHistory)
-
-	// Topology endpoints (require Neo4j — mainnet only)
-	r.Group(func(r chi.Router) {
-		r.Use(handlers.RequireNeo4jMiddleware)
-		r.Get("/api/topology/isis", handlers.GetISISTopology)
-		r.Get("/api/topology/path", handlers.GetISISPath)
-		r.Get("/api/topology/paths", handlers.GetISISPaths)
-		r.Get("/api/topology/compare", handlers.GetTopologyCompare)
-		r.Get("/api/topology/impact/{pk}", handlers.GetFailureImpact)
-		r.Get("/api/topology/critical-links", handlers.GetCriticalLinks)
-		r.Get("/api/topology/redundancy-report", handlers.GetRedundancyReport)
-		r.Get("/api/topology/simulate-link-removal", handlers.GetSimulateLinkRemoval)
-		r.Get("/api/topology/simulate-link-addition", handlers.GetSimulateLinkAddition)
-		r.Get("/api/topology/metro-connectivity", handlers.GetMetroConnectivity)
-		r.Get("/api/topology/metro-path-latency", handlers.GetMetroPathLatency)
-		r.Get("/api/topology/metro-path-detail", handlers.GetMetroPathDetail)
-		r.Get("/api/topology/metro-paths", handlers.GetMetroPaths)
-		r.Get("/api/topology/metro-device-paths", handlers.GetMetroDevicePaths)
-		r.Post("/api/topology/maintenance-impact", handlers.PostMaintenanceImpact)
-		r.Post("/api/topology/whatif-removal", handlers.PostWhatIfRemoval)
-	})
-
-	// SQL endpoints
-	r.Post("/api/sql/query", handlers.ExecuteQuery)
-	r.Post("/api/sql/generate", handlers.GenerateSQL)
-	r.Post("/api/sql/generate/stream", handlers.GenerateSQLStream)
-
-	// Cypher endpoints (require Neo4j — mainnet only)
-	r.Group(func(r chi.Router) {
-		r.Use(handlers.RequireNeo4jMiddleware)
-		r.Post("/api/cypher/query", handlers.ExecuteCypher)
-		r.Post("/api/cypher/generate", handlers.GenerateCypher)
-		r.Post("/api/cypher/generate/stream", handlers.GenerateCypherStream)
-	})
-
-	// Auto-detection endpoint
-	r.Post("/api/auto/generate/stream", handlers.AutoGenerateStream)
-
-	// Legacy SQL endpoints (backward compatibility)
-	r.Post("/api/query", handlers.ExecuteQuery)
-	r.Post("/api/generate", handlers.GenerateSQL)
-	r.Post("/api/generate/stream", handlers.GenerateSQLStream)
-	r.Post("/api/chat", handlers.Chat)
-	r.Post("/api/chat/stream", handlers.ChatStream)
-	r.Post("/api/complete", handlers.Complete)
-	r.Post("/api/visualize/recommend", handlers.RecommendVisualization)
 	r.Get("/api/version", handlers.GetVersion)
+
+	// Database query endpoints (rate limited)
+	r.Group(func(r chi.Router) {
+		r.Use(handlers.QueryRateLimitMiddleware)
+
+		r.Get("/api/catalog", handlers.GetCatalog)
+		r.Get("/api/stats", handlers.GetStats)
+		r.Get("/api/status", handlers.GetStatus)
+		r.Get("/api/status/link-history", handlers.GetLinkHistory)
+		r.Get("/api/status/device-history", handlers.GetDeviceHistory)
+		r.Get("/api/status/interface-issues", handlers.GetInterfaceIssues)
+		r.Get("/api/status/devices/{pk}/interface-history", handlers.GetDeviceInterfaceHistory)
+		r.Get("/api/status/devices/{pk}/history", handlers.GetSingleDeviceHistory)
+		r.Get("/api/status/links/{pk}/history", handlers.GetSingleLinkHistory)
+		r.Get("/api/timeline", handlers.GetTimeline)
+		r.Get("/api/timeline/bounds", handlers.GetTimelineBounds)
+
+		// Outage routes
+		r.Get("/api/outages/links", handlers.GetLinkOutages)
+		r.Get("/api/outages/links/csv", handlers.GetLinkOutagesCSV)
+
+		// Search routes
+		r.Get("/api/search", handlers.Search)
+		r.Get("/api/search/autocomplete", handlers.SearchAutocomplete)
+
+		// DZ entity routes
+		r.Get("/api/dz/devices", handlers.GetDevices)
+		r.Get("/api/dz/devices/{pk}", handlers.GetDevice)
+		r.Get("/api/dz/links", handlers.GetLinks)
+		r.Get("/api/dz/links/{pk}", handlers.GetLink)
+		r.Get("/api/dz/links-health", handlers.GetLinkHealth)
+		r.Get("/api/dz/metros", handlers.GetMetros)
+		r.Get("/api/dz/metros/{pk}", handlers.GetMetro)
+		r.Get("/api/dz/contributors", handlers.GetContributors)
+		r.Get("/api/dz/contributors/{pk}", handlers.GetContributor)
+		r.Get("/api/dz/users", handlers.GetUsers)
+		r.Get("/api/dz/users/{pk}", handlers.GetUser)
+		r.Get("/api/dz/multicast-groups", handlers.GetMulticastGroups)
+		r.Get("/api/dz/multicast-groups/{code}", handlers.GetMulticastGroup)
+		r.Get("/api/dz/multicast-groups/{code}/tree-paths", handlers.GetMulticastTreePaths)
+		r.Get("/api/dz/field-values", handlers.GetFieldValues)
+
+		// Solana entity routes
+		r.Get("/api/solana/validators", handlers.GetValidators)
+		r.Get("/api/solana/validators/{vote_pubkey}", handlers.GetValidator)
+		r.Get("/api/solana/gossip-nodes", handlers.GetGossipNodes)
+		r.Get("/api/solana/gossip-nodes/{pubkey}", handlers.GetGossipNode)
+
+		// Stake analytics routes
+		r.Get("/api/stake/overview", handlers.GetStakeOverview)
+		r.Get("/api/stake/history", handlers.GetStakeHistory)
+		r.Get("/api/stake/changes", handlers.GetStakeChanges)
+		r.Get("/api/stake/validators", handlers.GetStakeValidators)
+
+		// Traffic analytics routes
+		r.Get("/api/traffic/data", handlers.GetTrafficData)
+		r.Get("/api/traffic/discards", handlers.GetDiscardsData)
+
+		// Topology endpoints (ClickHouse only)
+		r.Get("/api/topology", handlers.GetTopology)
+		r.Get("/api/topology/traffic", handlers.GetTopologyTraffic)
+		r.Get("/api/topology/link-latency", handlers.GetLinkLatencyHistory)
+		r.Get("/api/topology/latency-comparison", handlers.GetLatencyComparison)
+		r.Get("/api/topology/latency-history/{origin}/{target}", handlers.GetLatencyHistory)
+
+		// Topology endpoints (require Neo4j — mainnet only)
+		r.Group(func(r chi.Router) {
+			r.Use(handlers.RequireNeo4jMiddleware)
+			r.Get("/api/topology/isis", handlers.GetISISTopology)
+			r.Get("/api/topology/path", handlers.GetISISPath)
+			r.Get("/api/topology/paths", handlers.GetISISPaths)
+			r.Get("/api/topology/compare", handlers.GetTopologyCompare)
+			r.Get("/api/topology/impact/{pk}", handlers.GetFailureImpact)
+			r.Get("/api/topology/critical-links", handlers.GetCriticalLinks)
+			r.Get("/api/topology/redundancy-report", handlers.GetRedundancyReport)
+			r.Get("/api/topology/simulate-link-removal", handlers.GetSimulateLinkRemoval)
+			r.Get("/api/topology/simulate-link-addition", handlers.GetSimulateLinkAddition)
+			r.Get("/api/topology/metro-connectivity", handlers.GetMetroConnectivity)
+			r.Get("/api/topology/metro-path-latency", handlers.GetMetroPathLatency)
+			r.Get("/api/topology/metro-path-detail", handlers.GetMetroPathDetail)
+			r.Get("/api/topology/metro-paths", handlers.GetMetroPaths)
+			r.Get("/api/topology/metro-device-paths", handlers.GetMetroDevicePaths)
+			r.Post("/api/topology/maintenance-impact", handlers.PostMaintenanceImpact)
+			r.Post("/api/topology/whatif-removal", handlers.PostWhatIfRemoval)
+		})
+
+		// SQL endpoints
+		r.Post("/api/sql/query", handlers.ExecuteQuery)
+		r.Post("/api/sql/generate", handlers.GenerateSQL)
+		r.Post("/api/sql/generate/stream", handlers.GenerateSQLStream)
+
+		// Cypher endpoints (require Neo4j — mainnet only)
+		r.Group(func(r chi.Router) {
+			r.Use(handlers.RequireNeo4jMiddleware)
+			r.Post("/api/cypher/query", handlers.ExecuteCypher)
+			r.Post("/api/cypher/generate", handlers.GenerateCypher)
+			r.Post("/api/cypher/generate/stream", handlers.GenerateCypherStream)
+		})
+
+		// Auto-detection endpoint
+		r.Post("/api/auto/generate/stream", handlers.AutoGenerateStream)
+
+		// Legacy SQL endpoints (backward compatibility)
+		r.Post("/api/query", handlers.ExecuteQuery)
+		r.Post("/api/generate", handlers.GenerateSQL)
+		r.Post("/api/generate/stream", handlers.GenerateSQLStream)
+		r.Post("/api/chat", handlers.Chat)
+		r.Post("/api/chat/stream", handlers.ChatStream)
+		r.Post("/api/complete", handlers.Complete)
+		r.Post("/api/visualize/recommend", handlers.RecommendVisualization)
+	})
 
 	// Session persistence routes
 	r.Get("/api/sessions", handlers.ListSessions)
@@ -529,6 +536,11 @@ func main() {
 	r.Post("/api/auth/wallet", handlers.PostAuthWallet)
 	r.Post("/api/auth/google", handlers.PostAuthGoogle)
 	r.Get("/api/usage/quota", handlers.GetUsageQuota)
+
+	// MCP (Model Context Protocol) server endpoint
+	mcpHandler := handlers.InitMCP()
+	r.Handle("/api/mcp", mcpHandler)
+	r.Handle("/api/mcp/*", mcpHandler)
 
 	// Serve static files from the web dist directory
 	webDir := os.Getenv("WEB_DIST_DIR")

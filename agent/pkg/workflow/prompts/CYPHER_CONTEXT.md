@@ -6,6 +6,7 @@ This document contains Cypher query patterns and guidance for the DZ network gra
 
 Use `execute_cypher` for things SQL cannot do efficiently:
 - **Path finding**: "What's the path between device A and device B?"
+- **Latency between metros**: "What's the latency between NYC and TYO?" - always use Cypher first to find the path and sum link RTTs, since SQL only has directly-connected metro pairs
 - **Reachability analysis**: "What devices are reachable from metro X?"
 - **Impact analysis**: "What's affected if device X goes down?"
 - **Multi-hop connectivity**: "What devices are N hops from X?"
