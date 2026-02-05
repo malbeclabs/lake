@@ -78,7 +78,7 @@ var (
 			"properties": {
 				"page": {
 					"type": "string",
-					"pattern": "^[a-zA-Z0-9][a-zA-Z0-9\\- ]*$",
+					"pattern": "^[a-zA-Z0-9][a-zA-Z0-9\\-]*$",
 					"description": "The documentation page to read (e.g., 'index', 'architecture', 'setup', 'troubleshooting')"
 				}
 			},
@@ -87,7 +87,8 @@ var (
 	}
 
 	// validPageNameRegex validates documentation page names to prevent path traversal.
-	validPageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\- ]*$`)
+	// Allow alphanumeric and hyphens only (docs use slug format).
+	validPageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9\-]*$`)
 )
 
 // DefaultTools returns the default set of tools for the v3 workflow.
