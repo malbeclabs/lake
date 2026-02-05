@@ -650,10 +650,11 @@ interface ChatProps {
   onAbort: () => void
   onRetry?: () => void
   onOpenInQueryEditor?: (query: string, type: 'sql' | 'cypher', env?: string) => void
+  sessionEnv?: string // Environment this chat session is locked to
 }
 
-export function Chat({ messages, isPending, processingSteps, streamError, onSendMessage, onAbort, onRetry, onOpenInQueryEditor }: ChatProps) {
-  const { features } = useEnv()
+export function Chat({ messages, isPending, processingSteps, streamError, onSendMessage, onAbort, onRetry, onOpenInQueryEditor, sessionEnv }: ChatProps) {
+  const { env: currentEnv, features } = useEnv()
   const [input, setInput] = useState('')
   const [highlightedQueries, setHighlightedQueries] = useState<Map<number, number | null>>(new Map()) // messageIndex -> queryIndex
   const [showLoginModal, setShowLoginModal] = useState(false)
@@ -787,6 +788,14 @@ export function Chat({ messages, isPending, processingSteps, streamError, onSend
       <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-auto">
         <div className="max-w-3xl mx-auto min-h-full">
           <div className="px-4 py-8 space-y-6">
+            {/* Env badge - shown when session env differs from current UI env */}
+            {sessionEnv && sessionEnv !== currentEnv && (
+              <div className="flex items-center justify-center">
+                <span className="px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  This conversation is querying {sessionEnv}
+                </span>
+              </div>
+            )}
             {messages.length === 0 && !isPending && !isSubmitting && (
               <div className="text-muted-foreground py-24 text-center">
                 <p className="text-lg mb-2">What would you like to know?</p>

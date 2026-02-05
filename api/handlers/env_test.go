@@ -32,16 +32,16 @@ func TestEnvFromContext(t *testing.T) {
 }
 
 func TestDatabaseForEnvFromContext(t *testing.T) {
-	t.Parallel()
+	// Not parallel: modifies global config.EnvDatabases
 
 	// Set up env databases for the test
 	origEnvDatabases := config.EnvDatabases
 	config.EnvDatabases = map[string]string{
-		"mainnet-beta": "dz_mainnet",
-		"devnet":       "dz_devnet",
-		"testnet":      "dz_testnet",
+		"mainnet-beta": "lake_mainnet",
+		"devnet":       "lake_devnet",
+		"testnet":      "lake_testnet",
 	}
-	config.SetDatabase("dz_mainnet")
+	config.SetDatabase("lake_mainnet")
 	t.Cleanup(func() {
 		config.EnvDatabases = origEnvDatabases
 	})
@@ -51,9 +51,9 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 		env      handlers.DZEnv
 		expected string
 	}{
-		{"mainnet", handlers.EnvMainnet, "dz_mainnet"},
-		{"devnet", handlers.EnvDevnet, "dz_devnet"},
-		{"testnet", handlers.EnvTestnet, "dz_testnet"},
+		{"mainnet", handlers.EnvMainnet, "lake_mainnet"},
+		{"devnet", handlers.EnvDevnet, "lake_devnet"},
+		{"testnet", handlers.EnvTestnet, "lake_testnet"},
 	}
 
 	for _, tt := range tests {
@@ -67,31 +67,28 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 func TestBuildEnvContext(t *testing.T) {
 	t.Parallel()
 
-	// Set up env databases for the test
-	origEnvDatabases := config.EnvDatabases
-	config.EnvDatabases = map[string]string{
-		"mainnet-beta": "dz_mainnet",
-		"devnet":       "dz_devnet",
-	}
-	t.Cleanup(func() {
-		config.EnvDatabases = origEnvDatabases
-	})
-
-	t.Run("mainnet mentions other envs", func(t *testing.T) {
+	t.Run("mainnet mentions other envs and cross-query syntax", func(t *testing.T) {
+		t.Parallel()
 		result := handlers.BuildEnvContext(handlers.EnvMainnet)
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "mainnet-beta")
-		assert.Contains(t, result, "devnet")
+		assert.Contains(t, result, "lake_devnet")
+		assert.Contains(t, result, "lake_testnet")
+		assert.Contains(t, result, "database.table")
 	})
 
-	t.Run("devnet mentions limitations", func(t *testing.T) {
+	t.Run("devnet requires database prefix", func(t *testing.T) {
+		t.Parallel()
 		result := handlers.BuildEnvContext(handlers.EnvDevnet)
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "devnet")
+		assert.Contains(t, result, "lake_devnet.")
+		assert.Contains(t, result, "MUST prefix")
 		assert.Contains(t, result, "Neo4j graph queries")
 	})
 
 	t.Run("different envs produce different context", func(t *testing.T) {
+		t.Parallel()
 		mainnet := handlers.BuildEnvContext(handlers.EnvMainnet)
 		devnet := handlers.BuildEnvContext(handlers.EnvDevnet)
 		assert.NotEqual(t, mainnet, devnet)

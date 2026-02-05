@@ -240,6 +240,25 @@ func GetWorkflowRun(ctx context.Context, id uuid.UUID) (*WorkflowRun, error) {
 	return &run, nil
 }
 
+// GetSessionEnv returns the environment from the most recent workflow run for a session.
+// Returns empty string if no workflow runs exist for the session.
+func GetSessionEnv(ctx context.Context, sessionID uuid.UUID) (string, error) {
+	var env string
+	err := config.PgPool.QueryRow(ctx, `
+		SELECT env FROM workflow_runs
+		WHERE session_id = $1
+		ORDER BY started_at DESC
+		LIMIT 1
+	`, sessionID).Scan(&env)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get session env: %w", err)
+	}
+	return env, nil
+}
+
 // ClaimIncompleteWorkflow atomically claims a single incomplete workflow for resumption.
 // This uses UPDATE ... RETURNING to ensure only one replica can claim a workflow.
 // A workflow is claimable if:

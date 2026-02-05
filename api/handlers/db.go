@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
+	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -20,11 +21,13 @@ func NewDBQuerier() *DBQuerier {
 }
 
 // Query executes a SQL query and returns the result.
+// Agent queries always run against the mainnet database. To query other
+// environments, use fully-qualified table names (e.g., lake_devnet.dim_devices_current).
 func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult, error) {
 	sql = strings.TrimSuffix(strings.TrimSpace(sql), ";")
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, sql)
+	rows, err := config.DB.Query(ctx, sql)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
@@ -126,10 +129,11 @@ func NewDBSchemaFetcher() *DBSchemaFetcher {
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.
+// Schema is always fetched from the mainnet database.
 func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
-	// Fetch columns
+	// Fetch columns from mainnet database
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, `
+	rows, err := config.DB.Query(ctx, `
 		SELECT
 			table,
 			name,
@@ -139,7 +143,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		  AND table NOT LIKE 'stg_%'
 		  AND table != '_env_lock'
 		ORDER BY table, position
-	`, DatabaseForEnvFromContext(ctx))
+	`, config.Database())
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
@@ -162,9 +166,9 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		columns = append(columns, c)
 	}
 
-	// Fetch view definitions
+	// Fetch view definitions from mainnet database
 	start = time.Now()
-	viewRows, err := envDB(ctx).Query(ctx, `
+	viewRows, err := config.DB.Query(ctx, `
 		SELECT
 			name,
 			as_select
@@ -173,7 +177,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		  AND engine = 'View'
 		  AND name NOT LIKE 'stg_%'
 		  AND name != '_env_lock'
-	`, DatabaseForEnvFromContext(ctx))
+	`, config.Database())
 	duration = time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
