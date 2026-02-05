@@ -22,6 +22,7 @@ type Session struct {
 	UpdatedAt   time.Time       `json:"updated_at"`
 	AccountID   *uuid.UUID      `json:"account_id,omitempty"`
 	AnonymousID *string         `json:"anonymous_id,omitempty"`
+	Env         *string         `json:"env,omitempty"` // Environment from first workflow run (for chat sessions)
 }
 
 // SessionListItem represents a session in list responses (without full content)
@@ -330,6 +331,13 @@ func GetSession(w http.ResponseWriter, r *http.Request) {
 		// No owner context - deny access
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
+	}
+
+	// For chat sessions, fetch the env from the first workflow run
+	if session.Type == "chat" {
+		if env, err := GetSessionEnv(ctx, id); err == nil && env != "" {
+			session.Env = &env
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

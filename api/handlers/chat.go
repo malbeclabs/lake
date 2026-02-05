@@ -434,8 +434,14 @@ func chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.Conve
 		return
 	}
 
-	// Start the workflow in background with env from request context
-	workflowID, err := Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, EnvFromContext(ctx))
+	// Use session's existing env if available (for followup messages), otherwise use request env
+	env := EnvFromContext(ctx)
+	if sessionEnv, err := GetSessionEnv(ctx, sessionUUID); err == nil && sessionEnv != "" {
+		env = DZEnv(sessionEnv)
+	}
+
+	// Start the workflow in background
+	workflowID, err := Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, env)
 	if err != nil {
 		slog.Error("Failed to start background workflow", "session_id", req.SessionID, "error", err)
 		// Don't expose internal errors to the UI

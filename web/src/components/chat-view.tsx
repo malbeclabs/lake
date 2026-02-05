@@ -231,6 +231,7 @@ export function SimplifiedChatView() {
       onAbort={handleAbort}
       onRetry={handleRetry}
       onOpenInQueryEditor={handleOpenInQueryEditor}
+      sessionEnv={session?.env}
     />
   )
 }

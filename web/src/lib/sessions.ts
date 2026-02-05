@@ -16,6 +16,7 @@ export interface ChatSession {
   updatedAt: Date
   name?: string
   messages: ChatMessage[]
+  env?: string // Environment from first workflow run (for non-mainnet sessions)
 }
 
 // Current session ID storage (just tracks which session is active, not content)
@@ -140,6 +141,7 @@ export function serverToChatSession(server: {
   created_at: string
   updated_at: string
   content: ChatMessage[]
+  env?: string | null
 }): ChatSession {
   return {
     id: server.id,
@@ -148,6 +150,7 @@ export function serverToChatSession(server: {
     updatedAt: new Date(server.updated_at),
     // Ensure all messages have IDs (migration for old data)
     messages: server.content.map(ensureMessageId),
+    env: server.env ?? undefined,
   }
 }
 
