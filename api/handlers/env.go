@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/malbeclabs/lake/api/config"
@@ -56,42 +55,25 @@ func DatabaseForEnvFromContext(ctx context.Context) string {
 	return db
 }
 
-// buildEnvContext returns the agent system prompt context for the given environment.
-// For mainnet, it mentions other available envs and their database names.
-// For non-mainnet, it says what env we're in and how to cross-query.
+// BuildEnvContext returns the agent system prompt context for the given environment.
+// All agent queries run against the mainnet database by default. For other environments,
+// the agent uses fully-qualified table names (e.g., lake_devnet.dim_devices_current).
 func BuildEnvContext(env DZEnv) string {
-	currentDB, _ := config.DatabaseForEnv(string(env))
-
-	// Build list of other environments and their databases
-	var others []string
-	for _, e := range config.AvailableEnvs() {
-		if DZEnv(e) == env {
-			continue
-		}
-		db, _ := config.DatabaseForEnv(e)
-		others = append(others, fmt.Sprintf("%s (database: `%s`)", e, db))
-	}
-
-	crossQuery := ""
-	if len(others) > 0 {
-		example := "other_db"
-		for _, e := range config.AvailableEnvs() {
-			if DZEnv(e) != env {
-				example, _ = config.DatabaseForEnv(e)
-				break
-			}
-		}
-		crossQuery = fmt.Sprintf(" Other environments are available: %s. If the user asks about another environment, use fully-qualified `database.table` syntax (e.g. `%s.dz_devices_current`).", strings.Join(others, ", "), example)
-	}
+	mainnetDB := config.Database()
 
 	if env == EnvMainnet {
-		if crossQuery == "" {
-			return ""
-		}
-		return fmt.Sprintf("You are querying the mainnet-beta deployment (database: `%s`).%s", currentDB, crossQuery)
+		return fmt.Sprintf("You are querying the mainnet-beta environment (database: `%s`). Other DZ environments are available: devnet (`lake_devnet`), testnet (`lake_testnet`). To query these, use fully-qualified `database.table` syntax (e.g., `lake_devnet.dim_devices_current`).", mainnetDB)
 	}
 
-	return fmt.Sprintf("You are querying the DZ %s deployment (database: `%s`). Neo4j graph queries, Solana validator data, and GeoIP location data are only available on mainnet-beta, not on this deployment.%s", string(env), currentDB, crossQuery)
+	// For non-mainnet envs, tell the agent to USE the environment's database
+	envDB := "lake_" + string(env)
+	return fmt.Sprintf(`The user is viewing the %s environment. You MUST prefix all table names with the database name "%s." to query %s data.
+
+Example: Instead of "SELECT * FROM dim_devices_current", write "SELECT * FROM %s.dim_devices_current"
+
+Queries without the "%s." prefix will return mainnet-beta data. This is incorrect UNLESS the user explicitly asks for mainnet or mainnet-beta data.
+
+Note: Neo4j graph queries, Solana validator data, and GeoIP location data are only available on mainnet-beta.`, string(env), envDB, string(env), envDB, envDB)
 }
 
 // isMainnet returns true if the request context is for the mainnet-beta environment.

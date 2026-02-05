@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -107,7 +108,9 @@ func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	// Agent queries always run against the mainnet database. To query other
+	// environments, use fully-qualified table names (e.g., lake_devnet.dim_devices_current).
+	rows, err := config.DB.Query(ctx, query)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

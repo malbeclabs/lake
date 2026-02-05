@@ -65,33 +65,30 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 }
 
 func TestBuildEnvContext(t *testing.T) {
-	// Not parallel: modifies global config.EnvDatabases
+	t.Parallel()
 
-	// Set up env databases for the test
-	origEnvDatabases := config.EnvDatabases
-	config.EnvDatabases = map[string]string{
-		"mainnet-beta": "lake_mainnet",
-		"devnet":       "lake_devnet",
-	}
-	t.Cleanup(func() {
-		config.EnvDatabases = origEnvDatabases
-	})
-
-	t.Run("mainnet mentions other envs", func(t *testing.T) {
+	t.Run("mainnet mentions other envs and cross-query syntax", func(t *testing.T) {
+		t.Parallel()
 		result := handlers.BuildEnvContext(handlers.EnvMainnet)
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "mainnet-beta")
-		assert.Contains(t, result, "devnet")
+		assert.Contains(t, result, "lake_devnet")
+		assert.Contains(t, result, "lake_testnet")
+		assert.Contains(t, result, "database.table")
 	})
 
-	t.Run("devnet mentions limitations", func(t *testing.T) {
+	t.Run("devnet requires database prefix", func(t *testing.T) {
+		t.Parallel()
 		result := handlers.BuildEnvContext(handlers.EnvDevnet)
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "devnet")
+		assert.Contains(t, result, "lake_devnet.")
+		assert.Contains(t, result, "MUST prefix")
 		assert.Contains(t, result, "Neo4j graph queries")
 	})
 
 	t.Run("different envs produce different context", func(t *testing.T) {
+		t.Parallel()
 		mainnet := handlers.BuildEnvContext(handlers.EnvMainnet)
 		devnet := handlers.BuildEnvContext(handlers.EnvDevnet)
 		assert.NotEqual(t, mainnet, devnet)
