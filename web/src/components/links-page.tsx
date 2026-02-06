@@ -175,7 +175,10 @@ export function LinksPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
+  // Live filter is combined with committed filters (all must match)
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -204,56 +207,33 @@ export function LinksPage() {
   const links = response?.items
   const filteredLinks = useMemo(() => {
     if (!links) return []
-    if (!activeFilterRaw) return links
+    if (allFilters.length === 0) return links
 
-    // Parse filter inside memo to ensure fresh parsing on each recompute
-    const filter = parseFilter(activeFilterRaw)
-    const searchField = filter.field as SortField | 'all'
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return links
-
-    const numericFilter = parseNumericFilter(filter.value)
-    if (searchField !== 'all' && numericSearchFields.includes(searchField as SortField)) {
-      const unitFilter =
-        (searchField === 'bandwidth' || searchField === 'in' || searchField === 'out')
-          ? parseNumericFilterWithUnits(
-              filter.value,
-              { gbps: 1e9, mbps: 1e6, bps: 1 },
-              'gbps'
-            )
-          : (searchField === 'latency' || searchField === 'jitter')
-              ? parseNumericFilterWithUnits(filter.value, { ms: 1000, us: 1 }, 'ms')
-              : null
-      const effectiveFilter = unitFilter ?? numericFilter
-      if (!effectiveFilter) {
-        return links
+    // Helper to get numeric value for a link field
+    const getNumericValue = (link: typeof links[number], field: string) => {
+      switch (field) {
+        case 'bandwidth':
+          return link.bandwidth_bps
+        case 'in':
+          return link.in_bps
+        case 'out':
+          return link.out_bps
+        case 'utilIn':
+          return link.utilization_in
+        case 'utilOut':
+          return link.utilization_out
+        case 'latency':
+          return link.latency_us
+        case 'jitter':
+          return link.jitter_us
+        case 'loss':
+          return link.loss_percent
+        default:
+          return 0
       }
-      const getNumericValue = (link: typeof links[number]) => {
-        switch (searchField) {
-          case 'bandwidth':
-            return link.bandwidth_bps
-          case 'in':
-            return link.in_bps
-          case 'out':
-            return link.out_bps
-          case 'utilIn':
-            return link.utilization_in
-          case 'utilOut':
-            return link.utilization_out
-          case 'latency':
-            return link.latency_us
-          case 'jitter':
-            return link.jitter_us
-          case 'loss':
-            return link.loss_percent
-          default:
-            return 0
-        }
-      }
-      return links.filter(link => matchesNumericFilter(getNumericValue(link), effectiveFilter))
     }
 
-    // Text search
+    // Helper to get text value for a link field
     const getSearchValue = (link: typeof links[number], field: string) => {
       switch (field) {
         case 'code':
@@ -273,16 +253,43 @@ export function LinksPage() {
       }
     }
 
-    if (searchField === 'all') {
-      // Search across all text fields
-      return links.filter(link => {
+    // Check if a link matches a single filter
+    const matchesSingleFilter = (link: typeof links[number], filterRaw: string): boolean => {
+      const filter = parseFilter(filterRaw)
+      const searchField = filter.field as SortField | 'all'
+      const needle = filter.value.trim().toLowerCase()
+      if (!needle) return true
+
+      // Handle numeric filters
+      if (searchField !== 'all' && numericSearchFields.includes(searchField as SortField)) {
+        const numericFilter = parseNumericFilter(filter.value)
+        const unitFilter =
+          (searchField === 'bandwidth' || searchField === 'in' || searchField === 'out')
+            ? parseNumericFilterWithUnits(
+                filter.value,
+                { gbps: 1e9, mbps: 1e6, bps: 1 },
+                'gbps'
+              )
+            : (searchField === 'latency' || searchField === 'jitter')
+                ? parseNumericFilterWithUnits(filter.value, { ms: 1000, us: 1 }, 'ms')
+                : null
+        const effectiveFilter = unitFilter ?? numericFilter
+        if (!effectiveFilter) return true
+        return matchesNumericFilter(getNumericValue(link, searchField), effectiveFilter)
+      }
+
+      // Handle text filters
+      if (searchField === 'all') {
         const textFields = ['code', 'type', 'contributor', 'sideA', 'sideZ', 'status']
         return textFields.some(field => getSearchValue(link, field).toLowerCase().includes(needle))
-      })
+      }
+
+      return getSearchValue(link, searchField).toLowerCase().includes(needle)
     }
 
-    return links.filter(link => getSearchValue(link, searchField).toLowerCase().includes(needle))
-  }, [links, activeFilterRaw])
+    // Apply all filters (AND logic - link must match all filters)
+    return links.filter(link => allFilters.every(f => matchesSingleFilter(link, f)))
+  }, [links, allFilters])
   const sortedLinks = useMemo(() => {
     if (!filteredLinks) return []
     // Deduplicate by pk to prevent any possible duplicate rows
@@ -374,7 +381,7 @@ export function LinksPage() {
 
   useEffect(() => {
     setOffset(0)
-  }, [activeFilterRaw])
+  }, [allFilters])
 
   if (isLoading) {
     return (

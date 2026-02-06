@@ -89,23 +89,80 @@ export function GossipNodesPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
-  const activeFilter = activeFilterRaw ? parseFilter(activeFilterRaw) : null
+  // Live filter is combined with committed filters (all must match)
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
+
+  // Use first filter for server-side filtering, apply rest client-side
+  const serverFilterRaw = allFilters[0] || ''
+  const serverFilter = serverFilterRaw ? parseFilter(serverFilterRaw) : null
+  const clientFilters = allFilters.slice(1)
 
   const { data: response, isLoading, isFetching, error } = useQuery({
-    queryKey: ['gossip-nodes', offset, sortField, sortDirection, activeFilterRaw],
+    queryKey: ['gossip-nodes', offset, sortField, sortDirection, serverFilterRaw],
     queryFn: () => fetchGossipNodes(
       PAGE_SIZE,
       offset,
       sortField,
       sortDirection,
-      activeFilter?.field,
-      activeFilter?.value
+      serverFilter?.field,
+      serverFilter?.value
     ),
     refetchInterval: 60000,
     placeholderData: keepPreviousData,
   })
-  const nodes = response?.items ?? []
+
+  // Helper to check if a node matches a single filter (for client-side filtering)
+  const matchesSingleFilter = (node: NonNullable<typeof response>['items'][number], filterRaw: string): boolean => {
+    const filter = parseFilter(filterRaw)
+    const field = filter.field
+    const needle = filter.value.trim().toLowerCase()
+    if (!needle) return true
+
+    // Text matching for various fields
+    switch (field) {
+      case 'pubkey':
+        return node.pubkey.toLowerCase().includes(needle)
+      case 'ip':
+        return (node.gossip_ip || '').toLowerCase().includes(needle)
+      case 'city':
+        return (node.city || '').toLowerCase().includes(needle)
+      case 'country':
+        return (node.country || '').toLowerCase().includes(needle)
+      case 'device':
+        return (node.device_code || '').toLowerCase().includes(needle)
+      case 'version':
+        return (node.version || '').toLowerCase().includes(needle)
+      case 'dz': {
+        const isDZ = node.on_dz
+        return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
+      }
+      case 'validator': {
+        const isValidator = node.is_validator
+        return needle === 'yes' ? isValidator : needle === 'no' ? !isValidator : true
+      }
+      case 'all': {
+        // Search across multiple text fields
+        const textFields = [
+          node.pubkey,
+          node.gossip_ip || '',
+          node.city || '',
+          node.country || '',
+          node.device_code || '',
+          node.version || '',
+        ]
+        return textFields.some(v => v.toLowerCase().includes(needle))
+      }
+      default:
+        return true
+    }
+  }
+
+  // Apply client-side filters to server results
+  const nodes = (response?.items ?? []).filter(n =>
+    clientFilters.every(f => matchesSingleFilter(n, f))
+  )
   const onDZCount = response?.on_dz_count ?? 0
   const validatorCount = response?.validator_count ?? 0
 
@@ -156,7 +213,7 @@ export function GossipNodesPage() {
   // Reset to first page when filter changes
   useEffect(() => {
     setOffset(0)
-  }, [activeFilterRaw])
+  }, [allFilters])
 
   if (isLoading) {
     return (

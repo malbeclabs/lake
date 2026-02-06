@@ -145,8 +145,10 @@ export function DevicesPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  // Use live filter if present, otherwise first committed filter
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
+  // Live filter is combined with committed filters (all must match)
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -175,48 +177,27 @@ export function DevicesPage() {
   const devices = response?.items
   const filteredDevices = useMemo(() => {
     if (!devices) return []
-    if (!activeFilterRaw) return devices
+    if (allFilters.length === 0) return devices
 
-    // Parse filter inside memo to ensure fresh parsing on each recompute
-    const filter = parseFilter(activeFilterRaw)
-    const searchField = filter.field as SortField | 'all'
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return devices
-
-    const numericFilter = parseNumericFilter(filter.value)
-    if (searchField !== 'all' && numericSearchFields.includes(searchField as SortField)) {
-      const unitFilter =
-        (searchField === 'in' || searchField === 'out' || searchField === 'peakIn' || searchField === 'peakOut')
-          ? parseNumericFilterWithUnits(
-              filter.value,
-              { gbps: 1e9, mbps: 1e6, bps: 1 },
-              'gbps'
-            )
-          : null
-      const effectiveFilter = unitFilter ?? numericFilter
-      if (!effectiveFilter) {
-        return devices
+    // Helper to get numeric value for a device field
+    const getNumericValue = (device: typeof devices[number], field: string) => {
+      switch (field) {
+        case 'users':
+          return device.current_users
+        case 'in':
+          return device.in_bps
+        case 'out':
+          return device.out_bps
+        case 'peakIn':
+          return device.peak_in_bps
+        case 'peakOut':
+          return device.peak_out_bps
+        default:
+          return 0
       }
-      const getNumericValue = (device: typeof devices[number]) => {
-        switch (searchField) {
-          case 'users':
-            return device.current_users
-          case 'in':
-            return device.in_bps
-          case 'out':
-            return device.out_bps
-          case 'peakIn':
-            return device.peak_in_bps
-          case 'peakOut':
-            return device.peak_out_bps
-          default:
-            return 0
-        }
-      }
-      return devices.filter(device => matchesNumericFilter(getNumericValue(device), effectiveFilter))
     }
 
-    // Text search
+    // Helper to get text value for a device field
     const getSearchValue = (device: typeof devices[number], field: string) => {
       switch (field) {
         case 'code':
@@ -238,16 +219,41 @@ export function DevicesPage() {
       }
     }
 
-    if (searchField === 'all') {
-      // Search across all text fields
-      return devices.filter(device => {
+    // Check if a device matches a single filter
+    const matchesSingleFilter = (device: typeof devices[number], filterRaw: string): boolean => {
+      const filter = parseFilter(filterRaw)
+      const searchField = filter.field as SortField | 'all'
+      const needle = filter.value.trim().toLowerCase()
+      if (!needle) return true
+
+      // Handle numeric filters
+      if (searchField !== 'all' && numericSearchFields.includes(searchField as SortField)) {
+        const numericFilter = parseNumericFilter(filter.value)
+        const unitFilter =
+          (searchField === 'in' || searchField === 'out' || searchField === 'peakIn' || searchField === 'peakOut')
+            ? parseNumericFilterWithUnits(
+                filter.value,
+                { gbps: 1e9, mbps: 1e6, bps: 1 },
+                'gbps'
+              )
+            : null
+        const effectiveFilter = unitFilter ?? numericFilter
+        if (!effectiveFilter) return true
+        return matchesNumericFilter(getNumericValue(device, searchField), effectiveFilter)
+      }
+
+      // Handle text filters
+      if (searchField === 'all') {
         const textFields = ['code', 'type', 'contributor', 'metro', 'status']
         return textFields.some(field => getSearchValue(device, field).toLowerCase().includes(needle))
-      })
+      }
+
+      return getSearchValue(device, searchField).toLowerCase().includes(needle)
     }
 
-    return devices.filter(device => getSearchValue(device, searchField).toLowerCase().includes(needle))
-  }, [devices, activeFilterRaw])
+    // Apply all filters (AND logic - device must match all filters)
+    return devices.filter(device => allFilters.every(f => matchesSingleFilter(device, f)))
+  }, [devices, allFilters])
   const sortedDevices = useMemo(() => {
     if (!filteredDevices) return []
     // Deduplicate by pk to prevent any possible duplicate rows
@@ -326,7 +332,7 @@ export function DevicesPage() {
 
   useEffect(() => {
     setOffset(0)
-  }, [activeFilterRaw])
+  }, [allFilters])
 
   if (isLoading) {
     return (
