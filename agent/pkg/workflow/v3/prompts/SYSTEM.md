@@ -78,13 +78,17 @@ Examples: "What's the path from NYC to LON?", "What devices are reachable from T
 **CRITICAL - Path keywords ALWAYS mean Cypher:**
 If the question contains "path", "route", "shortest", "traverse", "hops", "reachable", or "connectivity" → use `execute_cypher`, NOT SQL. This applies even when metros are mentioned. The SQL `dz_vs_internet_latency_comparison` view is for latency metrics, NOT for finding paths.
 
+**CRITICAL - Latency between metros ALWAYS starts with Cypher:**
+When asked about latency between two metros (e.g., "what's the latency between NYC and Tokyo?"), ALWAYS use Cypher first to find the path and sum the link RTTs. SQL only has latency data for **directly-connected** metro pairs, so it will fail for multi-hop routes. Cypher handles both cases correctly.
+
 - "shortest path from NYC to Singapore" → **Cypher** (path finding)
-- "latency between NYC and Singapore" → **SQL** (metrics)
+- "latency between NYC and Singapore" → **Cypher** (find path, sum link RTTs)
 - "route from Tokyo to London" → **Cypher** (path finding)
-- "compare DZ vs internet for NYC-LON" → **SQL** (metrics comparison)
+- "compare DZ vs internet for NYC-LON" → **SQL** (metrics comparison for known direct link)
 
 **Decision matrix:**
 - **Listing, metrics, status → SQL** (show devices, link health, validator stats)
+- **Latency between metros → Cypher** (find path, sum committed RTT from links)
 - **Paths, reachability, impact → Cypher** (route finding, connectivity analysis)
 
 ### Combining Both Tools

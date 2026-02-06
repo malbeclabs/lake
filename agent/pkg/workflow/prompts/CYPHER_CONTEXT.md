@@ -116,9 +116,28 @@ RETURN [n IN nodes(path) |
 ] AS segments
 ```
 
+### Find Shortest Path Between Metros (by hop count)
+
+**CRITICAL:** When finding paths between metros (not specific devices), you MUST use `ORDER BY` and `LIMIT 1`. This is because metros have multiple devices, so `shortestPath()` returns one path per device pair. Without ordering and limiting, you get multiple arbitrary paths instead of the true shortest.
+
+```cypher
+MATCH (ma:Metro {code: 'nyc'})<-[:LOCATED_IN]-(da:Device)
+MATCH (mz:Metro {code: 'lon'})<-[:LOCATED_IN]-(dz:Device)
+MATCH path = shortestPath((da)-[:CONNECTS*]-(dz))
+WITH path, length(path) AS pathLength
+ORDER BY pathLength
+LIMIT 1
+RETURN [n IN nodes(path) |
+  CASE WHEN n:Device THEN {type: 'device', code: n.code, status: n.status}
+       WHEN n:Link THEN {type: 'link', code: n.code, status: n.status}
+  END
+] AS segments,
+pathLength AS hops
+```
+
 ### Find Lowest-Latency Path Between Metros
 
-When finding the path between two metros, order by total latency to get the lowest-latency path. Use hop count as a tiebreaker when latencies are equal (or when committed_rtt_ns is not set).
+Same as above, but order by total latency first, with hop count as tiebreaker.
 
 ```cypher
 MATCH (ma:Metro {code: 'nyc'})<-[:LOCATED_IN]-(da:Device)
@@ -140,10 +159,11 @@ pathLength AS hops,
 totalRttNs / 1000000.0 AS total_rtt_ms
 ```
 
-**Key points:**
-- Order by `totalRttNs, pathLength` - latency first, hop count as tiebreaker
-- Use `reduce()` to sum `committed_rtt_ns` from Link nodes
-- With multiple devices per metro, compare paths across all device pairs
+**Key points for metro-to-metro paths:**
+- **ALWAYS use `ORDER BY ... LIMIT 1`** for metro-to-metro queries
+- Order by `pathLength` for shortest path, or `totalRttNs, pathLength` for lowest latency
+- Use `reduce()` to sum `committed_rtt_ns` from Link nodes when latency matters
+- Without ORDER BY/LIMIT, you get multiple paths from different device pairs
 
 ### Find ALL Paths Between Metros
 
@@ -164,7 +184,8 @@ ORDER BY hops
 ```
 
 **When to use which:**
-- `shortestPath()` - Returns ONE arbitrary shortest path (use for "the path", "shortest path")
+- `shortestPath()` with `ORDER BY ... LIMIT 1` - Returns THE shortest path among all device pairs (use for metro-to-metro "shortest path")
+- `shortestPath()` without ORDER BY - Only for device-to-device queries where there's exactly one pair
 - `allShortestPaths()` - Returns ALL paths of the shortest length (use for "paths", "all paths", "confirm paths")
 
 **WRONG:** Using `shortestPath()` when user asks for "paths" (plural) - only returns one path.
