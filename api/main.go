@@ -156,6 +156,15 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Never serve SPA fallback for .well-known paths — they must 404
+		// if not explicitly handled. Returning 200 + HTML for OAuth
+		// discovery paths (e.g. /.well-known/oauth-protected-resource)
+		// causes MCP clients to think auth is misconfigured.
+		if strings.HasPrefix(r.URL.Path, "/.well-known/") {
+			http.NotFound(w, r)
+			return
+		}
+
 		path := filepath.Join(staticDir, strings.TrimPrefix(r.URL.Path, "/"))
 
 		// Check if file exists locally
