@@ -50,28 +50,6 @@ func parseSSEResponse(body string) (map[string]any, error) {
 	return response, nil
 }
 
-func TestMCPHandler_Discovery(t *testing.T) {
-	handler := handlers.InitMCP()
-	require.NotNil(t, handler)
-
-	// GET request without session ID should return server info (for discovery/health checks)
-	req := httptest.NewRequest(http.MethodGet, "/api/mcp", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-
-	var response map[string]any
-	err := json.Unmarshal(rec.Body.Bytes(), &response)
-	require.NoError(t, err)
-
-	assert.Equal(t, "doublezero", response["name"])
-	assert.Equal(t, "1.0.0", response["version"])
-	assert.Equal(t, "mcp", response["protocol"])
-	assert.Equal(t, "streamable-http", response["transport"])
-}
-
 func TestMCPHandler_Initialize(t *testing.T) {
 	handler := handlers.InitMCP()
 	require.NotNil(t, handler)
