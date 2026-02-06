@@ -28,9 +28,23 @@ func InitMCP() http.Handler {
 		return mcpHandler
 	}
 
-	mcpHandler = mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+	streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return createMCPServer(r)
 	}, nil)
+
+	// Wrap the handler to support GET requests for discovery/health checks.
+	// Some MCP clients probe with GET before connecting, but Streamable HTTP
+	// only accepts GET for SSE with an active session.
+	mcpHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.Header.Get("Mcp-Session-Id") == "" {
+			// Discovery/health check - return server info
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"name":"doublezero","version":"1.0.0","protocol":"mcp","transport":"streamable-http"}`))
+			return
+		}
+		streamableHandler.ServeHTTP(w, r)
+	})
 
 	return mcpHandler
 }
