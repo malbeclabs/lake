@@ -12,7 +12,7 @@ require (
 	github.com/docker/go-connections v0.6.0
 	github.com/gagliardetto/solana-go v1.14.0
 	github.com/getsentry/sentry-go v0.42.0
-	github.com/go-chi/chi/v5 v5.2.4
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
