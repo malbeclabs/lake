@@ -64,6 +64,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	// Count validators on DZ (Solana validators connected via dz_users)
 	g.Go(func() error {

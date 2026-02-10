@@ -571,6 +571,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	params := parseTimelineParams(r)
 
 	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 	var (
 		deviceEvents      []TimelineEvent
 		linkEvents        []TimelineEvent
@@ -3548,6 +3549,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	offset := 0
 
 	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 	var (
 		deviceEvents        []TimelineEvent
 		linkEvents          []TimelineEvent

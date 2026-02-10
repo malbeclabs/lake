@@ -5,11 +5,20 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
+)
+
+// Cached schema to avoid querying ClickHouse system tables on every agent request.
+var (
+	schemaCache    string
+	schemaCacheAt  time.Time
+	schemaCacheMu  sync.RWMutex
+	schemaCacheTTL = 60 * time.Second
 )
 
 // DBQuerier implements workflow.Querier using the global connection pool.
@@ -130,7 +139,17 @@ func NewDBSchemaFetcher() *DBSchemaFetcher {
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.
 // Schema is always fetched from the mainnet database.
+// Results are cached for 60 seconds to avoid redundant queries under load.
 func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
+	// Check cache first
+	schemaCacheMu.RLock()
+	if schemaCache != "" && time.Since(schemaCacheAt) < schemaCacheTTL {
+		cached := schemaCache
+		schemaCacheMu.RUnlock()
+		return cached, nil
+	}
+	schemaCacheMu.RUnlock()
+
 	// Fetch columns from mainnet database
 	start := time.Now()
 	rows, err := config.DB.Query(ctx, `
@@ -220,5 +239,13 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		sb.WriteString("  Definition: " + def + "\n")
 	}
 
-	return sb.String(), nil
+	result := sb.String()
+
+	// Update cache
+	schemaCacheMu.Lock()
+	schemaCache = result
+	schemaCacheAt = time.Now()
+	schemaCacheMu.Unlock()
+
+	return result, nil
 }
