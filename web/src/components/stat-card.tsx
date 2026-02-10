@@ -5,6 +5,7 @@ interface StatCardProps {
   label: string
   value: number | undefined
   format: 'number' | 'stake' | 'bandwidth' | 'percent'
+  decimals?: number // Override default decimal places for the format
   delta?: number // Optional delta value to show change (percentage points for percent format)
   href?: string // Optional link to entity listing page
 }
@@ -42,7 +43,8 @@ function useAnimatedNumber(target: number | undefined, duration = 500) {
 
 function formatValue(
   value: number | undefined,
-  format: 'number' | 'stake' | 'bandwidth' | 'percent'
+  format: 'number' | 'stake' | 'bandwidth' | 'percent',
+  decimals?: number
 ): string {
   if (value === undefined) return '—'
 
@@ -51,30 +53,31 @@ function formatValue(
       // Convert to millions of SOL
       const millions = value / 1_000_000
       if (millions >= 1) {
-        return `${millions.toFixed(1)}M`
+        return `${millions.toFixed(decimals ?? 1)}M`
       }
       // Less than 1M, show in K
       const thousands = value / 1_000
-      return `${thousands.toFixed(0)}K`
+      return `${thousands.toFixed(decimals ?? 0)}K`
     }
     case 'bandwidth': {
+      const d = decimals ?? 1
       // Convert bps to Mbps, Gbps, or Tbps
       const gbps = value / 1_000_000_000
       if (gbps >= 1000) {
-        return `${(gbps / 1000).toFixed(1)} Tbps`
+        return `${(gbps / 1000).toFixed(d)} Tbps`
       }
       if (gbps >= 1) {
-        return `${gbps.toFixed(1)} Gbps`
+        return `${gbps.toFixed(d)} Gbps`
       }
       // Less than 1 Gbps, show in Mbps
       const mbps = value / 1_000_000
-      return `${mbps.toFixed(1)} Mbps`
+      return `${mbps.toFixed(d)} Mbps`
     }
     case 'percent':
-      return `${value.toFixed(1)}%`
+      return `${value.toFixed(decimals ?? 1)}%`
     case 'number':
     default:
-      return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+      return value.toLocaleString('en-US', { maximumFractionDigits: decimals ?? 0 })
   }
 }
 
@@ -83,7 +86,7 @@ function formatDelta(delta: number): string {
   return `${sign}${delta.toFixed(2)}%`
 }
 
-export function StatCard({ label, value, format, delta, href }: StatCardProps) {
+export function StatCard({ label, value, format, decimals, delta, href }: StatCardProps) {
   const animatedValue = useAnimatedNumber(value)
   const isLoading = value === undefined
   const [showSkeleton, setShowSkeleton] = useState(false)
@@ -111,7 +114,7 @@ export function StatCard({ label, value, format, delta, href }: StatCardProps) {
           )
         ) : (
           <span className="inline-flex items-baseline gap-2">
-            {formatValue(animatedValue, format)}
+            {formatValue(animatedValue, format, decimals)}
             {showDelta && (
               <span className={`text-sm font-normal ${delta > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                 {formatDelta(delta)}
