@@ -5,14 +5,14 @@ go 1.25.6
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.43.0
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.11.0
-	github.com/anthropics/anthropic-sdk-go v1.20.0
+	github.com/anthropics/anthropic-sdk-go v1.22.0
 	github.com/aws/aws-sdk-go-v2 v1.41.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/docker/go-connections v0.6.0
 	github.com/gagliardetto/solana-go v1.14.0
 	github.com/getsentry/sentry-go v0.42.0
-	github.com/go-chi/chi/v5 v5.2.4
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
@@ -20,7 +20,7 @@ require (
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/lmittmann/tint v1.1.3
 	github.com/malbeclabs/doublezero v0.0.0-20260127003248-a7973ff42f73
-	github.com/modelcontextprotocol/go-sdk v1.2.0
+	github.com/modelcontextprotocol/go-sdk v1.3.0
 	github.com/mr-tron/base58 v1.2.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/oschwald/geoip2-golang v1.13.0
@@ -35,7 +35,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/neo4j v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
 	golang.org/x/sync v0.19.0
-	golang.org/x/time v0.12.0
+	golang.org/x/time v0.14.0
 )
 
 require (
@@ -89,7 +89,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
-	github.com/google/jsonschema-go v0.3.0 // indirect
+	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.5 // indirect
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0 // indirect
