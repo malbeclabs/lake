@@ -113,7 +113,7 @@ func Load() error {
 		DialTimeout:     5 * time.Second,
 		MaxOpenConns:    30,
 		MaxIdleConns:    10,
-		ConnMaxLifetime: time.Hour,
+		ConnMaxLifetime: 10 * time.Minute,
 	}
 
 	// Enable TLS for ClickHouse Cloud (port 9440)
@@ -155,7 +155,7 @@ func Load() error {
 			DialTimeout:     5 * time.Second,
 			MaxOpenConns:    10,
 			MaxIdleConns:    5,
-			ConnMaxLifetime: time.Hour,
+			ConnMaxLifetime: 10 * time.Minute,
 		}
 		if secure {
 			envOpts.TLS = &tls.Config{}

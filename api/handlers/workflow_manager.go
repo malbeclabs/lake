@@ -337,8 +337,9 @@ func (m *WorkflowManager) StartWorkflow(
 		slog.Warn("Failed to initialize session content", "session_id", sessionID, "error", err)
 	}
 
-	// Create cancellable context for the workflow with session/workflow IDs for tracing
-	workflowCtx, cancel := context.WithCancel(context.Background())
+	// Create context for the workflow with a 5-minute timeout to prevent
+	// indefinite connection holds on stuck LLM calls or slow queries.
+	workflowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	workflowCtx = workflow.ContextWithWorkflowIDs(workflowCtx, sessionID.String(), run.ID.String())
 	workflowCtx = ContextWithEnv(workflowCtx, workflowEnv)
 
@@ -824,8 +825,8 @@ func (m *WorkflowManager) ResumeWorkflowBackground(run *WorkflowRun) error {
 		existingMessages = nil
 	}
 
-	// Create cancellable context with env from persisted workflow
-	workflowCtx, cancel := context.WithCancel(context.Background())
+	// Create context with a 5-minute timeout to prevent indefinite connection holds
+	workflowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	resumeEnv := DZEnv(run.Env)
 	if !ValidEnvs[resumeEnv] {
 		resumeEnv = EnvMainnet

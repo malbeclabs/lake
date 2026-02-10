@@ -247,6 +247,9 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+	// Limit concurrent ClickHouse queries to avoid exhausting the connection pool
+	// during cache refreshes (this function launches ~22 parallel queries).
+	g.SetLimit(10)
 
 	// Check database connectivity
 	g.Go(func() error {
