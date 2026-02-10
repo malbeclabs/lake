@@ -124,6 +124,7 @@ export function Landing() {
           label="User Inbound"
           value={stats?.user_inbound_bps}
           format="bandwidth"
+          decimals={0}
         />
       </div>
 
