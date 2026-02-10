@@ -125,7 +125,7 @@ SELECT MAX(peak) FROM per_window
 | `solana_validators_on_dz_connections` | All connection events with `first_connected_ts`, device_code, device_metro_code |
 | `solana_validators_disconnections` | Validators that left DZ (vote_pubkey, activated_stake_sol, device_code, device_metro_code, connected_ts, disconnected_ts) |
 | `solana_validators_new_connections` | Recently connected validators with device_code, device_metro_code |
-| `dz_links_health_current` | Current link health (status, packet loss, latency vs committed, is_dark) |
+| `dz_links_health_current` | Current link health (status, packet loss, latency vs committed, is_dark, is_down) |
 | `dz_link_status_changes` | Link status transitions with timestamps (previous_status, new_status, changed_ts) |
 | `dz_vs_internet_latency_comparison` | Compare DZ vs public internet latency for **directly-connected** metro pairs only. For latency between non-adjacent metros (e.g., NYC-TYO), use `execute_cypher` to find the path first. |
 
@@ -194,9 +194,9 @@ ORDER BY activated_stake_sol DESC LIMIT 10;
 
 -- Links with current issues
 SELECT code, status, is_soft_drained, is_hard_drained, is_isis_soft_drained,
-       has_packet_loss, loss_pct, exceeds_committed_rtt, is_dark
+       has_packet_loss, loss_pct, exceeds_committed_rtt, is_dark, is_down
 FROM dz_links_health_current
-WHERE is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark;
+WHERE is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark OR is_down;
 
 -- Link status changes in past 7 days
 SELECT link_code, previous_status, new_status, changed_ts
@@ -255,13 +255,14 @@ SELECT code, status, metro_pk FROM dz_devices_current WHERE status = 'drained';
 ```
 
 **For "network health" questions**, check and list:
-1. Link issues from `dz_links_health_current` - check is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark
+1. Link issues from `dz_links_health_current` - **query individual rows** with code, loss_pct, and boolean flags (is_down, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark). Do NOT aggregate into counts — list each affected link by code.
 2. Drained devices - **MUST list specific device codes**
 3. Interface errors from `fact_dz_device_interface_counters` - include device code and **actual numeric counts**
 
 **CRITICAL: Always include specific identifiers and counts:**
-- "tok-dzd1 is drained, chi-dzd1 is drained" (NOT just "2 drained devices")
+- "was-chi-1 is down (100% loss)" (NOT just "1 link down")
 - "tok-fra-1 has 50% packet loss" (NOT just "packet loss detected")
+- "tok-dzd1 is drained, chi-dzd1 is drained" (NOT just "2 drained devices")
 - "lon-dzd1 has 8 in_errors, 3 discards" (NOT just "interface errors detected")
 
 ### Metro Codes (IMPORTANT)
@@ -602,19 +603,20 @@ ORDER BY stake_sol DESC
 | `exceeds_committed_rtt` | Avg latency exceeds committed RTT |
 | `avg_rtt_us`, `p95_rtt_us` | Latency metrics (last hour) |
 | `is_dark` | No telemetry in last 2 hours |
+| `is_down` | 100% packet loss in last 5 minutes (link currently down) |
 
 ```sql
 -- Links with current issues
 SELECT code, side_a_metro, side_z_metro, status, loss_pct,
-       is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark
+       is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark, is_down
 FROM dz_links_health_current
-WHERE is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark;
+WHERE is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark OR is_down;
 
 -- Links with issues in a specific metro
-SELECT code, status, loss_pct, is_dark
+SELECT code, status, loss_pct, is_dark, is_down
 FROM dz_links_health_current
 WHERE (side_a_metro = 'sao' OR side_z_metro = 'sao')
-  AND (is_soft_drained OR is_hard_drained OR has_packet_loss OR is_dark);
+  AND (is_soft_drained OR is_hard_drained OR has_packet_loss OR is_dark OR is_down);
 ```
 
 **`dz_link_status_changes` for history:**

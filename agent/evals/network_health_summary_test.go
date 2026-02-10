@@ -101,6 +101,11 @@ func runTest_NetworkHealthSummary(t *testing.T, llmFactory LLMClientFactory) {
 			Rationale:     "nyc-lon-1 link has packet loss that should be reported",
 		},
 		{
+			Description:   "Response mentions was-chi-1 is down",
+			ExpectedValue: "was-chi-1 appears and is reported as down or having 100% packet loss",
+			Rationale:     "was-chi-1 link has 100% loss in the last 5 minutes and should be flagged as down",
+		},
+		{
 			Description:   "Response mentions drained status",
 			ExpectedValue: "drained devices or drained links mentioned (count or names acceptable)",
 			Rationale:     "There are drained devices in the network - either count or names is acceptable",
@@ -361,6 +366,7 @@ func seedNetworkHealthSummaryData(t *testing.T, ctx context.Context, conn clickh
 		{PK: "metro4", Code: "sf", Name: "San Francisco"},
 		{PK: "metro5", Code: "tok", Name: "Tokyo"},
 		{PK: "metro6", Code: "fra", Name: "Frankfurt"},
+		{PK: "metro7", Code: "was", Name: "Washington DC"},
 	}
 	seedMetros(t, ctx, conn, metros, now, now)
 
@@ -373,6 +379,7 @@ func seedNetworkHealthSummaryData(t *testing.T, ctx context.Context, conn clickh
 		{PK: "device5", Code: "tok-dzd1", Status: "drained", MetroPK: "metro5", DeviceType: "DZD"},
 		{PK: "device6", Code: "fra-dzd1", Status: "activated", MetroPK: "metro6", DeviceType: "DZD"},
 		{PK: "device7", Code: "nyc-dzd2", Status: "activated", MetroPK: "metro1", DeviceType: "DZD"},
+		{PK: "device8", Code: "was-dzd1", Status: "activated", MetroPK: "metro7", DeviceType: "DZD"},
 	}
 	seedDevices(t, ctx, conn, devices, now, now)
 
@@ -385,6 +392,7 @@ func seedNetworkHealthSummaryData(t *testing.T, ctx context.Context, conn clickh
 		{PK: "link3", Code: "sf-nyc-1", Status: "drained", LinkType: "WAN", SideAPK: "device4", SideZPK: "device1", SideAIfaceName: "Ethernet1", SideZIfaceName: "Ethernet1", Bandwidth: 10000000000, CommittedRTTNs: 12000000},
 		{PK: "link4", Code: "tok-fra-1", Status: "activated", LinkType: "WAN", SideAPK: "device5", SideZPK: "device6", SideAIfaceName: "Ethernet1", SideZIfaceName: "Ethernet1", Bandwidth: 10000000000, CommittedRTTNs: 20000000},
 		{PK: "link5", Code: "nyc-local-1", Status: "activated", LinkType: "DZX", SideAPK: "device1", SideZPK: "device7", SideAIfaceName: "Ethernet2", SideZIfaceName: "Ethernet1", Bandwidth: 10000000000, CommittedRTTNs: 5000000},
+		{PK: "link6", Code: "was-chi-1", Status: "activated", LinkType: "WAN", SideAPK: "device8", SideZPK: "device3", SideAIfaceName: "Ethernet1", SideZIfaceName: "Ethernet2", Bandwidth: 10000000000, CommittedRTTNs: 10000000},
 	}
 	var linkSchema serviceability.LinkSchema
 	err = linkDS.WriteBatch(ctx, conn, len(links), func(i int) ([]any, error) {
@@ -424,6 +432,11 @@ func seedNetworkHealthSummaryData(t *testing.T, ctx context.Context, conn clickh
 		{now.Add(-30 * time.Minute), 1, 2, "device5", "device6", "link4", 0, true, nil},
 		{now.Add(-45 * time.Minute), 1, 1, "device6", "device5", "link4", 0, true, nil},
 		{now.Add(-45 * time.Minute), 1, 2, "device6", "device5", "link4", 180000, false, int64Ptr(5000)},
+		// Link6 (was-chi): Completely down - ALL samples in last 5 min are losses
+		{now.Add(-2 * time.Minute), 1, 1, "device8", "device3", "link6", 0, true, nil},
+		{now.Add(-2 * time.Minute), 1, 2, "device8", "device3", "link6", 0, true, nil},
+		{now.Add(-3 * time.Minute), 1, 1, "device3", "device8", "link6", 0, true, nil},
+		{now.Add(-3 * time.Minute), 1, 2, "device3", "device8", "link6", 0, true, nil},
 	}
 	err = latencyDS.WriteBatch(ctx, conn, len(latencySamples), func(i int) ([]any, error) {
 		s := latencySamples[i]
@@ -546,13 +559,13 @@ ORDER BY code
 	linkQuery := `
 SELECT code, status
 FROM dz_links_current
-WHERE code IN ('nyc-lon-1', 'lon-sf-1', 'sf-nyc-1', 'tok-fra-1')
+WHERE code IN ('nyc-lon-1', 'lon-sf-1', 'sf-nyc-1', 'tok-fra-1', 'was-chi-1')
 ORDER BY code
 `
 
 	linkResult, err := dataset.Query(ctx, conn, linkQuery, nil)
 	require.NoError(t, err, "Failed to execute link query")
-	require.GreaterOrEqual(t, linkResult.Count, 3, "Should have at least 3 links")
+	require.GreaterOrEqual(t, linkResult.Count, 4, "Should have at least 4 links")
 
 	t.Logf("Database validation passed: Found %d devices and %d links", result.Count, linkResult.Count)
 }
@@ -566,6 +579,7 @@ func seedNetworkHealthSummaryGraphData(t *testing.T, ctx context.Context, client
 		{PK: "metro4", Code: "sf", Name: "San Francisco"},
 		{PK: "metro5", Code: "tok", Name: "Tokyo"},
 		{PK: "metro6", Code: "fra", Name: "Frankfurt"},
+		{PK: "metro7", Code: "was", Name: "Washington DC"},
 	}
 	devices := []graphDevice{
 		{PK: "device1", Code: "nyc-dzd1", Status: "activated", MetroPK: "metro1"},
@@ -575,6 +589,7 @@ func seedNetworkHealthSummaryGraphData(t *testing.T, ctx context.Context, client
 		{PK: "device5", Code: "tok-dzd1", Status: "drained", MetroPK: "metro5"},
 		{PK: "device6", Code: "fra-dzd1", Status: "activated", MetroPK: "metro6"},
 		{PK: "device7", Code: "nyc-dzd2", Status: "activated", MetroPK: "metro1"},
+		{PK: "device8", Code: "was-dzd1", Status: "activated", MetroPK: "metro7"},
 	}
 	links := []graphLink{
 		{PK: "link1", Code: "nyc-lon-1", Status: "activated", SideAPK: "device1", SideZPK: "device2"},
@@ -582,6 +597,7 @@ func seedNetworkHealthSummaryGraphData(t *testing.T, ctx context.Context, client
 		{PK: "link3", Code: "sf-nyc-1", Status: "drained", SideAPK: "device4", SideZPK: "device1"},
 		{PK: "link4", Code: "tok-fra-1", Status: "activated", SideAPK: "device5", SideZPK: "device6"},
 		{PK: "link5", Code: "nyc-local-1", Status: "activated", SideAPK: "device1", SideZPK: "device7"},
+		{PK: "link6", Code: "was-chi-1", Status: "activated", SideAPK: "device8", SideZPK: "device3"},
 	}
 	seedGraphData(t, ctx, client, metros, devices, links)
 }

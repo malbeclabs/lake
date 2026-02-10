@@ -108,7 +108,8 @@ func setupLinksTables(t *testing.T) {
 			loss_pct Float64,
 			exceeds_committed_rtt UInt8,
 			has_packet_loss UInt8,
-			is_dark UInt8
+			is_dark UInt8,
+			is_down UInt8
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
@@ -334,9 +335,9 @@ func setupLinkHealthData(t *testing.T) {
 
 	// Insert link health data
 	err := config.DB.Exec(ctx, `
-		INSERT INTO dz_links_health_current (pk, avg_rtt_us, p95_rtt_us, committed_rtt_ns, loss_pct, exceeds_committed_rtt, has_packet_loss, is_dark) VALUES
-		('link-1', 1500.0, 2000.0, 3000000, 0.0, 0, 0, 0),
-		('link-2', 500.0, 800.0, 1000000, 0.05, 0, 0, 0)
+		INSERT INTO dz_links_health_current (pk, avg_rtt_us, p95_rtt_us, committed_rtt_ns, loss_pct, exceeds_committed_rtt, has_packet_loss, is_dark, is_down) VALUES
+		('link-1', 1500.0, 2000.0, 3000000, 0.0, 0, 0, 0, 0),
+		('link-2', 500.0, 800.0, 1000000, 0.05, 0, 0, 0, 0)
 	`)
 	require.NoError(t, err)
 }
@@ -430,4 +431,46 @@ func TestGetLinkHealth_CountsByStatus(t *testing.T) {
 	assert.Equal(t, 0, response.WarningCount)
 	assert.Equal(t, 0, response.CriticalCount)
 	assert.Equal(t, 0, response.UnknownCount)
+}
+
+func TestGetLinkHealth_IsDownForcesCritical(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupLinksTables(t)
+	insertLinksTestData(t)
+
+	ctx := t.Context()
+
+	// Insert health data: link-1 healthy, link-2 is_down
+	err := config.DB.Exec(ctx, `
+		INSERT INTO dz_links_health_current (pk, avg_rtt_us, p95_rtt_us, committed_rtt_ns, loss_pct, exceeds_committed_rtt, has_packet_loss, is_dark, is_down) VALUES
+		('link-1', 1500.0, 2000.0, 3000000, 0.0, 0, 0, 0, 0),
+		('link-2', 500.0, 800.0, 1000000, 100.0, 0, 1, 0, 1)
+	`)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
+	rr := httptest.NewRecorder()
+	handlers.GetLinkHealth(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.TopologyLinkHealthResponse
+	err = json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+
+	// Find link-2 (is_down should force critical)
+	var link2 *handlers.TopologyLinkHealth
+	for i := range response.Links {
+		if response.Links[i].LinkPK == "link-2" {
+			link2 = &response.Links[i]
+			break
+		}
+	}
+	require.NotNil(t, link2)
+	assert.True(t, link2.IsDown)
+	assert.Equal(t, "critical", link2.SlaStatus)
+
+	// Verify counts
+	assert.Equal(t, 1, response.HealthyCount)
+	assert.Equal(t, 1, response.CriticalCount)
 }
