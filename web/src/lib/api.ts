@@ -2094,6 +2094,7 @@ export interface TopologyLinkHealth {
   exceeds_commit: boolean
   has_packet_loss: boolean
   is_dark: boolean
+  is_down: boolean
   sla_status: 'healthy' | 'warning' | 'critical' | 'unknown'
   sla_ratio: number
 }

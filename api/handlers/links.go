@@ -234,6 +234,7 @@ type TopologyLinkHealth struct {
 	ExceedsCommit  bool    `json:"exceeds_commit"`
 	HasPacketLoss  bool    `json:"has_packet_loss"`
 	IsDark         bool    `json:"is_dark"`
+	IsDown         bool    `json:"is_down"`
 	SlaStatus      string  `json:"sla_status"` // "healthy", "warning", "critical", "unknown"
 	SlaRatio       float64 `json:"sla_ratio"`  // measured / committed (0 if no commitment)
 }
@@ -265,7 +266,8 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 			h.loss_pct,
 			toUInt8(h.exceeds_committed_rtt) AS exceeds_committed_rtt,
 			toUInt8(h.has_packet_loss) AS has_packet_loss,
-			toUInt8(h.is_dark) AS is_dark
+			toUInt8(h.is_dark) AS is_dark,
+			toUInt8(h.is_down) AS is_down
 		FROM dz_links_health_current h
 		JOIN dz_links_current l ON h.pk = l.pk
 		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
@@ -289,7 +291,7 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var lh TopologyLinkHealth
-		var exceedsCommit, hasPacketLoss, isDark uint8
+		var exceedsCommit, hasPacketLoss, isDark, isDown uint8
 		if err := rows.Scan(
 			&lh.LinkPK,
 			&lh.SideAPK,
@@ -303,6 +305,7 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 			&exceedsCommit,
 			&hasPacketLoss,
 			&isDark,
+			&isDown,
 		); err != nil {
 			log.Printf("Link health scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -311,6 +314,7 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 		lh.ExceedsCommit = exceedsCommit != 0
 		lh.HasPacketLoss = hasPacketLoss != 0
 		lh.IsDark = isDark != 0
+		lh.IsDown = isDown != 0
 
 		// Sanitize NaN/Inf values from ClickHouse
 		if math.IsNaN(lh.AvgRttUs) || math.IsInf(lh.AvgRttUs, 0) {
@@ -324,7 +328,11 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Calculate SLA status
-		if lh.IsDark || lh.CommittedRttNs == 0 {
+		if lh.IsDown {
+			lh.SlaStatus = "critical"
+			lh.SlaRatio = 0
+			criticalCount++
+		} else if lh.IsDark || lh.CommittedRttNs == 0 {
 			lh.SlaStatus = "unknown"
 			lh.SlaRatio = 0
 			unknownCount++
