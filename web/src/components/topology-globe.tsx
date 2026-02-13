@@ -861,14 +861,30 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setTimeout(() => setGlobeReady(true), 1000)
   }, [])
 
-  // Control rotation based on analysis state. Only runs once globeReady
-  // so the animate-in can finish first. Respects URL-loaded selections.
+  // Pause/resume rotation on transitions in/out of analysis mode.
+  // Only fires on state changes, so explicit user play/pause clicks
+  // are not overridden by the effect.
+  const prevAnalysisActive = useRef<boolean | null>(null) // null = first run
   useEffect(() => {
     if (!globeReady) return
-    if (isAnalysisActive) {
-      setAutoRotate(false)
-    } else if (autoRotateEnabled) {
-      setAutoRotate(true)
+    const isFirst = prevAnalysisActive.current === null
+    const wasActive = prevAnalysisActive.current
+    prevAnalysisActive.current = isAnalysisActive
+    if (isFirst) {
+      // Initial mount: respect current state
+      if (isAnalysisActive) {
+        setAutoRotate(false)
+      } else if (autoRotateEnabled) {
+        setAutoRotate(true)
+      }
+    } else {
+      const entering = isAnalysisActive && !wasActive
+      const leaving = !isAnalysisActive && wasActive
+      if (entering) {
+        setAutoRotate(false)
+      } else if (leaving && autoRotateEnabled) {
+        setAutoRotate(true)
+      }
     }
   }, [globeReady, isAnalysisActive, autoRotateEnabled, setAutoRotate])
 
