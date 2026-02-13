@@ -264,6 +264,32 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
 
+  // Preload all globe textures so theme switching doesn't need a network fetch.
+  const [texturesLoaded, setTexturesLoaded] = useState(false)
+  useEffect(() => {
+    const urls = ['/textures/earth-day.jpg', '/textures/earth-night.jpg', '/textures/night-sky.jpg']
+    let loaded = 0
+    for (const url of urls) {
+      const img = new Image()
+      img.onload = img.onerror = () => { if (++loaded >= urls.length) setTexturesLoaded(true) }
+      img.src = url
+    }
+  }, [])
+
+  // Show loading overlay during theme transitions while globe re-renders.
+  const prevThemeRef = useRef(isDark)
+  const [themeSwitching, setThemeSwitching] = useState(false)
+  useEffect(() => {
+    if (prevThemeRef.current === isDark) return
+    prevThemeRef.current = isDark
+    setThemeSwitching(true)
+    // Give globe time to re-render with new texture
+    const timer = setTimeout(() => setThemeSwitching(false), 1500)
+    return () => clearTimeout(timer)
+  }, [isDark])
+
+  const globeImageUrl = isDark ? '/textures/earth-night.jpg' : '/textures/earth-day.jpg'
+
   const [autoRotateEnabled, setAutoRotateEnabled] = useState(true) // user preference
   const [autoRotating, setAutoRotating] = useState(true) // actual state
   const [linkAnimating, setLinkAnimating] = useState(true) // link animation state
@@ -1881,16 +1907,18 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
   return (
     <div ref={containerRef} className="absolute inset-0 bg-black">
-      {dimensions.width > 0 && dimensions.height > 0 && (
+      {(!globeReady || themeSwitching) && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+        </div>
+      )}
+      {texturesLoaded && dimensions.width > 0 && dimensions.height > 0 && (
         <Globe
           ref={globeRefCb}
           width={dimensions.width}
           height={dimensions.height}
-          globeImageUrl={isDark
-            ? '/textures/earth-night.jpg'
-            : '/textures/earth-day.jpg'
-          }
-          backgroundImageUrl="/textures/night-sky.png"
+          globeImageUrl={globeImageUrl}
+          backgroundImageUrl="/textures/night-sky.jpg"
           showAtmosphere={true}
           atmosphereColor={isDark ? '#1a73e8' : '#6baadb'}
           atmosphereAltitude={isDark ? 0.2 : 0.15}
