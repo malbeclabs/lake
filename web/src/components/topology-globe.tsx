@@ -1826,10 +1826,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           width={dimensions.width}
           height={dimensions.height}
           globeImageUrl={isDark
-            ? '//unpkg.com/three-globe/example/img/earth-night.jpg'
-            : '//unpkg.com/three-globe/example/img/earth-day.jpg'
+            ? '/textures/earth-night.jpg'
+            : '/textures/earth-day.jpg'
           }
-          backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+          backgroundImageUrl="/textures/night-sky.png"
           showAtmosphere={true}
           atmosphereColor={isDark ? '#1a73e8' : '#6baadb'}
           atmosphereAltitude={isDark ? 0.2 : 0.15}
