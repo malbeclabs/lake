@@ -165,7 +165,21 @@ interface GlobeArcValidatorLink {
   endLng: number
 }
 
-type GlobeArcEntity = GlobeArcLink | GlobeArcValidatorLink
+interface GlobeArcInterMetro {
+  entityType: 'inter-metro'
+  metroAPk: string
+  metroACode: string
+  metroZPk: string
+  metroZCode: string
+  linkCount: number
+  avgLatencyUs: number
+  startLat: number
+  startLng: number
+  endLat: number
+  endLng: number
+}
+
+type GlobeArcEntity = GlobeArcLink | GlobeArcValidatorLink | GlobeArcInterMetro
 
 // Get link weight based on bandwidth capacity
 function getBandwidthStroke(bps: number): number {
@@ -1311,12 +1325,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
   const arcsData: GlobeArcEntity[] = useMemo(() => {
     const arcs: GlobeArcEntity[] = []
+    const interMetroEdges = new Map<string, { count: number; totalLatency: number; latencyCount: number }>()
 
     for (const link of links) {
-      const startPos = devicePositions.get(link.side_a_pk)
-      const endPos = devicePositions.get(link.side_z_pk)
-      if (!startPos || !endPos) continue
-
       // Handle collapsed metros in clustering mode
       if (metroClusteringMode) {
         const deviceA = deviceMap.get(link.side_a_pk)
@@ -1324,10 +1335,31 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const metroAPK = deviceA?.metro_pk
         const metroZPK = deviceZ?.metro_pk
         if (metroAPK && metroZPK) {
-          if (metroAPK === metroZPK && collapsedMetros.has(metroAPK)) continue
-          if (collapsedMetros.has(metroAPK) && collapsedMetros.has(metroZPK)) continue
+          const aCollapsed = collapsedMetros.has(metroAPK)
+          const zCollapsed = collapsedMetros.has(metroZPK)
+          // Skip intra-metro links when the metro is collapsed
+          if (metroAPK === metroZPK && aCollapsed) continue
+          // Aggregate inter-metro links when at least one end is collapsed
+          if (aCollapsed || zCollapsed) {
+            if (metroAPK !== metroZPK) {
+              const edgeKey = [metroAPK, metroZPK].sort().join('|')
+              const existing = interMetroEdges.get(edgeKey) || { count: 0, totalLatency: 0, latencyCount: 0 }
+              existing.count++
+              if (link.latency_us > 0) {
+                existing.totalLatency += link.latency_us
+                existing.latencyCount++
+              }
+              interMetroEdges.set(edgeKey, existing)
+            }
+            // Skip individual link if both ends collapsed
+            if (aCollapsed && zCollapsed) continue
+          }
         }
       }
+
+      const startPos = devicePositions.get(link.side_a_pk)
+      const endPos = devicePositions.get(link.side_z_pk)
+      if (!startPos || !endPos) continue
 
       arcs.push({
         entityType: 'link',
@@ -1350,6 +1382,26 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       })
     }
 
+    // Add aggregated inter-metro arcs for collapsed metros
+    if (metroClusteringMode && collapsedMetros.size > 0) {
+      for (const [edgeKey, data] of interMetroEdges) {
+        const [metroAPK, metroZPK] = edgeKey.split('|')
+        const metroA = metroMap.get(metroAPK)
+        const metroZ = metroMap.get(metroZPK)
+        if (!metroA || !metroZ) continue
+        if (!collapsedMetros.has(metroAPK) && !collapsedMetros.has(metroZPK)) continue
+        arcs.push({
+          entityType: 'inter-metro',
+          metroAPk: metroAPK, metroACode: metroA.code,
+          metroZPk: metroZPK, metroZCode: metroZ.code,
+          linkCount: data.count,
+          avgLatencyUs: data.latencyCount > 0 ? data.totalLatency / data.latencyCount : 0,
+          startLat: metroA.latitude, startLng: metroA.longitude,
+          endLat: metroZ.latitude, endLng: metroZ.longitude,
+        })
+      }
+    }
+
     // Add validator connecting lines
     if (showValidators && !pathModeEnabled) {
       for (const v of validators) {
@@ -1365,7 +1417,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     return arcs
-  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, showValidators, pathModeEnabled, validators])
+  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, showValidators, pathModeEnabled, validators])
 
   // ─── Point accessors ─────────────────────────────────────────────────
 
@@ -1504,6 +1556,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const a = arc as GlobeArcEntity
 
     if (a.entityType === 'validator-link') return ['rgba(168,85,247,0.7)', 'rgba(124,58,237,0.9)']
+    if (a.entityType === 'inter-metro') return '#94a3b8'
 
     const l = a as GlobeArcLink
     const isSelected = selectedItem?.type === 'link' && selectedItem.data.pk === l.pk
@@ -1560,6 +1613,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return 0.15
+    if (a.entityType === 'inter-metro') return 0.8
 
     const l = a as GlobeArcLink
     const isSelected = selectedItem?.type === 'link' && selectedItem.data.pk === l.pk
@@ -1590,6 +1644,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       return 0
     }
     const a = arc as GlobeArcEntity
+    if (a.entityType === 'inter-metro') return 0
     if (a.entityType === 'validator-link') return 0.3
     return 0.4
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
@@ -1607,6 +1662,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       return 0
     }
     const a = arc as GlobeArcEntity
+    if (a.entityType === 'inter-metro') return 0
     if (a.entityType === 'validator-link') return 0.2
     return 0.2
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
@@ -1614,6 +1670,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const getArcLabel = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return ''
+    if (a.entityType === 'inter-metro') {
+      const m = a as GlobeArcInterMetro
+      const avgLatencyMs = m.avgLatencyUs > 0 ? (m.avgLatencyUs / 1000).toFixed(2) + ' ms' : 'N/A'
+      return `<div style="background:rgba(0,0,0,0.85);padding:6px 10px;border-radius:6px;font-size:12px;color:#fff">
+        <div style="font-weight:600">${m.metroACode} ↔ ${m.metroZCode}</div>
+        <div style="color:#9ca3af">${m.linkCount} link${m.linkCount !== 1 ? 's' : ''} &middot; Avg latency: <span style="color:#fff">${avgLatencyMs}</span></div>
+      </div>`
+    }
 
     const l = a as GlobeArcLink
     const latencyMs = (l.latencyUs / 1000).toFixed(2)
@@ -1706,6 +1770,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const handleArcClick = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return
+    if (a.entityType === 'inter-metro') return
     if (pathModeEnabled || whatifAdditionMode) return
 
     const l = a as GlobeArcLink
@@ -1784,6 +1849,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           arcDashAnimateTime={(d: object) => {
             if (!linkAnimating) return 0
             const a = d as GlobeArcEntity
+            if (a.entityType === 'inter-metro') return 0
             if (a.entityType === 'validator-link') return 2000
             return arcAnimateTime((a as GlobeArcLink).latencyUs)
           }}
