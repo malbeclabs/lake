@@ -1468,7 +1468,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const getArcColor = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
 
-    if (a.entityType === 'validator-link') return '#7c3aed80'
+    if (a.entityType === 'validator-link') return ['rgba(168,85,247,0.7)', 'rgba(124,58,237,0.9)']
 
     const l = a as GlobeArcLink
     const isSelected = selectedItem?.type === 'link' && selectedItem.data.pk === l.pk
