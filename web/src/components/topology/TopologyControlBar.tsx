@@ -39,6 +39,9 @@ interface TopologyControlBarProps {
   // Globe auto-rotation (globe view only)
   autoRotating?: boolean
   onToggleAutoRotate?: () => void
+  // Globe link animation (globe view only)
+  linkAnimating?: boolean
+  onToggleLinkAnimation?: () => void
 }
 
 interface NavItemProps {
@@ -118,6 +121,8 @@ export function TopologyControlBar({
   onReset,
   autoRotating,
   onToggleAutoRotate,
+  linkAnimating,
+  onToggleLinkAnimation,
 }: TopologyControlBarProps) {
   const { mode, setMode, pathMode, setPathMode, overlays, toggleOverlay, view, panel, openPanel, closePanel } = useTopology()
   const { features } = useEnv()
@@ -280,6 +285,16 @@ export function TopologyControlBar({
               label={autoRotating ? 'Pause rotation' : 'Auto-rotate'}
               onClick={onToggleAutoRotate}
               active={autoRotating}
+              activeColor="cyan"
+              collapsed={collapsed}
+            />
+          )}
+          {onToggleLinkAnimation && (
+            <NavItem
+              icon={<Activity className="h-3.5 w-3.5" />}
+              label={linkAnimating ? 'Static links' : 'Animate links'}
+              onClick={onToggleLinkAnimation}
+              active={linkAnimating}
               activeColor="cyan"
               collapsed={collapsed}
             />

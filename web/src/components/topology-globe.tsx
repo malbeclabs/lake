@@ -252,6 +252,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
   const [autoRotateEnabled, setAutoRotateEnabled] = useState(true) // user preference
   const [autoRotating, setAutoRotating] = useState(true) // actual state
+  const [linkAnimating, setLinkAnimating] = useState(true) // link animation state
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedItem, setSelectedItemState] = useState<SelectedItemData | null>(null)
   const settingSelectionLocallyRef = useRef(false)
@@ -890,6 +891,22 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }
     }
   }, [globeReady, isAnalysisActive, autoRotateEnabled, setAutoRotate])
+
+  // Auto-disable link animation on transitions in/out of analysis mode.
+  // User can re-enable via the toggle even while in analysis mode.
+  const prevAnalysisForLinks = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (!globeReady) return
+    const isFirst = prevAnalysisForLinks.current === null
+    const wasActive = prevAnalysisForLinks.current
+    prevAnalysisForLinks.current = isAnalysisActive
+    if (isFirst) {
+      if (isAnalysisActive) setLinkAnimating(false)
+    } else {
+      if (isAnalysisActive && !wasActive) setLinkAnimating(false)
+      if (!isAnalysisActive && wasActive) setLinkAnimating(true)
+    }
+  }, [globeReady, isAnalysisActive])
 
   // Pause auto-rotation on direct globe interaction (drag/scroll on the canvas).
   // Ignores clicks on UI controls (buttons, panels) to avoid conflicting with toggles.
@@ -1560,14 +1577,13 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [selectedItem, removalLink, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, bandwidthMode, trafficFlowMode, linkMap])
 
   const getArcDashLength = useCallback((arc: object) => {
-    // In analysis mode, show solid lines (no dashes) for all arc types
-    if (isAnalysisActive) {
+    // When animation is off, show solid lines (except mode-specific dashing)
+    if (!linkAnimating) {
       const a = arc as GlobeArcEntity
       if (a.entityType === 'link') {
         const l = a as GlobeArcLink
         const isRemovedLink = removalLink?.linkPK === l.pk
         const criticality = linkCriticalityMap.get(l.pk)
-        // Mode-specific dashing still applies
         if (whatifRemovalMode && isRemovedLink) return 0.3
         if (criticalityOverlayEnabled && criticality) return 0.3
       }
@@ -1576,11 +1592,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return 0.3
     return 0.4
-  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, isAnalysisActive])
+  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
 
   const getArcDashGap = useCallback((arc: object) => {
-    // In analysis mode, show solid lines (no gaps) for all arc types
-    if (isAnalysisActive) {
+    if (!linkAnimating) {
       const a = arc as GlobeArcEntity
       if (a.entityType === 'link') {
         const l = a as GlobeArcLink
@@ -1594,7 +1609,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return 0.2
     return 0.2
-  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, isAnalysisActive])
+  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
 
   const getArcLabel = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1767,7 +1782,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           arcDashLength={getArcDashLength}
           arcDashGap={getArcDashGap}
           arcDashAnimateTime={(d: object) => {
-            if (isAnalysisActive) return 0
+            if (!linkAnimating) return 0
             const a = d as GlobeArcEntity
             if (a.entityType === 'validator-link') return 2000
             return arcAnimateTime((a as GlobeArcLink).latencyUs)
@@ -1794,6 +1809,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           setAutoRotateEnabled(next)
           setAutoRotate(next)
         }}
+        linkAnimating={linkAnimating}
+        onToggleLinkAnimation={() => setLinkAnimating(prev => !prev)}
       />
 
       {/* Detail panel - shown when entity selected in explore mode */}
