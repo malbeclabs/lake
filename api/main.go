@@ -353,7 +353,7 @@ func main() {
 				"connect-src 'self' https://accounts.google.com https://cloudflareinsights.com https://*.basemaps.cartocdn.com https://*.ingest.us.sentry.io",
 				"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
 				"font-src 'self' https://fonts.gstatic.com",
-				"img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.basemaps.cartocdn.com",
+				"img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.basemaps.cartocdn.com https://unpkg.com",
 			}, "; ")
 			w.Header().Set("Content-Security-Policy", csp)
 
