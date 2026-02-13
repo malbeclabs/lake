@@ -1,5 +1,5 @@
 declare module 'react-globe.gl' {
-  import type { Object3D, Scene, Camera, WebGLRenderer } from 'three'
+  import type { Scene, Camera, WebGLRenderer } from 'three'
 
   interface GlobeInstance {
     pointOfView: (pov?: { lat?: number; lng?: number; altitude?: number }, transitionMs?: number) => GlobeInstance | { lat: number; lng: number; altitude: number }
