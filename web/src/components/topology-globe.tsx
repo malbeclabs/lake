@@ -922,26 +922,55 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
   }, [globeReady, isAnalysisActive])
 
-  // Pause auto-rotation on direct globe interaction (drag/scroll on the canvas).
-  // Ignores clicks on UI controls (buttons, panels) to avoid conflicting with toggles.
-  const handleInteraction = useCallback((e: Event) => {
-    if ((e.target as HTMLElement).tagName !== 'CANVAS') return
-    const globe = globeRef.current
-    if (!globe) return
-    globe.controls().autoRotate = false
-    setAutoRotating(false)
-  }, [])
-
+  // Pause auto-rotation during direct globe interaction (drag/scroll on the canvas),
+  // then resume after 3s of inactivity. Brief clicks don't affect rotation — entity
+  // selection already pauses via isAnalysisActive.
+  const interactionTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    el.addEventListener('pointerdown', handleInteraction)
-    el.addEventListener('wheel', handleInteraction)
-    return () => {
-      el.removeEventListener('pointerdown', handleInteraction)
-      el.removeEventListener('wheel', handleInteraction)
+
+    const pauseAndDebounce = (e: Event) => {
+      if ((e.target as HTMLElement).tagName !== 'CANVAS') return
+      const globe = globeRef.current
+      if (!globe) return
+      // Pause rotation during interaction
+      globe.controls().autoRotate = false
+      setAutoRotating(false)
+      // Clear any pending resume timer
+      clearTimeout(interactionTimerRef.current)
+      // Resume after 3s of no interaction (if user preference is enabled and no analysis active)
+      interactionTimerRef.current = setTimeout(() => {
+        if (!autoRotateEnabled || isAnalysisActive) return
+        setAutoRotate(true)
+      }, 3000)
     }
-  }, [handleInteraction])
+
+    // Only drag and zoom should pause — not pointerdown (which fires on brief clicks too).
+    // OrbitControls uses pointermove after pointerdown for drag, so listen to that.
+    let pointerIsDown = false
+    const onPointerDown = (e: Event) => {
+      if ((e.target as HTMLElement).tagName !== 'CANVAS') return
+      pointerIsDown = true
+    }
+    const onPointerMove = (e: Event) => {
+      if (!pointerIsDown) return
+      pauseAndDebounce(e)
+    }
+    const onPointerUp = () => { pointerIsDown = false }
+
+    el.addEventListener('pointerdown', onPointerDown)
+    el.addEventListener('pointermove', onPointerMove)
+    el.addEventListener('pointerup', onPointerUp)
+    el.addEventListener('wheel', pauseAndDebounce)
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown)
+      el.removeEventListener('pointermove', onPointerMove)
+      el.removeEventListener('pointerup', onPointerUp)
+      el.removeEventListener('wheel', pauseAndDebounce)
+      clearTimeout(interactionTimerRef.current)
+    }
+  }, [autoRotateEnabled, isAnalysisActive, setAutoRotate])
 
   // Fly-to on selection
   const flyToEntity = useCallback((lat: number, lng: number) => {
