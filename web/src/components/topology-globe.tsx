@@ -277,6 +277,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const isisHealthMode = overlays.isisHealth
   const multicastTreesMode = overlays.multicastTrees
 
+  // True when user is actively analyzing — any overlay, mode, or selection active.
+  // Used to stop arc animation and show solid lines for clarity.
+  const anyOverlayActive = Object.values(overlays).some(Boolean)
+  const isAnalysisActive = anyOverlayActive || mode !== 'explore' || !!selectedItem
+
   // Multicast trees operational state (local)
   const [selectedMulticastGroups, setSelectedMulticastGroups] = useState<string[]>([])
   const [multicastGroupDetails, setMulticastGroupDetails] = useState<Map<string, MulticastGroupDetail>>(new Map())
@@ -1542,10 +1547,13 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const l = a as GlobeArcLink
     const isRemovedLink = removalLink?.linkPK === l.pk
     const criticality = linkCriticalityMap.get(l.pk)
+    // Mode-specific dashing always applies
     if (whatifRemovalMode && isRemovedLink) return 0.3
     if (criticalityOverlayEnabled && criticality) return 0.3
+    // In analysis mode, show solid lines (no dashes)
+    if (isAnalysisActive) return 0
     return 0.4
-  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap])
+  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, isAnalysisActive])
 
   const getArcDashGap = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1555,8 +1563,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const criticality = linkCriticalityMap.get(l.pk)
     if (whatifRemovalMode && isRemovedLink) return 0.2
     if (criticalityOverlayEnabled && criticality) return 0.2
+    // In analysis mode, show solid lines (no gaps)
+    if (isAnalysisActive) return 0
     return 0.2
-  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap])
+  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, isAnalysisActive])
 
   const getArcLabel = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1728,6 +1738,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           arcDashLength={getArcDashLength}
           arcDashGap={getArcDashGap}
           arcDashAnimateTime={(d: object) => {
+            if (isAnalysisActive) return 0
             const a = d as GlobeArcEntity
             if (a.entityType === 'validator-link') return 2000
             return arcAnimateTime((a as GlobeArcLink).latencyUs)
