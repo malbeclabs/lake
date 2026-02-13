@@ -1367,7 +1367,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const metroIndex = metroIndexMap.get(p.pk) ?? 0
         return METRO_COLORS[metroIndex % METRO_COLORS.length]
       }
-      return isDark ? '#00ccaa' : '#0e7490'
+      return '#00ccaa'
     }
 
     // Device entity
@@ -1393,7 +1393,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const isImpactDevice = impactMode && impactDevices.includes(d.pk)
 
     // Priority cascade (same as map)
-    if (isDisabledInPathMode) return isDark ? '#4b5563' : '#9ca3af'
+    if (isDisabledInPathMode) return '#4b5563'
     if (whatifRemovalMode && isDisconnected) return '#ef4444'
     if (isAdditionSource || isPathSource) return '#22c55e'
     if (isAdditionTarget || isPathTarget) return '#ef4444'
@@ -1410,15 +1410,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     // Overlay colors
     if (stakeOverlayMode) return getStakeColor(d.stakeShare)
     if (contributorDevicesMode && !stakeOverlayMode && !metroClusteringMode) {
-      if (!d.contributorPk) return isDark ? '#6b7280' : '#9ca3af'
+      if (!d.contributorPk) return '#6b7280'
       return CONTRIBUTOR_COLORS[(contributorIndexMap.get(d.contributorPk) ?? 0) % CONTRIBUTOR_COLORS.length]
     }
     if (metroClusteringMode && !stakeOverlayMode && !contributorDevicesMode) return METRO_COLORS[(metroIndexMap.get(d.metroPk) ?? 0) % METRO_COLORS.length]
     if (deviceTypeMode && !stakeOverlayMode && !metroClusteringMode && !contributorDevicesMode) return DEVICE_TYPE_COLORS[d.deviceType?.toLowerCase() || 'default'] || DEVICE_TYPE_COLORS.default
 
     // Vibrant default for the "living demo" aesthetic
-    return isDark ? '#00ffcc' : '#0891b2'
-  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastDevicePathMap, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, isDark])
+    return '#00ffcc'
+  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastDevicePathMap, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap])
 
   const getPointRadius = useCallback((point: object) => {
     const p = point as GlobePointEntity
@@ -1510,15 +1510,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         if (sla.status === 'warning') return '#eab308'
         if (sla.status === 'critical') return '#ef4444'
       }
-      return isDark ? '#6b728080' : '#9ca3af80'
+      return '#6b728080'
     }
     if (trafficFlowMode) return getTrafficColor(linkMap.get(l.pk)!).color
     if (contributorLinksMode && l.contributorPk) return CONTRIBUTOR_COLORS[(contributorIndexMap.get(l.contributorPk) ?? 0) % CONTRIBUTOR_COLORS.length]
-    if (contributorLinksMode && !l.contributorPk) return isDark ? '#6b728050' : '#9ca3af50'
+    if (contributorLinksMode && !l.contributorPk) return '#6b728050'
     if (linkTypeMode) {
       const linkType = l.linkType || 'default'
       const colors = LINK_TYPE_COLORS[linkType] || LINK_TYPE_COLORS.default
-      return isDark ? colors.dark : colors.light
+      return colors.dark
     }
     if (criticalityOverlayEnabled && criticality) return criticalityColors[criticality]
     if (isisHealthMode) {
@@ -1537,10 +1537,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (isSelected) return '#3b82f6'
 
     // Vibrant default gradient for the "living demo" aesthetic
-    return isDark
-      ? ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
-      : ['rgba(8,145,178,0.7)', 'rgba(37,99,235,0.7)']
-  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, multicastLinkPathMap, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, isDark])
+    return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
+  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, multicastLinkPathMap, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap])
 
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
