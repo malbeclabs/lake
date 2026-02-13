@@ -80,7 +80,7 @@ export interface TopologyContextValue {
   toggleOverlay: (overlay: keyof OverlayState) => void
 
   // View type (provided by parent)
-  view: 'map' | 'graph'
+  view: 'map' | 'graph' | 'globe'
 
   // Hover state (for cursor-following popover)
   hoveredEntity: { type: SelectionType; id: string; x: number; y: number } | null
@@ -91,14 +91,14 @@ const TopologyContext = createContext<TopologyContextValue | null>(null)
 
 interface TopologyProviderProps {
   children: ReactNode
-  view: 'map' | 'graph'
+  view: 'map' | 'graph' | 'globe'
 }
 
 const DEFAULT_PANEL_WIDTH = 320
 
 // Parse overlays from URL param (comma-separated)
 // If no param, use view-specific defaults
-function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph'): OverlayState {
+function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'globe'): OverlayState {
   const defaultState: OverlayState = {
     validators: false,
     deviceType: true,               // Default device overlay

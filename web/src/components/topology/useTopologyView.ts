@@ -79,7 +79,7 @@ export interface TopologyViewState {
   toggleIsisHealth: () => void
 
   // View type
-  view: 'map' | 'graph'
+  view: 'map' | 'graph' | 'globe'
 }
 
 export function useTopologyView(): TopologyViewState {

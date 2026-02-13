@@ -173,7 +173,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const { recentSearches, addRecentSearch, clearRecentSearches } = useRecentSearches()
 
-  const isTopologyPage = location.pathname === '/topology/map' || location.pathname === '/topology/graph'
+  const isTopologyPage = location.pathname === '/topology/map' || location.pathname === '/topology/graph' || location.pathname === '/topology/globe'
   const isTimelinePage = location.pathname === '/timeline'
   const isStatusPage = location.pathname.startsWith('/status')
   const isOutagesPage = location.pathname === '/outages'

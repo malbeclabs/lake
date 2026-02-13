@@ -622,6 +622,7 @@ function AppContent() {
             <Route path="/topology" element={<Navigate to="/topology/map" replace />} />
             <Route path="/topology/map" element={<TopologyPage view="map" />} />
             <Route path="/topology/graph" element={<TopologyPage view="graph" />} />
+            <Route path="/topology/globe" element={<TopologyPage view="globe" />} />
             <Route path="/topology/path-calculator" element={<PathCalculatorPage />} />
             <Route path="/topology/redundancy" element={<RedundancyReportPage />} />
             <Route path="/topology/metro-connectivity" element={<MetroConnectivityPage />} />

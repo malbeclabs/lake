@@ -4,13 +4,14 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchTopology } from '@/lib/api'
 import { TopologyMap } from '@/components/topology-map'
 import { TopologyGraph } from '@/components/topology-graph'
+import { TopologyGlobe } from '@/components/topology-globe'
 import { TopologyProvider } from '@/components/topology'
 import { Globe } from 'lucide-react'
 
 // Only show loading indicator after this delay to avoid flash on fast loads
 const LOADING_DELAY_MS = 300
 
-type ViewMode = 'map' | 'graph'
+type ViewMode = 'map' | 'graph' | 'globe'
 
 interface TopologyPageProps {
   view: ViewMode
@@ -63,12 +64,12 @@ export function TopologyPage({ view }: TopologyPageProps) {
     setShowLoading(false)
   }, [isLoading])
 
-  if (isLoading && view === 'map') {
+  if (isLoading && (view === 'map' || view === 'globe')) {
     // Only show loading indicator after delay to avoid flash
     return showLoading ? <TopologyLoading /> : null
   }
 
-  if (error && view === 'map') {
+  if (error && (view === 'map' || view === 'globe')) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-destructive">
@@ -94,6 +95,15 @@ export function TopologyPage({ view }: TopologyPageProps) {
           <TopologyGraph
             selectedDevicePK={selectedDevicePK}
             onDeviceSelect={handleGraphDeviceSelect}
+          />
+        )}
+
+        {view === 'globe' && data && (
+          <TopologyGlobe
+            metros={data.metros}
+            devices={data.devices}
+            links={data.links}
+            validators={data.validators}
           />
         )}
       </div>

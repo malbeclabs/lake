@@ -154,6 +154,7 @@ export function Sidebar() {
   // Topology sub-routes
   const isTopologyMap = location.pathname === '/topology/map'
   const isTopologyGraph = location.pathname === '/topology/graph'
+  const isTopologyGlobe = location.pathname === '/topology/globe'
   const isTopologyPathCalculator = location.pathname === '/topology/path-calculator'
   const isTopologyRedundancy = location.pathname === '/topology/redundancy'
   const isTopologyMetroConnectivity = location.pathname === '/topology/metro-connectivity'
@@ -371,6 +372,18 @@ export function Sidebar() {
               title="Map"
             >
               <Map className="h-4 w-4" />
+            </Link>
+            <Link
+              to="/topology/globe"
+              className={cn(
+                'p-2 rounded transition-colors',
+                isTopologyGlobe
+                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+              title="Globe"
+            >
+              <Globe className="h-4 w-4" />
             </Link>
             {hasNeo4j && (
               <>
@@ -937,6 +950,18 @@ export function Sidebar() {
             >
               <Map className="h-4 w-4" />
               Map
+            </Link>
+            <Link
+              to="/topology/globe"
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                isTopologyGlobe
+                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+            >
+              <Globe className="h-4 w-4" />
+              Globe
             </Link>
             {hasNeo4j && (
               <>
