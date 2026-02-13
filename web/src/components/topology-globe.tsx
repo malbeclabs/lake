@@ -1732,7 +1732,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   // ─── Render ──────────────────────────────────────────────────────────
 
   return (
-    <div ref={containerRef} className={`absolute inset-0 ${isDark ? 'bg-black' : 'bg-[#e8ecf0]'}`}>
+    <div ref={containerRef} className="absolute inset-0 bg-black">
       {dimensions.width > 0 && dimensions.height > 0 && (
         <Globe
           ref={globeRefCb}
@@ -1742,7 +1742,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             ? '//unpkg.com/three-globe/example/img/earth-night.jpg'
             : '//unpkg.com/three-globe/example/img/earth-day.jpg'
           }
-          backgroundImageUrl={isDark ? '//unpkg.com/three-globe/example/img/night-sky.png' : undefined}
+          backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
           showAtmosphere={true}
           atmosphereColor={isDark ? '#1a73e8' : '#6baadb'}
           atmosphereAltitude={isDark ? 0.2 : 0.15}
