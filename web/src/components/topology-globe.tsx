@@ -1627,7 +1627,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (isRemovedLink || isInSelectedPath || isInSelectedMetroPath) return 0.8
     if (isSelected) return 0.7
     if (trafficFlowMode) return getTrafficColor(linkMap.get(l.pk)!).stroke
-    return 0.3
+    // Default: scale by bandwidth so higher-capacity links are visually thicker
+    return getBandwidthStroke(l.bandwidthBps)
   }, [selectedItem, removalLink, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, bandwidthMode, trafficFlowMode, linkMap])
 
   const getArcDashLength = useCallback((arc: object) => {
