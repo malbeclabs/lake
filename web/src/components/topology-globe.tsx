@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useRef, useState, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useTheme } from '@/hooks/use-theme'
 import Globe from 'react-globe.gl'
 import type { GlobeInstance } from 'react-globe.gl'
 import { useQuery } from '@tanstack/react-query'
@@ -243,6 +244,8 @@ function calculateDevicePosition(
 }
 
 export function TopologyGlobe({ metros, devices, links, validators }: TopologyGlobeProps) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
   const globeRef = useRef<GlobeInstance | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
@@ -1364,7 +1367,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const metroIndex = metroIndexMap.get(p.pk) ?? 0
         return METRO_COLORS[metroIndex % METRO_COLORS.length]
       }
-      return '#00ccaa'
+      return isDark ? '#00ccaa' : '#0e7490'
     }
 
     // Device entity
@@ -1390,7 +1393,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const isImpactDevice = impactMode && impactDevices.includes(d.pk)
 
     // Priority cascade (same as map)
-    if (isDisabledInPathMode) return '#4b5563'
+    if (isDisabledInPathMode) return isDark ? '#4b5563' : '#9ca3af'
     if (whatifRemovalMode && isDisconnected) return '#ef4444'
     if (isAdditionSource || isPathSource) return '#22c55e'
     if (isAdditionTarget || isPathTarget) return '#ef4444'
@@ -1407,15 +1410,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     // Overlay colors
     if (stakeOverlayMode) return getStakeColor(d.stakeShare)
     if (contributorDevicesMode && !stakeOverlayMode && !metroClusteringMode) {
-      if (!d.contributorPk) return '#6b7280'
+      if (!d.contributorPk) return isDark ? '#6b7280' : '#9ca3af'
       return CONTRIBUTOR_COLORS[(contributorIndexMap.get(d.contributorPk) ?? 0) % CONTRIBUTOR_COLORS.length]
     }
     if (metroClusteringMode && !stakeOverlayMode && !contributorDevicesMode) return METRO_COLORS[(metroIndexMap.get(d.metroPk) ?? 0) % METRO_COLORS.length]
     if (deviceTypeMode && !stakeOverlayMode && !metroClusteringMode && !contributorDevicesMode) return DEVICE_TYPE_COLORS[d.deviceType?.toLowerCase() || 'default'] || DEVICE_TYPE_COLORS.default
 
     // Vibrant default for the "living demo" aesthetic
-    return '#00ffcc'
-  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastDevicePathMap, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap])
+    return isDark ? '#00ffcc' : '#0891b2'
+  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastDevicePathMap, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, isDark])
 
   const getPointRadius = useCallback((point: object) => {
     const p = point as GlobePointEntity
@@ -1507,15 +1510,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         if (sla.status === 'warning') return '#eab308'
         if (sla.status === 'critical') return '#ef4444'
       }
-      return '#6b728080'
+      return isDark ? '#6b728080' : '#9ca3af80'
     }
     if (trafficFlowMode) return getTrafficColor(linkMap.get(l.pk)!).color
     if (contributorLinksMode && l.contributorPk) return CONTRIBUTOR_COLORS[(contributorIndexMap.get(l.contributorPk) ?? 0) % CONTRIBUTOR_COLORS.length]
-    if (contributorLinksMode && !l.contributorPk) return '#6b728050'
+    if (contributorLinksMode && !l.contributorPk) return isDark ? '#6b728050' : '#9ca3af50'
     if (linkTypeMode) {
       const linkType = l.linkType || 'default'
       const colors = LINK_TYPE_COLORS[linkType] || LINK_TYPE_COLORS.default
-      return colors.dark
+      return isDark ? colors.dark : colors.light
     }
     if (criticalityOverlayEnabled && criticality) return criticalityColors[criticality]
     if (isisHealthMode) {
@@ -1533,9 +1536,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) return PATH_COLORS[(multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0) % PATH_COLORS.length]
     if (isSelected) return '#3b82f6'
 
-    // Vibrant teal-to-blue gradient for the "living demo" aesthetic
-    return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
-  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, multicastLinkPathMap, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap])
+    // Vibrant default gradient for the "living demo" aesthetic
+    return isDark
+      ? ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
+      : ['rgba(8,145,178,0.7)', 'rgba(37,99,235,0.7)']
+  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, multicastLinkPathMap, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, isDark])
 
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1726,20 +1731,21 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
   // ─── Render ──────────────────────────────────────────────────────────
 
-  const isDark = true // Globe always renders on dark background
-
   return (
-    <div ref={containerRef} className="absolute inset-0 bg-black">
+    <div ref={containerRef} className={`absolute inset-0 ${isDark ? 'bg-black' : 'bg-[#e8ecf0]'}`}>
       {dimensions.width > 0 && dimensions.height > 0 && (
         <Globe
           ref={globeRefCb}
           width={dimensions.width}
           height={dimensions.height}
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
-          backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+          globeImageUrl={isDark
+            ? '//unpkg.com/three-globe/example/img/earth-night.jpg'
+            : '//unpkg.com/three-globe/example/img/earth-day.jpg'
+          }
+          backgroundImageUrl={isDark ? '//unpkg.com/three-globe/example/img/night-sky.png' : undefined}
           showAtmosphere={true}
-          atmosphereColor="#1a73e8"
-          atmosphereAltitude={0.2}
+          atmosphereColor={isDark ? '#1a73e8' : '#6baadb'}
+          atmosphereAltitude={isDark ? 0.2 : 0.15}
           animateIn={true}
           lineHoverPrecision={1}
           // Points layer
