@@ -246,7 +246,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const globeRef = useRef<GlobeInstance | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
-  const interactionTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
   const [autoRotateEnabled, setAutoRotateEnabled] = useState(true)
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedItem, setSelectedItemState] = useState<SelectedItemData | null>(null)
@@ -861,27 +861,23 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }, 1000)
   }, [])
 
-  // Pause rotation when selection/panel is active
+  // Pause rotation when in analysis mode (overlay, mode, or selection active).
+  // Resume when user returns to idle state — no auto-resume timers.
   useEffect(() => {
-    if (selectedItem || panel.isOpen) {
+    if (isAnalysisActive) {
       setAutoRotate(false)
     } else if (autoRotateEnabled) {
-      // Resume after a delay
-      const timer = setTimeout(() => setAutoRotate(true), 3000)
-      return () => clearTimeout(timer)
+      setAutoRotate(true)
     }
-  }, [selectedItem, panel.isOpen, autoRotateEnabled, setAutoRotate])
+  }, [isAnalysisActive, autoRotateEnabled, setAutoRotate])
 
-  // Pause auto-rotation on pointer interaction, resume after 5s
+  // Pause auto-rotation on pointer interaction (drag/scroll).
+  // Does NOT auto-resume — user must clear selection or click play.
   const handleInteraction = useCallback(() => {
     const globe = globeRef.current
     if (!globe) return
     globe.controls().autoRotate = false
-    if (interactionTimer.current) clearTimeout(interactionTimer.current)
-    if (!selectedItem && !panel.isOpen && autoRotateEnabled) {
-      interactionTimer.current = setTimeout(() => setAutoRotate(true), 5000)
-    }
-  }, [selectedItem, panel.isOpen, autoRotateEnabled, setAutoRotate])
+  }, [])
 
   useEffect(() => {
     const el = containerRef.current
