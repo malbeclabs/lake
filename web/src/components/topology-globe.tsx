@@ -247,7 +247,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const containerRef = useRef<HTMLDivElement>(null)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
 
-  const [autoRotateEnabled, setAutoRotateEnabled] = useState(true)
+  const [autoRotateEnabled, setAutoRotateEnabled] = useState(true) // user preference
+  const [autoRotating, setAutoRotating] = useState(true) // actual state
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedItem, setSelectedItemState] = useState<SelectedItemData | null>(null)
   const settingSelectionLocallyRef = useRef(false)
@@ -841,6 +842,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const controls = globe.controls()
     controls.autoRotate = enabled
     controls.autoRotateSpeed = 0.3
+    setAutoRotating(enabled)
   }, [])
 
   // Callback ref: fires when the Globe instance mounts. Set the initial
@@ -877,6 +879,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const globe = globeRef.current
     if (!globe) return
     globe.controls().autoRotate = false
+    setAutoRotating(false)
   }, [])
 
   useEffect(() => {
@@ -1765,9 +1768,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
       {/* Control bar */}
       <TopologyControlBar
-        autoRotating={autoRotateEnabled}
+        autoRotating={autoRotating}
         onToggleAutoRotate={() => {
-          const next = !autoRotateEnabled
+          const next = !autoRotating
           setAutoRotateEnabled(next)
           setAutoRotate(next)
         }}
