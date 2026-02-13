@@ -1542,29 +1542,39 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [selectedItem, removalLink, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, bandwidthMode, trafficFlowMode, linkMap])
 
   const getArcDashLength = useCallback((arc: object) => {
+    // In analysis mode, show solid lines (no dashes) for all arc types
+    if (isAnalysisActive) {
+      const a = arc as GlobeArcEntity
+      if (a.entityType === 'link') {
+        const l = a as GlobeArcLink
+        const isRemovedLink = removalLink?.linkPK === l.pk
+        const criticality = linkCriticalityMap.get(l.pk)
+        // Mode-specific dashing still applies
+        if (whatifRemovalMode && isRemovedLink) return 0.3
+        if (criticalityOverlayEnabled && criticality) return 0.3
+      }
+      return 0
+    }
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return 0.3
-    const l = a as GlobeArcLink
-    const isRemovedLink = removalLink?.linkPK === l.pk
-    const criticality = linkCriticalityMap.get(l.pk)
-    // Mode-specific dashing always applies
-    if (whatifRemovalMode && isRemovedLink) return 0.3
-    if (criticalityOverlayEnabled && criticality) return 0.3
-    // In analysis mode, show solid lines (no dashes)
-    if (isAnalysisActive) return 0
     return 0.4
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, isAnalysisActive])
 
   const getArcDashGap = useCallback((arc: object) => {
+    // In analysis mode, show solid lines (no gaps) for all arc types
+    if (isAnalysisActive) {
+      const a = arc as GlobeArcEntity
+      if (a.entityType === 'link') {
+        const l = a as GlobeArcLink
+        const isRemovedLink = removalLink?.linkPK === l.pk
+        const criticality = linkCriticalityMap.get(l.pk)
+        if (whatifRemovalMode && isRemovedLink) return 0.2
+        if (criticalityOverlayEnabled && criticality) return 0.2
+      }
+      return 0
+    }
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return 0.2
-    const l = a as GlobeArcLink
-    const isRemovedLink = removalLink?.linkPK === l.pk
-    const criticality = linkCriticalityMap.get(l.pk)
-    if (whatifRemovalMode && isRemovedLink) return 0.2
-    if (criticalityOverlayEnabled && criticality) return 0.2
-    // In analysis mode, show solid lines (no gaps)
-    if (isAnalysisActive) return 0
     return 0.2
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, isAnalysisActive])
 
