@@ -1262,7 +1262,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
   // ─── Build points data ───────────────────────────────────────────────
 
-  const pointsData: GlobePointEntity[] = useMemo(() => {
+  const pointsDataRaw: GlobePointEntity[] = useMemo(() => {
     const pts: GlobePointEntity[] = []
 
     // Add device points
@@ -1321,9 +1321,25 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     return pts
   }, [devices, devicePositions, metroClusteringMode, collapsedMetros, metroMap, metros, devicesByMetro, showValidators, pathModeEnabled, validators, deviceMap])
 
+  // Stabilize pointsData — return previous reference if content unchanged
+  // to prevent react-globe.gl from re-animating on data refetch.
+  const prevPointsRef = useRef<GlobePointEntity[]>([])
+  const prevPointsKeyRef = useRef('')
+  const stablePointsData = useMemo(() => {
+    const key = pointsDataRaw.map(p => {
+      if (p.entityType === 'device') return `d:${p.pk}`
+      if (p.entityType === 'metro') return `m:${p.pk}`
+      return `v:${(p as GlobePointValidator).votePubkey}`
+    }).join(',')
+    if (key === prevPointsKeyRef.current) return prevPointsRef.current
+    prevPointsKeyRef.current = key
+    prevPointsRef.current = pointsDataRaw
+    return pointsDataRaw
+  }, [pointsDataRaw])
+
   // ─── Build arcs data ─────────────────────────────────────────────────
 
-  const arcsData: GlobeArcEntity[] = useMemo(() => {
+  const arcsDataRaw: GlobeArcEntity[] = useMemo(() => {
     const arcs: GlobeArcEntity[] = []
     const interMetroEdges = new Map<string, { count: number; totalLatency: number; latencyCount: number }>()
 
@@ -1418,6 +1434,22 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     return arcs
   }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, showValidators, pathModeEnabled, validators])
+
+  // Stabilize arcsData — return previous reference if content unchanged
+  // to prevent react-globe.gl from re-animating on data refetch.
+  const prevArcsRef = useRef<GlobeArcEntity[]>([])
+  const prevArcsKeyRef = useRef('')
+  const stableArcsData = useMemo(() => {
+    const key = arcsDataRaw.map(a => {
+      if (a.entityType === 'link') return `l:${a.pk}`
+      if (a.entityType === 'inter-metro') return `im:${(a as GlobeArcInterMetro).metroAPk}-${(a as GlobeArcInterMetro).metroZPk}`
+      return `vl:${(a as GlobeArcValidatorLink).votePubkey}`
+    }).join(',')
+    if (key === prevArcsKeyRef.current) return prevArcsRef.current
+    prevArcsKeyRef.current = key
+    prevArcsRef.current = arcsDataRaw
+    return arcsDataRaw
+  }, [arcsDataRaw])
 
   // ─── Point accessors ─────────────────────────────────────────────────
 
@@ -1836,7 +1868,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           animateIn={true}
           lineHoverPrecision={1}
           // Points layer
-          pointsData={pointsData}
+          pointsData={stablePointsData}
           pointLat="lat"
           pointLng="lng"
           pointRadius={getPointRadius}
@@ -1846,7 +1878,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           pointResolution={12}
           onPointClick={handlePointClick}
           // Arcs layer
-          arcsData={arcsData}
+          arcsData={stableArcsData}
           arcStartLat="startLat"
           arcStartLng="startLng"
           arcEndLat="endLat"
