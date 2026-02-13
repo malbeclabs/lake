@@ -1556,7 +1556,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const a = arc as GlobeArcEntity
 
     if (a.entityType === 'validator-link') return ['rgba(168,85,247,0.7)', 'rgba(124,58,237,0.9)']
-    if (a.entityType === 'inter-metro') return '#94a3b8'
+    if (a.entityType === 'inter-metro') {
+      const m = a as GlobeArcInterMetro
+      if (metroClusteringMode) {
+        const colorA = METRO_COLORS[(metroIndexMap.get(m.metroAPk) ?? 0) % METRO_COLORS.length]
+        const colorZ = METRO_COLORS[(metroIndexMap.get(m.metroZPk) ?? 0) % METRO_COLORS.length]
+        return [colorA, colorZ]
+      }
+      return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
+    }
 
     const l = a as GlobeArcLink
     const isSelected = selectedItem?.type === 'link' && selectedItem.data.pk === l.pk
