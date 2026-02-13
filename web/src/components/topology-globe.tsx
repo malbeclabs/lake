@@ -888,9 +888,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
   }, [globeReady, isAnalysisActive, autoRotateEnabled, setAutoRotate])
 
-  // Pause auto-rotation on pointer interaction (drag/scroll).
-  // Does NOT auto-resume — user must clear selection or click play.
-  const handleInteraction = useCallback(() => {
+  // Pause auto-rotation on direct globe interaction (drag/scroll on the canvas).
+  // Ignores clicks on UI controls (buttons, panels) to avoid conflicting with toggles.
+  const handleInteraction = useCallback((e: Event) => {
+    if ((e.target as HTMLElement).tagName !== 'CANVAS') return
     const globe = globeRef.current
     if (!globe) return
     globe.controls().autoRotate = false
