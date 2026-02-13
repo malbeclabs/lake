@@ -848,6 +848,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   // Callback ref: fires when the Globe instance mounts. Set the initial
   // camera position immediately so animate-in zooms into the right area.
   const initialFlyDone = useRef(false)
+  const [globeReady, setGlobeReady] = useState(false)
   const globeRefCb = useCallback((instance: GlobeInstance | null) => {
     globeRef.current = instance
     if (!instance || initialFlyDone.current) return
@@ -855,23 +856,21 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     // Set initial position immediately (no transition) so the animate-in
     // zoom happens over North Atlantic instead of the default { lat:0, lng:0 }
     instance.pointOfView({ lat: 35, lng: -30, altitude: 2.2 }, 0)
-    // Start auto-rotation after animate-in completes (~1s)
-    setTimeout(() => {
-      const controls = instance.controls()
-      controls.autoRotate = true
-      controls.autoRotateSpeed = 0.3
-    }, 1000)
+    // Signal that globe is mounted; the rotation effect below will decide
+    // whether to start rotating based on isAnalysisActive.
+    setTimeout(() => setGlobeReady(true), 1000)
   }, [])
 
-  // Pause rotation when in analysis mode (overlay, mode, or selection active).
-  // Resume when user returns to idle state — no auto-resume timers.
+  // Control rotation based on analysis state. Only runs once globeReady
+  // so the animate-in can finish first. Respects URL-loaded selections.
   useEffect(() => {
+    if (!globeReady) return
     if (isAnalysisActive) {
       setAutoRotate(false)
     } else if (autoRotateEnabled) {
       setAutoRotate(true)
     }
-  }, [isAnalysisActive, autoRotateEnabled, setAutoRotate])
+  }, [globeReady, isAnalysisActive, autoRotateEnabled, setAutoRotate])
 
   // Pause auto-rotation on pointer interaction (drag/scroll).
   // Does NOT auto-resume — user must clear selection or click play.
