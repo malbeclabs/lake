@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 // Topology interaction modes
@@ -172,6 +172,19 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   const [overlays, setOverlays] = useState<OverlayState>(() =>
     parseOverlaysFromUrl(searchParams.get('overlays'), view)
   )
+
+  // Track previous view to detect view switches
+  const prevViewRef = useRef(view)
+  useEffect(() => {
+    if (prevViewRef.current !== view) {
+      prevViewRef.current = view
+      // Reset to view-specific defaults when switching views,
+      // unless the user has explicitly set overlays in the URL
+      if (!searchParams.get('overlays')) {
+        setOverlays(parseOverlaysFromUrl(null, view))
+      }
+    }
+  }, [view, searchParams])
 
   // Hover state
   const [hoveredEntity, setHoveredEntity] = useState<{ type: SelectionType; id: string; x: number; y: number } | null>(null)
