@@ -166,11 +166,13 @@ func TestLake_Clickhouse_Dataset_DimensionType2_LoadSnapshotIntoStaging(t *testi
 
 		ds, err := NewDimensionType2Dataset(log, &testSchemaSinglePK{})
 		require.NoError(t, err)
+		cleanupStaging := false
 		err = ds.WriteBatch(ctx, conn, 1, func(i int) ([]any, error) {
 			return []any{"entity1", "CODE1", "Name1"}, nil
 		}, &DimensionType2DatasetWriteConfig{
-			SnapshotTS: nanosTS,
-			OpID:       opID,
+			SnapshotTS:     nanosTS,
+			OpID:           opID,
+			CleanupStaging: &cleanupStaging,
 		})
 		require.NoError(t, err)
 		// WriteBatch may fail during delta computation, but loadSnapshotIntoStaging should have succeeded
@@ -202,10 +204,12 @@ func TestLake_Clickhouse_Dataset_DimensionType2_LoadSnapshotIntoStaging(t *testi
 		opID := uuid.New()
 		ds, err := NewDimensionType2Dataset(log, &testSchemaSinglePK{})
 		require.NoError(t, err)
+		cleanupStaging := false
 		err = ds.WriteBatch(ctx, conn, 1, func(i int) ([]any, error) {
 			return []any{"test_pk", "CODE1", "Name1"}, nil
 		}, &DimensionType2DatasetWriteConfig{
-			OpID: opID,
+			OpID:           opID,
+			CleanupStaging: &cleanupStaging,
 		})
 		require.NoError(t, err)
 		// WriteBatch may fail during delta computation, but loadSnapshotIntoStaging should have succeeded
