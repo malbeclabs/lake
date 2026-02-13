@@ -898,7 +898,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const flyToEntity = useCallback((lat: number, lng: number) => {
     const globe = globeRef.current
     if (!globe) return
-    globe.pointOfView({ lat, lng, altitude: 1.5 }, 1000)
+    globe.pointOfView({ lat, lng, altitude: 0.8 }, 1000)
   }, [])
 
   // ─── Data fetching effects ───────────────────────────────────────────
