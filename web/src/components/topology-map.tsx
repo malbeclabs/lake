@@ -1482,18 +1482,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return set
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
 
-  // Validators on multicast tree devices (auto-shown when tree is active)
-  const multicastTreeValidators = useMemo(() => {
-    if (!multicastTreesMode || !selectedMulticastGroup || multicastTreeDevicePKs.size === 0) return []
-    return validators.filter(v => multicastTreeDevicePKs.has(v.device_pk))
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreeDevicePKs, validators])
-
-  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
-  const visibleValidators = useMemo(() => {
-    if (showValidators && !pathModeEnabled) return validators
-    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
-    return []
-  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
 
   // Set of link PKs that are in any multicast tree (for dimming)
   const multicastTreeLinkPKs = useMemo(() => {
@@ -1593,6 +1581,20 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     }
     return set
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
+
+  // Validators on multicast publisher/subscriber devices (auto-shown when tree is active)
+  const multicastTreeValidators = useMemo(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return []
+    if (multicastPublisherDevices.size === 0 && multicastSubscriberDevices.size === 0) return []
+    return validators.filter(v => multicastPublisherDevices.has(v.device_pk) || multicastSubscriberDevices.has(v.device_pk))
+  }, [multicastTreesMode, selectedMulticastGroup, multicastPublisherDevices, multicastSubscriberDevices, validators])
+
+  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
+  const visibleValidators = useMemo(() => {
+    if (showValidators && !pathModeEnabled) return validators
+    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
+    return []
+  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
 
   // Count publishers and subscribers per device for multicast hover tooltip (filtered by enabled)
   const multicastPublisherCount = useMemo(() => {
@@ -2035,8 +2037,34 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         })
       }
     }
+    // Add validator-to-device flow lines (only for pub/sub validators shown on tree)
+    if (showTreeValidators) {
+      for (const v of multicastTreeValidators) {
+        const devicePos = devicePositions.get(v.device_pk)
+        if (!devicePos) continue
+        const roleColor = multicastDeviceRoleColorMap.get(v.device_pk)
+        const color = roleColor || (isDark ? '#a855f7' : '#7c3aed')
+        const isPub = multicastPublisherDevices.has(v.device_pk)
+        // Publishers: flow from validator → device; Subscribers: flow from device → validator
+        const from: [number, number] = isPub ? [v.longitude, v.latitude] : devicePos
+        const to: [number, number] = isPub ? devicePos : [v.longitude, v.latitude]
+        features.push({
+          type: 'Feature',
+          properties: {
+            pk: `mc-val-${v.vote_pubkey}`,
+            color,
+            weight: 3,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [from, to],
+          },
+        })
+      }
+    }
+
     return { type: 'FeatureCollection' as const, features }
-  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, isDark])
+  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, isDark, showTreeValidators, multicastTreeValidators, devicePositions, multicastDeviceRoleColorMap, multicastPublisherDevices])
 
   // Stabilize the GeoJSON reference so the <Source> doesn't get a new object on
   // every react-query refetch (which causes MapLibre to re-process and flicker).
@@ -3653,7 +3681,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
               validators={validators}
-              multicastTreeDevicePKs={multicastTreeDevicePKs}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
             />

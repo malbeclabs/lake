@@ -160,6 +160,7 @@ interface GlobeArcValidatorLink {
   entityType: 'validator-link'
   votePubkey: string
   devicePk: string
+  role: 'pub' | 'sub' | null
   startLat: number
   startLng: number
   endLat: number
@@ -784,19 +785,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     return set
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
 
-  // Validators on multicast tree devices (auto-shown when tree is active)
-  const multicastTreeValidators = useMemo(() => {
-    if (!multicastTreesMode || !selectedMulticastGroup || multicastTreeDevicePKs.size === 0) return []
-    return validators.filter(v => multicastTreeDevicePKs.has(v.device_pk))
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreeDevicePKs, validators])
-
-  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
-  const visibleValidators = useMemo(() => {
-    if (showValidators && !pathModeEnabled) return validators
-    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
-    return []
-  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
-
   // Per-publisher tree segments with device PKs and positions (for multicast-tree arcs)
   const multicastPublisherPaths = useMemo(() => {
     const result: Array<{ publisherPK: string; segments: Array<{ fromPK: string; toPK: string; fromLat: number; fromLng: number; toLat: number; toLng: number }> }> = []
@@ -924,6 +912,20 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     return map
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, isDark])
+
+  // Validators on multicast publisher/subscriber devices (auto-shown when tree is active)
+  const multicastTreeValidators = useMemo(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return []
+    if (multicastPublisherDevices.size === 0 && multicastSubscriberDevices.size === 0) return []
+    return validators.filter(v => multicastPublisherDevices.has(v.device_pk) || multicastSubscriberDevices.has(v.device_pk))
+  }, [multicastTreesMode, selectedMulticastGroup, multicastPublisherDevices, multicastSubscriberDevices, validators])
+
+  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
+  const visibleValidators = useMemo(() => {
+    if (showValidators && !pathModeEnabled) return validators
+    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
+    return []
+  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
 
   // ─── Selection management ────────────────────────────────────────────
 
@@ -1631,6 +1633,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           entityType: 'validator-link',
           votePubkey: v.vote_pubkey,
           devicePk: v.device_pk,
+          role: multicastPublisherDevices.has(v.device_pk) ? 'pub' : multicastSubscriberDevices.has(v.device_pk) ? 'sub' : null,
           startLat: v.latitude, startLng: v.longitude,
           endLat: devicePos.lat, endLng: devicePos.lng,
         })
@@ -1660,7 +1663,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     return arcs
-  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, visibleValidators, multicastTreesMode, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap])
+  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, visibleValidators, multicastTreesMode, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, multicastPublisherDevices, multicastSubscriberDevices])
 
   // Stabilize arcsData — return previous reference if content unchanged
   // to prevent react-globe.gl from re-animating on data refetch.
@@ -1926,6 +1929,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const a = arc as GlobeArcEntity
     // Multicast-tree arcs always dash when animate flow is on
     if (a.entityType === 'multicast-tree') return animateFlow ? 0.4 : 0
+    // Validator-link arcs: dash when multicast animate flow is on
+    if (a.entityType === 'validator-link') return animateFlow ? 0.3 : 0
     // When animation is off, show solid lines (except mode-specific dashing)
     if (!linkAnimating) {
       if (a.entityType === 'link') {
@@ -1938,13 +1943,13 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       return 0
     }
     if (a.entityType === 'inter-metro') return 0
-    if (a.entityType === 'validator-link') return 0.3
     return 0.4
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating, animateFlow])
 
   const getArcDashGap = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
     if (a.entityType === 'multicast-tree') return animateFlow ? 0.2 : 0
+    if (a.entityType === 'validator-link') return animateFlow ? 0.2 : 0
     if (!linkAnimating) {
       if (a.entityType === 'link') {
         const l = a as GlobeArcLink
@@ -1956,7 +1961,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       return 0
     }
     if (a.entityType === 'inter-metro') return 0
-    if (a.entityType === 'validator-link') return 0.2
     return 0.2
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating, animateFlow])
 
@@ -2149,9 +2153,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             const a = d as GlobeArcEntity
             // Multicast-tree arcs: always animate in publisher→subscriber direction
             if (a.entityType === 'multicast-tree') return animateFlow ? 1500 : 0
+            if (a.entityType === 'validator-link') {
+              if (!animateFlow) return 0
+              const vl = a as GlobeArcValidatorLink
+              // Positive = start→end (validator→device), negative = reverse
+              return vl.role === 'sub' ? -2000 : 2000
+            }
             if (!linkAnimating) return 0
             if (a.entityType === 'inter-metro') return 0
-            if (a.entityType === 'validator-link') return 2000
             return arcAnimateTime((a as GlobeArcLink).latencyUs)
           }}
           arcAltitude={(d: object) => {
@@ -2392,7 +2401,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
               validators={validators}
-              multicastTreeDevicePKs={multicastTreeDevicePKs}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
             />

@@ -3777,7 +3777,6 @@ export function TopologyGraph({
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
               validators={[]}
-              multicastTreeDevicePKs={new Set()}
               showTreeValidators={false}
               onToggleShowTreeValidators={() => {}}
             />
