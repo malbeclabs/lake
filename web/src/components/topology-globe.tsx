@@ -355,6 +355,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
+  const [showTreeValidators, setShowTreeValidators] = useState(true)
   // PKs to skip during auto-enable (restored from URL on initial load)
   const initialDisabledPubsRef = useRef<Set<string> | null>(null)
   const initialDisabledSubsRef = useRef<Set<string> | null>(null)
@@ -781,6 +782,19 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     return set
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
+
+  // Validators on multicast tree devices (auto-shown when tree is active)
+  const multicastTreeValidators = useMemo(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup || multicastTreeDevicePKs.size === 0) return []
+    return validators.filter(v => multicastTreeDevicePKs.has(v.device_pk))
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreeDevicePKs, validators])
+
+  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
+  const visibleValidators = useMemo(() => {
+    if (showValidators && !pathModeEnabled) return validators
+    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
+    return []
+  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
 
   // Per-publisher tree segments with device PKs and positions (for multicast-tree arcs)
   const multicastPublisherPaths = useMemo(() => {
@@ -1468,8 +1482,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     // Add validator points
-    if (showValidators && !pathModeEnabled) {
-      for (const v of validators) {
+    if (visibleValidators.length > 0) {
+      for (const v of visibleValidators) {
         const device = deviceMap.get(v.device_pk)
         const metro = device ? metroMap.get(device.metro_pk) : undefined
         pts.push({
@@ -1490,7 +1504,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     return pts
-  }, [devices, devicePositions, metroClusteringMode, collapsedMetros, metroMap, metros, devicesByMetro, showValidators, pathModeEnabled, validators, deviceMap])
+  }, [devices, devicePositions, metroClusteringMode, collapsedMetros, metroMap, metros, devicesByMetro, visibleValidators, deviceMap])
 
   // Stabilize pointsData — return previous reference if content unchanged
   // to prevent react-globe.gl from re-animating on data refetch.
@@ -1590,8 +1604,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     // Add validator connecting lines
-    if (showValidators && !pathModeEnabled) {
-      for (const v of validators) {
+    if (visibleValidators.length > 0) {
+      for (const v of visibleValidators) {
         const devicePos = devicePositions.get(v.device_pk)
         if (!devicePos) continue
         arcs.push({
@@ -1626,7 +1640,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     return arcs
-  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, showValidators, pathModeEnabled, validators, multicastTreesMode, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap])
+  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, visibleValidators, multicastTreesMode, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap])
 
   // Stabilize arcsData — return previous reference if content unchanged
   // to prevent react-globe.gl from re-animating on data refetch.
@@ -2349,6 +2363,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
+              validators={validators}
+              multicastTreeDevicePKs={multicastTreeDevicePKs}
+              showTreeValidators={showTreeValidators}
+              onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
             />
           )}
         </TopologyPanel>

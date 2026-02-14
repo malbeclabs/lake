@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Radio, X } from 'lucide-react'
 import { useTopology } from '../TopologyContext'
 import {
   fetchMulticastGroups,
   type MulticastGroupListItem,
   type MulticastGroupDetail,
+  type TopologyValidator,
 } from '@/lib/api'
 
 // Colors for multicast publishers — exported so map/globe/graph views use the same palette
@@ -38,6 +39,11 @@ interface MulticastTreesOverlayPanelProps {
   // Animate flow toggle
   animateFlow: boolean
   onToggleAnimateFlow: () => void
+  // Validators overlay
+  validators: TopologyValidator[]
+  multicastTreeDevicePKs: Set<string>
+  showTreeValidators: boolean
+  onToggleShowTreeValidators: () => void
 }
 
 export function MulticastTreesOverlayPanel({
@@ -54,6 +60,10 @@ export function MulticastTreesOverlayPanel({
   onToggleDimOtherLinks,
   animateFlow,
   onToggleAnimateFlow,
+  validators,
+  multicastTreeDevicePKs,
+  showTreeValidators,
+  onToggleShowTreeValidators,
 }: MulticastTreesOverlayPanelProps) {
   const { toggleOverlay } = useTopology()
   const [groups, setGroups] = useState<MulticastGroupListItem[]>([])
@@ -81,6 +91,23 @@ export function MulticastTreesOverlayPanel({
       return { pubs, subs }
     }
     return { pubs: group.publisher_count, subs: group.subscriber_count }
+  }
+
+  // Validators whose device is part of the multicast tree
+  const treeValidators = useMemo(() => {
+    if (!selectedGroup || multicastTreeDevicePKs.size === 0) return []
+    return validators.filter(v => multicastTreeDevicePKs.has(v.device_pk))
+  }, [selectedGroup, multicastTreeDevicePKs, validators])
+
+  // Total stake of tree validators
+  const treeValidatorStake = useMemo(() => {
+    return treeValidators.reduce((sum, v) => sum + (v.stake_sol ?? 0), 0)
+  }, [treeValidators])
+
+  const formatStake = (sol: number) => {
+    if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M`
+    if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k`
+    return `${sol.toFixed(0)}`
   }
 
   return (
@@ -233,6 +260,34 @@ export function MulticastTreesOverlayPanel({
             </div>
           </div>
 
+          {/* Validators on tree devices — summary + toggle */}
+          {selectedGroup && treeValidators.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
+                Validators on Tree
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="flex items-center gap-1.5">
+                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
+                  <span>{treeValidators.length} validators</span>
+                  <span className="text-muted-foreground">{formatStake(treeValidatorStake)} SOL</span>
+                </span>
+                <button
+                  onClick={onToggleShowTreeValidators}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                    showTreeValidators ? 'bg-purple-500' : 'bg-[var(--muted)]'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                      showTreeValidators ? 'translate-x-3.5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Options */}
           <div className="pt-2 border-t border-[var(--border)]">
             <div className="flex items-center justify-between">
@@ -292,6 +347,10 @@ export function MulticastTreesOverlayPanel({
               <div className="flex items-center gap-2">
                 <div className="w-6 h-0.5 bg-purple-500 rounded" />
                 <span>Tree path (each publisher has its own line)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
+                <span>Validator (on tree device)</span>
               </div>
             </div>
           </div>

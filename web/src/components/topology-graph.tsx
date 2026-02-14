@@ -3776,6 +3776,10 @@ export function TopologyGraph({
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
+              validators={[]}
+              multicastTreeDevicePKs={new Set()}
+              showTreeValidators={false}
+              onToggleShowTreeValidators={() => {}}
             />
           )}
         </TopologyPanel>

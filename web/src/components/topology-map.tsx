@@ -385,6 +385,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const initialDisabledSubsRef = useRef<Set<string> | null>(null)
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
+  const [showTreeValidators, setShowTreeValidators] = useState(true)
 
 
   // Handler to select multicast group
@@ -1481,6 +1482,19 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return set
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
 
+  // Validators on multicast tree devices (auto-shown when tree is active)
+  const multicastTreeValidators = useMemo(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup || multicastTreeDevicePKs.size === 0) return []
+    return validators.filter(v => multicastTreeDevicePKs.has(v.device_pk))
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreeDevicePKs, validators])
+
+  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
+  const visibleValidators = useMemo(() => {
+    if (showValidators && !pathModeEnabled) return validators
+    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
+    return []
+  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
+
   // Set of link PKs that are in any multicast tree (for dimming)
   const multicastTreeLinkPKs = useMemo(() => {
     const set = new Set<string>()
@@ -1905,10 +1919,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {
-    if (!showValidators) return { type: 'FeatureCollection' as const, features: [] }
+    if (visibleValidators.length === 0) return { type: 'FeatureCollection' as const, features: [] }
 
     const validatorLinkColor = isDark ? '#7c3aed' : '#6d28d9'
-    const features = validators.map(validator => {
+    const features = visibleValidators.map(validator => {
       const devicePos = devicePositions.get(validator.device_pk)
       if (!devicePos) return null
 
@@ -1936,7 +1950,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       type: 'FeatureCollection' as const,
       features,
     }
-  }, [validators, devicePositions, showValidators, isDark, hoveredValidator, hoverHighlight])
+  }, [visibleValidators, devicePositions, isDark, hoveredValidator, hoverHighlight])
 
   // GeoJSON for per-publisher multicast tree lines (static, with offset curves)
   const multicastTreeGeoJson = useMemo(() => {
@@ -2791,8 +2805,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         {/* Animated multicast flow dots are managed imperatively via useEffect
             (source: multicast-flow-dots) to avoid React reconciliation issues. */}
 
-        {/* Validator links (when toggled, hidden in path mode) */}
-        {showValidators && !pathModeEnabled && (
+        {/* Validator links (when toggled, hidden in path mode, or auto-shown for multicast tree) */}
+        {visibleValidators.length > 0 && (
           <Source id="validator-links" type="geojson" data={validatorLinksGeoJson}>
             <Layer
               id="validator-link-lines"
@@ -3204,8 +3218,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           )
         })}
 
-        {/* Validator markers (when toggled, hidden in path mode) */}
-        {showValidators && !pathModeEnabled && validators.map(validator => {
+        {/* Validator markers (when toggled, hidden in path mode, or auto-shown for multicast tree) */}
+        {visibleValidators.length > 0 && visibleValidators.map(validator => {
           const devicePos = devicePositions.get(validator.device_pk)
           if (!devicePos) return null
 
@@ -3616,6 +3630,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
+              validators={validators}
+              multicastTreeDevicePKs={multicastTreeDevicePKs}
+              showTreeValidators={showTreeValidators}
+              onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
             />
           )}
         </TopologyPanel>
