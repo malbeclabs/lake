@@ -1457,10 +1457,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return map
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
 
-  // Build direction map: for each link PK, store the "from" device PK (upstream, closer to publisher).
-  // Used to orient animated dots in the correct flow direction (publisher → subscriber).
+  // Build direction map: for each link PK, store the set of "from" device PKs (upstream, closer to publisher).
+  // A link can have traffic flowing in both directions if different publisher→subscriber paths traverse it oppositely.
   const multicastLinkDirectionMap = useMemo(() => {
-    const map = new Map<string, string>()
+    const map = new Map<string, Set<string>>()
     if (!multicastTreesMode || !selectedMulticastGroup) return map
 
     const treeData = multicastTreePaths.get(selectedMulticastGroup)
@@ -1476,10 +1476,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           for (const link of links) {
             if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
                 (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
-              // Only set if not already set (first path to claim direction wins)
-              if (!map.has(link.pk)) {
-                map.set(link.pk, fromPK)
-              }
+              const existing = map.get(link.pk) ?? new Set<string>()
+              existing.add(fromPK)
+              map.set(link.pk, existing)
               break
             }
           }
@@ -1940,36 +1939,39 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     if (!multicastTreesMode || !animateFlow || !selectedMulticastGroup) {
       return { type: 'FeatureCollection' as const, features: [] }
     }
-    const features = links
-      .filter(link => multicastLinkPathMap.has(link.pk))
-      .map(link => {
-        // Orient coordinates in flow direction (publisher → subscriber)
-        const upstreamPK = multicastLinkDirectionMap.get(link.pk)
-        const fromPK = upstreamPK === link.side_z_pk ? link.side_z_pk : link.side_a_pk
+    const features: GeoJSON.Feature<GeoJSON.LineString>[] = []
+    for (const link of links) {
+      if (!multicastLinkPathMap.has(link.pk)) continue
+      const directions = multicastLinkDirectionMap.get(link.pk)
+      const publisherPKs = multicastLinkPathMap.get(link.pk)!
+      const color = publisherPKs.length > 1
+        ? (isDark ? '#ec4899' : '#db2777')
+        : (isDark
+            ? MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length].dark
+            : MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length].light)
+      const weight = publisherPKs.length > 1 ? 5.5 : 3.5
+
+      // Create one feature per flow direction on this link
+      const fromPKs = directions ? [...directions] : [link.side_a_pk]
+      for (const fromPK of fromPKs) {
         const toPK = fromPK === link.side_a_pk ? link.side_z_pk : link.side_a_pk
         const startPos = devicePositions.get(fromPK)
         const endPos = devicePositions.get(toPK)
-        if (!startPos || !endPos) return null
-        const publisherPKs = multicastLinkPathMap.get(link.pk)!
-        const color = publisherPKs.length > 1
-          ? (isDark ? '#ec4899' : '#db2777')
-          : (isDark
-              ? MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length].dark
-              : MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length].light)
-        return {
-          type: 'Feature' as const,
+        if (!startPos || !endPos) continue
+        features.push({
+          type: 'Feature',
           properties: {
-            pk: link.pk,
+            pk: `${link.pk}_${fromPK}`,
             color,
-            weight: publisherPKs.length > 1 ? 5.5 : 3.5,
+            weight,
           },
           geometry: {
-            type: 'LineString' as const,
+            type: 'LineString',
             coordinates: calculateCurvedPath(startPos, endPos),
           },
-        }
-      })
-      .filter((f): f is NonNullable<typeof f> => f !== null)
+        })
+      }
+    }
     return { type: 'FeatureCollection' as const, features }
   }, [multicastTreesMode, animateFlow, selectedMulticastGroup, links, multicastLinkPathMap, multicastLinkDirectionMap, multicastPublisherColorMap, devicePositions, isDark])
 
@@ -1977,7 +1979,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   // every react-query refetch (which causes MapLibre to re-process and flicker).
   // Only produce a new reference when the actual set of feature PKs changes.
   const animatedFeatureKey = useMemo(() => {
-    return multicastAnimatedGeoJson.features.map(f => f.properties.pk).join(',')
+    return multicastAnimatedGeoJson.features.map(f => f.properties?.pk).join(',')
   }, [multicastAnimatedGeoJson])
 
   const stableAnimatedGeoJson = useMemo(() => {
