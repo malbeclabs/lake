@@ -796,6 +796,33 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     return map
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
 
+  // Direction map: for each link PK, store the upstream device PK (closer to publisher).
+  // Used to orient arc dash animation in the correct flow direction.
+  const multicastLinkDirectionMap = useMemo(() => {
+    const map = new Map<string, string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
+    const treeData = multicastTreePaths.get(selectedMulticastGroup)
+    if (treeData?.paths?.length) {
+      treeData.paths.forEach(treePath => {
+        const path = treePath.path
+        if (!path?.length) return
+        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+        for (let i = 0; i < path.length - 1; i++) {
+          const fromPK = path[i].devicePK
+          const toPK = path[i + 1].devicePK
+          for (const link of links) {
+            if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
+                (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
+              if (!map.has(link.pk)) map.set(link.pk, fromPK)
+              break
+            }
+          }
+        }
+      })
+    }
+    return map
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
+
   const multicastPublisherColorMap = useMemo(() => {
     const map = new Map<string, number>()
     if (!multicastTreesMode || !selectedMulticastGroup) return map
@@ -2027,7 +2054,12 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             const a = d as GlobeArcEntity
             if (a.entityType === 'link') {
               const l = a as GlobeArcLink
-              if (animateFlow && multicastTreesMode && multicastLinkPathMap.has(l.pk)) return 1500
+              if (animateFlow && multicastTreesMode && multicastLinkPathMap.has(l.pk)) {
+                // Positive = start→end, negative = end→start. Arc start is side_a.
+                // If upstream (closer to publisher) is side_z, reverse the animation.
+                const upstreamPK = multicastLinkDirectionMap.get(l.pk)
+                return upstreamPK === l.deviceZPk ? -1500 : 1500
+              }
             }
             if (!linkAnimating) return 0
             if (a.entityType === 'inter-metro') return 0
