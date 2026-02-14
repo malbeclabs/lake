@@ -91,44 +91,20 @@ export function MulticastTreesOverlayPanel({
     return { pubs: group.publisher_count, subs: group.subscriber_count }
   }
 
-  // Validators on publisher/subscriber devices in the selected group
-  const treeValidators = useMemo(() => {
-    if (!selectedGroup) return []
-    const detail = groupDetails.get(selectedGroup)
-    if (!detail?.members) return []
-    const memberDevicePKs = new Set(detail.members.map(m => m.device_pk))
-    return validators.filter(v => memberDevicePKs.has(v.device_pk))
-  }, [selectedGroup, groupDetails, validators])
-
-  // Total stake of tree validators
-  const treeValidatorStake = useMemo(() => {
-    return treeValidators.reduce((sum, v) => sum + (v.stake_sol ?? 0), 0)
-  }, [treeValidators])
-
-  // Breakdown of tree validators by role
-  const treeValidatorBreakdown = useMemo(() => {
-    if (!selectedGroup || treeValidators.length === 0) return { pub: 0, sub: 0 }
-    const detail = groupDetails.get(selectedGroup)
-    const pubDevices = new Set<string>()
-    const subDevices = new Set<string>()
-    if (detail?.members) {
-      for (const m of detail.members) {
-        if (m.mode === 'P' || m.mode === 'P+S') pubDevices.add(m.device_pk)
-        if (m.mode === 'S' || m.mode === 'P+S') subDevices.add(m.device_pk)
-      }
+  // Map device_pk -> validator for enriching member entries
+  const validatorByDevice = useMemo(() => {
+    const map = new Map<string, TopologyValidator>()
+    for (const v of validators) {
+      // First validator per device wins (most have 1:1 mapping)
+      if (!map.has(v.device_pk)) map.set(v.device_pk, v)
     }
-    let pub = 0, sub = 0
-    for (const v of treeValidators) {
-      if (pubDevices.has(v.device_pk)) pub++
-      if (subDevices.has(v.device_pk)) sub++
-    }
-    return { pub, sub }
-  }, [selectedGroup, treeValidators, groupDetails])
+    return map
+  }, [validators])
 
   const formatStake = (sol: number) => {
-    if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M`
-    if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k`
-    return `${sol.toFixed(0)}`
+    if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M SOL`
+    if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k SOL`
+    return `${sol.toFixed(0)} SOL`
   }
 
   return (
@@ -209,29 +185,49 @@ export function MulticastTreesOverlayPanel({
                                     const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
                                     const colorStyle = isDark ? pubColor.dark : pubColor.light
                                     const isEnabled = enabledPublishers.has(m.device_pk)
+                                    const validator = validatorByDevice.get(m.device_pk)
                                     return (
                                       <div
                                         key={m.user_pk}
-                                        className={`flex items-center gap-1 py-0.5 cursor-pointer hover:bg-[var(--muted)] rounded px-1 -mx-1 ${!isEnabled ? 'opacity-40' : ''}`}
+                                        className={`py-0.5 cursor-pointer hover:bg-[var(--muted)] rounded px-1 -mx-1 ${!isEnabled ? 'opacity-40' : ''}`}
                                         onClick={() => onTogglePublisher(m.device_pk)}
                                       >
-                                        <input
-                                          type="checkbox"
-                                          checked={isEnabled}
-                                          onChange={() => {}}
-                                          className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
-                                        />
-                                        <div
-                                          className="w-3 h-3 rounded-full flex-shrink-0"
-                                          style={{ backgroundColor: colorStyle }}
-                                        />
-                                        <span>{m.device_code}</span>
-                                        <span className="text-muted-foreground">({m.metro_code})</span>
-                                        {m.owner_pubkey && (
-                                          <span className="text-muted-foreground truncate max-w-[60px]" title={m.owner_pubkey}>
-                                            {m.owner_pubkey.slice(0, 4)}..
-                                          </span>
-                                        )}
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="checkbox"
+                                            checked={isEnabled}
+                                            onChange={() => {}}
+                                            className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
+                                          />
+                                          <div
+                                            className="w-3 h-3 rounded-full flex-shrink-0"
+                                            style={{ backgroundColor: colorStyle }}
+                                          />
+                                          {validator ? (
+                                            <>
+                                              <span className="font-mono" title={validator.vote_pubkey}>
+                                                {validator.vote_pubkey.slice(0, 4)}..
+                                              </span>
+                                              <span className="text-muted-foreground ml-auto flex-shrink-0">
+                                                {formatStake(validator.stake_sol ?? 0)}
+                                              </span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              {m.owner_pubkey ? (
+                                                <span className="font-mono" title={m.owner_pubkey}>
+                                                  {m.owner_pubkey.slice(0, 4)}..
+                                                </span>
+                                              ) : (
+                                                <span>{m.device_code}</span>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-1 ml-6 text-muted-foreground">
+                                          <span>{m.device_code}</span>
+                                          <span>({m.metro_code})</span>
+                                        </div>
                                       </div>
                                     )
                                   })}
@@ -244,26 +240,46 @@ export function MulticastTreesOverlayPanel({
                                   .filter(m => m.mode === 'S' || m.mode === 'P+S')
                                   .map(m => {
                                     const isEnabled = enabledSubscribers.has(m.device_pk)
+                                    const validator = validatorByDevice.get(m.device_pk)
                                     return (
                                       <div
                                         key={m.user_pk + '-sub'}
-                                        className={`flex items-center gap-1 py-0.5 cursor-pointer hover:bg-[var(--muted)] rounded px-1 -mx-1 ${!isEnabled ? 'opacity-40' : ''}`}
+                                        className={`py-0.5 cursor-pointer hover:bg-[var(--muted)] rounded px-1 -mx-1 ${!isEnabled ? 'opacity-40' : ''}`}
                                         onClick={() => onToggleSubscriber(m.device_pk)}
                                       >
-                                        <input
-                                          type="checkbox"
-                                          checked={isEnabled}
-                                          onChange={() => {}}
-                                          className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
-                                        />
-                                        <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
-                                        <span>{m.device_code}</span>
-                                        <span className="text-muted-foreground">({m.metro_code})</span>
-                                        {m.owner_pubkey && (
-                                          <span className="text-muted-foreground truncate max-w-[60px]" title={m.owner_pubkey}>
-                                            {m.owner_pubkey.slice(0, 4)}..
-                                          </span>
-                                        )}
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="checkbox"
+                                            checked={isEnabled}
+                                            onChange={() => {}}
+                                            className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
+                                          />
+                                          <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
+                                          {validator ? (
+                                            <>
+                                              <span className="font-mono" title={validator.vote_pubkey}>
+                                                {validator.vote_pubkey.slice(0, 4)}..
+                                              </span>
+                                              <span className="text-muted-foreground ml-auto flex-shrink-0">
+                                                {formatStake(validator.stake_sol ?? 0)}
+                                              </span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              {m.owner_pubkey ? (
+                                                <span className="font-mono" title={m.owner_pubkey}>
+                                                  {m.owner_pubkey.slice(0, 4)}..
+                                                </span>
+                                              ) : (
+                                                <span>{m.device_code}</span>
+                                              )}
+                                            </>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-1 ml-6 text-muted-foreground">
+                                          <span>{m.device_code}</span>
+                                          <span>({m.metro_code})</span>
+                                        </div>
                                       </div>
                                     )
                                   })}
@@ -281,52 +297,24 @@ export function MulticastTreesOverlayPanel({
             </div>
           </div>
 
-          {/* Validators on tree devices — summary + toggle */}
-          {selectedGroup && treeValidators.length > 0 && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                  Validators on Tree
-                </div>
-                <button
-                  onClick={onToggleShowTreeValidators}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-                    showTreeValidators ? 'bg-purple-500' : 'bg-[var(--muted)]'
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                      showTreeValidators ? 'translate-x-3.5' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
-              </div>
-              <div className="text-[10px] space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <span>{treeValidators.length} validators</span>
-                  <span className="text-muted-foreground">{formatStake(treeValidatorStake)} SOL</span>
-                </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  {treeValidatorBreakdown.pub > 0 && (
-                    <span className="flex items-center gap-1">
-                      <div className="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0" />
-                      {treeValidatorBreakdown.pub} pub
-                    </span>
-                  )}
-                  {treeValidatorBreakdown.sub > 0 && (
-                    <span className="flex items-center gap-1">
-                      <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                      {treeValidatorBreakdown.sub} sub
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Options */}
           <div className="pt-2 border-t border-[var(--border)]">
             <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground">Show validators</span>
+              <button
+                onClick={onToggleShowTreeValidators}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                  showTreeValidators ? 'bg-purple-500' : 'bg-[var(--muted)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    showTreeValidators ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="flex items-center justify-between mt-1.5">
               <span className="text-[10px] text-muted-foreground">Dim other links</span>
               <button
                 onClick={onToggleDimOtherLinks}
@@ -382,15 +370,11 @@ export function MulticastTreesOverlayPanel({
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-6 h-0.5 bg-purple-500 rounded" />
-                <span>Tree path (each publisher has its own line)</span>
+                <span>Tree path</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-purple-500" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
-                <span>Validator (publisher)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-red-500" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
-                <span>Validator (subscriber)</span>
+                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
+                <span>Validator</span>
               </div>
             </div>
           </div>
