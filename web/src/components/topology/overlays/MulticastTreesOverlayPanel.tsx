@@ -291,16 +291,7 @@ export function MulticastTreesOverlayPanel({
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-6 h-0.5 bg-purple-500 rounded" />
-                <span>Tree path (color matches publisher)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-6 h-1 rounded"
-                  style={{
-                    background: `repeating-linear-gradient(90deg, ${isDark ? '#ec4899' : '#db2777'} 0 3px, transparent 3px 6px)`,
-                  }}
-                />
-                <span>Shared path (multiple publishers)</span>
+                <span>Tree path (each publisher has its own line)</span>
               </div>
             </div>
           </div>

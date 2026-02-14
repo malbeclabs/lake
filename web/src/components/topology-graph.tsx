@@ -1068,45 +1068,91 @@ export function TopologyGraph({
     previousPathEdgeIdsRef.current = newPathEdgeIds
   }, [mode, metroPathsResult, metroPathViewMode, metroPathSelectedPairs, isDark])
 
-  // Highlight multicast tree paths on graph
-  useEffect(() => {
-    if (!cyRef.current || !multicastTreesEnabled || !selectedMulticastGroup) return
-    const cy = cyRef.current
+  // Track virtual multicast edges and layout state for cleanup
+  const multicastVirtualEdgeIdsRef = useRef<Set<string>>(new Set())
+  const multicastLayoutActiveRef = useRef(false)
 
-    // Use shared multicast publisher colors
+  // Highlight multicast tree paths on graph with per-publisher virtual edges and tree layout
+  useEffect(() => {
+    if (!cyRef.current || !multicastTreesEnabled || !selectedMulticastGroup) {
+      // Cleanup: remove virtual edges and restore cose layout if previously active
+      if (cyRef.current && multicastLayoutActiveRef.current) {
+        const cy = cyRef.current
+        cy.batch(() => {
+          // Remove virtual edges
+          multicastVirtualEdgeIdsRef.current.forEach(edgeId => {
+            const edge = cy.getElementById(edgeId)
+            if (edge.length) edge.remove()
+          })
+          multicastVirtualEdgeIdsRef.current.clear()
+
+          // Restore real edge styles
+          const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+          cy.edges().forEach(edge => {
+            edge.removeStyle('line-color target-arrow-color width opacity z-index line-style')
+            edge.style({ 'line-color': defaultColor, 'target-arrow-color': defaultColor, 'width': 1, 'opacity': 0.7, 'line-style': 'solid' })
+          })
+
+          cy.elements().removeClass('path-node path-edge path-selected multicast-publisher multicast-subscriber')
+          cy.nodes().forEach(node => {
+            if (node.data('multicastLabel')) {
+              node.removeData('multicastLabel')
+              node.removeStyle('label text-valign text-halign font-size text-background-color text-background-opacity text-background-padding')
+            }
+            node.removeStyle('opacity')
+          })
+        })
+
+        // Restore cose layout
+        cy.layout({
+          name: 'cose',
+          animate: true,
+          animationDuration: 500,
+          nodeDimensionsIncludeLabels: true,
+          idealEdgeLength: 120,
+          nodeRepulsion: 10000,
+          gravity: 0.2,
+          numIter: 500,
+        } as cytoscape.LayoutOptions).run()
+        multicastLayoutActiveRef.current = false
+      }
+      return
+    }
+    const cy = cyRef.current
 
     // Clear previous highlighting
     const defaultColor = isDark ? '#6b7280' : '#9ca3af'
     previousPathEdgeIdsRef.current.forEach(edgeId => {
       const edge = cy.getElementById(edgeId)
-      if (edge.length) {
+      if (edge.length && !edge.data('mcVirtual')) {
         edge.removeStyle('line-color target-arrow-color width opacity z-index line-style')
-        edge.style({
-          'line-color': defaultColor,
-          'target-arrow-color': defaultColor,
-          'width': 1,
-          'opacity': 0.7,
-          'line-style': 'solid',
-        })
+        edge.style({ 'line-color': defaultColor, 'target-arrow-color': defaultColor, 'width': 1, 'opacity': 0.7, 'line-style': 'solid' })
       }
     })
     previousPathEdgeIdsRef.current.clear()
+    // Remove old virtual edges
+    multicastVirtualEdgeIdsRef.current.forEach(edgeId => {
+      const edge = cy.getElementById(edgeId)
+      if (edge.length) edge.remove()
+    })
+    multicastVirtualEdgeIdsRef.current.clear()
+
     cy.elements().removeClass('path-node path-edge path-selected multicast-publisher multicast-subscriber')
-    // Clear labels from previous multicast nodes
     cy.nodes().forEach(node => {
       if (node.data('multicastLabel')) {
         node.removeData('multicastLabel')
         node.removeStyle('label text-valign text-halign font-size text-background-color text-background-opacity text-background-padding')
       }
+      node.removeStyle('opacity')
     })
     const newPathEdgeIds = new Set<string>()
 
     // Build publisher/subscriber counts per device (filtered by enabled)
     const publisherCounts = new Map<string, number>()
     const subscriberCounts = new Map<string, number>()
+    const treeNodePKs = new Set<string>()
     if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const detail = multicastGroupDetails.get(code)
+      const detail = multicastGroupDetails.get(selectedMulticastGroup)
       if (detail?.members) {
         detail.members.forEach(m => {
           if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)) {
@@ -1125,96 +1171,38 @@ export function TopologyGraph({
         const node = cy.getElementById(devicePK)
         if (!node.length) continue
         node.addClass('path-node multicast-publisher')
+        treeNodePKs.add(devicePK)
         const pubColorIdx = multicastPublisherColorMap.get(devicePK) ?? 0
         const pubColor = isDark
           ? MULTICAST_PUBLISHER_COLORS[pubColorIdx % MULTICAST_PUBLISHER_COLORS.length].dark
           : MULTICAST_PUBLISHER_COLORS[pubColorIdx % MULTICAST_PUBLISHER_COLORS.length].light
         const isAlsoSubscriber = subscriberCounts.has(devicePK)
         let label = ''
-        if (isAlsoSubscriber) {
-          label = 'P+S'
-        } else if (pubCount > 1) {
-          label = `P${pubCount}`
-        } else {
-          label = 'P'
-        }
+        if (isAlsoSubscriber) label = 'P+S'
+        else if (pubCount > 1) label = `P${pubCount}`
+        else label = 'P'
         node.data('multicastLabel', label)
         node.style({
-          'background-color': pubColor,
-          'border-color': pubColor,
-          'border-width': 3,
-          'width': 20,
-          'height': 20,
-          'label': label,
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'font-size': 8,
-          'color': '#ffffff',
-          'text-background-color': pubColor,
-          'text-background-opacity': 0,
+          'background-color': pubColor, 'border-color': pubColor, 'border-width': 3,
+          'width': 20, 'height': 20, 'label': label,
+          'text-valign': 'center', 'text-halign': 'center', 'font-size': 8,
+          'color': '#ffffff', 'text-background-color': pubColor, 'text-background-opacity': 0,
         })
       }
 
       for (const [devicePK, subCount] of subscriberCounts) {
-        if (publisherCounts.has(devicePK)) continue // Already styled as publisher
+        if (publisherCounts.has(devicePK)) continue
         const node = cy.getElementById(devicePK)
         if (!node.length) continue
         node.addClass('path-node multicast-subscriber')
+        treeNodePKs.add(devicePK)
         const label = subCount > 1 ? `S${subCount}` : 'S'
         node.data('multicastLabel', label)
         node.style({
-          'background-color': '#ef4444',
-          'border-color': '#ef4444',
-          'border-width': 3,
-          'width': 20,
-          'height': 20,
-          'label': label,
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'font-size': 8,
-          'color': '#ffffff',
-          'text-background-color': '#ef4444',
-          'text-background-opacity': 0,
-        })
-      }
-    }
-
-    // Build publisher color map from tree data
-    const publisherColorMap = new Map<string, number>()
-    let colorIndex = 0
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const treeData = multicastTreePaths.get(code)
-      if (treeData?.paths?.length) {
-        treeData.paths.forEach(treePath => {
-          if (!publisherColorMap.has(treePath.publisherDevicePK)) {
-            publisherColorMap.set(treePath.publisherDevicePK, colorIndex++)
-          }
-        })
-      }
-    }
-
-    // Build edge-to-publishers map for detecting shared paths
-    const edgePublishers = new Map<string, Set<string>>()
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const treeData = multicastTreePaths.get(code)
-      if (treeData?.paths?.length) {
-        treeData.paths.forEach(treePath => {
-          const path = treePath.path
-          const publisherPK = treePath.publisherDevicePK
-          const subscriberPK = treePath.subscriberDevicePK
-          if (!path?.length) return
-          if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
-          for (let i = 0; i < path.length - 1; i++) {
-            const from = path[i].devicePK
-            const to = path[i + 1].devicePK
-            const edgeKey = [from, to].sort().join('|')
-            if (!edgePublishers.has(edgeKey)) {
-              edgePublishers.set(edgeKey, new Set())
-            }
-            edgePublishers.get(edgeKey)!.add(publisherPK)
-          }
+          'background-color': '#ef4444', 'border-color': '#ef4444', 'border-width': 3,
+          'width': 20, 'height': 20, 'label': label,
+          'text-valign': 'center', 'text-halign': 'center', 'font-size': 8,
+          'color': '#ffffff', 'text-background-color': '#ef4444', 'text-background-opacity': 0,
         })
       }
     }
@@ -1223,64 +1211,115 @@ export function TopologyGraph({
       stylePublisherSubscriberNodes()
 
       if (selectedMulticastGroup) {
-        const code = selectedMulticastGroup
-        const treeData = multicastTreePaths.get(code)
+        const treeData = multicastTreePaths.get(selectedMulticastGroup)
         if (treeData?.paths?.length) {
+          // Collect all per-publisher segments (deduped per publisher)
+          const publisherSegments = new Map<string, Set<string>>() // publisherPK -> set of "from|to" keys
           treeData.paths.forEach(treePath => {
             const path = treePath.path
             if (!path?.length) return
-
             const publisherPK = treePath.publisherDevicePK
             const subscriberPK = treePath.subscriberDevicePK
             if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
 
-            const publisherColorIdx = publisherColorMap.get(publisherPK) ?? 0
+            if (!publisherSegments.has(publisherPK)) publisherSegments.set(publisherPK, new Set())
+            const segs = publisherSegments.get(publisherPK)!
+
+            path.forEach(hop => treeNodePKs.add(hop.devicePK))
+
+            for (let i = 0; i < path.length - 1; i++) {
+              const from = path[i].devicePK
+              const to = path[i + 1].devicePK
+              segs.add(`${from}|${to}`)
+            }
+          })
+
+          // Add virtual edges per publisher
+          for (const [publisherPK, segs] of publisherSegments) {
+            const publisherColorIdx = multicastPublisherColorMap.get(publisherPK) ?? 0
             const color = isDark
               ? MULTICAST_PUBLISHER_COLORS[publisherColorIdx % MULTICAST_PUBLISHER_COLORS.length].dark
               : MULTICAST_PUBLISHER_COLORS[publisherColorIdx % MULTICAST_PUBLISHER_COLORS.length].light
 
-            // Highlight transit nodes
-            path.forEach(hop => {
-              const node = cy.getElementById(hop.devicePK)
-              if (node.length && !publisherCounts.has(hop.devicePK) && !subscriberCounts.has(hop.devicePK)) {
-                node.addClass('path-node')
-              }
-            })
+            for (const segKey of segs) {
+              const [from, to] = segKey.split('|')
+              const edgeId = `mc-${publisherPK}-${from}-${to}`
 
-            // Highlight edges
-            for (let i = 0; i < path.length - 1; i++) {
-              const from = path[i].devicePK
-              const to = path[i + 1].devicePK
-              const edgeKey = [from, to].sort().join('|')
-              const edge = cy.edges(`[source="${from}"][target="${to}"], [source="${to}"][target="${from}"]`)
-              edge.addClass('path-edge')
-              edge.forEach(e => { newPathEdgeIds.add(e.id()) })
-
-              const sharedPublishers = edgePublishers.get(edgeKey)
-              const isShared = sharedPublishers && sharedPublishers.size > 1
-              const edgeColor = isShared ? (isDark ? '#ec4899' : '#db2777') : color
-
-              edge.style({
-                'line-color': edgeColor,
-                'target-arrow-color': edgeColor,
-                'width': isShared ? 5 : 3,
-                'opacity': 0.9,
-                'z-index': 5,
-                'line-style': isShared ? 'dashed' : 'solid',
+              // Add virtual edge
+              cy.add({
+                group: 'edges',
+                data: { id: edgeId, source: from, target: to, mcVirtual: true, mcPublisher: publisherPK },
               })
+              multicastVirtualEdgeIdsRef.current.add(edgeId)
+              newPathEdgeIds.add(edgeId)
+
+              const edge = cy.getElementById(edgeId)
+              if (edge.length) {
+                edge.style({
+                  'line-color': color,
+                  'target-arrow-color': color,
+                  'width': 3,
+                  'opacity': 0.9,
+                  'z-index': 5,
+                  'line-style': 'solid',
+                  'curve-style': 'bezier',
+                })
+              }
+
+              // Mark transit nodes
+              for (const pk of [from, to]) {
+                const node = cy.getElementById(pk)
+                if (node.length && !publisherCounts.has(pk) && !subscriberCounts.has(pk)) {
+                  node.addClass('path-node')
+                }
+              }
             }
-          })
+          }
         }
+      }
+
+      // Dim non-tree nodes and real edges
+      if (dimOtherLinks) {
+        cy.edges().forEach(edge => {
+          if (!newPathEdgeIds.has(edge.id()) && !edge.data('mcVirtual')) {
+            edge.style({ 'opacity': 0.08 })
+          }
+        })
+        cy.nodes().forEach(node => {
+          if (!treeNodePKs.has(node.id())) {
+            node.style({ 'opacity': 0.15 })
+          }
+        })
       }
     })
 
-    // Dim non-highlighted edges when multicast overlay is active and dimming enabled
-    if (dimOtherLinks) {
-      cy.edges().forEach(edge => {
-        if (!newPathEdgeIds.has(edge.id())) {
-          edge.style({ 'opacity': 0.08 })
-        }
+    // Run breadthfirst layout with publishers as roots
+    const roots = Array.from(publisherCounts.keys()).filter(pk => cy.getElementById(pk).length > 0)
+    if (roots.length > 0) {
+      // Collect only tree-participating nodes for the layout
+      const treeNodesCollection = cy.collection()
+      treeNodePKs.forEach(pk => {
+        const node = cy.getElementById(pk)
+        if (node.length) treeNodesCollection.merge(node)
       })
+      // Include virtual edges in the layout
+      const virtualEdgesCollection = cy.collection()
+      multicastVirtualEdgeIdsRef.current.forEach(edgeId => {
+        const edge = cy.getElementById(edgeId)
+        if (edge.length) virtualEdgesCollection.merge(edge)
+      })
+      const layoutElements = treeNodesCollection.union(virtualEdgesCollection)
+
+      layoutElements.layout({
+        name: 'breadthfirst',
+        roots: roots,
+        directed: true,
+        animate: true,
+        animationDuration: 500,
+        spacingFactor: 1.5,
+        nodeDimensionsIncludeLabels: true,
+      } as cytoscape.LayoutOptions).run()
+      multicastLayoutActiveRef.current = true
     }
 
     previousPathEdgeIdsRef.current = newPathEdgeIds
