@@ -183,38 +183,30 @@ export function TopologyGraph({
       .catch(err => console.error('Failed to fetch multicast group:', err))
   }, [multicastTreesEnabled, selectedMulticastGroup, multicastGroupDetails])
 
-  // Auto-enable publishers/subscribers when group details are loaded
+  // Set enabled publishers/subscribers when group details are loaded
   useEffect(() => {
-    if (!multicastTreesEnabled) return
+    if (!multicastTreesEnabled || !selectedMulticastGroup) return
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return
 
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
+    // On first load, skip PKs that were disabled in the URL
+    const skipPubs = initialDisabledPubsRef.current
+    const skipSubs = initialDisabledSubsRef.current
+    initialDisabledPubsRef.current = null
+    initialDisabledSubsRef.current = null
 
-      // On first load, skip PKs that were disabled in the URL
-      const skipPubs = initialDisabledPubsRef.current
-      const skipSubs = initialDisabledSubsRef.current
-      initialDisabledPubsRef.current = null
-      initialDisabledSubsRef.current = null
-
-      detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') {
-          if (skipPubs?.has(m.device_pk)) return
-          setEnabledPublishers(prev => {
-            if (prev.has(m.device_pk)) return prev
-            return new Set(prev).add(m.device_pk)
-          })
-        }
-        if (m.mode === 'S' || m.mode === 'P+S') {
-          if (skipSubs?.has(m.device_pk)) return
-          setEnabledSubscribers(prev => {
-            if (prev.has(m.device_pk)) return prev
-            return new Set(prev).add(m.device_pk)
-          })
-        }
-      })
-    }
+    const pubs = new Set<string>()
+    const subs = new Set<string>()
+    detail.members.forEach(m => {
+      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.device_pk)) {
+        pubs.add(m.device_pk)
+      }
+      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.device_pk)) {
+        subs.add(m.device_pk)
+      }
+    })
+    setEnabledPublishers(pubs)
+    setEnabledSubscribers(subs)
   }, [multicastTreesEnabled, selectedMulticastGroup, multicastGroupDetails])
 
   // Build publisher color map for consistent colors (shared with panel)

@@ -383,31 +383,30 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .catch(err => console.error('Failed to fetch multicast group:', err))
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
-  // Auto-enable publishers/subscribers when group details load
+  // Set enabled publishers/subscribers when group details load
   useEffect(() => {
-    if (!multicastTreesMode) return
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
+    if (!multicastTreesMode || !selectedMulticastGroup) return
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return
 
-      // On first load, skip PKs that were disabled in the URL
-      const skipPubs = initialDisabledPubsRef.current
-      const skipSubs = initialDisabledSubsRef.current
-      initialDisabledPubsRef.current = null
-      initialDisabledSubsRef.current = null
+    // On first load, skip PKs that were disabled in the URL
+    const skipPubs = initialDisabledPubsRef.current
+    const skipSubs = initialDisabledSubsRef.current
+    initialDisabledPubsRef.current = null
+    initialDisabledSubsRef.current = null
 
-      detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') {
-          if (skipPubs?.has(m.device_pk)) return
-          setEnabledPublishers(prev => prev.has(m.device_pk) ? prev : new Set(prev).add(m.device_pk))
-        }
-        if (m.mode === 'S' || m.mode === 'P+S') {
-          if (skipSubs?.has(m.device_pk)) return
-          setEnabledSubscribers(prev => prev.has(m.device_pk) ? prev : new Set(prev).add(m.device_pk))
-        }
-      })
-    }
+    const pubs = new Set<string>()
+    const subs = new Set<string>()
+    detail.members.forEach(m => {
+      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.device_pk)) {
+        pubs.add(m.device_pk)
+      }
+      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.device_pk)) {
+        subs.add(m.device_pk)
+      }
+    })
+    setEnabledPublishers(pubs)
+    setEnabledSubscribers(subs)
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
   // Path finding operational state (local)
