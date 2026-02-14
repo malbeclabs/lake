@@ -370,6 +370,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
+  // PKs to skip during auto-enable (restored from URL on initial load)
+  const initialDisabledPubsRef = useRef<Set<string> | null>(null)
+  const initialDisabledSubsRef = useRef<Set<string> | null>(null)
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
 
@@ -439,15 +442,23 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       const detail = multicastGroupDetails.get(code)
       if (!detail?.members) return
 
+      // On first load, skip PKs that were disabled in the URL
+      const skipPubs = initialDisabledPubsRef.current
+      const skipSubs = initialDisabledSubsRef.current
+      initialDisabledPubsRef.current = null
+      initialDisabledSubsRef.current = null
+
       // Enable all publishers and subscribers from this group
       detail.members.forEach(m => {
         if (m.mode === 'P' || m.mode === 'P+S') {
+          if (skipPubs?.has(m.device_pk)) return
           setEnabledPublishers(prev => {
             if (prev.has(m.device_pk)) return prev
             return new Set(prev).add(m.device_pk)
           })
         }
         if (m.mode === 'S' || m.mode === 'P+S') {
+          if (skipSubs?.has(m.device_pk)) return
           setEnabledSubscribers(prev => {
             if (prev.has(m.device_pk)) return prev
             return new Set(prev).add(m.device_pk)
@@ -1165,13 +1176,32 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // Impact mode params (comma-separated list of device PKs)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
 
-    // Multicast group selection (comma-separated group codes)
+    // Multicast group selection and disabled publishers/subscribers
     setParam('multicast', multicastTreesMode && !!selectedMulticastGroup ? selectedMulticastGroup : null)
+    if (multicastTreesMode && selectedMulticastGroup) {
+      const detail = multicastGroupDetails.get(selectedMulticastGroup)
+      if (detail?.members) {
+        const disabledPubs = detail.members
+          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.device_pk))
+          .map(m => m.device_pk)
+        const disabledSubs = detail.members
+          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.device_pk))
+          .map(m => m.device_pk)
+        setParam('mc_pub_off', disabledPubs.length > 0 ? disabledPubs.join(',') : null)
+        setParam('mc_sub_off', disabledSubs.length > 0 ? disabledSubs.join(',') : null)
+      } else {
+        setParam('mc_pub_off', null)
+        setParam('mc_sub_off', null)
+      }
+    } else {
+      setParam('mc_pub_off', null)
+      setParam('mc_sub_off', null)
+    }
 
     if (changed) {
       setSearchParams(params, { replace: true })
     }
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers, enabledSubscribers])
 
   // When entering analysis modes with a device already selected, use it as source
   const prevMapModeRef = useRef<string>(mode)
@@ -2292,13 +2322,21 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       return
     }
 
-    // Restore multicast group selection
+    // Restore multicast group selection and disabled publishers/subscribers
     if (multicastParam) {
       const codes = multicastParam.split(',').filter(Boolean)
       if (codes.length > 0) {
         setSelectedMulticastGroup(codes[0] ?? null)
         if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
         openPanel('overlay')
+      }
+      const pubOffParam = searchParams.get('mc_pub_off')
+      const subOffParam = searchParams.get('mc_sub_off')
+      if (pubOffParam) {
+        initialDisabledPubsRef.current = new Set(pubOffParam.split(',').filter(Boolean))
+      }
+      if (subOffParam) {
+        initialDisabledSubsRef.current = new Set(subOffParam.split(',').filter(Boolean))
       }
     }
 

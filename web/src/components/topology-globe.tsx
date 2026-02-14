@@ -335,6 +335,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
+  // PKs to skip during auto-enable (restored from URL on initial load)
+  const initialDisabledPubsRef = useRef<Set<string> | null>(null)
+  const initialDisabledSubsRef = useRef<Set<string> | null>(null)
 
 
   // Multicast handlers
@@ -387,11 +390,20 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
       if (!detail?.members) return
+
+      // On first load, skip PKs that were disabled in the URL
+      const skipPubs = initialDisabledPubsRef.current
+      const skipSubs = initialDisabledSubsRef.current
+      initialDisabledPubsRef.current = null
+      initialDisabledSubsRef.current = null
+
       detail.members.forEach(m => {
         if (m.mode === 'P' || m.mode === 'P+S') {
+          if (skipPubs?.has(m.device_pk)) return
           setEnabledPublishers(prev => prev.has(m.device_pk) ? prev : new Set(prev).add(m.device_pk))
         }
         if (m.mode === 'S' || m.mode === 'P+S') {
+          if (skipSubs?.has(m.device_pk)) return
           setEnabledSubscribers(prev => prev.has(m.device_pk) ? prev : new Set(prev).add(m.device_pk))
         }
       })
@@ -1148,8 +1160,27 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setParam('addition_target', whatifAdditionMode ? additionTarget : null)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
     setParam('multicast', multicastTreesMode && !!selectedMulticastGroup ? selectedMulticastGroup : null)
+    if (multicastTreesMode && selectedMulticastGroup) {
+      const detail = multicastGroupDetails.get(selectedMulticastGroup)
+      if (detail?.members) {
+        const disabledPubs = detail.members
+          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.device_pk))
+          .map(m => m.device_pk)
+        const disabledSubs = detail.members
+          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.device_pk))
+          .map(m => m.device_pk)
+        setParam('mc_pub_off', disabledPubs.length > 0 ? disabledPubs.join(',') : null)
+        setParam('mc_sub_off', disabledSubs.length > 0 ? disabledSubs.join(',') : null)
+      } else {
+        setParam('mc_pub_off', null)
+        setParam('mc_sub_off', null)
+      }
+    } else {
+      setParam('mc_pub_off', null)
+      setParam('mc_sub_off', null)
+    }
     if (changed) setSearchParams(params, { replace: true })
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers, enabledSubscribers])
 
   // Restore mode from URL on initial load
   useEffect(() => {
@@ -1200,13 +1231,21 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       setModeParamsRestored(true)
       return
     }
-    // Restore multicast group selection
+    // Restore multicast group selection and disabled publishers/subscribers
     if (multicastParam) {
       const codes = multicastParam.split(',').filter(Boolean)
       if (codes.length > 0) {
         setSelectedMulticastGroup(codes[0] ?? null)
         if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
         openPanel('overlay')
+      }
+      const pubOffParam = searchParams.get('mc_pub_off')
+      const subOffParam = searchParams.get('mc_sub_off')
+      if (pubOffParam) {
+        initialDisabledPubsRef.current = new Set(pubOffParam.split(',').filter(Boolean))
+      }
+      if (subOffParam) {
+        initialDisabledSubsRef.current = new Set(subOffParam.split(',').filter(Boolean))
       }
     }
 
