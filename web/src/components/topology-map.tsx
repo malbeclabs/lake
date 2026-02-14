@@ -1457,6 +1457,38 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return map
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
 
+  // Build direction map: for each link PK, store the "from" device PK (upstream, closer to publisher).
+  // Used to orient animated dots in the correct flow direction (publisher → subscriber).
+  const multicastLinkDirectionMap = useMemo(() => {
+    const map = new Map<string, string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
+
+    const treeData = multicastTreePaths.get(selectedMulticastGroup)
+    if (treeData?.paths?.length) {
+      treeData.paths.forEach(treePath => {
+        const path = treePath.path
+        if (!path?.length) return
+        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+
+        for (let i = 0; i < path.length - 1; i++) {
+          const fromPK = path[i].devicePK
+          const toPK = path[i + 1].devicePK
+          for (const link of links) {
+            if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
+                (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
+              // Only set if not already set (first path to claim direction wins)
+              if (!map.has(link.pk)) {
+                map.set(link.pk, fromPK)
+              }
+              break
+            }
+          }
+        }
+      })
+    }
+    return map
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
+
   // Build ordered list of unique publisher PKs for consistent color assignment
   const multicastPublisherColorMap = useMemo(() => {
     const map = new Map<string, number>()
@@ -1911,8 +1943,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const features = links
       .filter(link => multicastLinkPathMap.has(link.pk))
       .map(link => {
-        const startPos = devicePositions.get(link.side_a_pk)
-        const endPos = devicePositions.get(link.side_z_pk)
+        // Orient coordinates in flow direction (publisher → subscriber)
+        const upstreamPK = multicastLinkDirectionMap.get(link.pk)
+        const fromPK = upstreamPK === link.side_z_pk ? link.side_z_pk : link.side_a_pk
+        const toPK = fromPK === link.side_a_pk ? link.side_z_pk : link.side_a_pk
+        const startPos = devicePositions.get(fromPK)
+        const endPos = devicePositions.get(toPK)
         if (!startPos || !endPos) return null
         const publisherPKs = multicastLinkPathMap.get(link.pk)!
         const color = publisherPKs.length > 1
@@ -1935,7 +1971,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       })
       .filter((f): f is NonNullable<typeof f> => f !== null)
     return { type: 'FeatureCollection' as const, features }
-  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, links, multicastLinkPathMap, multicastPublisherColorMap, devicePositions, isDark])
+  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, links, multicastLinkPathMap, multicastLinkDirectionMap, multicastPublisherColorMap, devicePositions, isDark])
 
   // Stabilize the GeoJSON reference so the <Source> doesn't get a new object on
   // every react-query refetch (which causes MapLibre to re-process and flicker).
