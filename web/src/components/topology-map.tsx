@@ -351,21 +351,16 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const multicastTreesMode = overlays.multicastTrees
 
   // Multicast trees operational state (local)
-  const [selectedMulticastGroups, setSelectedMulticastGroups] = useState<string[]>([])
+  const [selectedMulticastGroup, setSelectedMulticastGroup] = useState<string | null>(null)
   const [multicastGroupDetails, setMulticastGroupDetails] = useState<Map<string, MulticastGroupDetail>>(new Map())
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
 
 
-  // Handler to toggle multicast group selection
-  const handleToggleMulticastGroup = useCallback((code: string) => {
-    setSelectedMulticastGroups(prev => {
-      if (prev.includes(code)) {
-        return prev.filter(c => c !== code)
-      }
-      return [...prev, code]
-    })
+  // Handler to select multicast group
+  const handleSelectMulticastGroup = useCallback((code: string | null) => {
+    setSelectedMulticastGroup(code)
   }, [])
 
   // Handler to toggle individual publisher
@@ -394,47 +389,37 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     })
   }, [])
 
-  // Handler to load multicast group details
-  const handleLoadMulticastGroupDetail = useCallback((code: string) => {
-    if (multicastGroupDetails.has(code)) return
-    fetchMulticastGroup(code)
-      .then(detail => {
-        setMulticastGroupDetails(prev => new Map(prev).set(code, detail))
+
+  // Fetch multicast tree paths when group is selected
+  useEffect(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return
+
+    // Fetch tree paths for selected group if we don't have it yet
+    if (multicastTreePaths.has(selectedMulticastGroup)) return
+    const code = selectedMulticastGroup
+    fetchMulticastTreePaths(code)
+      .then(result => {
+        setMulticastTreePaths(prev => new Map(prev).set(code, result))
       })
+      .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths])
+
+  // Auto-load group details when group is selected
+  useEffect(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return
+    if (multicastGroupDetails.has(selectedMulticastGroup)) return
+    const code = selectedMulticastGroup
+    fetchMulticastGroup(code)
+      .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
       .catch(err => console.error('Failed to fetch multicast group:', err))
-  }, [multicastGroupDetails])
-
-  // Fetch multicast tree paths when groups are selected
-  useEffect(() => {
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return
-
-    // Fetch tree paths for each selected group that we don't have yet
-    for (const code of selectedMulticastGroups) {
-      if (multicastTreePaths.has(code)) continue
-      fetchMulticastTreePaths(code)
-        .then(result => {
-          setMulticastTreePaths(prev => new Map(prev).set(code, result))
-        })
-        .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
-    }
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
-
-  // Auto-load group details when groups are selected
-  useEffect(() => {
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return
-    for (const code of selectedMulticastGroups) {
-      if (multicastGroupDetails.has(code)) continue
-      fetchMulticastGroup(code)
-        .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
-        .catch(err => console.error('Failed to fetch multicast group:', err))
-    }
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
   // Auto-enable publishers/subscribers when group details are loaded
   useEffect(() => {
     if (!multicastTreesMode) return
 
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
       if (!detail?.members) return
 
@@ -453,8 +438,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           })
         }
       })
-    })
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
+    }
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
   // Path finding operational state (local)
   const [pathSource, setPathSource] = useState<string | null>(null)
@@ -1165,12 +1150,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
 
     // Multicast group selection (comma-separated group codes)
-    setParam('multicast', multicastTreesMode && selectedMulticastGroups.length > 0 ? selectedMulticastGroups.join(',') : null)
+    setParam('multicast', multicastTreesMode && !!selectedMulticastGroup ? selectedMulticastGroup : null)
 
     if (changed) {
       setSearchParams(params, { replace: true })
     }
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroups])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup])
 
   // When entering analysis modes with a device already selected, use it as source
   const prevMapModeRef = useRef<string>(mode)
@@ -1371,146 +1356,157 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   // Build map of device PKs to publisher PKs for multicast trees (filtered by enabled publishers/subscribers)
   const multicastDevicePathMap = useMemo(() => {
     const map = new Map<string, string[]>()
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
 
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
+      if (treeData?.paths?.length) {
+        treeData.paths.forEach(treePath => {
+          const publisherPK = treePath.publisherDevicePK
+          const subscriberPK = treePath.subscriberDevicePK
+          // Filter: only include if publisher AND subscriber are enabled
+          if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
 
-      treeData.paths.forEach(treePath => {
-        const publisherPK = treePath.publisherDevicePK
-        const subscriberPK = treePath.subscriberDevicePK
-        // Filter: only include if publisher AND subscriber are enabled
-        if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
-
-        treePath.path?.forEach(hop => {
-          const existing = map.get(hop.devicePK) || []
-          if (!existing.includes(publisherPK)) {
-            existing.push(publisherPK)
-          }
-          map.set(hop.devicePK, existing)
+          treePath.path?.forEach(hop => {
+            const existing = map.get(hop.devicePK) || []
+            if (!existing.includes(publisherPK)) {
+              existing.push(publisherPK)
+            }
+            map.set(hop.devicePK, existing)
+          })
         })
-      })
-    })
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths, enabledPublishers, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
 
   // Build map of link PKs to publisher PKs for multicast trees (for coloring by publisher, filtered)
   const multicastLinkPathMap = useMemo(() => {
     const map = new Map<string, string[]>()
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
 
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
+      if (treeData?.paths?.length) {
+        treeData.paths.forEach(treePath => {
+          const path = treePath.path
+          const publisherPK = treePath.publisherDevicePK
+          const subscriberPK = treePath.subscriberDevicePK
+          if (!path?.length) return
+          // Filter: only include if publisher AND subscriber are enabled
+          if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
 
-      treeData.paths.forEach(treePath => {
-        const path = treePath.path
-        const publisherPK = treePath.publisherDevicePK
-        const subscriberPK = treePath.subscriberDevicePK
-        if (!path?.length) return
-        // Filter: only include if publisher AND subscriber are enabled
-        if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
+          for (let i = 0; i < path.length - 1; i++) {
+            const fromPK = path[i].devicePK
+            const toPK = path[i + 1].devicePK
 
-        for (let i = 0; i < path.length - 1; i++) {
-          const fromPK = path[i].devicePK
-          const toPK = path[i + 1].devicePK
-
-          for (const link of links) {
-            if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
-                (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
-              const existing = map.get(link.pk) || []
-              if (!existing.includes(publisherPK)) {
-                existing.push(publisherPK)
+            for (const link of links) {
+              if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
+                  (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
+                const existing = map.get(link.pk) || []
+                if (!existing.includes(publisherPK)) {
+                  existing.push(publisherPK)
+                }
+                map.set(link.pk, existing)
+                break
               }
-              map.set(link.pk, existing)
-              break
             }
           }
-        }
-      })
-    })
+        })
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
 
   // Build ordered list of unique publisher PKs for consistent color assignment
   const multicastPublisherColorMap = useMemo(() => {
     const map = new Map<string, number>()
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
 
     let colorIndex = 0
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-
-      detail.members
-        .filter(m => m.mode === 'P' || m.mode === 'P+S')
-        .forEach(m => {
-          if (!map.has(m.device_pk)) {
-            map.set(m.device_pk, colorIndex++)
-          }
-        })
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .forEach(m => {
+            if (!map.has(m.device_pk)) {
+              map.set(m.device_pk, colorIndex++)
+            }
+          })
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
   // Build set of publisher and subscriber device PKs for multicast trees (filtered by enabled)
   const multicastPublisherDevices = useMemo(() => {
     const set = new Set<string>()
     if (!multicastTreesMode) return set
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'P' || m.mode === 'P+S')
-        .filter(m => enabledPublishers.has(m.device_pk))
-        .forEach(m => set.add(m.device_pk))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .filter(m => enabledPublishers.has(m.device_pk))
+          .forEach(m => set.add(m.device_pk))
+      }
+    }
     return set
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledPublishers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
 
   const multicastSubscriberDevices = useMemo(() => {
     const set = new Set<string>()
     if (!multicastTreesMode) return set
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'S' || m.mode === 'P+S')
-        .filter(m => enabledSubscribers.has(m.device_pk))
-        .forEach(m => set.add(m.device_pk))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'S' || m.mode === 'P+S')
+          .filter(m => enabledSubscribers.has(m.device_pk))
+          .forEach(m => set.add(m.device_pk))
+      }
+    }
     return set
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
   // Count publishers and subscribers per device for multicast hover tooltip (filtered by enabled)
   const multicastPublisherCount = useMemo(() => {
     const map = new Map<string, number>()
     if (!multicastTreesMode) return map
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'P' || m.mode === 'P+S')
-        .filter(m => enabledPublishers.has(m.device_pk))
-        .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .filter(m => enabledPublishers.has(m.device_pk))
+          .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledPublishers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
 
   const multicastSubscriberCount = useMemo(() => {
     const map = new Map<string, number>()
     if (!multicastTreesMode) return map
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'S' || m.mode === 'P+S')
-        .filter(m => enabledSubscribers.has(m.device_pk))
-        .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'S' || m.mode === 'P+S')
+          .filter(m => enabledSubscribers.has(m.device_pk))
+          .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
   // Handle device click for path finding
   const handlePathDeviceClick = useCallback((devicePK: string) => {
@@ -2146,7 +2142,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     if (multicastParam) {
       const codes = multicastParam.split(',').filter(Boolean)
       if (codes.length > 0) {
-        setSelectedMulticastGroups(codes)
+        setSelectedMulticastGroup(codes[0] ?? null)
         if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
         openPanel('overlay')
       }
@@ -3324,15 +3320,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           {multicastTreesMode && (
             <MulticastTreesOverlayPanel
               isDark={isDark}
-              selectedGroups={selectedMulticastGroups}
-              onToggleGroup={handleToggleMulticastGroup}
-              onClearGroups={() => {
-                setSelectedMulticastGroups([])
-                setEnabledPublishers(new Set())
-                setEnabledSubscribers(new Set())
-              }}
+              selectedGroup={selectedMulticastGroup}
+              onSelectGroup={handleSelectMulticastGroup}
               groupDetails={multicastGroupDetails}
-              onLoadGroupDetail={handleLoadMulticastGroupDetail}
               enabledPublishers={enabledPublishers}
               enabledSubscribers={enabledSubscribers}
               onTogglePublisher={handleTogglePublisher}

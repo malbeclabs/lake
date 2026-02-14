@@ -117,21 +117,16 @@ export function TopologyGraph({
   const multicastTreesEnabled = overlays.multicastTrees
 
   // Multicast trees operational state (local)
-  const [selectedMulticastGroups, setSelectedMulticastGroups] = useState<string[]>([])
+  const [selectedMulticastGroup, setSelectedMulticastGroup] = useState<string | null>(null)
   const [multicastGroupDetails, setMulticastGroupDetails] = useState<Map<string, MulticastGroupDetail>>(new Map())
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
 
 
-  // Handler to toggle multicast group selection
-  const handleToggleMulticastGroup = useCallback((code: string) => {
-    setSelectedMulticastGroups(prev => {
-      if (prev.includes(code)) {
-        return prev.filter(c => c !== code)
-      }
-      return [...prev, code]
-    })
+  // Handler to select multicast group
+  const handleSelectMulticastGroup = useCallback((code: string | null) => {
+    setSelectedMulticastGroup(code)
   }, [])
 
   // Handler to toggle individual publisher
@@ -160,46 +155,35 @@ export function TopologyGraph({
     })
   }, [])
 
-  // Handler to load multicast group details
-  const handleLoadMulticastGroupDetail = useCallback((code: string) => {
-    if (multicastGroupDetails.has(code)) return
-    fetchMulticastGroup(code)
-      .then(detail => {
-        setMulticastGroupDetails(prev => new Map(prev).set(code, detail))
+  // Fetch multicast tree paths when group is selected
+  useEffect(() => {
+    if (!multicastTreesEnabled || !selectedMulticastGroup) return
+
+    if (multicastTreePaths.has(selectedMulticastGroup)) return
+    const code = selectedMulticastGroup
+    fetchMulticastTreePaths(code)
+      .then(result => {
+        setMulticastTreePaths(prev => new Map(prev).set(code, result))
       })
+      .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths])
+
+  // Auto-load group details when group is selected
+  useEffect(() => {
+    if (!multicastTreesEnabled || !selectedMulticastGroup) return
+    if (multicastGroupDetails.has(selectedMulticastGroup)) return
+    const code = selectedMulticastGroup
+    fetchMulticastGroup(code)
+      .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
       .catch(err => console.error('Failed to fetch multicast group:', err))
-  }, [multicastGroupDetails])
-
-  // Fetch multicast tree paths when groups are selected
-  useEffect(() => {
-    if (!multicastTreesEnabled || selectedMulticastGroups.length === 0) return
-
-    for (const code of selectedMulticastGroups) {
-      if (multicastTreePaths.has(code)) continue
-      fetchMulticastTreePaths(code)
-        .then(result => {
-          setMulticastTreePaths(prev => new Map(prev).set(code, result))
-        })
-        .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
-    }
-  }, [multicastTreesEnabled, selectedMulticastGroups, multicastTreePaths])
-
-  // Auto-load group details when groups are selected
-  useEffect(() => {
-    if (!multicastTreesEnabled || selectedMulticastGroups.length === 0) return
-    for (const code of selectedMulticastGroups) {
-      if (multicastGroupDetails.has(code)) continue
-      fetchMulticastGroup(code)
-        .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
-        .catch(err => console.error('Failed to fetch multicast group:', err))
-    }
-  }, [multicastTreesEnabled, selectedMulticastGroups, multicastGroupDetails])
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastGroupDetails])
 
   // Auto-enable publishers/subscribers when group details are loaded
   useEffect(() => {
     if (!multicastTreesEnabled) return
 
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
       if (!detail?.members) return
 
@@ -217,29 +201,30 @@ export function TopologyGraph({
           })
         }
       })
-    })
-  }, [multicastTreesEnabled, selectedMulticastGroups, multicastGroupDetails])
+    }
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastGroupDetails])
 
   // Build publisher color map for consistent colors (shared with panel)
   const multicastPublisherColorMap = useMemo(() => {
     const map = new Map<string, number>()
-    if (!multicastTreesEnabled || selectedMulticastGroups.length === 0) return map
+    if (!multicastTreesEnabled || !selectedMulticastGroup) return map
 
     let colorIndex = 0
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-
-      detail.members
-        .filter(m => m.mode === 'P' || m.mode === 'P+S')
-        .forEach(m => {
-          if (!map.has(m.device_pk)) {
-            map.set(m.device_pk, colorIndex++)
-          }
-        })
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .forEach(m => {
+            if (!map.has(m.device_pk)) {
+              map.set(m.device_pk, colorIndex++)
+            }
+          })
+      }
+    }
     return map
-  }, [multicastTreesEnabled, selectedMulticastGroups, multicastGroupDetails])
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastGroupDetails])
 
   // Path finding operational state (local)
   const [pathSource, setPathSource] = useState<string | null>(null)
@@ -1080,7 +1065,7 @@ export function TopologyGraph({
 
   // Highlight multicast tree paths on graph
   useEffect(() => {
-    if (!cyRef.current || !multicastTreesEnabled || selectedMulticastGroups.length === 0) return
+    if (!cyRef.current || !multicastTreesEnabled || !selectedMulticastGroup) return
     const cy = cyRef.current
 
     // Tree colors - one per publisher
@@ -1124,18 +1109,20 @@ export function TopologyGraph({
     // Build publisher/subscriber counts per device (filtered by enabled)
     const publisherCounts = new Map<string, number>()
     const subscriberCounts = new Map<string, number>()
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members.forEach(m => {
-        if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)) {
-          publisherCounts.set(m.device_pk, (publisherCounts.get(m.device_pk) || 0) + 1)
-        }
-        if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.device_pk)) {
-          subscriberCounts.set(m.device_pk, (subscriberCounts.get(m.device_pk) || 0) + 1)
-        }
-      })
-    })
+      if (detail?.members) {
+        detail.members.forEach(m => {
+          if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)) {
+            publisherCounts.set(m.device_pk, (publisherCounts.get(m.device_pk) || 0) + 1)
+          }
+          if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.device_pk)) {
+            subscriberCounts.set(m.device_pk, (subscriberCounts.get(m.device_pk) || 0) + 1)
+          }
+        })
+      }
+    }
 
     // Style publisher/subscriber nodes
     const stylePublisherSubscriberNodes = () => {
@@ -1200,94 +1187,99 @@ export function TopologyGraph({
     // Build publisher color map from tree data
     const publisherColorMap = new Map<string, number>()
     let colorIndex = 0
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
-      treeData.paths.forEach(treePath => {
-        if (!publisherColorMap.has(treePath.publisherDevicePK)) {
-          publisherColorMap.set(treePath.publisherDevicePK, colorIndex++)
-        }
-      })
-    })
+      if (treeData?.paths?.length) {
+        treeData.paths.forEach(treePath => {
+          if (!publisherColorMap.has(treePath.publisherDevicePK)) {
+            publisherColorMap.set(treePath.publisherDevicePK, colorIndex++)
+          }
+        })
+      }
+    }
 
     // Build edge-to-publishers map for detecting shared paths
     const edgePublishers = new Map<string, Set<string>>()
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
-      treeData.paths.forEach(treePath => {
-        const path = treePath.path
-        const publisherPK = treePath.publisherDevicePK
-        const subscriberPK = treePath.subscriberDevicePK
-        if (!path?.length) return
-        if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
-        for (let i = 0; i < path.length - 1; i++) {
-          const from = path[i].devicePK
-          const to = path[i + 1].devicePK
-          const edgeKey = [from, to].sort().join('|')
-          if (!edgePublishers.has(edgeKey)) {
-            edgePublishers.set(edgeKey, new Set())
-          }
-          edgePublishers.get(edgeKey)!.add(publisherPK)
-        }
-      })
-    })
-
-    cy.batch(() => {
-      stylePublisherSubscriberNodes()
-
-      selectedMulticastGroups.forEach(code => {
-        const treeData = multicastTreePaths.get(code)
-        if (!treeData?.paths?.length) return
-
+      if (treeData?.paths?.length) {
         treeData.paths.forEach(treePath => {
           const path = treePath.path
-          if (!path?.length) return
-
           const publisherPK = treePath.publisherDevicePK
           const subscriberPK = treePath.subscriberDevicePK
+          if (!path?.length) return
           if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
-
-          const publisherColorIdx = publisherColorMap.get(publisherPK) ?? 0
-          const color = isDark
-            ? TREE_COLORS[publisherColorIdx % TREE_COLORS.length].dark
-            : TREE_COLORS[publisherColorIdx % TREE_COLORS.length].light
-
-          // Highlight transit nodes
-          path.forEach(hop => {
-            const node = cy.getElementById(hop.devicePK)
-            if (node.length && !publisherCounts.has(hop.devicePK) && !subscriberCounts.has(hop.devicePK)) {
-              node.addClass('path-node')
-            }
-          })
-
-          // Highlight edges
           for (let i = 0; i < path.length - 1; i++) {
             const from = path[i].devicePK
             const to = path[i + 1].devicePK
             const edgeKey = [from, to].sort().join('|')
-            const edge = cy.edges(`[source="${from}"][target="${to}"], [source="${to}"][target="${from}"]`)
-            edge.addClass('path-edge')
-            edge.forEach(e => { newPathEdgeIds.add(e.id()) })
-
-            const sharedPublishers = edgePublishers.get(edgeKey)
-            const isShared = sharedPublishers && sharedPublishers.size > 1
-
-            edge.style({
-              'line-color': color,
-              'target-arrow-color': color,
-              'width': isShared ? 5 : 3,
-              'opacity': 0.9,
-              'z-index': 5,
-              'line-style': isShared ? 'dashed' : 'solid',
-            })
+            if (!edgePublishers.has(edgeKey)) {
+              edgePublishers.set(edgeKey, new Set())
+            }
+            edgePublishers.get(edgeKey)!.add(publisherPK)
           }
         })
-      })
+      }
+    }
+
+    cy.batch(() => {
+      stylePublisherSubscriberNodes()
+
+      if (selectedMulticastGroup) {
+        const code = selectedMulticastGroup
+        const treeData = multicastTreePaths.get(code)
+        if (treeData?.paths?.length) {
+          treeData.paths.forEach(treePath => {
+            const path = treePath.path
+            if (!path?.length) return
+
+            const publisherPK = treePath.publisherDevicePK
+            const subscriberPK = treePath.subscriberDevicePK
+            if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
+
+            const publisherColorIdx = publisherColorMap.get(publisherPK) ?? 0
+            const color = isDark
+              ? TREE_COLORS[publisherColorIdx % TREE_COLORS.length].dark
+              : TREE_COLORS[publisherColorIdx % TREE_COLORS.length].light
+
+            // Highlight transit nodes
+            path.forEach(hop => {
+              const node = cy.getElementById(hop.devicePK)
+              if (node.length && !publisherCounts.has(hop.devicePK) && !subscriberCounts.has(hop.devicePK)) {
+                node.addClass('path-node')
+              }
+            })
+
+            // Highlight edges
+            for (let i = 0; i < path.length - 1; i++) {
+              const from = path[i].devicePK
+              const to = path[i + 1].devicePK
+              const edgeKey = [from, to].sort().join('|')
+              const edge = cy.edges(`[source="${from}"][target="${to}"], [source="${to}"][target="${from}"]`)
+              edge.addClass('path-edge')
+              edge.forEach(e => { newPathEdgeIds.add(e.id()) })
+
+              const sharedPublishers = edgePublishers.get(edgeKey)
+              const isShared = sharedPublishers && sharedPublishers.size > 1
+
+              edge.style({
+                'line-color': color,
+                'target-arrow-color': color,
+                'width': isShared ? 5 : 3,
+                'opacity': 0.9,
+                'z-index': 5,
+                'line-style': isShared ? 'dashed' : 'solid',
+              })
+            }
+          })
+        }
+      }
     })
 
     previousPathEdgeIdsRef.current = newPathEdgeIds
-  }, [multicastTreesEnabled, selectedMulticastGroups, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers])
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers])
 
   // Clear classes when mode changes
   useEffect(() => {
@@ -1467,12 +1459,12 @@ export function TopologyGraph({
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
 
     // Multicast group selection (comma-separated group codes)
-    setParam('multicast', multicastTreesEnabled && selectedMulticastGroups.length > 0 ? selectedMulticastGroups.join(',') : null)
+    setParam('multicast', multicastTreesEnabled && !!selectedMulticastGroup ? selectedMulticastGroup : null)
 
     if (changed) {
       setSearchParams(params, { replace: true })
     }
-  }, [searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesEnabled, selectedMulticastGroups])
+  }, [searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesEnabled, selectedMulticastGroup])
 
   // Restore mode selections from URL params on initial load only
   // TODO: Add proper back/forward navigation support
@@ -1590,7 +1582,7 @@ export function TopologyGraph({
     if (multicastParam) {
       const codes = multicastParam.split(',').filter(Boolean)
       if (codes.length > 0) {
-        setSelectedMulticastGroups(codes)
+        setSelectedMulticastGroup(codes[0] ?? null)
         if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
         openPanel('overlay')
       }
@@ -3699,15 +3691,9 @@ export function TopologyGraph({
           {multicastTreesEnabled && (
             <MulticastTreesOverlayPanel
               isDark={isDark}
-              selectedGroups={selectedMulticastGroups}
-              onToggleGroup={handleToggleMulticastGroup}
-              onClearGroups={() => {
-                setSelectedMulticastGroups([])
-                setEnabledPublishers(new Set())
-                setEnabledSubscribers(new Set())
-              }}
+              selectedGroup={selectedMulticastGroup}
+              onSelectGroup={handleSelectMulticastGroup}
               groupDetails={multicastGroupDetails}
-              onLoadGroupDetail={handleLoadMulticastGroupDetail}
               enabledPublishers={enabledPublishers}
               enabledSubscribers={enabledSubscribers}
               onTogglePublisher={handleTogglePublisher}

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Radio, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Radio, X } from 'lucide-react'
 import { useTopology } from '../TopologyContext'
 import {
   fetchMulticastGroups,
@@ -21,11 +21,9 @@ const GROUP_COLORS = [
 
 interface MulticastTreesOverlayPanelProps {
   isDark: boolean
-  selectedGroups: string[]  // Group codes that are currently selected
-  onToggleGroup: (code: string) => void
-  onClearGroups: () => void
+  selectedGroup: string | null  // Single selected group code
+  onSelectGroup: (code: string | null) => void
   groupDetails: Map<string, MulticastGroupDetail>  // Cached group details
-  onLoadGroupDetail: (code: string) => void
   // Publisher/subscriber filtering
   enabledPublishers: Set<string>  // device PKs of enabled publishers
   enabledSubscribers: Set<string>  // device PKs of enabled subscribers
@@ -37,11 +35,9 @@ interface MulticastTreesOverlayPanelProps {
 
 export function MulticastTreesOverlayPanel({
   isDark,
-  selectedGroups,
-  onToggleGroup,
-  onClearGroups,
+  selectedGroup,
+  onSelectGroup,
   groupDetails,
-  onLoadGroupDetail,
   enabledPublishers,
   enabledSubscribers,
   onTogglePublisher,
@@ -52,7 +48,6 @@ export function MulticastTreesOverlayPanel({
   const [groups, setGroups] = useState<MulticastGroupListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   // Fetch groups on mount
   useEffect(() => {
@@ -66,27 +61,15 @@ export function MulticastTreesOverlayPanel({
       .finally(() => setLoading(false))
   }, [])
 
-  // Load group details when expanded
-  const handleToggleExpand = useCallback((code: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev)
-      if (next.has(code)) {
-        next.delete(code)
-      } else {
-        next.add(code)
-        // Load details if not already loaded
-        if (!groupDetails.has(code)) {
-          onLoadGroupDetail(code)
-        }
-      }
-      return next
-    })
-  }, [groupDetails, onLoadGroupDetail])
-
-  const getGroupColor = (index: number) => {
-    if (index < 0) return isDark ? '#6b7280' : '#9ca3af' // default gray for unselected
-    const colorSet = GROUP_COLORS[index % GROUP_COLORS.length]
-    return isDark ? colorSet.dark : colorSet.light
+  // Compute member counts from loaded details (more accurate than group list counts)
+  const getMemberCounts = (group: MulticastGroupListItem) => {
+    const detail = groupDetails.get(group.code)
+    if (detail?.members) {
+      const pubs = detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').length
+      const subs = detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').length
+      return { pubs, subs }
+    }
+    return { pubs: group.publisher_count, subs: group.subscriber_count }
   }
 
   return (
@@ -119,76 +102,39 @@ export function MulticastTreesOverlayPanel({
 
       {!loading && !error && groups.length > 0 && (
         <div className="space-y-3">
-          {/* Summary */}
-          <div className="space-y-1.5">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Groups</span>
-              <span className="font-medium">{groups.length}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Selected</span>
-              <span className="font-medium">{selectedGroups.length}</span>
-            </div>
-            {selectedGroups.length > 0 && (
-              <button
-                onClick={onClearGroups}
-                className="text-[10px] text-muted-foreground hover:text-foreground"
-              >
-                Clear all
-              </button>
-            )}
-          </div>
-
           {/* Groups list */}
-          <div className="pt-2 border-t border-[var(--border)] space-y-1">
+          <div className="space-y-1">
             <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">
-              Available Groups
+              Groups
             </div>
-            <div className="max-h-64 overflow-y-auto space-y-0.5">
+            <div className="space-y-0.5">
               {groups.map((group) => {
-                const isSelected = selectedGroups.includes(group.code)
-                const isExpanded = expandedGroups.has(group.code)
-                const color = getGroupColor(selectedGroups.indexOf(group.code))
+                const isSelected = selectedGroup === group.code
                 const detail = groupDetails.get(group.code)
+                const { pubs, subs } = getMemberCounts(group)
 
                 return (
                   <div key={group.pk}>
-                    <div
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                        isSelected ? 'bg-[var(--muted)]' : 'hover:bg-[var(--muted)]'
+                    <button
+                      onClick={() => onSelectGroup(isSelected ? null : group.code)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                        isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
                       }`}
-                      style={isSelected ? { borderLeft: `3px solid ${color}` } : undefined}
                     >
-                      <button
-                        onClick={() => handleToggleExpand(group.code)}
-                        className="p-0.5 hover:bg-[var(--muted)] rounded"
-                      >
-                        {isExpanded ? (
-                          <ChevronDown className="h-3 w-3" />
-                        ) : (
-                          <ChevronRight className="h-3 w-3" />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => onToggleGroup(group.code)}
-                        className="flex-1 text-left flex items-center gap-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {}}
-                          className="h-3 w-3 rounded border-[var(--border)]"
-                        />
-                        <span className="font-medium">{group.code}</span>
-                        <span className="text-muted-foreground text-[10px] ml-auto">
-                          {group.publisher_count} pub / {group.subscriber_count} sub
-                        </span>
-                      </button>
-                    </div>
+                      <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                        isSelected ? 'border-purple-500' : 'border-[var(--border)]'
+                      }`}>
+                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
+                      </div>
+                      <span className="font-medium">{group.code}</span>
+                      <span className="text-muted-foreground text-[10px] ml-auto">
+                        {pubs} pub / {subs} sub
+                      </span>
+                    </button>
 
-                    {/* Expanded details */}
-                    {isExpanded && (
-                      <div className="ml-6 mt-1 mb-2 pl-2 border-l border-[var(--border)] text-[10px] space-y-1">
+                    {/* Show details when selected */}
+                    {isSelected && (
+                      <div className="ml-4 mt-1 mb-2 pl-2 border-l border-[var(--border)] text-[10px] space-y-1.5">
                         <div className="text-muted-foreground">
                           IP: {group.multicast_ip}
                         </div>
@@ -220,9 +166,13 @@ export function MulticastTreesOverlayPanel({
                                           className="w-3 h-3 rounded-full flex-shrink-0"
                                           style={{ backgroundColor: colorStyle }}
                                         />
-                                        <span className="font-medium">P</span>
                                         <span>{m.device_code}</span>
                                         <span className="text-muted-foreground">({m.metro_code})</span>
+                                        {m.owner_pubkey && (
+                                          <span className="text-muted-foreground truncate max-w-[60px]" title={m.owner_pubkey}>
+                                            {m.owner_pubkey.slice(0, 4)}..
+                                          </span>
+                                        )}
                                       </div>
                                     )
                                   })}
@@ -248,9 +198,13 @@ export function MulticastTreesOverlayPanel({
                                           className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
                                         />
                                         <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
-                                        <span className="font-medium">S</span>
                                         <span>{m.device_code}</span>
                                         <span className="text-muted-foreground">({m.metro_code})</span>
+                                        {m.owner_pubkey && (
+                                          <span className="text-muted-foreground truncate max-w-[60px]" title={m.owner_pubkey}>
+                                            {m.owner_pubkey.slice(0, 4)}..
+                                          </span>
+                                        )}
                                       </div>
                                     )
                                   })}
