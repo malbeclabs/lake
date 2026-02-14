@@ -14,7 +14,7 @@ const cacheStopTimeout = 5 * time.Second
 
 // maxConcurrentRefreshes limits how many cache refreshes can run simultaneously.
 // With a limit of 2, worst case is status (10 queries) + timeline (10 queries)
-// = 20 connections, leaving 10 of the 30-connection pool for API/agent requests.
+// = 20 connections, leaving 30 of the 50-connection pool for API/agent requests.
 const maxConcurrentRefreshes = 2
 
 // refreshCheckInterval is how often the refresh loop checks for due refreshes.
@@ -161,6 +161,9 @@ func (c *StatusCache) refreshLoop() {
 			for i, entry := range entries {
 				if now.Sub(lastRefresh[i]) < entry.interval {
 					continue
+				}
+				if c.ctx.Err() != nil {
+					break
 				}
 				i, entry := i, entry
 				g.Go(func() error {
