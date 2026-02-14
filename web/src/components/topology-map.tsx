@@ -1532,22 +1532,25 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
   // Map device_pk -> role color for validators on multicast member devices
+  // Respects enabled state: P+S devices only get publisher color when enabled as publisher
   const multicastDeviceRoleColorMap = useMemo(() => {
     const map = new Map<string, string>()
     if (!multicastTreesMode || !selectedMulticastGroup) return map
     const detail = multicastGroupDetails.get(selectedMulticastGroup)
     if (!detail?.members) return map
     for (const m of detail.members) {
-      if (m.mode === 'P' || m.mode === 'P+S') {
+      const isPub = (m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)
+      const isSub = (m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.device_pk)
+      if (isPub) {
         const colorIndex = multicastPublisherColorMap.get(m.device_pk) ?? 0
         const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
         map.set(m.device_pk, isDark ? c.dark : c.light)
-      } else if (m.mode === 'S') {
+      } else if (isSub) {
         map.set(m.device_pk, '#ef4444') // red for subscriber
       }
     }
     return map
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, isDark])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, enabledPublishers, enabledSubscribers, isDark])
 
   // Build set of publisher and subscriber device PKs for multicast trees (filtered by enabled)
   const multicastPublisherDevices = useMemo(() => {
@@ -1583,18 +1586,28 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
   // Validators on multicast publisher/subscriber devices (auto-shown when tree is active)
+  // Deduplicated to 1 per device — avoids showing many markers for multi-validator devices
   const multicastTreeValidators = useMemo(() => {
     if (!multicastTreesMode || !selectedMulticastGroup) return []
     if (multicastPublisherDevices.size === 0 && multicastSubscriberDevices.size === 0) return []
-    return validators.filter(v => multicastPublisherDevices.has(v.device_pk) || multicastSubscriberDevices.has(v.device_pk))
+    const seen = new Set<string>()
+    return validators.filter(v => {
+      if (seen.has(v.device_pk)) return false
+      if (!multicastPublisherDevices.has(v.device_pk) && !multicastSubscriberDevices.has(v.device_pk)) return false
+      seen.add(v.device_pk)
+      return true
+    })
   }, [multicastTreesMode, selectedMulticastGroup, multicastPublisherDevices, multicastSubscriberDevices, validators])
 
   // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
   const visibleValidators = useMemo(() => {
+    // When multicast tree is active, show only tree-relevant validators (unless tree validators toggled off)
+    if (multicastTreesMode && selectedMulticastGroup && multicastTreeValidators.length > 0) {
+      return showTreeValidators ? multicastTreeValidators : []
+    }
     if (showValidators && !pathModeEnabled) return validators
-    if (showTreeValidators && multicastTreeValidators.length > 0) return multicastTreeValidators
     return []
-  }, [showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
+  }, [multicastTreesMode, selectedMulticastGroup, showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
 
   // Count publishers and subscribers per device for multicast hover tooltip (filtered by enabled)
   const multicastPublisherCount = useMemo(() => {
