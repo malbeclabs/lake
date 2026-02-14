@@ -357,6 +357,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
 
+
   // Handler to toggle multicast group selection
   const handleToggleMulticastGroup = useCallback((code: string) => {
     setSelectedMulticastGroups(prev => {
@@ -417,6 +418,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
     }
   }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
+
+  // Auto-load group details when groups are selected
+  useEffect(() => {
+    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return
+    for (const code of selectedMulticastGroups) {
+      if (multicastGroupDetails.has(code)) continue
+      fetchMulticastGroup(code)
+        .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
+        .catch(err => console.error('Failed to fetch multicast group:', err))
+    }
+  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
 
   // Auto-enable publishers/subscribers when group details are loaded
   useEffect(() => {
@@ -1152,10 +1164,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // Impact mode params (comma-separated list of device PKs)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
 
+    // Multicast group selection (comma-separated group codes)
+    setParam('multicast', multicastTreesMode && selectedMulticastGroups.length > 0 ? selectedMulticastGroups.join(',') : null)
+
     if (changed) {
       setSearchParams(params, { replace: true })
     }
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroups])
 
   // When entering analysis modes with a device already selected, use it as source
   const prevMapModeRef = useRef<string>(mode)
@@ -1425,20 +1440,19 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     let colorIndex = 0
     selectedMulticastGroups.forEach(code => {
-      const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
+      const detail = multicastGroupDetails.get(code)
+      if (!detail?.members) return
 
-      // Get unique publishers in order of first appearance
-      const seenPublishers = new Set<string>()
-      treeData.paths.forEach(treePath => {
-        if (!seenPublishers.has(treePath.publisherDevicePK)) {
-          seenPublishers.add(treePath.publisherDevicePK)
-          map.set(treePath.publisherDevicePK, colorIndex++)
-        }
-      })
+      detail.members
+        .filter(m => m.mode === 'P' || m.mode === 'P+S')
+        .forEach(m => {
+          if (!map.has(m.device_pk)) {
+            map.set(m.device_pk, colorIndex++)
+          }
+        })
     })
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
+  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
 
   // Build set of publisher and subscriber device PKs for multicast trees (filtered by enabled)
   const multicastPublisherDevices = useMemo(() => {
@@ -1952,6 +1966,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const additionSourceParam = searchParams.get('addition_source')
     const additionTargetParam = searchParams.get('addition_target')
     const impactDevicesParam = searchParams.get('impact_devices')
+    const multicastParam = searchParams.get('multicast')
 
     // Restore path mode
     if (pathSourceParam || pathTargetParam) {
@@ -2127,9 +2142,19 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       return
     }
 
+    // Restore multicast group selection
+    if (multicastParam) {
+      const codes = multicastParam.split(',').filter(Boolean)
+      if (codes.length > 0) {
+        setSelectedMulticastGroups(codes)
+        if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
+        openPanel('overlay')
+      }
+    }
+
     // No mode params to restore
     setModeParamsRestored(true)
-  }, [modeParamsRestored, searchParams, deviceMap, linkMap, metroMap, mapReady, mode, setMode, openPanel, impactDevices, toggleImpactDevice])
+  }, [modeParamsRestored, searchParams, deviceMap, linkMap, metroMap, mapReady, mode, setMode, openPanel, impactDevices, toggleImpactDevice, overlays.multicastTrees, toggleOverlay])
 
   // Restore selected item from URL params when they change
   // Track last processed params to avoid re-processing the same selection
@@ -2728,7 +2753,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             borderWidth = 3
             opacity = 1
           } else if (multicastTreesMode && isInAnyMulticastTree && multicastDevicePublisherPKs) {
-            // Multicast transit: in tree path, color by first publisher
+            // Multicast transit: in tree path, color by first publisher (only in network paths mode)
             const firstPublisherPK = multicastDevicePublisherPKs[0]
             const publisherColorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
             markerColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]

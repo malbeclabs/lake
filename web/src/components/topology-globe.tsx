@@ -334,6 +334,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
 
+
   // Multicast handlers
   const handleToggleMulticastGroup = useCallback((code: string) => {
     setSelectedMulticastGroups(prev => prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code])
@@ -374,6 +375,17 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
     }
   }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
+
+  // Auto-load group details when groups are selected
+  useEffect(() => {
+    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return
+    for (const code of selectedMulticastGroups) {
+      if (multicastGroupDetails.has(code)) continue
+      fetchMulticastGroup(code)
+        .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
+        .catch(err => console.error('Failed to fetch multicast group:', err))
+    }
+  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
 
   // Auto-enable publishers/subscribers when group details load
   useEffect(() => {
@@ -780,18 +792,18 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
     let colorIndex = 0
     selectedMulticastGroups.forEach(code => {
-      const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
-      const seen = new Set<string>()
-      treeData.paths.forEach(tp => {
-        if (!seen.has(tp.publisherDevicePK)) {
-          seen.add(tp.publisherDevicePK)
-          map.set(tp.publisherDevicePK, colorIndex++)
-        }
-      })
+      const detail = multicastGroupDetails.get(code)
+      if (!detail?.members) return
+      detail.members
+        .filter(m => m.mode === 'P' || m.mode === 'P+S')
+        .forEach(m => {
+          if (!map.has(m.device_pk)) {
+            map.set(m.device_pk, colorIndex++)
+          }
+        })
     })
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
+  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
 
   const multicastPublisherDevices = useMemo(() => {
     const set = new Set<string>()
@@ -1131,8 +1143,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setParam('addition_source', whatifAdditionMode ? additionSource : null)
     setParam('addition_target', whatifAdditionMode ? additionTarget : null)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
+    setParam('multicast', multicastTreesMode && selectedMulticastGroups.length > 0 ? selectedMulticastGroups.join(',') : null)
     if (changed) setSearchParams(params, { replace: true })
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroups])
 
   // Restore mode from URL on initial load
   useEffect(() => {
@@ -1145,6 +1158,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const additionSourceParam = searchParams.get('addition_source')
     const additionTargetParam = searchParams.get('addition_target')
     const impactDevicesParam = searchParams.get('impact_devices')
+    const multicastParam = searchParams.get('multicast')
 
     if (pathSourceParam || pathTargetParam) {
       if (pathSourceParam && !deviceMap.has(pathSourceParam)) return
@@ -1182,8 +1196,18 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       setModeParamsRestored(true)
       return
     }
+    // Restore multicast group selection
+    if (multicastParam) {
+      const codes = multicastParam.split(',').filter(Boolean)
+      if (codes.length > 0) {
+        setSelectedMulticastGroups(codes)
+        if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
+        openPanel('overlay')
+      }
+    }
+
     setModeParamsRestored(true)
-  }, [modeParamsRestored, searchParams, deviceMap, linkMap, mode, setMode, openPanel, impactDevices, toggleImpactDevice])
+  }, [modeParamsRestored, searchParams, deviceMap, linkMap, mode, setMode, openPanel, impactDevices, toggleImpactDevice, overlays.multicastTrees, toggleOverlay])
 
   // Restore selected item from URL params
   const lastProcessedParamsRef = useRef<string | null>(null)
@@ -1488,7 +1512,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
 
     return arcs
-  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, showValidators, pathModeEnabled, validators])
+  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, showValidators, pathModeEnabled, validators, multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledPublishers, enabledSubscribers, multicastPublisherColorMap])
 
   // Stabilize arcsData — return previous reference if content unchanged
   // to prevent react-globe.gl from re-animating on data refetch.
@@ -1727,9 +1751,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [selectedItem, removalLink, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, bandwidthMode, trafficFlowMode, linkMap])
 
   const getArcDashLength = useCallback((arc: object) => {
+    const a = arc as GlobeArcEntity
     // When animation is off, show solid lines (except mode-specific dashing)
     if (!linkAnimating) {
-      const a = arc as GlobeArcEntity
       if (a.entityType === 'link') {
         const l = a as GlobeArcLink
         const isRemovedLink = removalLink?.linkPK === l.pk
@@ -1739,15 +1763,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }
       return 0
     }
-    const a = arc as GlobeArcEntity
     if (a.entityType === 'inter-metro') return 0
     if (a.entityType === 'validator-link') return 0.3
     return 0.4
   }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
 
   const getArcDashGap = useCallback((arc: object) => {
+    const a = arc as GlobeArcEntity
     if (!linkAnimating) {
-      const a = arc as GlobeArcEntity
       if (a.entityType === 'link') {
         const l = a as GlobeArcLink
         const isRemovedLink = removalLink?.linkPK === l.pk
@@ -1757,7 +1780,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }
       return 0
     }
-    const a = arc as GlobeArcEntity
     if (a.entityType === 'inter-metro') return 0
     if (a.entityType === 'validator-link') return 0.2
     return 0.2
@@ -1945,8 +1967,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           arcDashLength={getArcDashLength}
           arcDashGap={getArcDashGap}
           arcDashAnimateTime={(d: object) => {
-            if (!linkAnimating) return 0
             const a = d as GlobeArcEntity
+            if (!linkAnimating) return 0
             if (a.entityType === 'inter-metro') return 0
             if (a.entityType === 'validator-link') return 2000
             return arcAnimateTime((a as GlobeArcLink).latencyUs)

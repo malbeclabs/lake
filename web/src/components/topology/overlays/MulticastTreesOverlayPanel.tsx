@@ -94,7 +94,7 @@ export function MulticastTreesOverlayPanel({
       <div className="flex items-center justify-between mb-2">
         <span className="font-medium flex items-center gap-1.5">
           <Radio className="h-3.5 w-3.5 text-purple-500" />
-          Multicast Trees
+          Multicast
         </span>
         <button
           onClick={() => toggleOverlay('multicastTrees')}
@@ -181,7 +181,7 @@ export function MulticastTreesOverlayPanel({
                         />
                         <span className="font-medium">{group.code}</span>
                         <span className="text-muted-foreground text-[10px] ml-auto">
-                          {group.publisher_count}P / {group.subscriber_count}S
+                          {group.publisher_count} pub / {group.subscriber_count} sub
                         </span>
                       </button>
                     </div>
