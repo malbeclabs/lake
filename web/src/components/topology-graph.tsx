@@ -122,6 +122,7 @@ export function TopologyGraph({
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
+  const [dimOtherLinks, setDimOtherLinks] = useState(true)
 
 
   // Handler to select multicast group
@@ -1278,8 +1279,17 @@ export function TopologyGraph({
       }
     })
 
+    // Dim non-highlighted edges when multicast overlay is active and dimming enabled
+    if (dimOtherLinks) {
+      cy.edges().forEach(edge => {
+        if (!newPathEdgeIds.has(edge.id())) {
+          edge.style({ 'opacity': 0.08 })
+        }
+      })
+    }
+
     previousPathEdgeIdsRef.current = newPathEdgeIds
-  }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers])
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers, dimOtherLinks])
 
   // Clear classes when mode changes
   useEffect(() => {
@@ -2822,6 +2832,8 @@ export function TopologyGraph({
       // Edge hover
       cy.on('mouseover', 'edge', (event) => {
         const edge = event.target
+        // Skip tooltip on dimmed edges (opacity set to 0.08 by multicast overlay)
+        if (edge.numericStyle('opacity') < 0.1) return
         edge.addClass('hover')
         const midpoint = edge.midpoint()
         const pan = cy.pan()
@@ -3699,6 +3711,8 @@ export function TopologyGraph({
               onTogglePublisher={handleTogglePublisher}
               onToggleSubscriber={handleToggleSubscriber}
               publisherColorMap={multicastPublisherColorMap}
+              dimOtherLinks={dimOtherLinks}
+              onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
             />
           )}
         </TopologyPanel>

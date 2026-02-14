@@ -356,6 +356,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
+  const [dimOtherLinks, setDimOtherLinks] = useState(true)
 
 
   // Handler to select multicast group
@@ -1760,6 +1761,11 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayOpacity = 1
       }
 
+      // Dim non-highlighted links when multicast overlay is active and dimming enabled
+      if (multicastTreesMode && dimOtherLinks && !isInAnyMulticastTree && !isSelected && !isHovered) {
+        displayOpacity = 0.08
+      }
+
       return {
         type: 'Feature' as const,
         properties: {
@@ -1823,7 +1829,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       features,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, multicastLinkPathMap, multicastPublisherColorMap])
+  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, multicastLinkPathMap, multicastPublisherColorMap, dimOtherLinks])
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {
@@ -2364,6 +2370,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const handleLinkMouseEnter = useCallback((e: MapLayerMouseEvent) => {
     if (e.features && e.features[0]) {
       const pk = e.features[0].properties?.pk
+
+      // Skip hover on dimmed links when multicast overlay is active
+      if (multicastTreesMode && dimOtherLinks && pk && !multicastLinkPathMap.has(pk)) {
+        return
+      }
+
       const props = e.features[0].properties
 
       // Handle inter-metro links
@@ -2407,7 +2419,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setHoveredLink(buildLinkInfo(link))
       }
     }
-  }, [linkMap, buildLinkInfo])
+  }, [linkMap, buildLinkInfo, multicastTreesMode, dimOtherLinks, multicastLinkPathMap])
 
   const handleLinkMouseLeave = useCallback(() => {
     setHoveredLink(null)
@@ -3328,6 +3340,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               onTogglePublisher={handleTogglePublisher}
               onToggleSubscriber={handleToggleSubscriber}
               publisherColorMap={multicastPublisherColorMap}
+              dimOtherLinks={dimOtherLinks}
+              onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
             />
           )}
         </TopologyPanel>

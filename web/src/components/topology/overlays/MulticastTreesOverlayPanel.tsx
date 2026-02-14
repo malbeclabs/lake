@@ -31,6 +31,9 @@ interface MulticastTreesOverlayPanelProps {
   onToggleSubscriber: (devicePK: string) => void
   // Publisher color map for consistent colors
   publisherColorMap: Map<string, number>
+  // Dim other links toggle
+  dimOtherLinks: boolean
+  onToggleDimOtherLinks: () => void
 }
 
 export function MulticastTreesOverlayPanel({
@@ -43,6 +46,8 @@ export function MulticastTreesOverlayPanel({
   onTogglePublisher,
   onToggleSubscriber,
   publisherColorMap,
+  dimOtherLinks,
+  onToggleDimOtherLinks,
 }: MulticastTreesOverlayPanelProps) {
   const { toggleOverlay } = useTopology()
   const [groups, setGroups] = useState<MulticastGroupListItem[]>([])
@@ -219,6 +224,25 @@ export function MulticastTreesOverlayPanel({
                   </div>
                 )
               })}
+            </div>
+          </div>
+
+          {/* Options */}
+          <div className="pt-2 border-t border-[var(--border)]">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-muted-foreground">Dim other links</span>
+              <button
+                onClick={onToggleDimOtherLinks}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                  dimOtherLinks ? 'bg-purple-500' : 'bg-[var(--muted)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    dimOtherLinks ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
             </div>
           </div>
 

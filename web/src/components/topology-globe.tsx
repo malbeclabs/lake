@@ -333,6 +333,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
+  const [dimOtherLinks, setDimOtherLinks] = useState(true)
 
 
   // Multicast handlers
@@ -1727,9 +1728,12 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) return PATH_COLORS[(multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0) % PATH_COLORS.length]
     if (isSelected) return '#3b82f6'
 
+    // Dim non-highlighted links when multicast overlay is active and dimming enabled
+    if (multicastTreesMode && dimOtherLinks) return 'rgba(100,100,100,0.08)'
+
     // Vibrant default gradient for the "living demo" aesthetic
     return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
-  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, multicastLinkPathMap, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, metroClusteringMode, metroIndexMap])
+  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, multicastLinkPathMap, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, metroClusteringMode, metroIndexMap, dimOtherLinks])
 
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1790,6 +1794,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const getArcLabel = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
     if (a.entityType === 'validator-link') return ''
+    // Skip tooltip on dimmed links when multicast overlay is active
+    if (multicastTreesMode && dimOtherLinks && a.entityType === 'link' && !multicastLinkPathMap.has((a as GlobeArcLink).pk)) return ''
     if (a.entityType === 'inter-metro') {
       const m = a as GlobeArcInterMetro
       const avgLatencyMs = m.avgLatencyUs > 0 ? (m.avgLatencyUs / 1000).toFixed(2) + ' ms' : 'N/A'
@@ -1807,7 +1813,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       <div style="color:#9ca3af">Z: <span style="color:#fff">${l.deviceZCode}</span>${l.interfaceZName ? ` <span style="font-family:monospace;color:#fff">(${l.interfaceZName})</span>` : ''}</div>
       <div style="color:#9ca3af">Latency: <span style="color:#fff">${l.latencyUs > 0 ? latencyMs + ' ms' : 'N/A'}</span> &middot; BW: <span style="color:#fff">${formatBandwidth(l.bandwidthBps)}</span></div>
     </div>`
-  }, [])
+  }, [multicastTreesMode, dimOtherLinks, multicastLinkPathMap])
 
   // ─── Click handlers ──────────────────────────────────────────────────
 
@@ -2203,6 +2209,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               onTogglePublisher={handleTogglePublisher}
               onToggleSubscriber={handleToggleSubscriber}
               publisherColorMap={multicastPublisherColorMap}
+              dimOtherLinks={dimOtherLinks}
+              onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
             />
           )}
         </TopologyPanel>
