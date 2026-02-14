@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchISISTopology, fetchISISPaths, fetchTopologyCompare, fetchWhatIfRemoval, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchTopology, fetchLinkHealth, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
 import type { WhatIfRemovalResponse, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
-import { useTopology, TopologyPanel, TopologyControlBar, DeviceDetails, LinkDetails, EntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, type DeviceInfo, type LinkInfo, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyPanel, TopologyControlBar, DeviceDetails, LinkDetails, EntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceInfo, type LinkInfo, type DeviceOption, type MetroOption } from '@/components/topology'
 import { ErrorState } from '@/components/ui/error-state'
 
 // Device type colors (types from serviceability smart contract: hybrid, transit, edge)
@@ -1073,17 +1073,7 @@ export function TopologyGraph({
     if (!cyRef.current || !multicastTreesEnabled || !selectedMulticastGroup) return
     const cy = cyRef.current
 
-    // Tree colors - one per publisher
-    const TREE_COLORS = [
-      { light: '#9333ea', dark: '#a855f7' },  // Purple
-      { light: '#2563eb', dark: '#3b82f6' },  // Blue
-      { light: '#16a34a', dark: '#22c55e' },  // Green
-      { light: '#ea580c', dark: '#f97316' },  // Orange
-      { light: '#0891b2', dark: '#06b6d4' },  // Cyan
-      { light: '#dc2626', dark: '#ef4444' },  // Red
-      { light: '#ca8a04', dark: '#eab308' },  // Yellow
-      { light: '#db2777', dark: '#ec4899' },  // Pink
-    ]
+    // Use shared multicast publisher colors
 
     // Clear previous highlighting
     const defaultColor = isDark ? '#6b7280' : '#9ca3af'
@@ -1137,8 +1127,8 @@ export function TopologyGraph({
         node.addClass('path-node multicast-publisher')
         const pubColorIdx = multicastPublisherColorMap.get(devicePK) ?? 0
         const pubColor = isDark
-          ? TREE_COLORS[pubColorIdx % TREE_COLORS.length].dark
-          : TREE_COLORS[pubColorIdx % TREE_COLORS.length].light
+          ? MULTICAST_PUBLISHER_COLORS[pubColorIdx % MULTICAST_PUBLISHER_COLORS.length].dark
+          : MULTICAST_PUBLISHER_COLORS[pubColorIdx % MULTICAST_PUBLISHER_COLORS.length].light
         const isAlsoSubscriber = subscriberCounts.has(devicePK)
         let label = ''
         if (isAlsoSubscriber) {
@@ -1246,8 +1236,8 @@ export function TopologyGraph({
 
             const publisherColorIdx = publisherColorMap.get(publisherPK) ?? 0
             const color = isDark
-              ? TREE_COLORS[publisherColorIdx % TREE_COLORS.length].dark
-              : TREE_COLORS[publisherColorIdx % TREE_COLORS.length].light
+              ? MULTICAST_PUBLISHER_COLORS[publisherColorIdx % MULTICAST_PUBLISHER_COLORS.length].dark
+              : MULTICAST_PUBLISHER_COLORS[publisherColorIdx % MULTICAST_PUBLISHER_COLORS.length].light
 
             // Highlight transit nodes
             path.forEach(hop => {

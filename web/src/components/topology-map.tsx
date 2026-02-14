@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -1783,7 +1783,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         } else {
           // Single publisher — color by publisher
           const publisherColorIndex = multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0
-          displayColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
+          const mc = MULTICAST_PUBLISHER_COLORS[publisherColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+          displayColor = isDark ? mc.dark : mc.light
           displayWeight = defaultWeight + 2
         }
         displayOpacity = 0.9
@@ -1916,7 +1917,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         const publisherPKs = multicastLinkPathMap.get(link.pk)!
         const color = publisherPKs.length > 1
           ? (isDark ? '#ec4899' : '#db2777')
-          : PATH_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % PATH_COLORS.length]
+          : (isDark
+              ? MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length].dark
+              : MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length].light)
         return {
           type: 'Feature' as const,
           properties: {
@@ -2928,7 +2931,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           } else if (multicastTreesMode && isMulticastPublisher) {
             // Multicast publisher: color by publisher's assigned color
             const publisherColorIndex = multicastPublisherColorMap.get(device.pk) ?? 0
-            markerColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
+            const mcPub = MULTICAST_PUBLISHER_COLORS[publisherColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+            markerColor = isDark ? mcPub.dark : mcPub.light
             borderColor = markerColor
             markerSize = 20
             borderWidth = 4
@@ -2944,7 +2948,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             // Multicast transit: in tree path, color by first publisher (only in network paths mode)
             const firstPublisherPK = multicastDevicePublisherPKs[0]
             const publisherColorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
-            markerColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
+            const mcTransit = MULTICAST_PUBLISHER_COLORS[publisherColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+            markerColor = isDark ? mcTransit.dark : mcTransit.light
             borderColor = markerColor
             markerSize = 14
             borderWidth = 2

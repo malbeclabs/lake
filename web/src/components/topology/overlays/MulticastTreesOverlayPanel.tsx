@@ -7,8 +7,9 @@ import {
   type MulticastGroupDetail,
 } from '@/lib/api'
 
-// Colors for different multicast groups
-const GROUP_COLORS = [
+// Colors for multicast publishers — exported so map/globe/graph views use the same palette
+// eslint-disable-next-line react-refresh/only-export-components
+export const MULTICAST_PUBLISHER_COLORS = [
   { light: '#9333ea', dark: '#a855f7' },  // purple
   { light: '#2563eb', dark: '#3b82f6' },  // blue
   { light: '#16a34a', dark: '#22c55e' },  // green
@@ -157,7 +158,7 @@ export function MulticastTreesOverlayPanel({
                                   .filter(m => m.mode === 'P' || m.mode === 'P+S')
                                   .map(m => {
                                     const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
-                                    const pubColor = GROUP_COLORS[pubColorIndex % GROUP_COLORS.length]
+                                    const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
                                     const colorStyle = isDark ? pubColor.dark : pubColor.light
                                     const isEnabled = enabledPublishers.has(m.device_pk)
                                     return (
@@ -274,7 +275,7 @@ export function MulticastTreesOverlayPanel({
             <div className="space-y-1.5 text-[10px]">
               <div className="flex items-center gap-2">
                 <div className="flex gap-0.5">
-                  {GROUP_COLORS.slice(0, 4).map((c, i) => (
+                  {MULTICAST_PUBLISHER_COLORS.slice(0, 4).map((c, i) => (
                     <div
                       key={i}
                       className="w-2 h-2 rounded-full"

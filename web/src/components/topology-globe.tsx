@@ -6,7 +6,7 @@ import type { GlobeInstance } from 'react-globe.gl'
 import { useQuery } from '@tanstack/react-query'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import type { LinkInfo, SelectedItemData } from '@/components/topology'
 import { formatBandwidth, formatTrafficRate } from '@/components/topology'
 
@@ -1623,9 +1623,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (isInAnyPath && devicePathIndices) return PATH_COLORS[devicePathIndices[0] % PATH_COLORS.length]
     if (metroPathModeEnabled && isInSelectedMetroPath) return PATH_COLORS[0]
     if (metroPathModeEnabled && isInAnyMetroPath && metroDevicePathIndices) return PATH_COLORS[metroDevicePathIndices[0] % PATH_COLORS.length]
-    if (multicastTreesMode && isMulticastPublisher) return PATH_COLORS[(multicastPublisherColorMap.get(d.pk) ?? 0) % PATH_COLORS.length]
+    if (multicastTreesMode && isMulticastPublisher) { const mc = MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(d.pk) ?? 0) % MULTICAST_PUBLISHER_COLORS.length]; return isDark ? mc.dark : mc.light }
     if (multicastTreesMode && isMulticastSubscriber) return '#ef4444'
-    if (multicastTreesMode && isInAnyMulticastTree && multicastDevicePublisherPKs) return PATH_COLORS[(multicastPublisherColorMap.get(multicastDevicePublisherPKs[0]) ?? 0) % PATH_COLORS.length]
+    if (multicastTreesMode && isInAnyMulticastTree && multicastDevicePublisherPKs) { const mc = MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(multicastDevicePublisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length]; return isDark ? mc.dark : mc.light }
     if (isImpactDevice) return '#ef4444'
     if (isSelected) return '#3b82f6'
 
@@ -1766,7 +1766,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (metroPathModeEnabled && isInAnyMetroPath && metroLinkPathIndices) return PATH_COLORS[metroLinkPathIndices[0] % PATH_COLORS.length] + '60'
     if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) {
       if (multicastLinkPublisherPKs.length > 1) return isDark ? '#ec4899' : '#db2777'
-      return PATH_COLORS[(multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0) % PATH_COLORS.length]
+      const mc = MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0) % MULTICAST_PUBLISHER_COLORS.length]
+      return isDark ? mc.dark : mc.light
     }
     if (isSelected) return '#3b82f6'
 
