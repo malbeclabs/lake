@@ -104,6 +104,27 @@ export function MulticastTreesOverlayPanel({
     return treeValidators.reduce((sum, v) => sum + (v.stake_sol ?? 0), 0)
   }, [treeValidators])
 
+  // Breakdown of tree validators by role
+  const treeValidatorBreakdown = useMemo(() => {
+    if (!selectedGroup || treeValidators.length === 0) return { pub: 0, sub: 0, transit: 0 }
+    const detail = groupDetails.get(selectedGroup)
+    const pubDevices = new Set<string>()
+    const subDevices = new Set<string>()
+    if (detail?.members) {
+      for (const m of detail.members) {
+        if (m.mode === 'P' || m.mode === 'P+S') pubDevices.add(m.device_pk)
+        if (m.mode === 'S' || m.mode === 'P+S') subDevices.add(m.device_pk)
+      }
+    }
+    let pub = 0, sub = 0, transit = 0
+    for (const v of treeValidators) {
+      if (pubDevices.has(v.device_pk)) pub++
+      else if (subDevices.has(v.device_pk)) sub++
+      else transit++
+    }
+    return { pub, sub, transit }
+  }, [selectedGroup, treeValidators, groupDetails])
+
   const formatStake = (sol: number) => {
     if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M`
     if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k`
@@ -263,15 +284,10 @@ export function MulticastTreesOverlayPanel({
           {/* Validators on tree devices — summary + toggle */}
           {selectedGroup && treeValidators.length > 0 && (
             <div className="space-y-1">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
-                Validators on Tree
-              </div>
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="flex items-center gap-1.5">
-                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
-                  <span>{treeValidators.length} validators</span>
-                  <span className="text-muted-foreground">{formatStake(treeValidatorStake)} SOL</span>
-                </span>
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  Validators on Tree
+                </div>
                 <button
                   onClick={onToggleShowTreeValidators}
                   className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
@@ -284,6 +300,32 @@ export function MulticastTreesOverlayPanel({
                     }`}
                   />
                 </button>
+              </div>
+              <div className="text-[10px] space-y-0.5">
+                <div className="flex items-center justify-between">
+                  <span>{treeValidators.length} validators</span>
+                  <span className="text-muted-foreground">{formatStake(treeValidatorStake)} SOL</span>
+                </div>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  {treeValidatorBreakdown.pub > 0 && (
+                    <span className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-purple-500 flex-shrink-0" />
+                      {treeValidatorBreakdown.pub} pub
+                    </span>
+                  )}
+                  {treeValidatorBreakdown.sub > 0 && (
+                    <span className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                      {treeValidatorBreakdown.sub} sub
+                    </span>
+                  )}
+                  {treeValidatorBreakdown.transit > 0 && (
+                    <span className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
+                      {treeValidatorBreakdown.transit} transit
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -350,7 +392,15 @@ export function MulticastTreesOverlayPanel({
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
-                <span>Validator (on tree device)</span>
+                <span>Validator (transit device)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-purple-500" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
+                <span>Validator (publisher device)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full flex-shrink-0 border-2 border-red-500" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
+                <span>Validator (subscriber device)</span>
               </div>
             </div>
           </div>

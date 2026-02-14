@@ -1543,6 +1543,24 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return map
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
+  // Map device_pk -> role color for validators on multicast member devices
+  const multicastDeviceRoleColorMap = useMemo(() => {
+    const map = new Map<string, string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return map
+    for (const m of detail.members) {
+      if (m.mode === 'P' || m.mode === 'P+S') {
+        const colorIndex = multicastPublisherColorMap.get(m.device_pk) ?? 0
+        const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
+        map.set(m.device_pk, isDark ? c.dark : c.light)
+      } else if (m.mode === 'S') {
+        map.set(m.device_pk, '#ef4444') // red for subscriber
+      }
+    }
+    return map
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, isDark])
+
   // Build set of publisher and subscriber device PKs for multicast trees (filtered by enabled)
   const multicastPublisherDevices = useMemo(() => {
     const set = new Set<string>()
@@ -1921,20 +1939,21 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const validatorLinksGeoJson = useMemo(() => {
     if (visibleValidators.length === 0) return { type: 'FeatureCollection' as const, features: [] }
 
-    const validatorLinkColor = isDark ? '#7c3aed' : '#6d28d9'
+    const defaultLinkColor = isDark ? '#7c3aed' : '#6d28d9'
     const features = visibleValidators.map(validator => {
       const devicePos = devicePositions.get(validator.device_pk)
       if (!devicePos) return null
 
       const isHovered = hoveredValidator?.votePubkey === validator.vote_pubkey
+      const roleColor = multicastDeviceRoleColorMap.get(validator.device_pk)
 
       return {
         type: 'Feature' as const,
         properties: {
           votePubkey: validator.vote_pubkey,
-          color: isHovered ? hoverHighlight : validatorLinkColor,
-          weight: isHovered ? 2 : 1,
-          opacity: isHovered ? 0.9 : 0.4,
+          color: isHovered ? hoverHighlight : roleColor || defaultLinkColor,
+          weight: isHovered ? 2 : roleColor ? 1.5 : 1,
+          opacity: isHovered ? 0.9 : roleColor ? 0.6 : 0.4,
         },
         geometry: {
           type: 'LineString' as const,
@@ -1950,7 +1969,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       type: 'FeatureCollection' as const,
       features,
     }
-  }, [visibleValidators, devicePositions, isDark, hoveredValidator, hoverHighlight])
+  }, [visibleValidators, devicePositions, isDark, hoveredValidator, hoverHighlight, multicastDeviceRoleColorMap])
 
   // GeoJSON for per-publisher multicast tree lines (static, with offset curves)
   const multicastTreeGeoJson = useMemo(() => {
@@ -3251,6 +3270,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           }
 
           const size = (isThisSelected ? baseRadius + 3 : isThisHovered ? baseRadius + 2 : baseRadius) * 2
+          const roleColor = multicastDeviceRoleColorMap.get(validator.device_pk)
 
           return (
             <Marker
@@ -3265,13 +3285,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   width: size,
                   height: size,
                   backgroundColor: validatorColor,
-                  border: `${isThisSelected ? 3 : isThisHovered ? 2 : 1}px solid ${isThisSelected ? selectionColor : hoverHighlight}`,
+                  border: `${isThisSelected ? 3 : isThisHovered ? 2 : roleColor ? 2 : 1}px solid ${isThisSelected ? selectionColor : isThisHovered ? hoverHighlight : roleColor || hoverHighlight}`,
                   opacity: isThisHovered || isThisSelected ? 1 : 0.9,
                   boxShadow: isThisSelected
                     ? `0 0 0 4px ${selectionColor}40, 0 0 12px ${selectionColor}60`
                     : isThisHovered
                       ? `0 0 0 2px ${hoverHighlight}40`
-                      : undefined,
+                      : roleColor
+                        ? `0 0 0 3px ${roleColor}50`
+                        : undefined,
                 }}
                 onMouseEnter={() => {
                   setHoveredValidator(validatorInfo)

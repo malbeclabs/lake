@@ -159,6 +159,7 @@ interface GlobeArcLink {
 interface GlobeArcValidatorLink {
   entityType: 'validator-link'
   votePubkey: string
+  devicePk: string
   startLat: number
   startLng: number
   endLat: number
@@ -906,6 +907,24 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     return set
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
+  // Map device_pk -> role color for validators on multicast member devices
+  const multicastDeviceRoleColorMap = useMemo(() => {
+    const map = new Map<string, string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return map
+    for (const m of detail.members) {
+      if (m.mode === 'P' || m.mode === 'P+S') {
+        const colorIndex = multicastPublisherColorMap.get(m.device_pk) ?? 0
+        const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
+        map.set(m.device_pk, isDark ? c.dark : c.light)
+      } else if (m.mode === 'S') {
+        map.set(m.device_pk, '#ef4444') // red for subscriber
+      }
+    }
+    return map
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, isDark])
+
   // ─── Selection management ────────────────────────────────────────────
 
   const setSelectedItem = useCallback((item: SelectedItemData | null) => {
@@ -1611,6 +1630,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         arcs.push({
           entityType: 'validator-link',
           votePubkey: v.vote_pubkey,
+          devicePk: v.device_pk,
           startLat: v.latitude, startLng: v.longitude,
           endLat: devicePos.lat, endLng: devicePos.lng,
         })
@@ -1665,8 +1685,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const p = point as GlobePointEntity
 
     if (p.entityType === 'validator') {
-      const isSelected = selectedItem?.type === 'validator' && selectedItem.data.votePubkey === p.votePubkey
-      return isSelected ? '#3b82f6' : '#a855f7'
+      const v = p as GlobePointValidator
+      const isSelected = selectedItem?.type === 'validator' && selectedItem.data.votePubkey === v.votePubkey
+      if (isSelected) return '#3b82f6'
+      const roleColor = multicastDeviceRoleColorMap.get(v.devicePk)
+      return roleColor || '#a855f7'
     }
 
     if (p.entityType === 'metro') {
@@ -1733,7 +1756,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     // Vibrant default for the "living demo" aesthetic
     return '#00ffcc'
-  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastTreeDevicePKs, multicastPublisherPaths, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap])
+  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastTreeDevicePKs, multicastPublisherPaths, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, multicastDeviceRoleColorMap])
 
   const getPointRadius = useCallback((point: object) => {
     const p = point as GlobePointEntity
@@ -1806,7 +1829,12 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       const mc = MULTICAST_PUBLISHER_COLORS[mt.colorIndex % MULTICAST_PUBLISHER_COLORS.length]
       return isDark ? mc.dark : mc.light
     }
-    if (a.entityType === 'validator-link') return ['rgba(168,85,247,0.7)', 'rgba(124,58,237,0.9)']
+    if (a.entityType === 'validator-link') {
+      const vl = a as GlobeArcValidatorLink
+      const roleColor = multicastDeviceRoleColorMap.get(vl.devicePk)
+      if (roleColor) return [roleColor, roleColor]
+      return ['rgba(168,85,247,0.7)', 'rgba(124,58,237,0.9)']
+    }
     if (a.entityType === 'inter-metro') {
       const m = a as GlobeArcInterMetro
       if (metroClusteringMode) {
@@ -1868,7 +1896,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     // Vibrant default gradient for the "living demo" aesthetic
     return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
-  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark])
+  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap])
 
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
