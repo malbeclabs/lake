@@ -1754,15 +1754,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayWeight = defaultWeight + 1
         displayOpacity = 0.3
       } else if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) {
-        // Multicast tree: color by publisher (first publisher if multiple)
-        const firstPublisherPK = multicastLinkPublisherPKs[0]
-        const publisherColorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
-        displayColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
-        // If multiple publishers share this link, make it thicker and dashed
         if (multicastLinkPublisherPKs.length > 1) {
+          // Shared link (multiple publishers) — neutral gray, thicker + dashed
+          displayColor = isDark ? '#ec4899' : '#db2777'
           displayWeight = defaultWeight + 4
           useDash = true
         } else {
+          // Single publisher — color by publisher
+          const publisherColorIndex = multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0
+          displayColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
           displayWeight = defaultWeight + 2
         }
         displayOpacity = 0.9
@@ -1893,9 +1893,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         const endPos = devicePositions.get(link.side_z_pk)
         if (!startPos || !endPos) return null
         const publisherPKs = multicastLinkPathMap.get(link.pk)!
-        const firstPublisherPK = publisherPKs[0]
-        const colorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
-        const color = PATH_COLORS[colorIndex % PATH_COLORS.length]
+        const color = publisherPKs.length > 1
+          ? (isDark ? '#ec4899' : '#db2777')
+          : PATH_COLORS[(multicastPublisherColorMap.get(publisherPKs[0]) ?? 0) % PATH_COLORS.length]
         return {
           type: 'Feature' as const,
           properties: {
@@ -1911,7 +1911,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       })
       .filter((f): f is NonNullable<typeof f> => f !== null)
     return { type: 'FeatureCollection' as const, features }
-  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, links, multicastLinkPathMap, multicastPublisherColorMap, devicePositions])
+  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, links, multicastLinkPathMap, multicastPublisherColorMap, devicePositions, isDark])
 
   // Stabilize the GeoJSON reference so the <Source> doesn't get a new object on
   // every react-query refetch (which causes MapLibre to re-process and flicker).

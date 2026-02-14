@@ -1265,10 +1265,11 @@ export function TopologyGraph({
 
               const sharedPublishers = edgePublishers.get(edgeKey)
               const isShared = sharedPublishers && sharedPublishers.size > 1
+              const edgeColor = isShared ? (isDark ? '#ec4899' : '#db2777') : color
 
               edge.style({
-                'line-color': color,
-                'target-arrow-color': color,
+                'line-color': edgeColor,
+                'target-arrow-color': edgeColor,
                 'width': isShared ? 5 : 3,
                 'opacity': 0.9,
                 'z-index': 5,

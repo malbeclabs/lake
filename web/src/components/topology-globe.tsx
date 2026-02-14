@@ -1726,7 +1726,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (isInAnyPath && linkPathIndices) return PATH_COLORS[linkPathIndices[0] % PATH_COLORS.length] + '80'
     if (metroPathModeEnabled && isInSelectedMetroPath) return PATH_COLORS[0]
     if (metroPathModeEnabled && isInAnyMetroPath && metroLinkPathIndices) return PATH_COLORS[metroLinkPathIndices[0] % PATH_COLORS.length] + '60'
-    if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) return PATH_COLORS[(multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0) % PATH_COLORS.length]
+    if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) {
+      if (multicastLinkPublisherPKs.length > 1) return isDark ? '#ec4899' : '#db2777'
+      return PATH_COLORS[(multicastPublisherColorMap.get(multicastLinkPublisherPKs[0]) ?? 0) % PATH_COLORS.length]
+    }
     if (isSelected) return '#3b82f6'
 
     // Dim non-highlighted links when multicast overlay is active and dimming enabled

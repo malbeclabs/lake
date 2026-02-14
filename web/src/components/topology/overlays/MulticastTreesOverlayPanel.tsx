@@ -296,7 +296,7 @@ export function MulticastTreesOverlayPanel({
                 <div
                   className="w-6 h-1 rounded"
                   style={{
-                    background: `repeating-linear-gradient(90deg, ${isDark ? '#a855f7' : '#9333ea'} 0 3px, transparent 3px 6px)`,
+                    background: `repeating-linear-gradient(90deg, ${isDark ? '#ec4899' : '#db2777'} 0 3px, transparent 3px 6px)`,
                   }}
                 />
                 <span>Shared path (multiple publishers)</span>
