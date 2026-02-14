@@ -357,6 +357,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
+  const [animateFlow, setAnimateFlow] = useState(true)
 
 
   // Handler to select multicast group
@@ -1866,6 +1867,69 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     }
   }, [validators, devicePositions, showValidators, isDark, hoveredValidator, hoverHighlight])
 
+  // GeoJSON for animated multicast tree links overlay
+  const multicastAnimatedGeoJson = useMemo(() => {
+    if (!multicastTreesMode || !animateFlow || !selectedMulticastGroup) {
+      return { type: 'FeatureCollection' as const, features: [] }
+    }
+    const features = links
+      .filter(link => multicastLinkPathMap.has(link.pk))
+      .map(link => {
+        const startPos = devicePositions.get(link.side_a_pk)
+        const endPos = devicePositions.get(link.side_z_pk)
+        if (!startPos || !endPos) return null
+        const publisherPKs = multicastLinkPathMap.get(link.pk)!
+        const firstPublisherPK = publisherPKs[0]
+        const colorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
+        const color = PATH_COLORS[colorIndex % PATH_COLORS.length]
+        return {
+          type: 'Feature' as const,
+          properties: {
+            pk: link.pk,
+            color,
+            weight: publisherPKs.length > 1 ? 5.5 : 3.5,
+          },
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: calculateCurvedPath(startPos, endPos),
+          },
+        }
+      })
+      .filter((f): f is NonNullable<typeof f> => f !== null)
+    return { type: 'FeatureCollection' as const, features }
+  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, links, multicastLinkPathMap, multicastPublisherColorMap, devicePositions])
+
+  // Animate multicast flow dashes via requestAnimationFrame
+  useEffect(() => {
+    if (!multicastTreesMode || !animateFlow || !mapRef.current || multicastAnimatedGeoJson.features.length === 0) return
+
+    let frameId: number
+    let offset = 0
+    const dashLength = 4
+    const gapLength = 4
+    const totalPattern = dashLength + gapLength
+    const speed = 0.15 // pixels per frame
+
+    const animate = () => {
+      offset = (offset + speed) % totalPattern
+      const map = mapRef.current?.getMap()
+      if (map?.getLayer('multicast-animated-lines')) {
+        map.setPaintProperty('multicast-animated-lines', 'line-dasharray', [dashLength, gapLength, 0, totalPattern - offset])
+      }
+      frameId = requestAnimationFrame(animate)
+    }
+
+    // Small delay to ensure the layer exists
+    const timerId = setTimeout(() => {
+      frameId = requestAnimationFrame(animate)
+    }, 100)
+
+    return () => {
+      clearTimeout(timerId)
+      cancelAnimationFrame(frameId)
+    }
+  }, [multicastTreesMode, animateFlow, multicastAnimatedGeoJson.features.length])
+
   // Colors
   const deviceColor = isDark ? '#6b7280' : '#1f2937' // neutral grey/dark - overlays will override
   const metroColor = isDark ? '#4b5563' : '#9ca3af' // gray
@@ -2520,6 +2584,26 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             }}
           />
         </Source>
+
+        {/* Animated multicast tree flow overlay */}
+        {multicastTreesMode && animateFlow && multicastAnimatedGeoJson.features.length > 0 && (
+          <Source id="multicast-animated" type="geojson" data={multicastAnimatedGeoJson}>
+            <Layer
+              id="multicast-animated-lines"
+              type="line"
+              paint={{
+                'line-color': ['get', 'color'],
+                'line-width': ['get', 'weight'],
+                'line-opacity': 0.9,
+                'line-dasharray': [4, 4],
+              }}
+              layout={{
+                'line-cap': 'round',
+                'line-join': 'round',
+              }}
+            />
+          </Source>
+        )}
 
         {/* Validator links (when toggled, hidden in path mode) */}
         {showValidators && !pathModeEnabled && (
@@ -3342,6 +3426,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               publisherColorMap={multicastPublisherColorMap}
               dimOtherLinks={dimOtherLinks}
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
+              animateFlow={animateFlow}
+              onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
             />
           )}
         </TopologyPanel>

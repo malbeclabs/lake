@@ -123,6 +123,7 @@ export function TopologyGraph({
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
+  const [animateFlow, setAnimateFlow] = useState(true)
 
 
   // Handler to select multicast group
@@ -3713,6 +3714,8 @@ export function TopologyGraph({
               publisherColorMap={multicastPublisherColorMap}
               dimOtherLinks={dimOtherLinks}
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
+              animateFlow={animateFlow}
+              onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
             />
           )}
         </TopologyPanel>

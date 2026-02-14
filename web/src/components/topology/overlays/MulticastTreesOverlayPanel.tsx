@@ -34,6 +34,9 @@ interface MulticastTreesOverlayPanelProps {
   // Dim other links toggle
   dimOtherLinks: boolean
   onToggleDimOtherLinks: () => void
+  // Animate flow toggle
+  animateFlow: boolean
+  onToggleAnimateFlow: () => void
 }
 
 export function MulticastTreesOverlayPanel({
@@ -48,6 +51,8 @@ export function MulticastTreesOverlayPanel({
   publisherColorMap,
   dimOtherLinks,
   onToggleDimOtherLinks,
+  animateFlow,
+  onToggleAnimateFlow,
 }: MulticastTreesOverlayPanelProps) {
   const { toggleOverlay } = useTopology()
   const [groups, setGroups] = useState<MulticastGroupListItem[]>([])
@@ -240,6 +245,21 @@ export function MulticastTreesOverlayPanel({
                 <span
                   className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
                     dimOtherLinks ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="flex items-center justify-between mt-1.5">
+              <span className="text-[10px] text-muted-foreground">Animate flow</span>
+              <button
+                onClick={onToggleAnimateFlow}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+                  animateFlow ? 'bg-purple-500' : 'bg-[var(--muted)]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    animateFlow ? 'translate-x-3.5' : 'translate-x-0.5'
                   }`}
                 />
               </button>

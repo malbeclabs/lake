@@ -334,6 +334,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
+  const [animateFlow, setAnimateFlow] = useState(true)
 
 
   // Multicast handlers
@@ -1748,13 +1749,16 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const metroLinkPathIndices = metroLinkPathMap.get(l.pk)
     const isInSelectedMetroPath = metroPathSelectedPairs.length > 0 && metroLinkPathIndices?.some(idx => metroPathSelectedPairs.includes(idx))
 
+    // Hide dimmed links when multicast overlay is animating
+    if (multicastTreesMode && dimOtherLinks && !multicastLinkPathMap.has(l.pk)) return 0
+
     if (bandwidthMode) return getBandwidthStroke(l.bandwidthBps)
     if (isRemovedLink || isInSelectedPath || isInSelectedMetroPath) return 0.8
     if (isSelected) return 0.7
     if (trafficFlowMode) return getTrafficColor(linkMap.get(l.pk)!).stroke
     // Default: scale by bandwidth so higher-capacity links are visually thicker
     return getBandwidthStroke(l.bandwidthBps)
-  }, [selectedItem, removalLink, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, bandwidthMode, trafficFlowMode, linkMap])
+  }, [selectedItem, removalLink, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, bandwidthMode, trafficFlowMode, linkMap, multicastTreesMode, dimOtherLinks, multicastLinkPathMap])
 
   const getArcDashLength = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1766,13 +1770,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.3
         if (criticalityOverlayEnabled && criticality) return 0.3
+        // Multicast flow animation dashes even when global animation is off
+        if (animateFlow && multicastTreesMode && multicastLinkPathMap.has(l.pk)) return 0.4
       }
       return 0
     }
     if (a.entityType === 'inter-metro') return 0
     if (a.entityType === 'validator-link') return 0.3
     return 0.4
-  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
+  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating, animateFlow, multicastTreesMode, multicastLinkPathMap])
 
   const getArcDashGap = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1783,13 +1789,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.2
         if (criticalityOverlayEnabled && criticality) return 0.2
+        if (animateFlow && multicastTreesMode && multicastLinkPathMap.has(l.pk)) return 0.2
       }
       return 0
     }
     if (a.entityType === 'inter-metro') return 0
     if (a.entityType === 'validator-link') return 0.2
     return 0.2
-  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating])
+  }, [removalLink, whatifRemovalMode, criticalityOverlayEnabled, linkCriticalityMap, linkAnimating, animateFlow, multicastTreesMode, multicastLinkPathMap])
 
   const getArcLabel = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -1976,6 +1983,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           arcDashGap={getArcDashGap}
           arcDashAnimateTime={(d: object) => {
             const a = d as GlobeArcEntity
+            if (a.entityType === 'link') {
+              const l = a as GlobeArcLink
+              if (animateFlow && multicastTreesMode && multicastLinkPathMap.has(l.pk)) return 1500
+            }
             if (!linkAnimating) return 0
             if (a.entityType === 'inter-metro') return 0
             if (a.entityType === 'validator-link') return 2000
@@ -2211,6 +2222,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               publisherColorMap={multicastPublisherColorMap}
               dimOtherLinks={dimOtherLinks}
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
+              animateFlow={animateFlow}
+              onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
             />
           )}
         </TopologyPanel>
