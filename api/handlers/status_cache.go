@@ -6,9 +6,19 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const cacheStopTimeout = 5 * time.Second
+
+// maxConcurrentRefreshes limits how many cache refreshes can run simultaneously.
+// With a limit of 2, worst case is status (10 queries) + timeline (10 queries)
+// = 20 connections, leaving 10 of the 30-connection pool for API/agent requests.
+const maxConcurrentRefreshes = 2
+
+// refreshCheckInterval is how often the refresh loop checks for due refreshes.
+const refreshCheckInterval = 5 * time.Second
 
 // StatusCache provides periodic background caching for status endpoints.
 // This ensures fast initial page loads by pre-computing expensive queries.
@@ -64,6 +74,13 @@ var deviceHistoryConfigs = []struct {
 	{"24h", 72}, // 24-hour view (default)
 }
 
+// refreshEntry defines a cache refresh with its scheduling metadata.
+type refreshEntry struct {
+	name     string
+	interval time.Duration
+	fn       func()
+}
+
 // NewStatusCache creates a new cache with the specified refresh intervals.
 func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, outagesInterval, performanceInterval time.Duration) *StatusCache {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -81,7 +98,7 @@ func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, outag
 	}
 }
 
-// Start begins background refresh goroutines.
+// Start begins the background refresh loop.
 // It performs an initial refresh synchronously to ensure cache is warm before returning.
 func (c *StatusCache) Start() {
 	log.Printf("Starting status cache with intervals: status=%v, linkHistory=%v, timeline=%v, outages=%v, performance=%v",
@@ -96,15 +113,72 @@ func (c *StatusCache) Start() {
 	c.refreshLatencyComparison()
 	c.refreshMetroPathLatency()
 
-	// Start background refresh goroutines
-	c.wg.Add(7)
-	go c.statusRefreshLoop()
-	go c.linkHistoryRefreshLoop()
-	go c.deviceHistoryRefreshLoop()
-	go c.timelineRefreshLoop()
-	go c.outagesRefreshLoop()
-	go c.latencyComparisonRefreshLoop()
-	go c.metroPathLatencyRefreshLoop()
+	// Start a single coordinated refresh loop
+	c.wg.Add(1)
+	go c.refreshLoop()
+}
+
+// refreshLoop is a single coordinated loop that schedules all cache refreshes.
+// It replaces 7 independent goroutines with one loop that:
+//   - Checks every refreshCheckInterval which refreshes are due
+//   - Runs due refreshes in priority order (status/timeline first since they gate readyz)
+//   - Limits concurrent refreshes to maxConcurrentRefreshes via errgroup
+//   - Guarantees fair scheduling: all refresh types get turns, not just the frequent ones
+func (c *StatusCache) refreshLoop() {
+	defer c.wg.Done()
+
+	// Priority-ordered: status and timeline gate readyz, so they run first.
+	entries := []refreshEntry{
+		{"status", c.statusInterval, c.refreshStatus},
+		{"timeline", c.timelineInterval, c.refreshTimeline},
+		{"outages", c.outagesInterval, c.refreshOutages},
+		{"link history", c.linkHistoryInterval, c.refreshLinkHistory},
+		{"device history", c.linkHistoryInterval, c.refreshDeviceHistory},
+		{"latency comparison", c.performanceInterval, c.refreshLatencyComparison},
+		{"metro path latency", c.performanceInterval, c.refreshMetroPathLatency},
+	}
+
+	// Track when each refresh last ran. Initialized to now since Start()
+	// already completed the initial synchronous refresh.
+	lastRefresh := make([]time.Time, len(entries))
+	now := time.Now()
+	for i := range lastRefresh {
+		lastRefresh[i] = now
+	}
+
+	ticker := time.NewTicker(refreshCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			now := time.Now()
+
+			// Collect due refreshes in priority order
+			g, _ := errgroup.WithContext(c.ctx)
+			g.SetLimit(maxConcurrentRefreshes)
+
+			for i, entry := range entries {
+				if now.Sub(lastRefresh[i]) < entry.interval {
+					continue
+				}
+				i, entry := i, entry
+				g.Go(func() error {
+					if c.ctx.Err() != nil {
+						return nil
+					}
+					entry.fn()
+					lastRefresh[i] = time.Now()
+					return nil
+				})
+			}
+
+			_ = g.Wait()
+
+		case <-c.ctx.Done():
+			return
+		}
+	}
 }
 
 // Stop cancels the background refresh goroutines and waits for them to exit.
@@ -192,54 +266,6 @@ func (c *StatusCache) GetMetroPathLatency(optimize string) *MetroPathLatencyResp
 	return c.metroPathLatency[optimize]
 }
 
-// statusRefreshLoop runs the status refresh on a ticker.
-func (c *StatusCache) statusRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.statusInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshStatus()
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
-// linkHistoryRefreshLoop runs the link history refresh on a ticker.
-func (c *StatusCache) linkHistoryRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.linkHistoryInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshLinkHistory()
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
-// deviceHistoryRefreshLoop runs the device history refresh on a ticker.
-func (c *StatusCache) deviceHistoryRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.linkHistoryInterval) // Use same interval as link history
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshDeviceHistory()
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
 // refreshStatus fetches fresh status data and updates the cache.
 func (c *StatusCache) refreshStatus() {
 	start := time.Now()
@@ -317,38 +343,6 @@ func (c *StatusCache) refreshDeviceHistory() {
 		time.Since(start), len(deviceHistoryConfigs))
 }
 
-// timelineRefreshLoop runs the timeline refresh on a ticker.
-func (c *StatusCache) timelineRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.timelineInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshTimeline()
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
-// outagesRefreshLoop runs the outages refresh on a ticker.
-func (c *StatusCache) outagesRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.outagesInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshOutages()
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
 // refreshTimeline fetches fresh timeline data for the default 24h view.
 func (c *StatusCache) refreshTimeline() {
 	start := time.Now()
@@ -389,38 +383,6 @@ func (c *StatusCache) refreshOutages() {
 	c.mu.Unlock()
 
 	log.Printf("Outages cache refreshed in %v (%d outages)", time.Since(start), len(resp.Outages))
-}
-
-// latencyComparisonRefreshLoop runs the latency comparison refresh on a ticker.
-func (c *StatusCache) latencyComparisonRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.performanceInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshLatencyComparison()
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
-// metroPathLatencyRefreshLoop runs the metro path latency refresh on a ticker.
-func (c *StatusCache) metroPathLatencyRefreshLoop() {
-	defer c.wg.Done()
-	ticker := time.NewTicker(c.performanceInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			c.refreshMetroPathLatency()
-		case <-c.ctx.Done():
-			return
-		}
-	}
 }
 
 // refreshLatencyComparison fetches fresh DZ vs Internet latency comparison data.
