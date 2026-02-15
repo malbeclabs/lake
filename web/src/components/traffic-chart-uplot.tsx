@@ -592,20 +592,19 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     // Create new plot
     plotRef.current = new uPlot(opts, uplotData, chartRef.current)
 
-    // Handle resize
-    const handleResize = () => {
-      if (plotRef.current && chartRef.current) {
-        plotRef.current.setSize({
-          width: chartRef.current.offsetWidth,
-          height: 400,
-        })
+    // Handle resize via ResizeObserver so charts resize when container changes
+    // (e.g. switching between 1-column and 2-column layout)
+    const container = chartRef.current
+    const resizeObserver = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width
+      if (width && plotRef.current) {
+        plotRef.current.setSize({ width, height: 400 })
       }
-    }
-
-    window.addEventListener('resize', handleResize)
+    })
+    resizeObserver.observe(container)
 
     return () => {
-      window.removeEventListener('resize', handleResize)
+      resizeObserver.disconnect()
       if (plotRef.current) {
         plotRef.current.destroy()
         plotRef.current = null
