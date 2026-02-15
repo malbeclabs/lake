@@ -11,7 +11,7 @@ import { CapacityPanel } from '@/components/traffic-dashboard/capacity-panel'
 
 function DashboardContent() {
   const { selectedEntity, pinnedEntities, timeRange, metric, intfType } = useDashboard()
-  const showCapacity = ['7d', '14d', '30d'].includes(timeRange) && intfType !== 'tunnel' && intfType !== 'other'
+  const showCapacity = intfType !== 'tunnel' && intfType !== 'other'
   const isUtil = metric === 'utilization'
 
   return (
@@ -93,7 +93,7 @@ function DashboardContent() {
           {showCapacity && (
             <Section
               title="Capacity Planning"
-              description="Interfaces ranked by sustained P95 utilization over the selected window. Use longer time ranges (7d+) for meaningful trends."
+              description="Interfaces ranked by sustained P95 utilization over the selected window. Best with 24h+ for stable trends."
               defaultOpen={false}
             >
               <CapacityPanel />
