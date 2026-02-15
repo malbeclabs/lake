@@ -2,6 +2,9 @@ import { createContext, useContext, useMemo, useCallback, type ReactNode } from 
 import { useSearchParams } from 'react-router-dom'
 
 export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
+export type IntfType = 'all' | 'link' | 'tunnel' | 'other'
+
+const validIntfTypes: Set<string> = new Set(['all', 'link', 'tunnel', 'other'])
 
 const validTimeRanges: Set<string> = new Set(['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'])
 
@@ -16,6 +19,7 @@ export interface DashboardState {
   threshold: number
   metric: 'utilization' | 'throughput'
   groupBy: string
+  intfType: IntfType
 
   // Dimension filters
   metroFilter: string[]
@@ -37,6 +41,7 @@ export interface DashboardState {
   setThreshold: (t: number) => void
   setMetric: (m: 'utilization' | 'throughput') => void
   setGroupBy: (g: string) => void
+  setIntfType: (t: IntfType) => void
   setMetroFilter: (f: string[]) => void
   setDeviceFilter: (f: string[]) => void
   setLinkTypeFilter: (f: string[]) => void
@@ -93,6 +98,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [searchParams])
 
   const groupBy = useMemo(() => searchParams.get('group_by') ?? 'device', [searchParams])
+
+  const intfType = useMemo<IntfType>(() => {
+    const param = searchParams.get('intf_type')
+    if (param && validIntfTypes.has(param)) return param as IntfType
+    return 'all'
+  }, [searchParams])
 
   const threshold = useMemo(() => {
     const param = searchParams.get('threshold')
@@ -189,6 +200,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     })
   }, [setSearchParams])
 
+  const setIntfTypeAction = useCallback((t: IntfType) => {
+    setSearchParams(prev => {
+      if (t === 'all') {
+        prev.delete('intf_type')
+      } else {
+        prev.set('intf_type', t)
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
   const setListParam = useCallback((key: string, values: string[]) => {
     setSearchParams(prev => {
       if (values.length === 0) {
@@ -277,11 +299,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   return (
     <DashboardContext.Provider
       value={{
-        timeRange, threshold, metric, groupBy,
+        timeRange, threshold, metric, groupBy, intfType,
         metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
         customStart, customEnd,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold: setThresholdAction, setMetric: setMetricAction, setGroupBy: setGroupByAction,
+        setIntfType: setIntfTypeAction,
         setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
@@ -309,6 +332,7 @@ export function dashboardFilterParams(state: DashboardState): Record<string, str
   } else {
     params.time_range = state.timeRange
   }
+  if (state.intfType !== 'all') params.intf_type = state.intfType
   if (state.metroFilter.length > 0) params.metro = state.metroFilter.join(',')
   if (state.deviceFilter.length > 0) params.device = state.deviceFilter.join(',')
   if (state.linkTypeFilter.length > 0) params.link_type = state.linkTypeFilter.join(',')

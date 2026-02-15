@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, X, Search, Filter, Loader2, RotateCcw } from 'lucide-react'
-import { useDashboard, type TimeRange } from './dashboard-context'
+import { useDashboard, type TimeRange, type IntfType } from './dashboard-context'
 import { cn } from '@/lib/utils'
 import { fetchFieldValues } from '@/lib/api'
 
@@ -20,6 +20,13 @@ const presetTimeRangeOptions: { value: TimeRange; label: string }[] = [
 const metricOptions: { value: 'utilization' | 'throughput'; label: string }[] = [
   { value: 'utilization', label: 'Utilization' },
   { value: 'throughput', label: 'Throughput' },
+]
+
+const intfTypeOptions: { value: IntfType; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'link', label: 'Link' },
+  { value: 'tunnel', label: 'Tunnel' },
+  { value: 'other', label: 'Other' },
 ]
 
 function Dropdown<T extends string>({
@@ -543,12 +550,13 @@ function TimeRangeDropdown() {
 }
 
 export function DashboardFilters() {
-  const { metric, setMetric } = useDashboard()
+  const { metric, setMetric, intfType, setIntfType } = useDashboard()
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <TimeRangeDropdown />
       <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
+      <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />
       <DashboardSearch />
     </div>
   )

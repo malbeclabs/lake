@@ -328,6 +328,131 @@ func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 }
 
+// --- Traffic type filter tests ---
+
+// seedTrafficTypeData inserts data with different traffic types: link, tunnel, and other.
+func seedTrafficTypeData(t *testing.T) {
+	ctx := t.Context()
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_metros_current VALUES
+		('metro-1', 'FRA', 'Frankfurt')`))
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_contributors_current VALUES
+		('contrib-1', 'ACME', 'Acme Corp')`))
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_devices_current VALUES
+		('dev-1', 'ROUTER-FRA-1', 'metro-1', 'contrib-1')`))
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_links_current VALUES
+		('link-1', 100000000000, 'WAN', 'contrib-1')`))
+
+	// Link interface: has link_pk
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		VALUES
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL)`))
+
+	// Tunnel interface: has user_tunnel_id
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		VALUES
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Tunnel100', '', 50000000000, 25000000000, 30.0, 0, 0, 42)`))
+
+	// Other interface: no link_pk, no user_tunnel_id
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		VALUES
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Loopback0', '', 10000000, 5000000, 30.0, 0, 0, NULL)`))
+}
+
+func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedTrafficTypeData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantIntfs []string
+	}{
+		{
+			name:      "all_traffic",
+			query:     "?time_range=1h&entity=interface",
+			wantIntfs: []string{"Ethernet1", "Loopback0", "Tunnel100"},
+		},
+		{
+			name:      "all_traffic_explicit",
+			query:     "?time_range=1h&entity=interface&intf_type=all",
+			wantIntfs: []string{"Ethernet1", "Loopback0", "Tunnel100"},
+		},
+		{
+			name:      "link_only",
+			query:     "?time_range=1h&entity=interface&intf_type=link",
+			wantIntfs: []string{"Ethernet1"},
+		},
+		{
+			name:      "tunnel_only",
+			query:     "?time_range=1h&entity=interface&intf_type=tunnel",
+			wantIntfs: []string{"Tunnel100"},
+		},
+		{
+			name:      "other_only",
+			query:     "?time_range=1h&entity=interface&intf_type=other",
+			wantIntfs: []string{"Loopback0"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardTop(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.TopResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			var gotIntfs []string
+			for _, e := range resp.Entities {
+				gotIntfs = append(gotIntfs, e.Intf)
+			}
+			assert.ElementsMatch(t, tt.wantIntfs, gotIntfs)
+		})
+	}
+}
+
+func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedTrafficTypeData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"all_traffic", "?time_range=1h&metric=throughput"},
+		{"link_only", "?time_range=1h&metric=throughput&intf_type=link"},
+		{"tunnel_only", "?time_range=1h&metric=throughput&intf_type=tunnel"},
+		{"other_only", "?time_range=1h&metric=throughput&intf_type=other"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardStress(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.StressResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
+}
+
 // --- Drilldown endpoint tests ---
 
 func TestTrafficDashboardDrilldown(t *testing.T) {

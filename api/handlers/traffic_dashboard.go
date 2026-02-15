@@ -143,8 +143,9 @@ func dashboardTimeFilter(r *http.Request) (timeFilter string, bucketInterval str
 // It returns:
 //   - filterSQL: clauses for dimension tables (m, d, l, co) with leading AND
 //   - intfFilterSQL: clause for f.intf with leading AND (must go in the CTE where f is in scope)
+//   - intfTypeSQL: clause for interface type filtering with leading AND (must go in CTE)
 //   - join flags indicating which dimension joins are needed
-func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) {
+func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) {
 	var clauses []string
 
 	if metros := r.URL.Query().Get("metro"); metros != "" {
@@ -198,10 +199,29 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL string, ne
 		intfFilterSQL = fmt.Sprintf(" AND f.intf IN (%s)", strings.Join(quoted, ","))
 	}
 
+	intfTypeSQL = buildIntfTypeFilter(r.URL.Query().Get("intf_type"))
+
 	if len(clauses) > 0 {
 		filterSQL = " AND " + strings.Join(clauses, " AND ")
 	}
 	return
+}
+
+// buildIntfTypeFilter returns a SQL clause for filtering by interface type.
+// Values: "all" (no filter), "link" (link interfaces), "tunnel" (tunnel interfaces),
+// "other" (neither link nor tunnel). Default is "all".
+func buildIntfTypeFilter(intfType string) string {
+	switch intfType {
+	case "link":
+		return " AND f.link_pk != ''"
+	case "tunnel":
+		return " AND f.user_tunnel_id IS NOT NULL"
+	case "other":
+		return " AND f.link_pk = '' AND f.user_tunnel_id IS NULL"
+	default:
+		// "all" or empty: no filter
+		return ""
+	}
 }
 
 func escapeSingleQuote(s string) string {
@@ -211,7 +231,7 @@ func escapeSingleQuote(s string) string {
 // --- Query builders (exported for testing) ---
 
 // BuildStressQuery builds the ClickHouse query for the stress endpoint.
-func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL string, threshold float64,
+func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64,
 	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) (query string, grouped bool) {
 
 	// Determine group_by column and required joins
@@ -296,7 +316,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 				AND delta_duration > 0
 				AND in_octets_delta >= 0
 				AND out_octets_delta >= 0
-				AND intf NOT LIKE 'Tunnel%%'
+				%s
 				%s
 			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk
 		),
@@ -315,7 +335,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		GROUP BY %s
 		ORDER BY bucket_ts`,
 		bucketInterval, timeFilter,
-		intfFilterSQL,
+		intfTypeSQL, intfFilterSQL,
 		metricExpr, groupBySelect,
 		dimJoins, filterSQL,
 		selectCols, metricFilter, groupByCols)
@@ -324,7 +344,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
-func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL string, limit int) string {
+func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -378,7 +398,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 					AND f.delta_duration > 0
 					AND f.in_octets_delta >= 0
 					AND f.out_octets_delta >= 0
-					AND f.intf NOT LIKE 'Tunnel%%'
+					%s
 					%s
 				GROUP BY f.device_pk
 			)
@@ -402,7 +422,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 			WHERE 1=1 %s
 			ORDER BY %s %s
 			LIMIT %d`,
-			timeFilter, intfFilterSQL, filterSQL, orderCol, dir, limit)
+			timeFilter, intfTypeSQL, intfFilterSQL, filterSQL, orderCol, dir, limit)
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
@@ -423,7 +443,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
-				AND f.intf NOT LIKE 'Tunnel%%'
+				%s
 				%s
 			GROUP BY f.device_pk, f.intf, f.link_pk
 		)
@@ -454,7 +474,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 		WHERE 1=1 %s
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, intfFilterSQL, filterSQL, orderCol, dir, limit)
+		timeFilter, intfTypeSQL, intfFilterSQL, filterSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
@@ -480,7 +500,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL string, threshold float64, limit int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -521,7 +541,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
-				AND f.intf NOT LIKE 'Tunnel%%'
+				%s
 				%s
 				%s
 		)
@@ -544,7 +564,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		HAVING burstiness > 0
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, filterSQL, intfFilterSQL, threshold, orderCol, dir, limit)
+		timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, orderCol, dir, limit)
 }
 
 // --- Stress endpoint ---
@@ -588,9 +608,9 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 		metric = "utilization"
 	}
 
-	filterSQL, intfFilterSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
 
-	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, threshold,
+	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, threshold,
 		needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin)
 
 	start := time.Now()
@@ -762,9 +782,9 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filterSQL, intfFilterSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, limit)
+	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -833,12 +853,13 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	intf := r.URL.Query().Get("intf")
+	intfType := r.URL.Query().Get("intf_type")
 
 	var intfFilter string
 	if intf != "" {
 		intfFilter = fmt.Sprintf("AND f.intf = '%s'", escapeSingleQuote(intf))
 	} else {
-		intfFilter = "AND f.intf NOT LIKE 'Tunnel%'"
+		intfFilter = buildIntfTypeFilter(intfType)
 	}
 
 	query := BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter)
@@ -966,9 +987,9 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, intfFilterSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, threshold, limit)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, threshold, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

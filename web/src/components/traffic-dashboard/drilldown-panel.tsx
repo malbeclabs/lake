@@ -37,11 +37,12 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   )
 
   const { data, isLoading } = useQuery({
-    queryKey: ['dashboard-drilldown', entity.devicePk, entity.intf, state.timeRange],
+    queryKey: ['dashboard-drilldown', entity.devicePk, entity.intf, state.timeRange, state.intfType],
     queryFn: () => fetchDashboardDrilldown({
       device_pk: entity.devicePk,
       intf: entity.intf,
       time_range: state.timeRange,
+      intf_type: state.intfType !== 'all' ? state.intfType : undefined,
     }),
     staleTime: 30_000,
   })

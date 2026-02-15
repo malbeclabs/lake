@@ -3736,6 +3736,7 @@ export interface DashboardDrilldownParams {
   bucket?: string
   device_pk: string
   intf?: string
+  intf_type?: string
 }
 
 export async function fetchDashboardDrilldown(
