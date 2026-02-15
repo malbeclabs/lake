@@ -59,9 +59,10 @@ export function LocalizationPanel() {
   const { groupStats, totalGroups } = useMemo(() => {
     if (!data?.groups?.length) return { groupStats: [], totalGroups: 0 }
     const all = data.groups.map(g => {
-      const n = g.p95.length || 1
-      const avgP95 = g.p95.reduce((a, b) => a + b, 0) / n
-      const maxP95 = Math.max(...g.p95)
+      const p95 = g.p95_in.map((v, i) => Math.max(v, g.p95_out[i] ?? 0))
+      const n = p95.length || 1
+      const avgP95 = p95.reduce((a, b) => a + b, 0) / n
+      const maxP95 = Math.max(...p95)
       const totalStressed = g.stressed_count.reduce((a, b) => a + b, 0)
       return {
         key: g.key,

@@ -3643,9 +3643,12 @@ export async function fetchDiscardsData(
 
 export interface DashboardStressResponse {
   timestamps: string[]
-  p50: number[]
-  p95: number[]
-  max: number[]
+  p50_in: number[]
+  p95_in: number[]
+  max_in: number[]
+  p50_out: number[]
+  p95_out: number[]
+  max_out: number[]
   stressed_count: number[]
   total_count: number[]
   effective_bucket: string
@@ -3655,9 +3658,12 @@ export interface DashboardStressResponse {
 export interface DashboardStressGroup {
   key: string
   label: string
-  p50: number[]
-  p95: number[]
-  max: number[]
+  p50_in: number[]
+  p95_in: number[]
+  max_in: number[]
+  p50_out: number[]
+  p95_out: number[]
+  max_out: number[]
   stressed_count: number[]
 }
 

@@ -143,9 +143,12 @@ func TestTrafficDashboardStress(t *testing.T) {
 				}
 			} else {
 				assert.NotEmpty(t, resp.Timestamps, "should have timestamps")
-				assert.Len(t, resp.P50, len(resp.Timestamps))
-				assert.Len(t, resp.P95, len(resp.Timestamps))
-				assert.Len(t, resp.Max, len(resp.Timestamps))
+				assert.Len(t, resp.P50In, len(resp.Timestamps))
+				assert.Len(t, resp.P95In, len(resp.Timestamps))
+				assert.Len(t, resp.MaxIn, len(resp.Timestamps))
+				assert.Len(t, resp.P50Out, len(resp.Timestamps))
+				assert.Len(t, resp.P95Out, len(resp.Timestamps))
+				assert.Len(t, resp.MaxOut, len(resp.Timestamps))
 			}
 		})
 	}

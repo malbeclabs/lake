@@ -270,18 +270,23 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		dimJoins += " LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk"
 	}
 
-	// Build the metric expression and filter
-	var metricExpr, metricFilter string
+	// Build the metric expressions (separate in/out) and filter
+	var metricExprIn, metricExprOut, metricFilter string
 	switch metric {
 	case "throughput":
-		metricExpr = "greatest(ir.in_bps, ir.out_bps)"
+		metricExprIn = "ir.in_bps"
+		metricExprOut = "ir.out_bps"
 	case "packets":
-		metricExpr = "greatest(ir.in_pps, ir.out_pps)"
+		metricExprIn = "ir.in_pps"
+		metricExprOut = "ir.out_pps"
 	default: // utilization
-		metricExpr = `CASE WHEN l.bandwidth_bps > 0
-			THEN greatest(ir.in_bps, ir.out_bps) / l.bandwidth_bps
+		metricExprIn = `CASE WHEN l.bandwidth_bps > 0
+			THEN ir.in_bps / l.bandwidth_bps
 			ELSE NULL END`
-		metricFilter = " AND metric_val IS NOT NULL"
+		metricExprOut = `CASE WHEN l.bandwidth_bps > 0
+			THEN ir.out_bps / l.bandwidth_bps
+			ELSE NULL END`
+		metricFilter = " AND metric_val_in IS NOT NULL"
 	}
 
 	// Build percentile select
@@ -290,19 +295,25 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		selectCols = fmt.Sprintf(`
 			formatDateTime(bucket_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
 			group_key, group_label,
-			quantile(0.5)(metric_val) AS p50,
-			quantile(0.95)(metric_val) AS p95,
-			max(metric_val) AS max_val,
-			countIf(metric_val >= %f) AS stressed_count,
+			quantile(0.5)(metric_val_in) AS p50_in,
+			quantile(0.95)(metric_val_in) AS p95_in,
+			max(metric_val_in) AS max_in,
+			quantile(0.5)(metric_val_out) AS p50_out,
+			quantile(0.95)(metric_val_out) AS p95_out,
+			max(metric_val_out) AS max_out,
+			countIf(greatest(metric_val_in, metric_val_out) >= %f) AS stressed_count,
 			count() AS total_count`, threshold)
 		groupByCols = "bucket_ts, group_key, group_label"
 	} else {
 		selectCols = fmt.Sprintf(`
 			formatDateTime(bucket_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
-			quantile(0.5)(metric_val) AS p50,
-			quantile(0.95)(metric_val) AS p95,
-			max(metric_val) AS max_val,
-			countIf(metric_val >= %f) AS stressed_count,
+			quantile(0.5)(metric_val_in) AS p50_in,
+			quantile(0.95)(metric_val_in) AS p95_in,
+			max(metric_val_in) AS max_in,
+			quantile(0.5)(metric_val_out) AS p50_out,
+			quantile(0.95)(metric_val_out) AS p95_out,
+			max(metric_val_out) AS max_out,
+			countIf(greatest(metric_val_in, metric_val_out) >= %f) AS stressed_count,
 			count() AS total_count`, threshold)
 		groupByCols = "bucket_ts"
 	}
@@ -328,7 +339,8 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		with_metric AS (
 			SELECT
 				ir.bucket_ts, ir.device_pk, ir.intf, ir.link_pk, ir.in_bps, ir.out_bps,
-				%s AS metric_val
+				%s AS metric_val_in,
+				%s AS metric_val_out
 				%s
 			FROM interface_rates ir
 			%s
@@ -341,7 +353,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		ORDER BY bucket_ts`,
 		bucketInterval, timeFilter,
 		intfTypeSQL, intfFilterSQL,
-		metricExpr, groupBySelect,
+		metricExprIn, metricExprOut, groupBySelect,
 		dimJoins, filterSQL,
 		selectCols, metricFilter, groupByCols)
 
@@ -748,9 +760,12 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 
 type StressResponse struct {
 	Timestamps    []string      `json:"timestamps"`
-	P50           []float64     `json:"p50"`
-	P95           []float64     `json:"p95"`
-	Max           []float64     `json:"max"`
+	P50In         []float64     `json:"p50_in"`
+	P95In         []float64     `json:"p95_in"`
+	MaxIn         []float64     `json:"max_in"`
+	P50Out        []float64     `json:"p50_out"`
+	P95Out        []float64     `json:"p95_out"`
+	MaxOut        []float64     `json:"max_out"`
 	StressedCount []int64       `json:"stressed_count"`
 	TotalCount    []int64       `json:"total_count"`
 	EffBucket     string        `json:"effective_bucket"`
@@ -760,9 +775,12 @@ type StressResponse struct {
 type StressGroup struct {
 	Key           string    `json:"key"`
 	Label         string    `json:"label"`
-	P50           []float64 `json:"p50"`
-	P95           []float64 `json:"p95"`
-	Max           []float64 `json:"max"`
+	P50In         []float64 `json:"p50_in"`
+	P95In         []float64 `json:"p95_in"`
+	MaxIn         []float64 `json:"max_in"`
+	P50Out        []float64 `json:"p50_out"`
+	P95Out        []float64 `json:"p95_out"`
+	MaxOut        []float64 `json:"max_out"`
 	StressedCount []int64   `json:"stressed_count"`
 }
 
@@ -804,9 +822,12 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 
 	if grouped {
 		type rowData struct {
-			p50         float64
-			p95         float64
-			maxVal      float64
+			p50In       float64
+			p95In       float64
+			maxIn       float64
+			p50Out      float64
+			p95Out      float64
+			maxOut      float64
 			stressedCnt int64
 		}
 
@@ -818,9 +839,9 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 
 		for rows.Next() {
 			var ts, gk, gl string
-			var p50, p95, maxV float64
+			var p50In, p95In, maxIn, p50Out, p95Out, maxOut float64
 			var sc, tc uint64
-			if err := rows.Scan(&ts, &gk, &gl, &p50, &p95, &maxV, &sc, &tc); err != nil {
+			if err := rows.Scan(&ts, &gk, &gl, &p50In, &p95In, &maxIn, &p50Out, &p95Out, &maxOut, &sc, &tc); err != nil {
 				log.Printf("Traffic dashboard stress row scan error: %v", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -835,7 +856,8 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 				dataByGroup[gk] = map[string]*rowData{}
 			}
 			dataByGroup[gk][ts] = &rowData{
-				p50: p50, p95: p95, maxVal: maxV,
+				p50In: p50In, p95In: p95In, maxIn: maxIn,
+				p50Out: p50Out, p95Out: p95Out, maxOut: maxOut,
 				stressedCnt: int64(sc),
 			}
 		}
@@ -845,16 +867,22 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 			g := StressGroup{
 				Key:           gk,
 				Label:         groupLabels[gk],
-				P50:           make([]float64, len(tsOrder)),
-				P95:           make([]float64, len(tsOrder)),
-				Max:           make([]float64, len(tsOrder)),
+				P50In:         make([]float64, len(tsOrder)),
+				P95In:         make([]float64, len(tsOrder)),
+				MaxIn:         make([]float64, len(tsOrder)),
+				P50Out:        make([]float64, len(tsOrder)),
+				P95Out:        make([]float64, len(tsOrder)),
+				MaxOut:        make([]float64, len(tsOrder)),
 				StressedCount: make([]int64, len(tsOrder)),
 			}
 			for i, ts := range tsOrder {
 				if d, ok := dataByGroup[gk][ts]; ok {
-					g.P50[i] = d.p50
-					g.P95[i] = d.p95
-					g.Max[i] = d.maxVal
+					g.P50In[i] = d.p50In
+					g.P95In[i] = d.p95In
+					g.MaxIn[i] = d.maxIn
+					g.P50Out[i] = d.p50Out
+					g.P95Out[i] = d.p95Out
+					g.MaxOut[i] = d.maxOut
 					g.StressedCount[i] = d.stressedCnt
 				}
 			}
@@ -870,40 +898,50 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(resp)
 	} else {
 		var timestamps []string
-		var p50s, p95s, maxVals []float64
+		var p50Ins, p95Ins, maxIns []float64
+		var p50Outs, p95Outs, maxOuts []float64
 		var stressedCounts, totalCounts []int64
 
 		for rows.Next() {
 			var ts string
-			var p50, p95, maxV float64
+			var p50In, p95In, maxIn, p50Out, p95Out, maxOut float64
 			var sc, tc uint64
-			if err := rows.Scan(&ts, &p50, &p95, &maxV, &sc, &tc); err != nil {
+			if err := rows.Scan(&ts, &p50In, &p95In, &maxIn, &p50Out, &p95Out, &maxOut, &sc, &tc); err != nil {
 				log.Printf("Traffic dashboard stress row scan error: %v", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			timestamps = append(timestamps, ts)
-			p50s = append(p50s, p50)
-			p95s = append(p95s, p95)
-			maxVals = append(maxVals, maxV)
+			p50Ins = append(p50Ins, p50In)
+			p95Ins = append(p95Ins, p95In)
+			maxIns = append(maxIns, maxIn)
+			p50Outs = append(p50Outs, p50Out)
+			p95Outs = append(p95Outs, p95Out)
+			maxOuts = append(maxOuts, maxOut)
 			stressedCounts = append(stressedCounts, int64(sc))
 			totalCounts = append(totalCounts, int64(tc))
 		}
 
 		if timestamps == nil {
 			timestamps = []string{}
-			p50s = []float64{}
-			p95s = []float64{}
-			maxVals = []float64{}
+			p50Ins = []float64{}
+			p95Ins = []float64{}
+			maxIns = []float64{}
+			p50Outs = []float64{}
+			p95Outs = []float64{}
+			maxOuts = []float64{}
 			stressedCounts = []int64{}
 			totalCounts = []int64{}
 		}
 
 		resp := StressResponse{
 			Timestamps:    timestamps,
-			P50:           p50s,
-			P95:           p95s,
-			Max:           maxVals,
+			P50In:         p50Ins,
+			P95In:         p95Ins,
+			MaxIn:         maxIns,
+			P50Out:        p50Outs,
+			P95Out:        p95Outs,
+			MaxOut:        maxOuts,
 			StressedCount: stressedCounts,
 			TotalCount:    totalCounts,
 			EffBucket:     bucketInterval,
