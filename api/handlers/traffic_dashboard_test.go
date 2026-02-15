@@ -206,6 +206,10 @@ func TestTrafficDashboardTop(t *testing.T) {
 			var resp handlers.TopResponse
 			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 			assert.NotEmpty(t, resp.Entities, "should return entities")
+			// Verify contributor_code is populated from the join
+			for _, e := range resp.Entities {
+				assert.NotEmpty(t, e.ContributorCode, "contributor_code should be populated for %s %s", e.DeviceCode, e.Intf)
+			}
 		})
 	}
 }
@@ -612,6 +616,9 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 
 			var resp handlers.BurstinessResponse
 			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+			for _, e := range resp.Entities {
+				assert.NotEmpty(t, e.ContributorCode, "contributor_code should be populated for %s %s", e.DeviceCode, e.Intf)
+			}
 		})
 	}
 }
@@ -781,6 +788,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 		assert.Len(t, resp.Entities, 2)
 		for _, e := range resp.Entities {
 			assert.Greater(t, e.TotalEvents, int64(0))
+			assert.NotEmpty(t, e.ContributorCode, "contributor_code should be populated for %s %s", e.DeviceCode, e.Intf)
 		}
 	})
 

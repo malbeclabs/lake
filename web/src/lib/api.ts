@@ -3772,6 +3772,7 @@ export interface DashboardBurstinessEntity {
   device_code: string
   intf: string
   metro_code: string
+  contributor_code: string
   bandwidth_bps: number
   p50_util: number
   p99_util: number
@@ -3820,6 +3821,7 @@ export interface DashboardHealthEntity {
   device_code: string
   intf: string
   metro_code: string
+  contributor_code: string
   total_errors: number
   total_discards: number
   total_fcs_errors: number

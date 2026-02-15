@@ -111,6 +111,7 @@ function TopTable({
                   {isDevice ? 'Device' : 'Interface'}
                 </th>
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
+                <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Contributor</th>
                 {showUtilCols && (
                   <>
                     <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Link</th>
@@ -173,6 +174,7 @@ function TopTable({
                       }
                     </td>
                     <td className="py-1.5 px-2">{e.metro_code}</td>
+                    <td className="py-1.5 px-2">{e.contributor_code}</td>
                     {showUtilCols && (
                       <>
                         <td className="py-1.5 px-2">{e.link_type}</td>

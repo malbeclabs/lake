@@ -85,6 +85,7 @@ export function CapacityPanel() {
               <tr className="border-b border-border">
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Interface</th>
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
+                <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Contributor</th>
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Link</th>
                 <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('bandwidth_bps')}>
                   <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('bandwidth_bps')}>
@@ -127,6 +128,7 @@ export function CapacityPanel() {
                       {e.device_code} <span className="text-muted-foreground">{e.intf}</span>
                     </td>
                     <td className="py-1.5 px-2">{e.metro_code}</td>
+                    <td className="py-1.5 px-2">{e.contributor_code}</td>
                     <td className="py-1.5 px-2">{e.link_type}</td>
                     <td className="py-1.5 px-2 text-right font-mono">
                       {e.bandwidth_bps > 0 ? formatRate(e.bandwidth_bps) : '\u2014'}

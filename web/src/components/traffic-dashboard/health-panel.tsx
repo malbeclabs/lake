@@ -80,6 +80,7 @@ export function HealthPanel() {
                 <tr className="border-b border-border">
                   <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Interface</th>
                   <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
+                  <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Contributor</th>
                   <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('total_errors')}>
                     <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('total_errors')}>
                       Errors <SortIcon field="total_errors" />
@@ -128,6 +129,7 @@ export function HealthPanel() {
                         {e.device_code} <span className="text-muted-foreground">{e.intf}</span>
                       </td>
                       <td className="py-1.5 px-2">{e.metro_code}</td>
+                      <td className="py-1.5 px-2">{e.contributor_code}</td>
                       <td className="py-1.5 px-2 text-right font-mono">{formatCount(e.total_errors)}</td>
                       <td className="py-1.5 px-2 text-right font-mono">{formatCount(e.total_discards)}</td>
                       <td className="py-1.5 px-2 text-right font-mono">{formatCount(e.total_fcs_errors)}</td>

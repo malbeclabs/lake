@@ -585,12 +585,14 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 			END AS pct_time_stressed,
 			quantile(0.5)(ps.throughput_bps) AS p50_bps,
 			quantile(0.99)(ps.throughput_bps) AS p99_bps,
-			CASE WHEN argMax(ps.is_rx, ps.throughput_bps) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction
+			CASE WHEN argMax(ps.is_rx, ps.throughput_bps) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction,
+			COALESCE(co.code, '') AS contributor_code
 		FROM per_sample ps
 		INNER JOIN dz_devices_current d ON ps.device_pk = d.pk
 		LEFT JOIN dz_links_current l ON ps.link_pk = l.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		GROUP BY ps.device_pk, ps.intf, ps.link_pk, d.code, m.code, l.bandwidth_bps
+		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
+		GROUP BY ps.device_pk, ps.intf, ps.link_pk, d.code, m.code, l.bandwidth_bps, co.code
 		HAVING burstiness > 0
 			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= %f)
 		ORDER BY %s %s
@@ -647,7 +649,8 @@ func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL,
 			h.total_discards,
 			h.total_fcs_errors,
 			h.total_carrier_transitions,
-			h.total_errors + h.total_discards + h.total_fcs_errors + h.total_carrier_transitions AS total_events
+			h.total_errors + h.total_discards + h.total_fcs_errors + h.total_carrier_transitions AS total_events,
+			COALESCE(co.code, '') AS contributor_code
 		FROM health h
 		INNER JOIN dz_devices_current d ON h.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -669,6 +672,7 @@ type HealthEntity struct {
 	DeviceCode              string `json:"device_code"`
 	Intf                    string `json:"intf"`
 	MetroCode               string `json:"metro_code"`
+	ContributorCode         string `json:"contributor_code"`
 	TotalErrors             int64  `json:"total_errors"`
 	TotalDiscards           int64  `json:"total_discards"`
 	TotalFcsErrors          int64  `json:"total_fcs_errors"`
@@ -720,7 +724,7 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 		var e HealthEntity
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.TotalErrors, &e.TotalDiscards, &e.TotalFcsErrors,
-			&e.TotalCarrierTransitions, &e.TotalEvents); err != nil {
+			&e.TotalCarrierTransitions, &e.TotalEvents, &e.ContributorCode); err != nil {
 			log.Printf("Traffic dashboard health row scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1126,6 +1130,7 @@ type BurstinessEntity struct {
 	P50Bps          float64 `json:"p50_bps"`
 	P99Bps          float64 `json:"p99_bps"`
 	PeakDirection   string  `json:"peak_direction"`
+	ContributorCode string  `json:"contributor_code"`
 }
 
 type BurstinessResponse struct {
@@ -1186,7 +1191,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		var e BurstinessEntity
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.BandwidthBps, &e.P50Util, &e.P99Util, &e.Burstiness,
-			&e.PctTimeStressed, &e.P50Bps, &e.P99Bps, &e.PeakDirection); err != nil {
+			&e.PctTimeStressed, &e.P50Bps, &e.P99Bps, &e.PeakDirection, &e.ContributorCode); err != nil {
 			log.Printf("Traffic dashboard burstiness row scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
