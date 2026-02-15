@@ -30,7 +30,11 @@ func setupDashboardSchema(t *testing.T) {
 			out_discards_delta Nullable(Int64),
 			user_tunnel_id Nullable(Int64),
 			in_pkts_delta Nullable(Int64),
-			out_pkts_delta Nullable(Int64)
+			out_pkts_delta Nullable(Int64),
+			in_errors_delta Nullable(Int64),
+			out_errors_delta Nullable(Int64),
+			in_fcs_errors_delta Nullable(Int64),
+			carrier_transitions_delta Nullable(Int64)
 		) ENGINE = Memory`,
 
 		`CREATE TABLE IF NOT EXISTS dz_devices_current (
@@ -705,6 +709,139 @@ func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.BurstinessResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Empty(t, resp.Entities)
+}
+
+// --- Health endpoint tests ---
+
+// seedHealthData inserts data with nonzero error/discard/carrier values for health testing.
+func seedHealthData(t *testing.T) {
+	ctx := t.Context()
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_metros_current VALUES
+		('metro-1', 'FRA', 'Frankfurt'), ('metro-2', 'AMS', 'Amsterdam')`))
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_contributors_current VALUES
+		('contrib-1', 'ACME', 'Acme Corp')`))
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_devices_current VALUES
+		('dev-1', 'ROUTER-FRA-1', 'metro-1', 'contrib-1'),
+		('dev-2', 'ROUTER-AMS-1', 'metro-2', 'contrib-1')`))
+
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_links_current VALUES
+		('link-1', 100000000000, 'WAN', 'contrib-1')`))
+
+	// dev-1 Ethernet1: has errors and discards (link interface)
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
+		 in_errors_delta, out_errors_delta, in_discards_delta, out_discards_delta,
+		 in_fcs_errors_delta, carrier_transitions_delta)
+		VALUES
+		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000, 50000000, 30.0,
+		 10, 5, 3, 2, 1, 0),
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000, 50000000, 30.0,
+		 20, 10, 0, 0, 0, 2)`))
+
+	// dev-2 Ethernet2: has carrier transitions only (no link)
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
+		 in_errors_delta, out_errors_delta, in_discards_delta, out_discards_delta,
+		 in_fcs_errors_delta, carrier_transitions_delta)
+		VALUES
+		(now() - INTERVAL 20 MINUTE, 'dev-2', 'Ethernet2', '', 100000000, 50000000, 30.0,
+		 0, 0, 0, 0, 0, 5)`))
+
+	// dev-1 Loopback0: zero errors (should not appear in results)
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
+		 in_errors_delta, out_errors_delta, in_discards_delta, out_discards_delta,
+		 in_fcs_errors_delta, carrier_transitions_delta)
+		VALUES
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Loopback0', '', 100000000, 50000000, 30.0,
+		 0, 0, 0, 0, 0, 0)`))
+}
+
+func TestTrafficDashboardHealth(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedHealthData(t)
+
+	t.Run("default", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
+		rr := httptest.NewRecorder()
+
+		handlers.GetTrafficDashboardHealth(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+		var resp handlers.HealthResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		// Loopback0 has zero events, so only 2 interfaces should appear
+		assert.Len(t, resp.Entities, 2)
+		for _, e := range resp.Entities {
+			assert.Greater(t, e.TotalEvents, int64(0))
+		}
+	})
+
+	t.Run("sort_total_errors", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_errors&dir=desc", nil)
+		rr := httptest.NewRecorder()
+
+		handlers.GetTrafficDashboardHealth(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+		var resp handlers.HealthResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.NotEmpty(t, resp.Entities)
+		// First entity should have the most errors (dev-1 Ethernet1 has 45 total errors)
+		assert.Equal(t, "Ethernet1", resp.Entities[0].Intf)
+	})
+
+	t.Run("sort_total_carrier_transitions", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_carrier_transitions&dir=desc", nil)
+		rr := httptest.NewRecorder()
+
+		handlers.GetTrafficDashboardHealth(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+		var resp handlers.HealthResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		assert.NotEmpty(t, resp.Entities)
+		// First entity should have the most carrier transitions (dev-2 Ethernet2 has 5)
+		assert.Equal(t, "Ethernet2", resp.Entities[0].Intf)
+	})
+
+	t.Run("intf_type_link_only", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=link", nil)
+		rr := httptest.NewRecorder()
+
+		handlers.GetTrafficDashboardHealth(rr, req)
+
+		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+		var resp handlers.HealthResponse
+		require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		// Only Ethernet1 is a link interface with events > 0
+		assert.Len(t, resp.Entities, 1)
+		assert.Equal(t, "Ethernet1", resp.Entities[0].Intf)
+	})
+}
+
+func TestTrafficDashboardHealth_Empty(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficDashboardHealth(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.HealthResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Empty(t, resp.Entities)
 }

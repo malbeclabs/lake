@@ -598,6 +598,141 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, minBps, orderCol, dir, limit)
 }
 
+// BuildHealthQuery builds the ClickHouse query for the interface health endpoint.
+func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, limit int) string {
+	// Validate sort direction
+	dir := "DESC"
+	if sortDir == "ASC" {
+		dir = "ASC"
+	}
+
+	// Validate sort metric
+	orderCol := "total_events"
+	switch sortMetric {
+	case "total_events":
+		orderCol = "total_events"
+	case "total_errors":
+		orderCol = "total_errors"
+	case "total_discards":
+		orderCol = "total_discards"
+	case "total_fcs_errors":
+		orderCol = "total_fcs_errors"
+	case "total_carrier_transitions":
+		orderCol = "total_carrier_transitions"
+	}
+
+	return fmt.Sprintf(`
+		WITH health AS (
+			SELECT
+				f.device_pk,
+				f.intf,
+				f.link_pk,
+				sum(COALESCE(f.in_errors_delta, 0)) + sum(COALESCE(f.out_errors_delta, 0)) AS total_errors,
+				sum(COALESCE(f.in_discards_delta, 0)) + sum(COALESCE(f.out_discards_delta, 0)) AS total_discards,
+				sum(COALESCE(f.in_fcs_errors_delta, 0)) AS total_fcs_errors,
+				sum(COALESCE(f.carrier_transitions_delta, 0)) AS total_carrier_transitions,
+				count() AS sample_count
+			FROM fact_dz_device_interface_counters f
+			WHERE %s
+				%s
+				%s
+			GROUP BY f.device_pk, f.intf, f.link_pk
+		)
+		SELECT
+			h.device_pk,
+			d.code AS device_code,
+			h.intf,
+			COALESCE(m.code, '') AS metro_code,
+			h.total_errors,
+			h.total_discards,
+			h.total_fcs_errors,
+			h.total_carrier_transitions,
+			h.total_errors + h.total_discards + h.total_fcs_errors + h.total_carrier_transitions AS total_events
+		FROM health h
+		INNER JOIN dz_devices_current d ON h.device_pk = d.pk
+		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
+		LEFT JOIN dz_links_current l ON h.link_pk = l.pk
+		WHERE 1=1 %s
+		HAVING total_events > 0
+		ORDER BY %s %s
+		LIMIT %d`,
+		timeFilter, intfTypeSQL, intfFilterSQL,
+		filterSQL,
+		orderCol, dir, limit)
+}
+
+// --- Health endpoint ---
+
+type HealthEntity struct {
+	DevicePk                string `json:"device_pk"`
+	DeviceCode              string `json:"device_code"`
+	Intf                    string `json:"intf"`
+	MetroCode               string `json:"metro_code"`
+	TotalErrors             int64  `json:"total_errors"`
+	TotalDiscards           int64  `json:"total_discards"`
+	TotalFcsErrors          int64  `json:"total_fcs_errors"`
+	TotalCarrierTransitions int64  `json:"total_carrier_transitions"`
+	TotalEvents             int64  `json:"total_events"`
+}
+
+type HealthResponse struct {
+	Entities []HealthEntity `json:"entities"`
+}
+
+func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	timeFilter, _ := dashboardTimeFilter(r)
+
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+
+	sortMetric := r.URL.Query().Get("sort")
+	if sortMetric == "" {
+		sortMetric = "total_events"
+	}
+	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
+
+	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
+
+	query := BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, limit)
+
+	start := time.Now()
+	rows, err := envDB(ctx).Query(ctx, query)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		log.Printf("Traffic dashboard health query error: %v\nQuery: %s", err, query)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	entities := []HealthEntity{}
+	for rows.Next() {
+		var e HealthEntity
+		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
+			&e.TotalErrors, &e.TotalDiscards, &e.TotalFcsErrors,
+			&e.TotalCarrierTransitions, &e.TotalEvents); err != nil {
+			log.Printf("Traffic dashboard health row scan error: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		entities = append(entities, e)
+	}
+
+	resp := HealthResponse{Entities: entities}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // --- Stress endpoint ---
 
 type StressResponse struct {

@@ -3801,6 +3801,54 @@ export async function fetchDashboardBurstiness(
   return res.json()
 }
 
+// Dashboard health types and functions
+
+export interface DashboardHealthEntity {
+  device_pk: string
+  device_code: string
+  intf: string
+  metro_code: string
+  total_errors: number
+  total_discards: number
+  total_fcs_errors: number
+  total_carrier_transitions: number
+  total_events: number
+}
+
+export interface DashboardHealthResponse {
+  entities: DashboardHealthEntity[]
+}
+
+export interface DashboardHealthParams {
+  time_range?: string
+  sort?: 'total_events' | 'total_errors' | 'total_discards' | 'total_fcs_errors' | 'total_carrier_transitions'
+  dir?: 'asc' | 'desc'
+  limit?: number
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+  intf?: string
+  intf_type?: string
+  start_time?: string
+  end_time?: string
+  threshold?: string
+}
+
+export async function fetchDashboardHealth(
+  params: DashboardHealthParams = {}
+): Promise<DashboardHealthResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/health?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard health data')
+  return res.json()
+}
+
 // Search types and functions
 export type SearchEntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip'
 

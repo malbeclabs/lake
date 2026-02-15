@@ -6,6 +6,7 @@ import { LocalizationPanel } from '@/components/traffic-dashboard/localization-p
 import { TopDevicesPanel, TopInterfacesPanel } from '@/components/traffic-dashboard/attribution-panel'
 import { DrilldownPanel } from '@/components/traffic-dashboard/drilldown-panel'
 import { BurstinessPanel } from '@/components/traffic-dashboard/burstiness-panel'
+import { HealthPanel } from '@/components/traffic-dashboard/health-panel'
 import { CapacityPanel } from '@/components/traffic-dashboard/capacity-panel'
 
 function DashboardContent() {
@@ -80,6 +81,13 @@ function DashboardContent() {
             description="Interfaces with the largest gap between typical (P50) and peak (P99) traffic levels. Large gaps indicate bursty traffic."
           >
             <BurstinessPanel />
+          </Section>
+
+          <Section
+            title="Interface Health"
+            description="Interfaces with errors, discards, or carrier transitions in the selected time window."
+          >
+            <HealthPanel />
           </Section>
 
           {showCapacity && (
