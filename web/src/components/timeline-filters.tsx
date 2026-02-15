@@ -441,8 +441,8 @@ export function TimelineFilters({
         {/* Collapsible advanced filters */}
         <div
           className={cn(
-            'overflow-hidden transition-[max-height,opacity] duration-200',
-            advancedOpen ? 'max-h-[200px] opacity-100 mt-2' : 'max-h-0 opacity-0'
+            'transition-[max-height,opacity] duration-200',
+            advancedOpen ? 'max-h-[200px] opacity-100 mt-2 overflow-visible' : 'max-h-0 opacity-0 overflow-hidden'
           )}
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-muted/20 p-3">
