@@ -2166,12 +2166,12 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           arcDashAnimateTime={(d: object) => {
             const a = d as GlobeArcEntity
             // Multicast-tree arcs: always animate in publisher→subscriber direction
-            if (a.entityType === 'multicast-tree') return animateFlow ? 1500 : 0
+            if (a.entityType === 'multicast-tree') return animateFlow ? 3000 : 0
             if (a.entityType === 'validator-link') {
               if (!animateFlow) return 0
               const vl = a as GlobeArcValidatorLink
               // Positive = start→end (validator→device), negative = reverse
-              return vl.role === 'sub' ? -2000 : 2000
+              return vl.role === 'sub' ? -4000 : 4000
             }
             if (!linkAnimating) return 0
             if (a.entityType === 'inter-metro') return 0
