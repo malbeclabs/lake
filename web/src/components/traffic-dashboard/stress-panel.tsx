@@ -120,14 +120,6 @@ export function StressPanel() {
 
   return (
     <div>
-      {tooltipValues && (
-        <div className="flex items-center gap-4 text-xs text-muted-foreground mb-2">
-          <span>P50: <span className="font-medium text-foreground">{fmt(tooltipValues.p50)}</span></span>
-          <span>P95: <span className="font-medium text-foreground">{fmt(tooltipValues.p95)}</span></span>
-          <span>Max: <span className="font-medium text-foreground">{fmt(tooltipValues.max)}</span></span>
-          {isUtil && <span>Stressed: <span className="font-medium text-foreground">{tooltipValues.stressed}/{tooltipValues.total}</span></span>}
-        </div>
-      )}
       {isLoading ? (
         <div className="h-[280px] flex items-center justify-center">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -139,16 +131,26 @@ export function StressPanel() {
       ) : (
         <div ref={chartRef} className="w-full" />
       )}
-      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[oklch(65%_0.15_250)] inline-block" /> P50
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[oklch(70%_0.2_45)] inline-block" /> P95
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-3 h-0.5 bg-[oklch(65%_0.25_25)] inline-block border-dashed" /> Max
-        </span>
+      <div className="flex items-center justify-between mt-2 h-5">
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5 bg-[oklch(65%_0.15_250)] inline-block" /> P50
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5 bg-[oklch(70%_0.2_45)] inline-block" /> P95
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-0.5 bg-[oklch(65%_0.25_25)] inline-block border-dashed" /> Max
+          </span>
+        </div>
+        {tooltipValues && (
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <span>P50: <span className="font-medium text-foreground">{fmt(tooltipValues.p50)}</span></span>
+            <span>P95: <span className="font-medium text-foreground">{fmt(tooltipValues.p95)}</span></span>
+            <span>Max: <span className="font-medium text-foreground">{fmt(tooltipValues.max)}</span></span>
+            {isUtil && <span>Stressed: <span className="font-medium text-foreground">{tooltipValues.stressed}/{tooltipValues.total}</span></span>}
+          </div>
+        )}
       </div>
     </div>
   )
