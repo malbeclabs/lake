@@ -386,6 +386,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
   const [showTreeValidators, setShowTreeValidators] = useState(true)
+  const [linkAnimating, setLinkAnimating] = useState(true)
 
 
   // Handler to select multicast group
@@ -1744,12 +1745,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       const isRemovedLink = removalLink?.linkPK === link.pk
 
       // Determine display color based on mode
-      // Default to solid grey when no overlay is active (like graph view)
-      let displayColor = isDark ? '#4b5563' : '#9ca3af'
-      // Default weight is uniform; bandwidth overlay applies thickness based on capacity
+      // Default to cyan (dark) / blue (light) when no overlay is active (matches globe view)
+      let displayColor = isDark ? 'rgba(0,255,204,0.7)' : 'rgba(59,130,246,0.7)'
+      // Default weight uses bandwidth sizing (matches globe); overlays may override
       const defaultWeight = 1.5
-      let displayWeight = bandwidthMode ? getBandwidthWeight(link.bandwidth_bps) : defaultWeight
-      let displayOpacity = 0.6
+      let displayWeight = getBandwidthWeight(link.bandwidth_bps)
+      let displayOpacity = 0.7
       let useDash = false
 
       if (whatifRemovalMode && isRemovedLink) {
@@ -1895,6 +1896,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           opacity: displayOpacity,
           useDash,
           isSelected: isSelected ? 1 : 0,
+          latencyUs: link.latency_us ?? 0,
         },
         geometry: {
           type: 'LineString' as const,
@@ -1954,7 +1956,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const validatorLinksGeoJson = useMemo(() => {
     if (visibleValidators.length === 0) return { type: 'FeatureCollection' as const, features: [] }
 
-    const defaultLinkColor = isDark ? '#7c3aed' : '#6d28d9'
+    const defaultLinkColor = '#7c3aed'
     const features = visibleValidators.map(validator => {
       const devicePos = devicePositions.get(validator.device_pk)
       if (!devicePos) return null
@@ -2180,10 +2182,102 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     }
   }, [multicastTreesMode, animateFlow, stableAnimatedGeoJson])
 
+  // Animate flowing dots along links (matches globe animated arcs, works with all overlays)
+  useEffect(() => {
+    if (!mapReady || !linkAnimating) return
+    const map = mapRef.current?.getMap()
+    if (!map) return
+
+    const sourceId = 'link-flow-dots'
+    const layerId = 'link-flow-dots-layer'
+    const DOTS_PER_LINK = 2
+
+    // Per-link cycle duration based on latency (matches globe arcAnimateTime):
+    // low latency → faster dots, high latency → slower dots
+    // Returns cycle time in ms: 600ms (1µs) to 3000ms (200ms+)
+    const getCycleDuration = (latencyUs: number): number => {
+      const latencyMs = latencyUs / 1000
+      const clamped = Math.max(1, Math.min(200, latencyMs))
+      return 600 + (Math.log(clamped) / Math.log(200)) * 2400
+    }
+
+    const addLayer = () => {
+      if (map.getSource(sourceId)) return
+      map.addSource(sourceId, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      })
+      map.addLayer({
+        id: layerId,
+        type: 'circle',
+        source: sourceId,
+        paint: {
+          'circle-radius': 2.5,
+          'circle-color': ['get', 'color'],
+          'circle-opacity': 0.8,
+        },
+      })
+    }
+
+    let frameId: number
+    const tick = (timestamp: number) => {
+      // Re-add if react-map-gl removed it during style reconciliation
+      if (!map.getSource(sourceId) && map.isStyleLoaded()) {
+        addLayer()
+      }
+
+      const features = linkGeoJson.features as GeoJSON.Feature<GeoJSON.LineString>[]
+      const points: GeoJSON.Feature<GeoJSON.Point>[] = []
+
+      for (const feature of features) {
+        const props = feature.properties as Record<string, unknown>
+        // Skip heavily dimmed links (e.g. multicast dim-other-links)
+        if (typeof props?.opacity === 'number' && props.opacity < 0.2) continue
+
+        const color = (props?.color as string) ?? (isDark ? '#00ffcc' : '#3b82f6')
+        const latencyUs = (props?.latencyUs as number) ?? 0
+        const cycleDuration = getCycleDuration(latencyUs)
+        const t = (timestamp % cycleDuration) / cycleDuration
+
+        const coords = feature.geometry.coordinates as [number, number][]
+        for (let i = 0; i < DOTS_PER_LINK; i++) {
+          const dotT = (t + i / DOTS_PER_LINK) % 1
+          const pos = interpolateAlongPath(coords, dotT)
+          points.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: pos },
+            properties: { color },
+          })
+        }
+      }
+
+      try {
+        const src = map.getSource(sourceId)
+        if (src && 'setData' in src) {
+          (src as any).setData({ type: 'FeatureCollection', features: points })
+        }
+      } catch {
+        // Source may be removed during cleanup
+      }
+      frameId = requestAnimationFrame(tick)
+    }
+
+    frameId = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(frameId)
+      try {
+        if (map.getLayer(layerId)) map.removeLayer(layerId)
+        if (map.getSource(sourceId)) map.removeSource(sourceId)
+      } catch {
+        // Map may already be destroyed
+      }
+    }
+  }, [linkAnimating, mapReady, isDark, linkGeoJson])
+
   // Colors
-  const deviceColor = isDark ? '#6b7280' : '#1f2937' // neutral grey/dark - overlays will override
-  const metroColor = isDark ? '#4b5563' : '#9ca3af' // gray
-  const validatorColor = isDark ? '#a855f7' : '#9333ea' // purple
+  const deviceColor = '#00ffcc' // vibrant cyan - matches globe view, overlays will override
+  const metroColor = '#00ccaa' // muted cyan - matches globe view
+  const validatorColor = '#a855f7' // purple - matches globe view
   const selectionColor = '#3b82f6' // blue - consistent with graph view
 
   // Build hover info for links
@@ -2778,6 +2872,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onReset={fitBounds}
+          linkAnimating={linkAnimating}
+          onToggleLinkAnimation={() => setLinkAnimating(prev => !prev)}
         />
 
         {/* Link lines source and layers */}

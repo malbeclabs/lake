@@ -99,15 +99,15 @@ const DEFAULT_PANEL_WIDTH = 320
 // Parse overlays from URL param (comma-separated)
 // If no param, use view-specific defaults
 function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'globe'): OverlayState {
-  // Globe view defaults to no overlays to preserve the vibrant color scheme
-  const showTypeOverlays = view !== 'globe'
+  // Map and globe default to no overlays to preserve vibrant color scheme; graph uses type overlays
+  const showTypeOverlays = view === 'graph'
   const defaultState: OverlayState = {
     validators: false,
-    deviceType: showTypeOverlays,   // Default device overlay (except globe)
+    deviceType: showTypeOverlays,   // Default device overlay (graph only)
     stake: false,
     metroClustering: false,
     contributorDevices: false,
-    linkType: showTypeOverlays,     // Default link overlay (except globe)
+    linkType: showTypeOverlays,     // Default link overlay (graph only)
     bandwidth: false,
     linkHealth: false,
     trafficFlow: false,
