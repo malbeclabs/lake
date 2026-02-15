@@ -589,10 +589,14 @@ export function DashboardFilters() {
       <RefreshIntervalDropdown />
       <button
         onClick={handleManualRefresh}
-        className="flex items-center gap-1.5 px-2 py-1.5 text-sm border border-border rounded-md bg-background hover:bg-muted transition-colors"
+        disabled={isFetching > 0}
+        className={cn(
+          'flex items-center gap-1.5 px-2 py-1.5 text-sm border border-border rounded-md bg-background transition-colors',
+          isFetching > 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-muted'
+        )}
         title="Refresh now"
       >
-        <RefreshCw className={cn('h-3.5 w-3.5', isFetching > 0 && 'animate-spin')} />
+        <RefreshCw className="h-3.5 w-3.5" />
       </button>
       <DashboardSearch />
     </div>
