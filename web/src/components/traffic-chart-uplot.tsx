@@ -25,6 +25,7 @@ interface TrafficChartProps {
   stacked?: boolean
   linkLookup?: Map<string, LinkLookupInfo>
   bidirectional?: boolean
+  onTimeRangeSelect?: (startSec: number, endSec: number) => void
 }
 
 // Represents one interface with paired in/out in bidirectional mode
@@ -46,11 +47,13 @@ function formatBandwidth(bps: number): string {
   return bps.toFixed(0) + ' bps'
 }
 
-function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false }: TrafficChartProps) {
+function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect }: TrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const linkLookupRef = useRef(linkLookup)
+  const onTimeRangeSelectRef = useRef(onTimeRangeSelect)
+  onTimeRangeSelectRef.current = onTimeRangeSelect
   const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
@@ -470,7 +473,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         },
       ],
       cursor: {
-        drag: { x: false, y: false },
+        drag: { x: true, y: false, setScale: false },
         focus: {
           prox: stacked ? Infinity : 30,
         },
@@ -578,6 +581,16 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
             }
 
             setTooltip(null)
+          },
+        ],
+        setSelect: [
+          (u) => {
+            const min = u.posToVal(u.select.left, 'x')
+            const max = u.posToVal(u.select.left + u.select.width, 'x')
+            if (max - min >= 1 && onTimeRangeSelectRef.current) {
+              onTimeRangeSelectRef.current(Math.floor(min), Math.floor(max))
+            }
+            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false)
           },
         ],
       },

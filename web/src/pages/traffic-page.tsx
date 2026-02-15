@@ -361,6 +361,7 @@ function TrafficPageContent() {
               stacked={stacked}
               linkLookup={linkLookup}
               bidirectional={bidirectional}
+              onTimeRangeSelect={dashboardState.setCustomRange}
             />
           ) : (
             <div className="flex flex-col space-y-2">
