@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { ChevronDown, X, Search, Filter, Loader2, RotateCcw, RefreshCw } from 'lucide-react'
 import { useDashboard, type TimeRange, type IntfType, type RefreshInterval, refreshIntervalLabels } from './dashboard-context'
 import { cn } from '@/lib/utils'
@@ -575,6 +575,7 @@ function RefreshIntervalDropdown() {
 export function DashboardFilters() {
   const { metric, setMetric, intfType, setIntfType } = useDashboard()
   const queryClient = useQueryClient()
+  const isFetching = useIsFetching()
 
   const handleManualRefresh = () => {
     queryClient.invalidateQueries()
@@ -591,7 +592,7 @@ export function DashboardFilters() {
         className="flex items-center gap-1.5 px-2 py-1.5 text-sm border border-border rounded-md bg-background hover:bg-muted transition-colors"
         title="Refresh now"
       >
-        <RefreshCw className="h-3.5 w-3.5" />
+        <RefreshCw className={cn('h-3.5 w-3.5', isFetching > 0 && 'animate-spin')} />
       </button>
       <DashboardSearch />
     </div>
