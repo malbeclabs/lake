@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 
-export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d'
+export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
 
 export interface SelectedEntity {
   devicePk: string
@@ -21,6 +21,10 @@ export interface DashboardState {
   contributorFilter: string[]
   intfFilter: string[]
 
+  // Custom time range (unix seconds)
+  customStart: number | null
+  customEnd: number | null
+
   // Selections
   selectedEntity: SelectedEntity | null
   pinnedEntities: SelectedEntity[]
@@ -35,6 +39,8 @@ export interface DashboardState {
   setLinkTypeFilter: (f: string[]) => void
   setContributorFilter: (f: string[]) => void
   setIntfFilter: (f: string[]) => void
+  setCustomRange: (start: number, end: number) => void
+  clearCustomRange: () => void
   selectEntity: (e: SelectedEntity | null) => void
   pinEntity: (e: SelectedEntity) => void
   unpinEntity: (e: SelectedEntity) => void
@@ -58,12 +64,32 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [contributorFilter, setContributorFilter] = useState<string[]>([])
   const [intfFilter, setIntfFilter] = useState<string[]>([])
 
+  const [customStart, setCustomStart] = useState<number | null>(null)
+  const [customEnd, setCustomEnd] = useState<number | null>(null)
+
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null)
   const [pinnedEntities, setPinnedEntities] = useState<SelectedEntity[]>([])
 
   const handleSetTimeRange = useCallback((tr: TimeRange) => {
     setTimeRange(tr)
-    localStorage.setItem('traffic-dashboard-time-range', tr)
+    if (tr !== 'custom') {
+      setCustomStart(null)
+      setCustomEnd(null)
+      localStorage.setItem('traffic-dashboard-time-range', tr)
+    }
+  }, [])
+
+  const setCustomRange = useCallback((start: number, end: number) => {
+    setCustomStart(start)
+    setCustomEnd(end)
+    setTimeRange('custom')
+  }, [])
+
+  const clearCustomRange = useCallback(() => {
+    setCustomStart(null)
+    setCustomEnd(null)
+    const saved = localStorage.getItem('traffic-dashboard-time-range')
+    setTimeRange((saved as TimeRange) || '12h')
   }, [])
 
   const selectEntity = useCallback((e: SelectedEntity | null) => {
@@ -99,9 +125,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       value={{
         timeRange, threshold, metric, groupBy,
         metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
+        customStart, customEnd,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold, setMetric, setGroupBy,
         setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
+        setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
       }}
     >
@@ -119,8 +147,13 @@ export function useDashboard() {
 // Helper to build common query params from dashboard state
 export function dashboardFilterParams(state: DashboardState): Record<string, string> {
   const params: Record<string, string> = {
-    time_range: state.timeRange,
     threshold: String(state.threshold),
+  }
+  if (state.customStart != null && state.customEnd != null) {
+    params.start_time = String(state.customStart)
+    params.end_time = String(state.customEnd)
+  } else {
+    params.time_range = state.timeRange
   }
   if (state.metroFilter.length > 0) params.metro = state.metroFilter.join(',')
   if (state.deviceFilter.length > 0) params.device = state.deviceFilter.join(',')

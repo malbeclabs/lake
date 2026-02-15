@@ -20,6 +20,7 @@ function formatPercent(val: number): string {
 
 export function StressPanel() {
   const state = useDashboard()
+  const { setCustomRange } = state
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -78,11 +79,23 @@ export function StressPanel() {
         },
       ],
       cursor: {
-        drag: { x: false, y: false },
+        drag: { x: true, y: false },
       },
       hooks: {
         setCursor: [(u: uPlot) => {
           setHoveredIdx(u.cursor.idx ?? null)
+        }],
+        setSelect: [(u: uPlot) => {
+          const left = u.select.left
+          const width = u.select.width
+          if (width > 0) {
+            const startTs = Math.floor(u.posToVal(left, 'x'))
+            const endTs = Math.floor(u.posToVal(left + width, 'x'))
+            if (endTs > startTs) {
+              setCustomRange(startTs, endTs)
+            }
+            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false)
+          }
         }],
       },
       legend: { show: false },
@@ -101,7 +114,7 @@ export function StressPanel() {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [uplotData, isUtil])
+  }, [uplotData, isUtil, setCustomRange])
 
   // Tooltip values
   const tooltipValues = useMemo(() => {

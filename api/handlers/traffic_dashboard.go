@@ -90,6 +90,55 @@ func effectiveBucket(timeRange, bucket string) string {
 	}
 }
 
+// bucketForDuration returns a sensible bucket interval for the given duration.
+func bucketForDuration(d time.Duration) string {
+	switch {
+	case d < 3*time.Hour:
+		return "10 SECOND"
+	case d < 12*time.Hour:
+		return "1 MINUTE"
+	case d < 3*24*time.Hour:
+		return "5 MINUTE"
+	case d < 7*24*time.Hour:
+		return "30 MINUTE"
+	default:
+		return "1 HOUR"
+	}
+}
+
+// dashboardTimeFilter extracts time filter and bucket interval from the request.
+// When start_time and end_time query params are present (unix seconds), it returns
+// an absolute time filter. Otherwise it falls back to the preset time_range param.
+func dashboardTimeFilter(r *http.Request) (timeFilter string, bucketInterval string) {
+	startStr := r.URL.Query().Get("start_time")
+	endStr := r.URL.Query().Get("end_time")
+
+	if startStr != "" && endStr != "" {
+		start, err1 := strconv.ParseInt(startStr, 10, 64)
+		end, err2 := strconv.ParseInt(endStr, 10, 64)
+		if err1 == nil && err2 == nil && end > start {
+			timeFilter = fmt.Sprintf("event_ts BETWEEN toDateTime(%d) AND toDateTime(%d)", start, end)
+			duration := time.Duration(end-start) * time.Second
+			bucketInterval = bucketForDuration(duration)
+			if bp := parseBucket(r.URL.Query().Get("bucket")); bp != "" {
+				bucketInterval = bp
+			}
+			return
+		}
+	}
+
+	timeRange := r.URL.Query().Get("time_range")
+	if timeRange == "" {
+		timeRange = "12h"
+	}
+	rangeInterval := dashboardTimeRange(timeRange)
+	timeFilter = fmt.Sprintf("event_ts >= now() - INTERVAL %s", rangeInterval)
+
+	bucketParam := parseBucket(r.URL.Query().Get("bucket"))
+	bucketInterval = effectiveBucket(timeRange, bucketParam)
+	return
+}
+
 // buildDimensionFilters builds SQL WHERE clauses for dimension filters.
 // It returns the filter string (including leading AND) and a flag for whether
 // dimension joins are needed.
@@ -160,7 +209,7 @@ func escapeSingleQuote(s string) string {
 // --- Query builders (exported for testing) ---
 
 // BuildStressQuery builds the ClickHouse query for the stress endpoint.
-func BuildStressQuery(rangeInterval, bucketInterval, metric, groupBy, filterSQL string, threshold float64,
+func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL string, threshold float64,
 	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) (query string, grouped bool) {
 
 	// Determine group_by column and required joins
@@ -241,7 +290,7 @@ func BuildStressQuery(rangeInterval, bucketInterval, metric, groupBy, filterSQL 
 				max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
 				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps
 			FROM fact_dz_device_interface_counters f
-			WHERE event_ts >= now() - INTERVAL %s
+			WHERE %s
 				AND delta_duration > 0
 				AND in_octets_delta >= 0
 				AND out_octets_delta >= 0
@@ -262,7 +311,7 @@ func BuildStressQuery(rangeInterval, bucketInterval, metric, groupBy, filterSQL 
 		WHERE 1=1 %s
 		GROUP BY %s
 		ORDER BY bucket_ts`,
-		bucketInterval, rangeInterval,
+		bucketInterval, timeFilter,
 		metricExpr, groupBySelect,
 		dimJoins, filterSQL,
 		selectCols, metricFilter, groupByCols)
@@ -271,7 +320,7 @@ func BuildStressQuery(rangeInterval, bucketInterval, metric, groupBy, filterSQL 
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
-func BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL string, limit int) string {
+func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL string, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -321,7 +370,7 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL string,
 					quantile(0.95)(f.in_octets_delta * 8 / f.delta_duration) AS p95_in_bps,
 					quantile(0.95)(f.out_octets_delta * 8 / f.delta_duration) AS p95_out_bps
 				FROM fact_dz_device_interface_counters f
-				WHERE f.event_ts >= now() - INTERVAL %s
+				WHERE %s
 					AND f.delta_duration > 0
 					AND f.in_octets_delta >= 0
 					AND f.out_octets_delta >= 0
@@ -348,7 +397,7 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL string,
 			WHERE 1=1 %s
 			ORDER BY %s %s
 			LIMIT %d`,
-			rangeInterval, filterSQL, orderCol, dir, limit)
+			timeFilter, filterSQL, orderCol, dir, limit)
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
@@ -365,7 +414,7 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL string,
 				quantile(0.95)(f.in_octets_delta * 8 / f.delta_duration) AS p95_in_bps,
 				quantile(0.95)(f.out_octets_delta * 8 / f.delta_duration) AS p95_out_bps
 			FROM fact_dz_device_interface_counters f
-			WHERE f.event_ts >= now() - INTERVAL %s
+			WHERE %s
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
@@ -399,11 +448,11 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL string,
 		WHERE 1=1 %s
 		ORDER BY %s %s
 		LIMIT %d`,
-		rangeInterval, filterSQL, orderCol, dir, limit)
+		timeFilter, filterSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
-func BuildDrilldownQuery(rangeInterval, bucketInterval, devicePk, intfFilter string) string {
+func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string) string {
 	return fmt.Sprintf(`
 		SELECT
 			formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
@@ -413,7 +462,7 @@ func BuildDrilldownQuery(rangeInterval, bucketInterval, devicePk, intfFilter str
 			sum(COALESCE(f.in_discards_delta, 0)) AS in_discards,
 			sum(COALESCE(f.out_discards_delta, 0)) AS out_discards
 		FROM fact_dz_device_interface_counters f
-		WHERE f.event_ts >= now() - INTERVAL %s
+		WHERE %s
 			AND f.device_pk = '%s'
 			%s
 			AND f.delta_duration > 0
@@ -421,11 +470,11 @@ func BuildDrilldownQuery(rangeInterval, bucketInterval, devicePk, intfFilter str
 			AND f.out_octets_delta >= 0
 		GROUP BY time, f.intf
 		ORDER BY time, f.intf`,
-		bucketInterval, rangeInterval, escapeSingleQuote(devicePk), intfFilter)
+		bucketInterval, timeFilter, escapeSingleQuote(devicePk), intfFilter)
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-func BuildBurstinessQuery(rangeInterval, sortMetric, sortDir, filterSQL string, threshold float64, limit int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL string, threshold float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -462,7 +511,7 @@ func BuildBurstinessQuery(rangeInterval, sortMetric, sortDir, filterSQL string, 
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
-			WHERE f.event_ts >= now() - INTERVAL %s
+			WHERE %s
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
@@ -488,7 +537,7 @@ func BuildBurstinessQuery(rangeInterval, sortMetric, sortDir, filterSQL string, 
 		HAVING burstiness > 0
 		ORDER BY %s %s
 		LIMIT %d`,
-		rangeInterval, filterSQL, threshold, orderCol, dir, limit)
+		timeFilter, filterSQL, threshold, orderCol, dir, limit)
 }
 
 // --- Stress endpoint ---
@@ -517,14 +566,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "12h"
-	}
-	rangeInterval := dashboardTimeRange(timeRange)
-
-	bucketParam := parseBucket(r.URL.Query().Get("bucket"))
-	bucketInterval := effectiveBucket(timeRange, bucketParam)
+	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	threshold := 0.8
 	if t := r.URL.Query().Get("threshold"); t != "" {
@@ -541,7 +583,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
 
-	query, grouped := BuildStressQuery(rangeInterval, bucketInterval, metric, groupBy, filterSQL, threshold,
+	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, threshold,
 		needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin)
 
 	start := time.Now()
@@ -692,11 +734,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "12h"
-	}
-	rangeInterval := dashboardTimeRange(timeRange)
+	timeFilter, _ := dashboardTimeFilter(r)
 
 	entity := r.URL.Query().Get("entity")
 	if entity == "" {
@@ -719,7 +757,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL, limit)
+	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -779,14 +817,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "12h"
-	}
-	rangeInterval := dashboardTimeRange(timeRange)
-
-	bucketParam := parseBucket(r.URL.Query().Get("bucket"))
-	bucketInterval := effectiveBucket(timeRange, bucketParam)
+	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	devicePk := r.URL.Query().Get("device_pk")
 	if devicePk == "" {
@@ -803,7 +834,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 		intfFilter = "AND f.intf NOT LIKE 'Tunnel%'"
 	}
 
-	query := BuildDrilldownQuery(rangeInterval, bucketInterval, devicePk, intfFilter)
+	query := BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -856,12 +887,12 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 				FROM fact_dz_device_interface_counters
 				WHERE device_pk = '%s'
 					AND intf IN (%s)
-					AND event_ts >= now() - INTERVAL %s
+					AND %s
 			) f
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk`,
 			escapeSingleQuote(devicePk),
 			strings.Join(quoted, ","),
-			rangeInterval)
+			timeFilter)
 
 		metaRows, err := envDB(ctx).Query(ctx, metaQuery)
 		if err == nil {
@@ -906,11 +937,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "12h"
-	}
-	rangeInterval := dashboardTimeRange(timeRange)
+	timeFilter, _ := dashboardTimeFilter(r)
 
 	threshold := 0.8
 	if t := r.URL.Query().Get("threshold"); t != "" {
@@ -934,7 +961,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(rangeInterval, sortMetric, sortDir, filterSQL, threshold, limit)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, threshold, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

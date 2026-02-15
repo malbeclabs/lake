@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, X, Search, Filter, Loader2 } from 'lucide-react'
+import { ChevronDown, X, Search, Filter, Loader2, RotateCcw } from 'lucide-react'
 import { useDashboard, type TimeRange } from './dashboard-context'
 import { cn } from '@/lib/utils'
 import { fetchFieldValues } from '@/lib/api'
 
-const timeRangeOptions: { value: TimeRange; label: string }[] = [
+const presetTimeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: '1h', label: '1 hour' },
   { value: '3h', label: '3 hours' },
   { value: '6h', label: '6 hours' },
@@ -392,12 +392,150 @@ function DashboardSearch() {
   )
 }
 
+function formatCustomLabel(start: number, end: number): string {
+  const fmt = (ts: number) => {
+    const d = new Date(ts * 1000)
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+      ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  }
+  return `${fmt(start)} – ${fmt(end)}`
+}
+
+function toLocalDatetimeString(ts: number): string {
+  const d = new Date(ts * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function TimeRangeDropdown() {
+  const { timeRange, setTimeRange, customStart, customEnd, setCustomRange, clearCustomRange } = useDashboard()
+  const [isOpen, setIsOpen] = useState(false)
+  const [showCustomPicker, setShowCustomPicker] = useState(false)
+  const [customStartInput, setCustomStartInput] = useState('')
+  const [customEndInput, setCustomEndInput] = useState('')
+
+  const isCustom = timeRange === 'custom' && customStart != null && customEnd != null
+
+  const selectedLabel = isCustom
+    ? formatCustomLabel(customStart!, customEnd!)
+    : presetTimeRangeOptions.find(o => o.value === timeRange)?.label ?? timeRange
+
+  const handlePresetSelect = useCallback((v: TimeRange) => {
+    setTimeRange(v)
+    setIsOpen(false)
+    setShowCustomPicker(false)
+  }, [setTimeRange])
+
+  const handleCustomClick = useCallback(() => {
+    const now = Math.floor(Date.now() / 1000)
+    const start = customStart ?? now - 3600
+    const end = customEnd ?? now
+    setCustomStartInput(toLocalDatetimeString(start))
+    setCustomEndInput(toLocalDatetimeString(end))
+    setShowCustomPicker(true)
+  }, [customStart, customEnd])
+
+  const handleCustomApply = useCallback(() => {
+    const start = Math.floor(new Date(customStartInput).getTime() / 1000)
+    const end = Math.floor(new Date(customEndInput).getTime() / 1000)
+    if (!isNaN(start) && !isNaN(end) && end > start) {
+      setCustomRange(start, end)
+      setIsOpen(false)
+      setShowCustomPicker(false)
+    }
+  }, [customStartInput, customEndInput, setCustomRange])
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="relative inline-block">
+        <button
+          onClick={() => { setIsOpen(!isOpen); if (!isOpen) setShowCustomPicker(false) }}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-md bg-background hover:bg-muted transition-colors"
+        >
+          <span className="text-muted-foreground">Time:</span>
+          <span className="font-medium max-w-[200px] truncate">{selectedLabel}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+        </button>
+        {isOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => { setIsOpen(false); setShowCustomPicker(false) }} />
+            <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[200px]">
+              {presetTimeRangeOptions.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => handlePresetSelect(opt.value)}
+                  className={cn(
+                    'w-full text-left px-3 py-1.5 text-sm transition-colors',
+                    opt.value === timeRange && !isCustom
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+              <div className="border-t border-border my-1" />
+              <button
+                onClick={handleCustomClick}
+                className={cn(
+                  'w-full text-left px-3 py-1.5 text-sm transition-colors',
+                  isCustom ? 'bg-accent text-accent-foreground' : 'hover:bg-muted'
+                )}
+              >
+                Custom range...
+              </button>
+              {showCustomPicker && (
+                <div className="px-3 py-2 border-t border-border space-y-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground">Start</label>
+                    <input
+                      type="datetime-local"
+                      value={customStartInput}
+                      onChange={e => setCustomStartInput(e.target.value)}
+                      className="w-full mt-0.5 px-2 py-1 text-sm border border-border rounded bg-background"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">End</label>
+                    <input
+                      type="datetime-local"
+                      value={customEndInput}
+                      onChange={e => setCustomEndInput(e.target.value)}
+                      className="w-full mt-0.5 px-2 py-1 text-sm border border-border rounded bg-background"
+                    />
+                  </div>
+                  <button
+                    onClick={handleCustomApply}
+                    className="w-full px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+                  >
+                    Apply
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+      {isCustom && (
+        <button
+          onClick={clearCustomRange}
+          className="flex items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          title="Reset zoom"
+        >
+          <RotateCcw className="h-3 w-3" />
+          Reset
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function DashboardFilters() {
-  const { timeRange, setTimeRange, metric, setMetric } = useDashboard()
+  const { metric, setMetric } = useDashboard()
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
-      <Dropdown label="Time" value={timeRange} options={timeRangeOptions} onChange={setTimeRange} />
+      <TimeRangeDropdown />
       <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
       <DashboardSearch />
     </div>
