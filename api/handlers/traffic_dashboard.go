@@ -507,7 +507,9 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64, minBps float64, limit int) string {
+// It pre-aggregates raw samples into time buckets (using max per bucket per interface)
+// before computing P50/P99, so the results align with what time-series charts display.
+func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64, minBps float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -532,22 +534,26 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 	}
 
 	return fmt.Sprintf(`
-		WITH per_sample AS (
+		WITH bucketed AS (
 			SELECT
+				toStartOfInterval(f.event_ts, INTERVAL %s) AS bucket_ts,
 				f.device_pk,
 				f.intf,
 				f.link_pk,
-				CASE WHEN l.bandwidth_bps > 0
-					THEN greatest(
-						f.in_octets_delta * 8 / f.delta_duration,
-						f.out_octets_delta * 8 / f.delta_duration
-					) / l.bandwidth_bps
-					ELSE NULL END AS utilization,
-				greatest(
+				max(greatest(
 					f.in_octets_delta * 8 / f.delta_duration,
 					f.out_octets_delta * 8 / f.delta_duration
-				) AS throughput_bps,
-				CASE WHEN f.in_octets_delta >= f.out_octets_delta THEN 1 ELSE 0 END AS is_rx
+				)) AS throughput_bps,
+				CASE WHEN max(l.bandwidth_bps) > 0
+					THEN max(greatest(
+						f.in_octets_delta * 8 / f.delta_duration,
+						f.out_octets_delta * 8 / f.delta_duration
+					)) / max(l.bandwidth_bps)
+					ELSE NULL END AS utilization,
+				argMax(
+					CASE WHEN f.in_octets_delta >= f.out_octets_delta THEN 1 ELSE 0 END,
+					greatest(f.in_octets_delta * 8 / f.delta_duration, f.out_octets_delta * 8 / f.delta_duration)
+				) AS is_rx
 			FROM fact_dz_device_interface_counters f
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
@@ -560,44 +566,45 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 				%s
 				%s
 				%s
+			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk
 		)
 		SELECT
-			ps.device_pk,
+			b.device_pk,
 			d.code AS device_code,
-			ps.intf,
+			b.intf,
 			COALESCE(m.code, '') AS metro_code,
 			COALESCE(toFloat64(l.bandwidth_bps), 0) AS bandwidth_bps,
-			quantile(0.5)(ps.utilization) AS p50_util,
-			quantile(0.99)(ps.utilization) AS p99_util,
+			quantile(0.5)(b.utilization) AS p50_util,
+			quantile(0.99)(b.utilization) AS p99_util,
 			CASE
 				WHEN COALESCE(toFloat64(l.bandwidth_bps), 0) > 0
-				THEN quantile(0.99)(ps.utilization) - quantile(0.5)(ps.utilization)
+				THEN quantile(0.99)(b.utilization) - quantile(0.5)(b.utilization)
 				ELSE CASE
-					WHEN quantile(0.5)(ps.throughput_bps) > 0
-					THEN (quantile(0.99)(ps.throughput_bps) / quantile(0.5)(ps.throughput_bps)) - 1
+					WHEN quantile(0.5)(b.throughput_bps) > 0
+					THEN (quantile(0.99)(b.throughput_bps) / quantile(0.5)(b.throughput_bps)) - 1
 					ELSE 0
 				END
 			END AS burstiness,
 			CASE
 				WHEN COALESCE(toFloat64(l.bandwidth_bps), 0) > 0
-				THEN countIf(ps.utilization >= %f) / count()
+				THEN countIf(b.utilization >= %f) / count()
 				ELSE 0
 			END AS pct_time_stressed,
-			quantile(0.5)(ps.throughput_bps) AS p50_bps,
-			quantile(0.99)(ps.throughput_bps) AS p99_bps,
-			CASE WHEN argMax(ps.is_rx, ps.throughput_bps) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction,
+			quantile(0.5)(b.throughput_bps) AS p50_bps,
+			quantile(0.99)(b.throughput_bps) AS p99_bps,
+			CASE WHEN argMax(b.is_rx, b.throughput_bps) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction,
 			COALESCE(co.code, '') AS contributor_code
-		FROM per_sample ps
-		INNER JOIN dz_devices_current d ON ps.device_pk = d.pk
-		LEFT JOIN dz_links_current l ON ps.link_pk = l.pk
+		FROM bucketed b
+		INNER JOIN dz_devices_current d ON b.device_pk = d.pk
+		LEFT JOIN dz_links_current l ON b.link_pk = l.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
-		GROUP BY ps.device_pk, ps.intf, ps.link_pk, d.code, m.code, l.bandwidth_bps, co.code
+		GROUP BY b.device_pk, b.intf, b.link_pk, d.code, m.code, l.bandwidth_bps, co.code
 		HAVING burstiness > 0
 			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= %f)
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, minBps, orderCol, dir, limit)
+		bucketInterval, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, minBps, orderCol, dir, limit)
 }
 
 // BuildHealthQuery builds the ClickHouse query for the interface health endpoint.
@@ -1141,7 +1148,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, _ := dashboardTimeFilter(r)
+	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	threshold := 0.8
 	if t := r.URL.Query().Get("threshold"); t != "" {
@@ -1172,7 +1179,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, threshold, minBps, limit)
+	query := BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, threshold, minBps, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { ChevronDown, X, Search, Filter, Loader2, RotateCcw, RefreshCw } from 'lucide-react'
-import { useDashboard, type TimeRange, type IntfType, type RefreshInterval, refreshIntervalLabels } from './dashboard-context'
+import { useDashboard, type TimeRange, type IntfType, type BucketSize, bucketLabels, resolveAutoBucket, type RefreshInterval, refreshIntervalLabels } from './dashboard-context'
 import { cn } from '@/lib/utils'
 import { fetchFieldValues } from '@/lib/api'
 
@@ -29,6 +29,10 @@ const intfTypeOptions: { value: IntfType; label: string }[] = [
   { value: 'tunnel', label: 'Tunnel' },
   { value: 'other', label: 'Other' },
 ]
+
+const bucketOptions: { value: BucketSize; label: string }[] = Object.entries(bucketLabels).map(
+  ([value, label]) => ({ value: value as BucketSize, label })
+)
 
 function Dropdown<T extends string>({
   label,
@@ -572,6 +576,50 @@ function RefreshIntervalDropdown() {
   )
 }
 
+function BucketDropdown() {
+  const { bucket, setBucket, timeRange } = useDashboard()
+  const [isOpen, setIsOpen] = useState(false)
+
+  const effectiveBucket = bucket === 'auto' ? resolveAutoBucket(timeRange) : bucket
+  const displayLabel = bucket === 'auto'
+    ? `Auto (${bucketLabels[effectiveBucket]})`
+    : bucketLabels[bucket]
+
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-md bg-background hover:bg-muted transition-colors"
+      >
+        <span className="text-muted-foreground">Bucket:</span>
+        <span>{displayLabel}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+      </button>
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+          <div className="absolute left-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[140px]">
+            {bucketOptions.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => { setBucket(opt.value); setIsOpen(false) }}
+                className={cn(
+                  'w-full text-left px-3 py-1.5 text-sm transition-colors',
+                  opt.value === bucket
+                    ? 'bg-accent text-accent-foreground'
+                    : 'hover:bg-muted'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function DashboardFilters() {
   const { metric, setMetric, intfType, setIntfType } = useDashboard()
   const queryClient = useQueryClient()
@@ -586,6 +634,7 @@ export function DashboardFilters() {
       <TimeRangeDropdown />
       <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
       <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />
+      <BucketDropdown />
       <RefreshIntervalDropdown />
       <button
         onClick={handleManualRefresh}

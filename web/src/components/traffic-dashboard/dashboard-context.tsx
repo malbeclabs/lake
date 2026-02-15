@@ -14,6 +14,46 @@ export interface SelectedEntity {
   intf?: string
 }
 
+export type BucketSize = 'auto' | '10 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '30 MINUTE' | '1 HOUR'
+
+export const bucketLabels: Record<BucketSize, string> = {
+  'auto': 'Auto',
+  '10 SECOND': '10s',
+  '30 SECOND': '30s',
+  '1 MINUTE': '1m',
+  '5 MINUTE': '5m',
+  '10 MINUTE': '10m',
+  '30 MINUTE': '30m',
+  '1 HOUR': '1h',
+}
+
+const validBuckets: Set<string> = new Set(['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '30 MINUTE', '1 HOUR'])
+
+// Resolve auto bucket to an effective bucket size based on time range.
+// This mirrors the backend's effectiveBucket() function.
+export function resolveAutoBucket(timeRange: TimeRange): BucketSize {
+  switch (timeRange) {
+    case '1h':
+      return '10 SECOND'
+    case '3h':
+      return '30 SECOND'
+    case '6h':
+    case '12h':
+      return '1 MINUTE'
+    case '24h':
+      return '5 MINUTE'
+    case '3d':
+      return '10 MINUTE'
+    case '7d':
+      return '30 MINUTE'
+    case '14d':
+    case '30d':
+      return '1 HOUR'
+    default:
+      return '1 MINUTE'
+  }
+}
+
 export type RefreshInterval = 'off' | '30s' | '1m' | '5m' | '10m'
 
 export const refreshIntervalMs: Record<RefreshInterval, number | false> = {
@@ -38,6 +78,7 @@ export interface DashboardState {
   metric: 'utilization' | 'throughput' | 'packets'
   groupBy: string
   intfType: IntfType
+  bucket: BucketSize
   refreshInterval: RefreshInterval
   refetchInterval: number | false
 
@@ -62,6 +103,7 @@ export interface DashboardState {
   setMetric: (m: 'utilization' | 'throughput' | 'packets') => void
   setGroupBy: (g: string) => void
   setIntfType: (t: IntfType) => void
+  setBucket: (b: BucketSize) => void
   setRefreshInterval: (r: RefreshInterval) => void
   setMetroFilter: (f: string[]) => void
   setDeviceFilter: (f: string[]) => void
@@ -125,6 +167,12 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
   }, [searchParams])
 
   const groupBy = useMemo(() => searchParams.get('group_by') ?? 'device', [searchParams])
+
+  const bucket = useMemo<BucketSize>(() => {
+    const param = searchParams.get('bucket')
+    if (param && validBuckets.has(param)) return param as BucketSize
+    return 'auto'
+  }, [searchParams])
 
   // Force away from utilization when intf_type is non-link (utilization requires bandwidth)
   const metric = useMemo<'utilization' | 'throughput' | 'packets'>(() => {
@@ -233,6 +281,17 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
     })
   }, [setSearchParams])
 
+  const setBucketAction = useCallback((b: BucketSize) => {
+    setSearchParams(prev => {
+      if (b === 'auto') {
+        prev.delete('bucket')
+      } else {
+        prev.set('bucket', b)
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
   const setIntfTypeAction = useCallback((t: IntfType) => {
     setSearchParams(prev => {
       if (t === 'all') {
@@ -332,12 +391,12 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
   return (
     <DashboardContext.Provider
       value={{
-        timeRange, threshold, metric, groupBy, intfType, refreshInterval: refreshIntervalKey, refetchInterval,
+        timeRange, threshold, metric, groupBy, intfType, bucket, refreshInterval: refreshIntervalKey, refetchInterval,
         metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
         customStart, customEnd,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold: setThresholdAction, setMetric: setMetricAction, setGroupBy: setGroupByAction,
-        setIntfType: setIntfTypeAction, setRefreshInterval,
+        setIntfType: setIntfTypeAction, setBucket: setBucketAction, setRefreshInterval,
         setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
@@ -366,6 +425,7 @@ export function dashboardFilterParams(state: DashboardState): Record<string, str
     params.time_range = state.timeRange
   }
   if (state.intfType !== 'all') params.intf_type = state.intfType
+  if (state.bucket !== 'auto') params.bucket = state.bucket
   if (state.metroFilter.length > 0) params.metro = state.metroFilter.join(',')
   if (state.deviceFilter.length > 0) params.device = state.deviceFilter.join(',')
   if (state.linkTypeFilter.length > 0) params.link_type = state.linkTypeFilter.join(',')

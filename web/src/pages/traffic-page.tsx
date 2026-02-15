@@ -4,7 +4,7 @@ import { ChevronDown, ArrowUpDown } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
-import { DashboardProvider, useDashboard, dashboardFilterParams } from '@/components/traffic-dashboard/dashboard-context'
+import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
 import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 
 export interface LinkLookupInfo {
@@ -49,20 +49,6 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
   )
 }
 
-type BucketSize = '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
-
-const bucketLabels: Record<BucketSize, string> = {
-  '2 SECOND': '2 seconds',
-  '30 SECOND': '30 seconds',
-  '1 MINUTE': '1 minute',
-  '5 MINUTE': '5 minutes',
-  '10 MINUTE': '10 minutes',
-  '15 MINUTE': '15 minutes',
-  '30 MINUTE': '30 minutes',
-  '1 HOUR': '1 hour',
-  'auto': 'Auto',
-}
-
 type AggMethod = 'max' | 'avg'
 
 const aggLabels: Record<AggMethod, string> = {
@@ -86,31 +72,14 @@ const layoutLabels: Record<Layout, string> = {
 
 
 
-function BucketSelector({
-  bucketValue,
-  aggValue,
-  effectiveBucket,
-  onBucketChange,
-  onAggChange,
+function AggSelector({
+  value,
+  onChange,
 }: {
-  bucketValue: BucketSize
-  aggValue: AggMethod
-  effectiveBucket?: string
-  onBucketChange: (value: BucketSize) => void
-  onAggChange: (value: AggMethod) => void
+  value: AggMethod
+  onChange: (value: AggMethod) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
-
-  // Show effective bucket: for "auto" show the resolved value, for manual show if the API adjusted it
-  const effectiveLabel = effectiveBucket ? (bucketLabels[effectiveBucket as BucketSize] || effectiveBucket) : undefined
-  let displayBucket: string
-  if (bucketValue === 'auto' && effectiveLabel) {
-    displayBucket = `Auto (${effectiveLabel})`
-  } else if (effectiveBucket && effectiveBucket !== bucketValue) {
-    displayBucket = `${bucketLabels[bucketValue]} → ${effectiveLabel}`
-  } else {
-    displayBucket = bucketLabels[bucketValue]
-  }
 
   return (
     <div className="relative inline-block">
@@ -118,42 +87,22 @@ function BucketSelector({
         onClick={() => setIsOpen(!isOpen)}
         className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
       >
-        Coalesce: {displayBucket} ({aggLabels[aggValue]})
+        Agg: {aggLabels[value]}
         <ChevronDown className="h-4 w-4" />
       </button>
       {isOpen && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[200px]">
-            <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground border-b border-border">
-              Bucket Size
-            </div>
-            {(['2 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', 'auto'] as BucketSize[]).map((bucket) => (
-              <button
-                key={bucket}
-                onClick={() => {
-                  onBucketChange(bucket)
-                }}
-                className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  bucketValue === bucket
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-              >
-                {bucketLabels[bucket]}
-              </button>
-            ))}
-            <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground border-t border-b border-border mt-1">
-              Aggregation
-            </div>
+          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[140px]">
             {(['max', 'avg'] as AggMethod[]).map((agg) => (
               <button
                 key={agg}
                 onClick={() => {
-                  onAggChange(agg)
+                  onChange(agg)
+                  setIsOpen(false)
                 }}
                 className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  aggValue === agg
+                  value === agg
                     ? 'bg-muted text-foreground'
                     : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                 }`}
@@ -217,7 +166,6 @@ function TrafficPageContent() {
   const dashboardState = useDashboard()
   const { timeRange, intfType } = dashboardState
 
-  const [bucketSize, setBucketSize] = useState<BucketSize>('auto')
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
   const [layout, setLayout] = useState<Layout>('1x4')
   const [bidirectional, setBidirectional] = useState(true)
@@ -238,27 +186,11 @@ function TrafficPageContent() {
 
   // Compute actual bucket size to send to API
   const actualBucketSize = useMemo(() => {
-    if (bucketSize === 'auto') {
-      // Auto-select based on time range
-      switch (timeRange) {
-        case '1h':
-        case '3h':
-        case '6h':
-        case '12h':
-          return '30 SECOND'
-        case '24h':
-          return '1 MINUTE'
-        case '3d':
-        case '7d':
-        case '14d':
-        case '30d':
-          return '5 MINUTE'
-        default:
-          return '30 SECOND'
-      }
+    if (dashboardState.bucket === 'auto') {
+      return resolveAutoBucket(timeRange)
     }
-    return bucketSize
-  }, [bucketSize, timeRange])
+    return dashboardState.bucket
+  }, [dashboardState.bucket, timeRange])
 
 
   // Determine which chart categories to show based on intf type filter
@@ -469,13 +401,7 @@ function TrafficPageContent() {
               Rx/Tx
             </button>
             <LayoutSelector value={layout} onChange={handleLayoutChange} />
-            <BucketSelector
-              bucketValue={bucketSize}
-              aggValue={aggMethod}
-              effectiveBucket={tunnelData?.effective_bucket ?? nonTunnelData?.effective_bucket}
-              onBucketChange={setBucketSize}
-              onAggChange={setAggMethod}
-            />
+            <AggSelector value={aggMethod} onChange={setAggMethod} />
           </div>
         </div>
 
