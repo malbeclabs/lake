@@ -2099,7 +2099,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const animatedDotsRef = useRef<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] })
 
   useEffect(() => {
-    if (!multicastTreesMode || !animateFlow || !linkAnimating || stableAnimatedGeoJson.features.length === 0) return
+    if (!multicastTreesMode || !animateFlow || stableAnimatedGeoJson.features.length === 0) return
     const map = mapRef.current?.getMap()
     if (!map) return
 
@@ -2180,7 +2180,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         // Map may already be destroyed
       }
     }
-  }, [multicastTreesMode, animateFlow, linkAnimating, stableAnimatedGeoJson])
+  }, [multicastTreesMode, animateFlow, stableAnimatedGeoJson])
 
   // Refs so the rAF loop always reads latest values without effect re-runs
   const linkGeoJsonRef = useRef(linkGeoJson)
