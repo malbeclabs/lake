@@ -228,6 +228,10 @@ github.com/magiconair/properties v1.8.10 h1:s31yESBquKXCV9a/ScB3ESkOjUYYv+X0rg8S
 github.com/magiconair/properties v1.8.10/go.mod h1:Dhd985XPs7jluiymwWYZ0G4Z61jb3vdS329zhj2hYo0=
 github.com/malbeclabs/doublezero v0.0.0-20260127003248-a7973ff42f73 h1:Zh6VomsrYvGH92KH1IrDHOXzGxJ+Zj5ZjvNRFHQNfkQ=
 github.com/malbeclabs/doublezero v0.0.0-20260127003248-a7973ff42f73/go.mod h1:2A/r9YenEcsfmZksO/i1k4XkWEQDObofKAZECLqniVI=
+github.com/malbeclabs/doublezero v0.8.0 h1:BmTM65G29KkhoA9hLIcOvBFSm4rRa9Rpff5+O2o/1B4=
+github.com/malbeclabs/doublezero v0.8.0/go.mod h1:LH9kZqAKE/IRv317pPc+UzR4Jo6me+Kn7BbBNBqu3WA=
+github.com/malbeclabs/doublezero v0.8.1-0.20260214171734-9d6af25edb73 h1:h/gk+kdW66dpE13QzldvqVpVz9RmUN7jR5l8XEvQ0LU=
+github.com/malbeclabs/doublezero v0.8.1-0.20260214171734-9d6af25edb73/go.mod h1:kIMEbQ7WnFcBDosR2WXpB6Ueg/hiiahz3jc6fZEdVH8=
 github.com/mattn/go-colorable v0.1.14 h1:9A9LHSqF/7dyVVX6g0U9cwm9pG3kP9gSzcuIPHPsaIE=
 github.com/mattn/go-colorable v0.1.14/go.mod h1:6LmQG8QLFO4G5z1gPvYEzlUgJ2wF+stgPZH1UqBm1s8=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=
@@ -285,6 +289,7 @@ github.com/neo4j/neo4j-go-driver/v5 v5.28.4/go.mod h1:Vff8OwT7QpLm7L2yYr85XNWe9R
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
 github.com/oapi-codegen/runtime v1.0.0 h1:P4rqFX5fMFWqRzY9M/3YF9+aPSPPB06IzP2P7oOxrWo=
 github.com/oapi-codegen/runtime v1.0.0/go.mod h1:LmCUMQuPB4M/nLXilQXhHw+BLZdDb18B34OO356yJ/A=
+github.com/onsi/gomega v1.10.1 h1:o0+MgICZLuZ7xjH7Vx6zS/zcu93/BEp1VwkIW1mEXCE=
 github.com/onsi/gomega v1.15.0 h1:WjP/FQ/sk43MRmnEcT+MlDw2TFvkrXlprrPST/IudjU=
 github.com/onsi/gomega v1.15.0/go.mod h1:cIuvLEne0aoVhAgh/O6ac0Op8WWw9H6eYCriF+tEHG0=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=

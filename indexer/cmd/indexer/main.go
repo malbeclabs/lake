@@ -13,6 +13,8 @@ import (
 
 	_ "net/http/pprof"
 
+	"github.com/gagliardetto/solana-go"
+	solrpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/joho/godotenv"
 	"github.com/jonboulle/clockwork"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
+	revdist "github.com/malbeclabs/doublezero/sdk/revdist/go"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
@@ -260,6 +263,23 @@ func run() error {
 		solanaRPC = solanaRPCClient
 	}
 
+	// Initialize revdist client (optional, mainnet-beta only)
+	revDistEnabled := *dzEnvFlag == config.EnvMainnetBeta
+	var revDistClient *revdist.Client
+	var revDistProgramID solana.PublicKey
+	if revDistEnabled {
+		revDistSolanaRPC := rpc.NewWithRetries(networkConfig.SolanaRPCURL, nil)
+		defer revDistSolanaRPC.Close()
+		ledgerRPC := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+		defer ledgerRPC.Close()
+		ledgerClient := &rpcLedgerClient{rpc: ledgerRPC}
+		revDistProgramID = networkConfig.RevenueDistributionProgramID
+		revDistClient = revdist.NewWithLedger(revDistSolanaRPC, revDistProgramID, ledgerClient)
+		log.Info("revdist client initialized", "program_id", revDistProgramID.String())
+	} else {
+		log.Info("revdist disabled for non-mainnet env")
+	}
+
 	// Initialize ClickHouse client (required)
 	if *clickhouseAddrFlag == "" {
 		return fmt.Errorf("clickhouse-addr is required")
@@ -434,6 +454,10 @@ func run() error {
 			DeviceUsageInfluxQueryWindow: deviceUsageQueryWindow,
 			DeviceUsageRefreshInterval:   *deviceUsageRefreshIntervalFlag,
 
+			// Revenue distribution configuration
+			RevDistClient:    revDistClient,
+			RevDistProgramID: revDistProgramID,
+
 			// Solana configuration
 			SolanaRPC: solanaRPC,
 
@@ -517,4 +541,17 @@ func initializeGeoIP(cityDBPath, asnDBPath string, log *slog.Logger) (geoip.Reso
 		}
 		return nil
 	}, nil
+}
+
+// rpcLedgerClient adapts a Solana RPC client to the revdist LedgerRecordClient interface.
+type rpcLedgerClient struct {
+	rpc *solrpc.Client
+}
+
+func (c *rpcLedgerClient) GetRecordData(ctx context.Context, account solana.PublicKey) ([]byte, error) {
+	result, err := c.rpc.GetAccountInfo(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	return result.Value.Data.GetBinary(), nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzrevdist "github.com/malbeclabs/lake/indexer/pkg/dz/revdist"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
@@ -49,6 +50,10 @@ type Config struct {
 	DeviceUsageInfluxBucket      string
 	DeviceUsageInfluxQueryWindow time.Duration
 	ReadyIncludesDeviceUsage     bool // If true, the indexer also waits for the device usage view to be ready.
+
+	// Revenue distribution configuration (optional, mainnet-beta only).
+	RevDistClient    dzrevdist.RevDistClient
+	RevDistProgramID solana.PublicKey
 
 	// Solana configuration.
 	SolanaRPC sol.SolanaRPC

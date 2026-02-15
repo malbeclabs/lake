@@ -10,6 +10,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
+	dzrevdist "github.com/malbeclabs/lake/indexer/pkg/dz/revdist"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
@@ -23,6 +24,7 @@ type Indexer struct {
 	cfg Config
 
 	svc          *dzsvc.View
+	revdist      *dzrevdist.View
 	graphStore   *dzgraph.Store
 	telemLatency *dztelemlatency.View
 	telemUsage   *dztelemusage.View
@@ -183,11 +185,28 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			"region", cfg.ISISS3Region)
 	}
 
+	// Initialize revdist view (optional)
+	var revdistView *dzrevdist.View
+	if cfg.RevDistClient != nil {
+		revdistView, err = dzrevdist.NewView(dzrevdist.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			RevDistClient:   cfg.RevDistClient,
+			RefreshInterval: cfg.RefreshInterval,
+			ClickHouse:      cfg.ClickHouse,
+			ProgramID:       cfg.RevDistProgramID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create revdist view: %w", err)
+		}
+	}
+
 	i := &Indexer{
 		log: cfg.Logger,
 		cfg: cfg,
 
 		svc:          svcView,
+		revdist:      revdistView,
 		graphStore:   graphStore,
 		telemLatency: telemView,
 		telemUsage:   telemetryUsageView,
@@ -216,6 +235,9 @@ func (i *Indexer) Start(ctx context.Context) {
 	i.startedAt = i.cfg.Clock.Now()
 	i.svc.Start(ctx)
 	i.telemLatency.Start(ctx)
+	if i.revdist != nil {
+		i.revdist.Start(ctx)
+	}
 	if i.sol != nil {
 		i.sol.Start(ctx)
 	}
