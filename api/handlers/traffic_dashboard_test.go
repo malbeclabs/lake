@@ -415,6 +415,87 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 	}
 }
 
+// --- Scoped field values tests ---
+
+func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantVals  []string
+		wantEmpty bool
+	}{
+		{
+			name:     "intf_unscoped",
+			query:    "?entity=interfaces&field=intf",
+			wantVals: []string{"Ethernet1/1", "Port-Channel1000"},
+		},
+		{
+			name:     "intf_scoped_by_metro_FRA",
+			query:    "?entity=interfaces&field=intf&metro=FRA",
+			wantVals: []string{"Port-Channel1000"},
+		},
+		{
+			name:     "intf_scoped_by_metro_AMS",
+			query:    "?entity=interfaces&field=intf&metro=AMS",
+			wantVals: []string{"Ethernet1/1"},
+		},
+		{
+			name:      "intf_scoped_by_nonexistent_metro",
+			query:     "?entity=interfaces&field=intf&metro=NYC",
+			wantEmpty: true,
+		},
+		{
+			name:     "intf_scoped_by_device",
+			query:    "?entity=interfaces&field=intf&device=ROUTER-FRA-1",
+			wantVals: []string{"Port-Channel1000"},
+		},
+		{
+			name:     "intf_scoped_by_contributor",
+			query:    "?entity=interfaces&field=intf&contributor=ACME",
+			wantVals: []string{"Port-Channel1000"},
+		},
+		{
+			name:     "intf_scoped_by_link_type",
+			query:    "?entity=interfaces&field=intf&link_type=PNI",
+			wantVals: []string{"Ethernet1/1"},
+		},
+		{
+			name:     "metro_scoped_by_contributor",
+			query:    "?entity=devices&field=metro&contributor=ACME",
+			wantVals: []string{"FRA"},
+		},
+		{
+			name:     "contributor_scoped_by_metro",
+			query:    "?entity=devices&field=contributor&metro=AMS",
+			wantVals: []string{"BETA"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetFieldValues(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.FieldValuesResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			if tt.wantEmpty {
+				assert.Empty(t, resp.Values)
+			} else {
+				assert.Equal(t, tt.wantVals, resp.Values)
+			}
+		})
+	}
+}
+
 func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDashboardSchema(t)

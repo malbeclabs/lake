@@ -112,6 +112,18 @@ function DashboardSearch() {
     intfFilter, setIntfFilter,
   } = useDashboard()
 
+  // Build scope filters to pass to field-values API so autocomplete
+  // results are scoped to the active dashboard filters.
+  const scopeFilters = useMemo(() => {
+    const f: Record<string, string> = {}
+    if (metroFilter.length > 0) f.metro = metroFilter.join(',')
+    if (deviceFilter.length > 0) f.device = deviceFilter.join(',')
+    if (linkTypeFilter.length > 0) f.link_type = linkTypeFilter.join(',')
+    if (contributorFilter.length > 0) f.contributor = contributorFilter.join(',')
+    if (intfFilter.length > 0) f.intf = intfFilter.join(',')
+    return Object.keys(f).length > 0 ? f : undefined
+  }, [metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter])
+
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [isFocused, setIsFocused] = useState(false)
@@ -139,8 +151,8 @@ function DashboardSearch() {
   const acConfig = fieldValueMatch ? autocompleteConfig[fieldValueMatch.field] : null
 
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
-    queryKey: ['field-values', acConfig?.entity, acConfig?.field],
-    queryFn: () => fetchFieldValues(acConfig!.entity, acConfig!.field),
+    queryKey: ['field-values', acConfig?.entity, acConfig?.field, scopeFilters],
+    queryFn: () => fetchFieldValues(acConfig!.entity, acConfig!.field, scopeFilters),
     enabled: acConfig !== null && acConfig !== undefined,
     staleTime: 60000,
   })

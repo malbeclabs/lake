@@ -4097,8 +4097,14 @@ export interface FieldValuesResponse {
   values: string[]
 }
 
-export async function fetchFieldValues(entity: string, field: string): Promise<string[]> {
-  const res = await fetchWithRetry(`/api/dz/field-values?entity=${encodeURIComponent(entity)}&field=${encodeURIComponent(field)}`)
+export async function fetchFieldValues(entity: string, field: string, filters?: Record<string, string>): Promise<string[]> {
+  const params = new URLSearchParams({ entity, field })
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value)
+    }
+  }
+  const res = await fetchWithRetry(`/api/dz/field-values?${params}`)
   if (!res.ok) {
     return []
   }
