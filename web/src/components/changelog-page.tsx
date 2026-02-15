@@ -10,6 +10,13 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'February 15, 2026',
+    changes: [
+      { type: 'feature', description: 'Traffic analytics dashboard with aggregate stress charts, per-group localization, top interfaces table, drilldown panel, spike detection, and capacity planning' },
+      { type: 'feature', description: 'Bidirectional Rx/Tx charts across overview and interfaces pages with drag-to-zoom time range selection' },
+    ],
+  },
+  {
     date: 'February 14, 2026',
     changes: [
       { type: 'feature', description: 'Redesigned multicast overlay with per-publisher tree paths and animated flow dots' },
