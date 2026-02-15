@@ -2099,7 +2099,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const animatedDotsRef = useRef<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] })
 
   useEffect(() => {
-    if (!multicastTreesMode || !animateFlow || stableAnimatedGeoJson.features.length === 0) return
+    if (!multicastTreesMode || !animateFlow || !linkAnimating || stableAnimatedGeoJson.features.length === 0) return
     const map = mapRef.current?.getMap()
     if (!map) return
 
@@ -2180,7 +2180,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         // Map may already be destroyed
       }
     }
-  }, [multicastTreesMode, animateFlow, stableAnimatedGeoJson])
+  }, [multicastTreesMode, animateFlow, linkAnimating, stableAnimatedGeoJson])
 
   // Animate flowing dots along links (matches globe animated arcs, works with all overlays)
   useEffect(() => {
@@ -2217,6 +2217,11 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           'circle-opacity': 0.8,
         },
       })
+    }
+
+    // Add layer immediately at setup
+    if (map.isStyleLoaded()) {
+      addLayer()
     }
 
     let frameId: number
