@@ -52,6 +52,7 @@ export function LocalizationPanel() {
     queryKey: ['dashboard-stress-grouped', params],
     queryFn: () => fetchDashboardStress(params),
     staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
   })
 
   // Compute aggregate stats per group (average of the time series)

@@ -57,6 +57,7 @@ export function HealthPanel() {
     queryKey: ['dashboard-health', params],
     queryFn: () => fetchDashboardHealth(params),
     staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
     placeholderData: keepPreviousData,
   })
 

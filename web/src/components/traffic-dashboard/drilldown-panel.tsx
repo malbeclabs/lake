@@ -65,6 +65,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       intf_type: state.intfType !== 'all' ? state.intfType : undefined,
     }),
     staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
   })
 
   // Group points by interface

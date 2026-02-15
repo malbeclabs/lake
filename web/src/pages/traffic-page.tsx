@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, RefreshCw, ArrowUpDown } from 'lucide-react'
+import { ChevronDown, ArrowUpDown } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
@@ -84,23 +84,6 @@ const layoutLabels: Record<Layout, string> = {
   '2x2': '2',
 }
 
-type RefreshInterval = 'never' | '30s' | '1m' | '10m' | '30m'
-
-const refreshIntervalLabels: Record<RefreshInterval, string> = {
-  'never': 'Never',
-  '30s': '30 seconds',
-  '1m': '1 minute',
-  '10m': '10 minutes',
-  '30m': '30 minutes',
-}
-
-const refreshIntervalMs: Record<RefreshInterval, number | false> = {
-  'never': false,
-  '30s': 30000,
-  '1m': 60000,
-  '10m': 600000,
-  '30m': 1800000,
-}
 
 
 function BucketSelector({
@@ -230,51 +213,6 @@ function LayoutSelector({
   )
 }
 
-function RefreshIntervalSelector({
-  value,
-  onChange,
-}: {
-  value: RefreshInterval
-  onChange: (value: RefreshInterval) => void
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-      >
-        Auto-refresh: {refreshIntervalLabels[value]}
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]">
-            {(['never', '30s', '1m', '10m', '30m'] as RefreshInterval[]).map((interval) => (
-              <button
-                key={interval}
-                onClick={() => {
-                  onChange(interval)
-                  setIsOpen(false)
-                }}
-                className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  value === interval
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-              >
-                {refreshIntervalLabels[interval]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 function TrafficPageContent() {
   const dashboardState = useDashboard()
   const { timeRange, intfType } = dashboardState
@@ -282,7 +220,6 @@ function TrafficPageContent() {
   const [bucketSize, setBucketSize] = useState<BucketSize>('auto')
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
   const [layout, setLayout] = useState<Layout>('1x4')
-  const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>('never')
   const [bidirectional, setBidirectional] = useState(true)
 
   // Load layout from localStorage
@@ -293,24 +230,10 @@ function TrafficPageContent() {
     }
   }, [])
 
-  // Load refresh interval from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-refresh-interval')
-    if (saved && saved in refreshIntervalLabels) {
-      setRefreshInterval(saved as RefreshInterval)
-    }
-  }, [])
-
   // Save layout to localStorage
   const handleLayoutChange = (newLayout: Layout) => {
     setLayout(newLayout)
     localStorage.setItem('traffic-layout', newLayout)
-  }
-
-  // Save refresh interval to localStorage
-  const handleRefreshIntervalChange = (interval: RefreshInterval) => {
-    setRefreshInterval(interval)
-    localStorage.setItem('traffic-refresh-interval', interval)
   }
 
   // Compute actual bucket size to send to API
@@ -337,10 +260,6 @@ function TrafficPageContent() {
     return bucketSize
   }, [bucketSize, timeRange])
 
-  // Get refetch interval based on selected refresh interval
-  const refetchIntervalValue = useMemo(() => {
-    return refreshIntervalMs[refreshInterval]
-  }, [refreshInterval])
 
   // Determine which chart categories to show based on intf type filter
   const showTunnelCharts = intfType === 'all' || intfType === 'tunnel'
@@ -360,12 +279,11 @@ function TrafficPageContent() {
     data: tunnelData,
     isLoading: tunnelLoading,
     error: tunnelError,
-    refetch: refetchTunnel,
   } = useQuery({
     queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams],
     queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod, filterParams),
     staleTime: 30000,
-    refetchInterval: refetchIntervalValue,
+    refetchInterval: dashboardState.refetchInterval,
     enabled: showTunnelCharts,
   })
 
@@ -374,46 +292,35 @@ function TrafficPageContent() {
     data: nonTunnelData,
     isLoading: nonTunnelLoading,
     error: nonTunnelError,
-    refetch: refetchNonTunnel,
   } = useQuery({
     queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams],
     queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod, filterParams),
     staleTime: 30000,
-    refetchInterval: refetchIntervalValue,
+    refetchInterval: dashboardState.refetchInterval,
     enabled: showNonTunnelCharts,
   })
 
   // Fetch topology data for link metadata
   const {
     data: topologyData,
-    refetch: refetchTopology,
   } = useQuery({
     queryKey: ['topology'],
     queryFn: () => fetchTopology(),
     staleTime: 60000,
-    refetchInterval: refetchIntervalValue,
+    refetchInterval: dashboardState.refetchInterval,
   })
 
   // Fetch discards data (only when non-tunnel charts are visible)
   const {
     data: discardsData,
     isLoading: discardsLoading,
-    refetch: refetchDiscards,
   } = useQuery({
     queryKey: ['discards-intf', timeRange, actualBucketSize, filterParams],
     queryFn: () => fetchDiscardsData(timeRange, actualBucketSize, filterParams),
     staleTime: 30000,
-    refetchInterval: refetchIntervalValue,
+    refetchInterval: dashboardState.refetchInterval,
     enabled: showNonTunnelCharts,
   })
-
-  // Manual refresh handler
-  const handleManualRefresh = () => {
-    if (showTunnelCharts) refetchTunnel()
-    if (showNonTunnelCharts) refetchNonTunnel()
-    refetchTopology()
-    if (showNonTunnelCharts) refetchDiscards()
-  }
 
   // Build link lookup: device_pk + interface -> link info
   const linkLookup = useMemo(() => {
@@ -569,14 +476,6 @@ function TrafficPageContent() {
               onBucketChange={setBucketSize}
               onAggChange={setAggMethod}
             />
-            <RefreshIntervalSelector value={refreshInterval} onChange={handleRefreshIntervalChange} />
-            <button
-              onClick={handleManualRefresh}
-              className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-              title="Refresh now"
-            >
-              <RefreshCw className="h-4 w-4" />
-            </button>
           </div>
         </div>
 

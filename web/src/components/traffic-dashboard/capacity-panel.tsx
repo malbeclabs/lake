@@ -63,6 +63,7 @@ export function CapacityPanel() {
     queryKey: ['dashboard-capacity', params],
     queryFn: () => fetchDashboardTop(params),
     staleTime: 60_000,
+    refetchInterval: state.refetchInterval,
     placeholderData: keepPreviousData,
   })
 

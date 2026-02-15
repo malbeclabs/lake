@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useMemo, useCallback, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
@@ -14,12 +14,32 @@ export interface SelectedEntity {
   intf?: string
 }
 
+export type RefreshInterval = 'off' | '30s' | '1m' | '5m' | '10m'
+
+export const refreshIntervalMs: Record<RefreshInterval, number | false> = {
+  'off': false,
+  '30s': 30_000,
+  '1m': 60_000,
+  '5m': 300_000,
+  '10m': 600_000,
+}
+
+export const refreshIntervalLabels: Record<RefreshInterval, string> = {
+  'off': 'Off',
+  '30s': '30s',
+  '1m': '1m',
+  '5m': '5m',
+  '10m': '10m',
+}
+
 export interface DashboardState {
   timeRange: TimeRange
   threshold: number
   metric: 'utilization' | 'throughput' | 'packets'
   groupBy: string
   intfType: IntfType
+  refreshInterval: RefreshInterval
+  refetchInterval: number | false
 
   // Dimension filters
   metroFilter: string[]
@@ -42,6 +62,7 @@ export interface DashboardState {
   setMetric: (m: 'utilization' | 'throughput' | 'packets') => void
   setGroupBy: (g: string) => void
   setIntfType: (t: IntfType) => void
+  setRefreshInterval: (r: RefreshInterval) => void
   setMetroFilter: (f: string[]) => void
   setDeviceFilter: (f: string[]) => void
   setLinkTypeFilter: (f: string[]) => void
@@ -81,6 +102,12 @@ function parseList(param: string | null): string[] {
 
 export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const [refreshIntervalKey, setRefreshIntervalKey] = useState<RefreshInterval>('off')
+  const refetchInterval = refreshIntervalMs[refreshIntervalKey]
+
+  const setRefreshInterval = useCallback((r: RefreshInterval) => {
+    setRefreshIntervalKey(r)
+  }, [])
 
   // Derive all state from URL search params
   const timeRange = useMemo<TimeRange>(() => {
@@ -305,12 +332,12 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
   return (
     <DashboardContext.Provider
       value={{
-        timeRange, threshold, metric, groupBy, intfType,
+        timeRange, threshold, metric, groupBy, intfType, refreshInterval: refreshIntervalKey, refetchInterval,
         metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
         customStart, customEnd,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold: setThresholdAction, setMetric: setMetricAction, setGroupBy: setGroupByAction,
-        setIntfType: setIntfTypeAction,
+        setIntfType: setIntfTypeAction, setRefreshInterval,
         setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,

@@ -79,6 +79,7 @@ function TopTable({
     queryKey: ['dashboard-top', params],
     queryFn: () => fetchDashboardTop(params),
     staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
     placeholderData: keepPreviousData,
   })
 

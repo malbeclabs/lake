@@ -43,6 +43,7 @@ export function StressPanel() {
     queryKey: ['dashboard-stress', params],
     queryFn: () => fetchDashboardStress(params),
     staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
   })
 
   const isUtil = state.metric === 'utilization'

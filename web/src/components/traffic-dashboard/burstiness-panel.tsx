@@ -79,6 +79,7 @@ export function BurstinessPanel() {
     queryKey: ['dashboard-burstiness', params],
     queryFn: () => fetchDashboardBurstiness(params),
     staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
     placeholderData: keepPreviousData,
   })
 
