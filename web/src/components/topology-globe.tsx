@@ -195,11 +195,27 @@ interface GlobeArcMulticastTree {
 type GlobeArcEntity = GlobeArcLink | GlobeArcValidatorLink | GlobeArcInterMetro | GlobeArcMulticastTree
 
 // Get per-publisher arc altitude for parallel multicast tree arcs.
-function getPublisherAltitude(publisherIndex: number, totalPublishers: number): number {
-  if (totalPublishers === 1) return 0.1
-  const spread = 0.05
-  const center = 0.1
-  const start = center - (spread * (totalPublishers - 1)) / 2
+// Scales with great-circle distance so long arcs don't clip through the globe.
+function getPublisherAltitude(
+  publisherIndex: number,
+  totalPublishers: number,
+  startLat: number, startLng: number,
+  endLat: number, endLng: number,
+): number {
+  // Great-circle angular distance (radians)
+  const toRad = Math.PI / 180
+  const lat1 = startLat * toRad, lat2 = endLat * toRad
+  const dLng = (endLng - startLng) * toRad
+  const angularDist = Math.acos(
+    Math.min(1, Math.max(-1,
+      Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(dLng)
+    ))
+  )
+  // Scale with distance, with a minimum for short arcs
+  const base = Math.max(0.06, angularDist * 0.15)
+  if (totalPublishers === 1) return base
+  const spread = 0.04
+  const start = base - (spread * (totalPublishers - 1)) / 2
   return start + spread * publisherIndex
 }
 
@@ -1662,7 +1678,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           const canonicalKey = [seg.fromPK, seg.toPK].sort().join('|')
           const pubs = multicastSegmentPublishers.get(canonicalKey) ?? [publisherPK]
           const pubIndex = pubs.indexOf(publisherPK)
-          const altitude = getPublisherAltitude(pubIndex, pubs.length)
+          const altitude = getPublisherAltitude(pubIndex, pubs.length, seg.fromLat, seg.fromLng, seg.toLat, seg.toLng)
 
           arcs.push({
             entityType: 'multicast-tree',
