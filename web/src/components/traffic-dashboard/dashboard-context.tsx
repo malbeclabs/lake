@@ -47,8 +47,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     return (saved as TimeRange) || '12h'
   })
   const [threshold, setThreshold] = useState(0.8)
-  const [metric, setMetric] = useState<'utilization' | 'throughput'>('utilization')
-  const [groupBy, setGroupBy] = useState('metro')
+  const [metric, setMetric] = useState<'utilization' | 'throughput'>('throughput')
+  const [groupBy, setGroupBy] = useState('device')
 
   const [metroFilter, setMetroFilter] = useState<string[]>([])
   const [deviceFilter, setDeviceFilter] = useState<string[]>([])
