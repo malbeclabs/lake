@@ -1,6 +1,9 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useCallback, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
+
+const validTimeRanges: Set<string> = new Set(['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'])
 
 export interface SelectedEntity {
   devicePk: string
@@ -49,76 +52,227 @@ export interface DashboardState {
 
 const DashboardContext = createContext<DashboardState | null>(null)
 
+// Serialize a SelectedEntity to URL-safe string: devicePk~deviceCode or devicePk~deviceCode~intf
+function serializeEntity(e: SelectedEntity): string {
+  return e.intf ? `${e.devicePk}~${e.deviceCode}~${e.intf}` : `${e.devicePk}~${e.deviceCode}`
+}
+
+// Parse a serialized entity string back to SelectedEntity
+function parseEntity(s: string): SelectedEntity | null {
+  const parts = s.split('~')
+  if (parts.length < 2) return null
+  return {
+    devicePk: parts[0],
+    deviceCode: parts[1],
+    intf: parts.length >= 3 ? parts.slice(2).join('~') : undefined,
+  }
+}
+
+// Parse a comma-separated list, filtering out empty strings
+function parseList(param: string | null): string[] {
+  if (!param) return []
+  return param.split(',').filter(Boolean)
+}
+
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  const [timeRange, setTimeRange] = useState<TimeRange>(() => {
-    const saved = localStorage.getItem('traffic-dashboard-time-range')
-    return (saved as TimeRange) || '12h'
-  })
-  const [threshold, setThreshold] = useState(0.8)
-  const [metric, setMetric] = useState<'utilization' | 'throughput'>('throughput')
-  const [groupBy, setGroupBy] = useState('device')
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  const [metroFilter, setMetroFilter] = useState<string[]>([])
-  const [deviceFilter, setDeviceFilter] = useState<string[]>([])
-  const [linkTypeFilter, setLinkTypeFilter] = useState<string[]>([])
-  const [contributorFilter, setContributorFilter] = useState<string[]>([])
-  const [intfFilter, setIntfFilter] = useState<string[]>([])
+  // Derive all state from URL search params
+  const timeRange = useMemo<TimeRange>(() => {
+    // If custom start/end are present, it's a custom range
+    if (searchParams.has('start_time') && searchParams.has('end_time')) return 'custom'
+    const param = searchParams.get('time_range')
+    if (param && validTimeRanges.has(param)) return param as TimeRange
+    return '12h'
+  }, [searchParams])
 
-  const [customStart, setCustomStart] = useState<number | null>(null)
-  const [customEnd, setCustomEnd] = useState<number | null>(null)
+  const metric = useMemo<'utilization' | 'throughput'>(() => {
+    const param = searchParams.get('metric')
+    if (param === 'utilization' || param === 'throughput') return param
+    return 'throughput'
+  }, [searchParams])
 
-  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null)
-  const [pinnedEntities, setPinnedEntities] = useState<SelectedEntity[]>([])
+  const groupBy = useMemo(() => searchParams.get('group_by') ?? 'device', [searchParams])
+
+  const threshold = useMemo(() => {
+    const param = searchParams.get('threshold')
+    if (param != null) {
+      const n = parseFloat(param)
+      if (!isNaN(n)) return n
+    }
+    return 0.8
+  }, [searchParams])
+
+  const customStart = useMemo<number | null>(() => {
+    const param = searchParams.get('start_time')
+    if (param != null) {
+      const n = parseFloat(param)
+      if (!isNaN(n)) return n
+    }
+    return null
+  }, [searchParams])
+
+  const customEnd = useMemo<number | null>(() => {
+    const param = searchParams.get('end_time')
+    if (param != null) {
+      const n = parseFloat(param)
+      if (!isNaN(n)) return n
+    }
+    return null
+  }, [searchParams])
+
+  const metroFilter = useMemo(() => parseList(searchParams.get('metro')), [searchParams])
+  const deviceFilter = useMemo(() => parseList(searchParams.get('device')), [searchParams])
+  const linkTypeFilter = useMemo(() => parseList(searchParams.get('link_type')), [searchParams])
+  const contributorFilter = useMemo(() => parseList(searchParams.get('contributor')), [searchParams])
+  const intfFilter = useMemo(() => parseList(searchParams.get('intf')), [searchParams])
+
+  const selectedEntity = useMemo<SelectedEntity | null>(() => {
+    const param = searchParams.get('sel')
+    if (!param) return null
+    return parseEntity(param)
+  }, [searchParams])
+
+  const pinnedEntities = useMemo<SelectedEntity[]>(() => {
+    const param = searchParams.get('pinned')
+    if (!param) return []
+    return param.split(',').map(parseEntity).filter((e): e is SelectedEntity => e !== null)
+  }, [searchParams])
+
+  // Setters — each updates URL params, deleting param when at default value
 
   const handleSetTimeRange = useCallback((tr: TimeRange) => {
-    setTimeRange(tr)
-    if (tr !== 'custom') {
-      setCustomStart(null)
-      setCustomEnd(null)
-      localStorage.setItem('traffic-dashboard-time-range', tr)
-    }
-  }, [])
+    setSearchParams(prev => {
+      if (tr !== 'custom') {
+        prev.delete('start_time')
+        prev.delete('end_time')
+      }
+      if (tr === '12h') {
+        prev.delete('time_range')
+      } else {
+        prev.set('time_range', tr)
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  const setThresholdAction = useCallback((t: number) => {
+    setSearchParams(prev => {
+      if (t === 0.8) {
+        prev.delete('threshold')
+      } else {
+        prev.set('threshold', String(t))
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  const setMetricAction = useCallback((m: 'utilization' | 'throughput') => {
+    setSearchParams(prev => {
+      if (m === 'throughput') {
+        prev.delete('metric')
+      } else {
+        prev.set('metric', m)
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  const setGroupByAction = useCallback((g: string) => {
+    setSearchParams(prev => {
+      if (g === 'device') {
+        prev.delete('group_by')
+      } else {
+        prev.set('group_by', g)
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  const setListParam = useCallback((key: string, values: string[]) => {
+    setSearchParams(prev => {
+      if (values.length === 0) {
+        prev.delete(key)
+      } else {
+        prev.set(key, values.join(','))
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  const setMetroFilter = useCallback((f: string[]) => setListParam('metro', f), [setListParam])
+  const setDeviceFilter = useCallback((f: string[]) => setListParam('device', f), [setListParam])
+  const setLinkTypeFilter = useCallback((f: string[]) => setListParam('link_type', f), [setListParam])
+  const setContributorFilter = useCallback((f: string[]) => setListParam('contributor', f), [setListParam])
+  const setIntfFilter = useCallback((f: string[]) => setListParam('intf', f), [setListParam])
 
   const setCustomRange = useCallback((start: number, end: number) => {
-    setCustomStart(start)
-    setCustomEnd(end)
-    setTimeRange('custom')
-  }, [])
+    setSearchParams(prev => {
+      prev.set('start_time', String(start))
+      prev.set('end_time', String(end))
+      prev.delete('time_range')
+      return prev
+    })
+  }, [setSearchParams])
 
   const clearCustomRange = useCallback(() => {
-    setCustomStart(null)
-    setCustomEnd(null)
-    const saved = localStorage.getItem('traffic-dashboard-time-range')
-    setTimeRange((saved as TimeRange) || '12h')
-  }, [])
+    setSearchParams(prev => {
+      prev.delete('start_time')
+      prev.delete('end_time')
+      // Revert to default time range (12h) — delete param since it's the default
+      prev.delete('time_range')
+      return prev
+    })
+  }, [setSearchParams])
 
   const selectEntity = useCallback((e: SelectedEntity | null) => {
-    setSelectedEntity(e)
-  }, [])
+    setSearchParams(prev => {
+      if (e === null) {
+        prev.delete('sel')
+      } else {
+        prev.set('sel', serializeEntity(e))
+      }
+      return prev
+    })
+  }, [setSearchParams])
 
   const pinEntity = useCallback((e: SelectedEntity) => {
-    setPinnedEntities(prev => {
-      const key = e.devicePk + (e.intf || '')
-      if (prev.some(p => p.devicePk + (p.intf || '') === key)) return prev
-      return [...prev, e]
+    setSearchParams(prev => {
+      const existing = parseList(prev.get('pinned'))
+      const serialized = serializeEntity(e)
+      if (existing.includes(serialized)) return prev
+      const updated = [...existing, serialized]
+      prev.set('pinned', updated.join(','))
+      return prev
     })
-  }, [])
+  }, [setSearchParams])
 
   const unpinEntity = useCallback((e: SelectedEntity) => {
-    setPinnedEntities(prev =>
-      prev.filter(p => p.devicePk + (p.intf || '') !== e.devicePk + (e.intf || ''))
-    )
-  }, [])
+    setSearchParams(prev => {
+      const existing = parseList(prev.get('pinned'))
+      const serialized = serializeEntity(e)
+      const updated = existing.filter(s => s !== serialized)
+      if (updated.length === 0) {
+        prev.delete('pinned')
+      } else {
+        prev.set('pinned', updated.join(','))
+      }
+      return prev
+    })
+  }, [setSearchParams])
 
   const clearFilters = useCallback(() => {
-    setMetroFilter([])
-    setDeviceFilter([])
-    setLinkTypeFilter([])
-    setContributorFilter([])
-    setIntfFilter([])
-    setSelectedEntity(null)
-    setPinnedEntities([])
-  }, [])
+    setSearchParams(prev => {
+      prev.delete('metro')
+      prev.delete('device')
+      prev.delete('link_type')
+      prev.delete('contributor')
+      prev.delete('intf')
+      prev.delete('sel')
+      prev.delete('pinned')
+      return prev
+    })
+  }, [setSearchParams])
 
   return (
     <DashboardContext.Provider
@@ -127,7 +281,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
         customStart, customEnd,
         selectedEntity, pinnedEntities,
-        setTimeRange: handleSetTimeRange, setThreshold, setMetric, setGroupBy,
+        setTimeRange: handleSetTimeRange, setThreshold: setThresholdAction, setMetric: setMetricAction, setGroupBy: setGroupByAction,
         setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
