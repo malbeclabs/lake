@@ -4,6 +4,7 @@ import 'uplot/dist/uPlot.min.css'
 import { X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import type { TrafficPoint, SeriesInfo } from '@/lib/api'
 import type { LinkLookupInfo } from '@/pages/traffic-page'
+import { useTheme } from '@/hooks/use-theme'
 
 // Color palette matching the app
 const COLORS = [
@@ -46,6 +47,7 @@ function formatBandwidth(bps: number): string {
 }
 
 function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false }: TrafficChartProps) {
+  const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const linkLookupRef = useRef(linkLookup)
@@ -439,7 +441,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   useEffect(() => {
     if (!chartRef.current || uplotData[0].length === 0) return
 
-    const axisStroke = document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+    const axisStroke = resolvedTheme === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
 
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
@@ -610,7 +612,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         plotRef.current = null
       }
     }
-  }, [uplotData, uplotSeries, stacked, bidirectional])
+  }, [uplotData, uplotSeries, stacked, bidirectional, resolvedTheme])
 
   // Separate effect for handling click to pin/unpin tooltip
   useEffect(() => {

@@ -5,6 +5,7 @@ import 'uplot/dist/uPlot.min.css'
 import { fetchDashboardDrilldown, type DashboardDrilldownPoint } from '@/lib/api'
 import { useDashboard, type SelectedEntity } from './dashboard-context'
 import { Loader2, Pin, PinOff, X, Search, ChevronUp, ChevronDown } from 'lucide-react'
+import { useTheme } from '@/hooks/use-theme'
 
 function formatRate(val: number): string {
   if (val >= 1e12) return (val / 1e12).toFixed(1) + ' Tbps'
@@ -35,6 +36,7 @@ const seriesColors = [
 
 function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const state = useDashboard()
+  const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
@@ -132,7 +134,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       })
     })
 
-    const axisStroke = document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+    const axisStroke = resolvedTheme === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
 
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
@@ -172,7 +174,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [uplotData, fmt])
+  }, [uplotData, fmt, resolvedTheme])
 
   // Find bandwidth for header (single-interface drilldown)
   const bandwidth = data?.series?.find(s => s.intf === entity.intf)?.bandwidth_bps

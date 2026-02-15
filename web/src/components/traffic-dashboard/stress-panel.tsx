@@ -5,6 +5,7 @@ import 'uplot/dist/uPlot.min.css'
 import { fetchDashboardStress } from '@/lib/api'
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { Loader2 } from 'lucide-react'
+import { useTheme } from '@/hooks/use-theme'
 
 function formatRate(val: number): string {
   if (val >= 1e12) return (val / 1e12).toFixed(1) + ' Tbps'
@@ -27,6 +28,7 @@ function formatPps(val: number): string {
 
 export function StressPanel() {
   const state = useDashboard()
+  const { resolvedTheme } = useTheme()
   const { setCustomRange } = state
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
@@ -80,11 +82,11 @@ export function StressPanel() {
         },
       },
       axes: [
-        { stroke: document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)', grid: { stroke: 'rgba(128,128,128,0.06)' } },
+        { stroke: resolvedTheme === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)', grid: { stroke: 'rgba(128,128,128,0.06)' } },
         {
           values: (_: uPlot, vals: number[]) => vals.map(v => fmt(v)),
           size: 70,
-          stroke: document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)',
+          stroke: resolvedTheme === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)',
           grid: { stroke: 'rgba(128,128,128,0.06)' },
         },
       ],
@@ -124,7 +126,7 @@ export function StressPanel() {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [uplotData, isUtil, fmt, setCustomRange])
+  }, [uplotData, isUtil, fmt, setCustomRange, resolvedTheme])
 
   // Tooltip values
   const tooltipValues = useMemo(() => {
