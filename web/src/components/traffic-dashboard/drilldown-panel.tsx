@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
@@ -18,10 +18,19 @@ function entityLabel(e: SelectedEntity): string {
   return e.intf ? `${e.deviceCode} ${e.intf}` : e.deviceCode
 }
 
+const seriesColors = [
+  'oklch(65% 0.15 250)',
+  'oklch(65% 0.15 150)',
+  'oklch(65% 0.15 350)',
+  'oklch(65% 0.15 50)',
+  'oklch(65% 0.15 200)',
+]
+
 function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const state = useDashboard()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
 
   const isPinned = state.pinnedEntities.some(
     p => p.devicePk === entity.devicePk && p.intf === entity.intf
@@ -81,17 +90,9 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
 
     plotRef.current?.destroy()
 
-    const colors = [
-      'oklch(65% 0.15 250)',
-      'oklch(65% 0.15 150)',
-      'oklch(65% 0.15 350)',
-      'oklch(65% 0.15 50)',
-      'oklch(65% 0.15 200)',
-    ]
-
     const series: uPlot.Series[] = [{}]
     uplotData.intfs.forEach((intf, i) => {
-      const color = colors[i % colors.length]
+      const color = seriesColors[i % seriesColors.length]
       series.push({
         label: `${intf} Rx`,
         stroke: color,
@@ -122,6 +123,11 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
           size: 70,
         },
       ],
+      hooks: {
+        setCursor: [(u: uPlot) => {
+          setHoveredIdx(u.cursor.idx ?? null)
+        }],
+      },
       legend: { show: false },
     }
 
@@ -140,15 +146,41 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
     }
   }, [uplotData])
 
-  // Find bandwidth from series metadata
+  // Build per-interface metadata: bandwidth and link type from series data
+  const intfMeta = useMemo(() => {
+    if (!data?.series) return new Map<string, { bandwidth: number; linkType: string }>()
+    const m = new Map<string, { bandwidth: number; linkType: string }>()
+    for (const s of data.series) {
+      m.set(s.intf, { bandwidth: s.bandwidth_bps, linkType: s.link_type })
+    }
+    return m
+  }, [data?.series])
+
+  // Find bandwidth for header (single-interface drilldown)
   const bandwidth = data?.series?.find(s => s.intf === entity.intf)?.bandwidth_bps
+
+  // Hover values: for each interface, Rx/Tx at cursor position
+  const hoverValues = useMemo(() => {
+    if (hoveredIdx === null || !uplotData) return null
+    const m = new Map<string, { rx: number; tx: number }>()
+    uplotData.intfs.forEach((intf, i) => {
+      const rxIdx = 1 + i * 2
+      const txIdx = 2 + i * 2
+      const rx = uplotData.aligned[rxIdx]?.[hoveredIdx] as number | null
+      const tx = uplotData.aligned[txIdx]?.[hoveredIdx] as number | null
+      m.set(intf, { rx: rx ?? 0, tx: tx != null ? Math.abs(tx) : 0 })
+    })
+    return m
+  }, [hoveredIdx, uplotData])
+
+  const multiIntf = uplotData && uplotData.intfs.length > 1
 
   return (
     <div className="border border-border/50 rounded p-3">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <h3 className="text-xs font-semibold font-mono">{entityLabel(entity)}</h3>
-          {bandwidth != null && bandwidth > 0 && (
+          {bandwidth != null && bandwidth > 0 && !multiIntf && (
             <span className="text-xs text-muted-foreground">
               ({formatRate(bandwidth)} capacity)
             </span>
@@ -184,24 +216,73 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       ) : (
         <>
           <div ref={chartRef} className="w-full" />
-          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
-            {uplotData.intfs.map((intf, i) => {
-              const colors = [
-                'oklch(65% 0.15 250)',
-                'oklch(65% 0.15 150)',
-                'oklch(65% 0.15 350)',
-                'oklch(65% 0.15 50)',
-                'oklch(65% 0.15 200)',
-              ]
-              const color = colors[i % colors.length]
-              return (
-                <span key={intf} className="flex items-center gap-1">
-                  <span className="w-3 h-0.5 inline-block" style={{ backgroundColor: color }} />
-                  {intf}
+          {multiIntf ? (
+            <table className="w-full mt-2 text-xs table-fixed">
+              <colgroup>
+                <col />
+                <col className="w-24" />
+                <col className="w-24" />
+                <col className="w-24" />
+              </colgroup>
+              <thead>
+                <tr className="text-muted-foreground">
+                  <th className="text-left font-normal pb-1">Interface</th>
+                  <th className="text-right font-normal pb-1">Capacity</th>
+                  <th className="text-right font-normal pb-1">Rx</th>
+                  <th className="text-right font-normal pb-1">Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uplotData.intfs.map((intf, i) => {
+                  const color = seriesColors[i % seriesColors.length]
+                  const meta = intfMeta.get(intf)
+                  const hv = hoverValues?.get(intf)
+                  return (
+                    <tr key={intf} className="border-t border-border/30">
+                      <td className="py-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+                          <span className="font-mono text-foreground truncate">{intf}</span>
+                        </span>
+                      </td>
+                      <td className="py-1 text-right text-muted-foreground font-mono tabular-nums">
+                        {meta && meta.bandwidth > 0 ? formatRate(meta.bandwidth) : '—'}
+                      </td>
+                      <td className="py-1 text-right font-mono tabular-nums">
+                        {hv ? <span className="text-foreground">{formatRate(hv.rx)}</span> : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="py-1 text-right font-mono tabular-nums">
+                        {hv ? <span className="text-foreground">{formatRate(hv.tx)}</span> : <span className="text-muted-foreground">—</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="flex items-center justify-between mt-1 h-5">
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-0.5 inline-block" style={{ backgroundColor: seriesColors[0] }} />
+                  Rx (solid) / Tx (dashed)
                 </span>
-              )
-            })}
-          </div>
+              </div>
+              {hoverValues && (
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  {(() => {
+                    const hv = hoverValues.get(uplotData.intfs[0])
+                    if (!hv) return null
+                    return (
+                      <>
+                        <span>Rx: <span className="font-medium text-foreground">{formatRate(hv.rx)}</span></span>
+                        <span>Tx: <span className="font-medium text-foreground">{formatRate(hv.tx)}</span></span>
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
