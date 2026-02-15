@@ -546,7 +546,8 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 				greatest(
 					f.in_octets_delta * 8 / f.delta_duration,
 					f.out_octets_delta * 8 / f.delta_duration
-				) AS throughput_bps
+				) AS throughput_bps,
+				CASE WHEN f.in_octets_delta >= f.out_octets_delta THEN 1 ELSE 0 END AS is_rx
 			FROM fact_dz_device_interface_counters f
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
@@ -583,7 +584,8 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 				ELSE 0
 			END AS pct_time_stressed,
 			quantile(0.5)(ps.throughput_bps) AS p50_bps,
-			quantile(0.99)(ps.throughput_bps) AS p99_bps
+			quantile(0.99)(ps.throughput_bps) AS p99_bps,
+			CASE WHEN argMax(ps.is_rx, ps.throughput_bps) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction
 		FROM per_sample ps
 		INNER JOIN dz_devices_current d ON ps.device_pk = d.pk
 		LEFT JOIN dz_links_current l ON ps.link_pk = l.pk
@@ -988,6 +990,7 @@ type BurstinessEntity struct {
 	PctTimeStressed float64 `json:"pct_time_stressed"`
 	P50Bps          float64 `json:"p50_bps"`
 	P99Bps          float64 `json:"p99_bps"`
+	PeakDirection   string  `json:"peak_direction"`
 }
 
 type BurstinessResponse struct {
@@ -1048,7 +1051,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		var e BurstinessEntity
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.BandwidthBps, &e.P50Util, &e.P99Util, &e.Burstiness,
-			&e.PctTimeStressed, &e.P50Bps, &e.P99Bps); err != nil {
+			&e.PctTimeStressed, &e.P50Bps, &e.P99Bps, &e.PeakDirection); err != nil {
 			log.Printf("Traffic dashboard burstiness row scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

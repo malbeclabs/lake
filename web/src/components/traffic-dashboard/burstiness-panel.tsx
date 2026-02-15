@@ -144,6 +144,7 @@ export function BurstinessPanel() {
                     >
                       <td className="py-1.5 px-2 font-mono">
                         {e.device_code} <span className="text-muted-foreground">{e.intf}</span>
+                        <span className="text-[10px] text-muted-foreground ml-1">{e.peak_direction === 'rx' ? 'Rx' : 'Tx'}</span>
                       </td>
                       <td className="py-1.5 px-2">{e.metro_code}</td>
                       <td className="py-1.5 px-2 text-right font-mono">

@@ -3767,6 +3767,7 @@ export interface DashboardBurstinessEntity {
   pct_time_stressed: number
   p50_bps: number
   p99_bps: number
+  peak_direction: 'rx' | 'tx'
 }
 
 export interface DashboardBurstinessResponse {
