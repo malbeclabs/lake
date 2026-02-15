@@ -2182,11 +2182,16 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     }
   }, [multicastTreesMode, animateFlow, linkAnimating, stableAnimatedGeoJson])
 
-  // Keep a ref to linkGeoJson so the rAF loop always reads the latest value
+  // Refs so the rAF loop always reads latest values without effect re-runs
   const linkGeoJsonRef = useRef(linkGeoJson)
   linkGeoJsonRef.current = linkGeoJson
+  const linkAnimatingRef = useRef(linkAnimating)
+  linkAnimatingRef.current = linkAnimating
+  const isDarkRef = useRef(isDark)
+  isDarkRef.current = isDark
 
-  // Animate flowing dots along links (matches globe animated arcs, works with all overlays)
+  // Animate flowing dots along links (matches globe animated arcs, works with all overlays).
+  // Sets up once when map is ready; rAF loop reads refs for latest state.
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
@@ -2194,22 +2199,18 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const sourceId = 'link-flow-dots'
     const layerId = 'link-flow-dots-layer'
     const DOTS_PER_LINK = 2
+    const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
 
-    // Per-link cycle duration based on latency (matches globe arcAnimateTime):
-    // low latency → faster dots, high latency → slower dots
-    // Returns cycle time in ms: 600ms (1µs) to 3000ms (200ms+)
     const getCycleDuration = (latencyUs: number): number => {
       const latencyMs = latencyUs / 1000
       const clamped = Math.max(1, Math.min(200, latencyMs))
       return 600 + (Math.log(clamped) / Math.log(200)) * 2400
     }
 
-    const addLayer = () => {
-      if (map.getSource(sourceId)) return
-      map.addSource(sourceId, {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      })
+    const ensureLayer = () => {
+      if (map.getSource(sourceId)) return true
+      if (!map.isStyleLoaded()) return false
+      map.addSource(sourceId, { type: 'geojson', data: EMPTY })
       map.addLayer({
         id: layerId,
         type: 'circle',
@@ -2220,33 +2221,22 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           'circle-opacity': 0.8,
         },
       })
-    }
-
-    const removeLayer = () => {
-      try {
-        if (map.getLayer(layerId)) map.removeLayer(layerId)
-        if (map.getSource(sourceId)) map.removeSource(sourceId)
-      } catch {
-        // Map may already be destroyed
-      }
-    }
-
-    if (!linkAnimating) {
-      // Ensure layer is removed when animation is off
-      removeLayer()
-      return
-    }
-
-    // Add layer immediately at setup
-    if (map.isStyleLoaded()) {
-      addLayer()
+      return true
     }
 
     let frameId: number
     const tick = (timestamp: number) => {
-      // Re-add if react-map-gl removed it during style reconciliation
-      if (!map.getSource(sourceId)) {
-        if (map.isStyleLoaded()) addLayer()
+      if (!linkAnimatingRef.current) {
+        // Clear dots but keep layer alive for instant resume
+        try {
+          const src = map.getSource(sourceId)
+          if (src && 'setData' in src) (src as any).setData(EMPTY)
+        } catch { /* noop */ }
+        frameId = requestAnimationFrame(tick)
+        return
+      }
+
+      if (!ensureLayer()) {
         frameId = requestAnimationFrame(tick)
         return
       }
@@ -2256,10 +2246,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
       for (const feature of features) {
         const props = feature.properties as Record<string, unknown>
-        // Skip heavily dimmed links (e.g. multicast dim-other-links)
         if (typeof props?.opacity === 'number' && props.opacity < 0.2) continue
 
-        const color = (props?.color as string) ?? (isDark ? '#00ffcc' : '#3b82f6')
+        const color = (props?.color as string) ?? (isDarkRef.current ? '#00ffcc' : '#3b82f6')
         const latencyUs = (props?.latencyUs as number) ?? 0
         const cycleDuration = getCycleDuration(latencyUs)
         const t = (timestamp % cycleDuration) / cycleDuration
@@ -2281,18 +2270,19 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         if (src && 'setData' in src) {
           (src as any).setData({ type: 'FeatureCollection', features: points })
         }
-      } catch {
-        // Source may be removed during cleanup
-      }
+      } catch { /* noop */ }
       frameId = requestAnimationFrame(tick)
     }
 
     frameId = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(frameId)
-      removeLayer()
+      try {
+        if (map.getLayer(layerId)) map.removeLayer(layerId)
+        if (map.getSource(sourceId)) map.removeSource(sourceId)
+      } catch { /* noop */ }
     }
-  }, [linkAnimating, mapReady, isDark])
+  }, [mapReady])
 
   // Colors
   const deviceColor = '#00ffcc' // vibrant cyan - matches globe view, overlays will override
