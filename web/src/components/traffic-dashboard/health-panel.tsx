@@ -116,7 +116,7 @@ export function HealthPanel() {
                   return (
                     <tr
                       key={`${e.device_pk}-${e.intf}-${i}`}
-                      onClick={() => state.selectEntity({
+                      onClick={() => state.selectEntity(isSelected ? null : {
                         devicePk: e.device_pk,
                         deviceCode: e.device_code,
                         intf: e.intf,

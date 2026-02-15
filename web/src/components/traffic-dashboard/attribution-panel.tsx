@@ -84,7 +84,9 @@ function TopTable({
   })
 
   const handleRowClick = (entity: DashboardTopEntity) => {
-    state.selectEntity({
+    const isSelected = state.selectedEntity?.devicePk === entity.device_pk &&
+      (entityType === 'device' || state.selectedEntity?.intf === entity.intf)
+    state.selectEntity(isSelected ? null : {
       devicePk: entity.device_pk,
       deviceCode: entity.device_code,
       intf: entityType === 'interface' ? entity.intf : undefined,
