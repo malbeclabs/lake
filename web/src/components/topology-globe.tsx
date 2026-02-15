@@ -346,7 +346,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
   // True when user is actively analyzing — any overlay, mode, or selection active.
   // Used to stop arc animation and show solid lines for clarity.
-  const anyOverlayActive = Object.values(overlays).some(Boolean)
+  // Bandwidth is excluded because it's always-on sizing, not an analytical overlay.
+  const anyOverlayActive = Object.entries(overlays).some(([key, value]) => key !== 'bandwidth' && value)
   const isAnalysisActive = anyOverlayActive || mode !== 'explore' || !!selectedItem
 
   // Multicast trees operational state (local)
