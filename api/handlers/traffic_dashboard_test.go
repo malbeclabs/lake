@@ -331,6 +331,7 @@ func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 // --- Traffic type filter tests ---
 
 // seedTrafficTypeData inserts data with different traffic types: link, tunnel, and other.
+// Multiple samples per interface to produce meaningful percentile spreads for burstiness.
 func seedTrafficTypeData(t *testing.T) {
 	ctx := t.Context()
 
@@ -346,23 +347,30 @@ func seedTrafficTypeData(t *testing.T) {
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_links_current VALUES
 		('link-1', 100000000000, 'WAN', 'contrib-1')`))
 
-	// Link interface: has link_pk
+	// Link interface: has link_pk (3 samples with varying traffic)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL)`))
+		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 200000000000, 100000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 50000000000, 25000000000, 30.0, 0, 0, NULL)`))
 
-	// Tunnel interface: has user_tunnel_id
+	// Tunnel interface: has user_tunnel_id (3 samples with varying traffic)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Tunnel100', '', 50000000000, 25000000000, 30.0, 0, 0, 42)`))
+		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Tunnel100', '', 50000000000, 25000000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Tunnel100', '', 100000000000, 50000000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Tunnel100', '', 25000000000, 12500000000, 30.0, 0, 0, 42)`))
 
-	// Other interface: no link_pk, no user_tunnel_id
+	// Other interface: no link_pk, no user_tunnel_id (3 samples with varying traffic)
+	// Traffic must be above 1 Mbps (p50) to pass the burstiness minimum throughput filter.
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Loopback0', '', 10000000, 5000000, 30.0, 0, 0, NULL)`))
+		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Loopback0', '', 10000000000, 5000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Loopback0', '', 30000000000, 15000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Loopback0', '', 5000000000, 2500000000, 30.0, 0, 0, NULL)`))
 }
 
 func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
@@ -449,6 +457,67 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 
 			var resp handlers.StressResponse
 			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
+}
+
+func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedTrafficTypeData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantIntfs []string
+	}{
+		{
+			name:      "all_traffic",
+			query:     "?time_range=1h",
+			wantIntfs: []string{"Ethernet1", "Tunnel100", "Loopback0"},
+		},
+		{
+			name:      "all_traffic_explicit",
+			query:     "?time_range=1h&intf_type=all",
+			wantIntfs: []string{"Ethernet1", "Tunnel100", "Loopback0"},
+		},
+		{
+			name:      "tunnel_only",
+			query:     "?time_range=1h&intf_type=tunnel",
+			wantIntfs: []string{"Tunnel100"},
+		},
+		{
+			name:      "other_only",
+			query:     "?time_range=1h&intf_type=other",
+			wantIntfs: []string{"Loopback0"},
+		},
+		{
+			name:      "link_only",
+			query:     "?time_range=1h&intf_type=link",
+			wantIntfs: []string{"Ethernet1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardBurstiness(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.BurstinessResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			var gotIntfs []string
+			for _, e := range resp.Entities {
+				gotIntfs = append(gotIntfs, e.Intf)
+				// All entities should have p50_bps and p99_bps populated
+				assert.Greater(t, e.P50Bps, float64(0), "p50_bps should be > 0 for %s", e.Intf)
+				assert.Greater(t, e.P99Bps, float64(0), "p99_bps should be > 0 for %s", e.Intf)
+			}
+			assert.ElementsMatch(t, tt.wantIntfs, gotIntfs)
 		})
 	}
 }

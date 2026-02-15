@@ -91,19 +91,21 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     return '12h'
   }, [searchParams])
 
-  const metric = useMemo<'utilization' | 'throughput'>(() => {
-    const param = searchParams.get('metric')
-    if (param === 'utilization' || param === 'throughput') return param
-    return 'throughput'
-  }, [searchParams])
-
-  const groupBy = useMemo(() => searchParams.get('group_by') ?? 'device', [searchParams])
-
   const intfType = useMemo<IntfType>(() => {
     const param = searchParams.get('intf_type')
     if (param && validIntfTypes.has(param)) return param as IntfType
     return 'all'
   }, [searchParams])
+
+  const groupBy = useMemo(() => searchParams.get('group_by') ?? 'device', [searchParams])
+
+  // Force throughput when intf_type is non-link (utilization requires bandwidth)
+  const metric = useMemo<'utilization' | 'throughput'>(() => {
+    if (intfType === 'tunnel' || intfType === 'other') return 'throughput'
+    const param = searchParams.get('metric')
+    if (param === 'utilization' || param === 'throughput') return param
+    return 'throughput'
+  }, [searchParams, intfType])
 
   const threshold = useMemo(() => {
     const param = searchParams.get('threshold')

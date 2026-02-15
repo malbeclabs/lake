@@ -3763,6 +3763,8 @@ export interface DashboardBurstinessEntity {
   p99_util: number
   burstiness: number
   pct_time_stressed: number
+  p50_bps: number
+  p99_bps: number
 }
 
 export interface DashboardBurstinessResponse {
@@ -3771,7 +3773,7 @@ export interface DashboardBurstinessResponse {
 
 export interface DashboardBurstinessParams {
   time_range?: string
-  sort?: 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed'
+  sort?: 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 'p50_bps' | 'p99_bps'
   dir?: 'asc' | 'desc'
   limit?: number
   threshold?: number

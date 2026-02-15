@@ -518,6 +518,10 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		orderCol = "p99_util"
 	case "pct_time_stressed":
 		orderCol = "pct_time_stressed"
+	case "p50_bps":
+		orderCol = "p50_bps"
+	case "p99_bps":
+		orderCol = "p99_bps"
 	}
 
 	return fmt.Sprintf(`
@@ -531,7 +535,11 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 						f.in_octets_delta * 8 / f.delta_duration,
 						f.out_octets_delta * 8 / f.delta_duration
 					) / l.bandwidth_bps
-					ELSE NULL END AS utilization
+					ELSE NULL END AS utilization,
+				greatest(
+					f.in_octets_delta * 8 / f.delta_duration,
+					f.out_octets_delta * 8 / f.delta_duration
+				) AS throughput_bps
 			FROM fact_dz_device_interface_counters f
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
@@ -553,15 +561,29 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 			COALESCE(toFloat64(l.bandwidth_bps), 0) AS bandwidth_bps,
 			quantile(0.5)(ps.utilization) AS p50_util,
 			quantile(0.99)(ps.utilization) AS p99_util,
-			quantile(0.99)(ps.utilization) - quantile(0.5)(ps.utilization) AS burstiness,
-			countIf(ps.utilization >= %f) / count() AS pct_time_stressed
+			CASE
+				WHEN COALESCE(toFloat64(l.bandwidth_bps), 0) > 0
+				THEN quantile(0.99)(ps.utilization) - quantile(0.5)(ps.utilization)
+				ELSE CASE
+					WHEN quantile(0.5)(ps.throughput_bps) > 0
+					THEN (quantile(0.99)(ps.throughput_bps) / quantile(0.5)(ps.throughput_bps)) - 1
+					ELSE 0
+				END
+			END AS burstiness,
+			CASE
+				WHEN COALESCE(toFloat64(l.bandwidth_bps), 0) > 0
+				THEN countIf(ps.utilization >= %f) / count()
+				ELSE 0
+			END AS pct_time_stressed,
+			quantile(0.5)(ps.throughput_bps) AS p50_bps,
+			quantile(0.99)(ps.throughput_bps) AS p99_bps
 		FROM per_sample ps
 		INNER JOIN dz_devices_current d ON ps.device_pk = d.pk
 		LEFT JOIN dz_links_current l ON ps.link_pk = l.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		WHERE ps.utilization IS NOT NULL
 		GROUP BY ps.device_pk, ps.intf, ps.link_pk, d.code, m.code, l.bandwidth_bps
 		HAVING burstiness > 0
+			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= 1000000)
 		ORDER BY %s %s
 		LIMIT %d`,
 		timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, orderCol, dir, limit)
@@ -955,6 +977,8 @@ type BurstinessEntity struct {
 	P99Util         float64 `json:"p99_util"`
 	Burstiness      float64 `json:"burstiness"`
 	PctTimeStressed float64 `json:"pct_time_stressed"`
+	P50Bps          float64 `json:"p50_bps"`
+	P99Bps          float64 `json:"p99_bps"`
 }
 
 type BurstinessResponse struct {
@@ -1008,7 +1032,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		var e BurstinessEntity
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.BandwidthBps, &e.P50Util, &e.P99Util, &e.Burstiness,
-			&e.PctTimeStressed); err != nil {
+			&e.PctTimeStressed, &e.P50Bps, &e.P99Bps); err != nil {
 			log.Printf("Traffic dashboard burstiness row scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

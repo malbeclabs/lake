@@ -9,13 +9,27 @@ function formatPercent(val: number): string {
   return (val * 100).toFixed(1) + '%'
 }
 
-function burstColor(val: number): string {
-  if (val >= 0.5) return 'bg-red-500/15 text-red-400 border-red-500/20'
-  if (val >= 0.3) return 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
+function formatRate(val: number): string {
+  if (val >= 1e12) return (val / 1e12).toFixed(1) + ' Tbps'
+  if (val >= 1e9) return (val / 1e9).toFixed(1) + ' Gbps'
+  if (val >= 1e6) return (val / 1e6).toFixed(1) + ' Mbps'
+  if (val >= 1e3) return (val / 1e3).toFixed(1) + ' Kbps'
+  return val.toFixed(0) + ' bps'
+}
+
+function formatRatio(val: number): string {
+  return val.toFixed(1) + 'x'
+}
+
+function burstColor(val: number, isLink: boolean): string {
+  const high = isLink ? 0.5 : 3
+  const med = isLink ? 0.3 : 1.5
+  if (val >= high) return 'bg-red-500/15 text-red-400 border-red-500/20'
+  if (val >= med) return 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
   return 'bg-blue-500/15 text-blue-400 border-blue-500/20'
 }
 
-type SortField = 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed'
+type SortField = 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 'p50_bps' | 'p99_bps'
 
 export function BurstinessPanel() {
   const state = useDashboard()
@@ -104,6 +118,7 @@ export function BurstinessPanel() {
                 {entities.map((e, i) => {
                   const isSelected = state.selectedEntity?.devicePk === e.device_pk &&
                     state.selectedEntity?.intf === e.intf
+                  const isLink = e.bandwidth_bps > 0
                   return (
                     <tr
                       key={`${e.device_pk}-${e.intf}-${i}`}
@@ -121,14 +136,20 @@ export function BurstinessPanel() {
                         {e.device_code} <span className="text-muted-foreground">{e.intf}</span>
                       </td>
                       <td className="py-1.5 px-2">{e.metro_code}</td>
-                      <td className="py-1.5 px-2 text-right font-mono">{formatPercent(e.p50_util)}</td>
-                      <td className="py-1.5 px-2 text-right font-mono">{formatPercent(e.p99_util)}</td>
+                      <td className="py-1.5 px-2 text-right font-mono">
+                        {isLink ? formatPercent(e.p50_util) : formatRate(e.p50_bps)}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-mono">
+                        {isLink ? formatPercent(e.p99_util) : formatRate(e.p99_bps)}
+                      </td>
                       <td className="py-1.5 px-2 text-right">
-                        <span className={cn('px-1.5 py-0.5 rounded text-xs border', burstColor(e.burstiness))}>
-                          {formatPercent(e.burstiness)}
+                        <span className={cn('px-1.5 py-0.5 rounded text-xs border', burstColor(e.burstiness, isLink))}>
+                          {isLink ? formatPercent(e.burstiness) : formatRatio(e.burstiness)}
                         </span>
                       </td>
-                      <td className="py-1.5 px-2 text-right font-mono">{formatPercent(e.pct_time_stressed)}</td>
+                      <td className="py-1.5 px-2 text-right font-mono">
+                        {isLink ? formatPercent(e.pct_time_stressed) : '\u2014'}
+                      </td>
                     </tr>
                   )
                 })}

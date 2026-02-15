@@ -34,11 +34,13 @@ function Dropdown<T extends string>({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   label: string
   value: T
   options: { value: T; label: string }[]
   onChange: (v: T) => void
+  disabled?: boolean
 }) {
   const [isOpen, setIsOpen] = useState(false)
   const selectedLabel = options.find(o => o.value === value)?.label ?? value
@@ -46,8 +48,11 @@ function Dropdown<T extends string>({
   return (
     <div className="relative inline-block">
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-md bg-background hover:bg-muted transition-colors"
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        className={cn(
+          'flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-md bg-background transition-colors',
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'
+        )}
       >
         <span className="text-muted-foreground">{label}:</span>
         <span className="font-medium">{selectedLabel}</span>
@@ -555,7 +560,7 @@ export function DashboardFilters() {
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <TimeRangeDropdown />
-      <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
+      <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} disabled={intfType === 'tunnel' || intfType === 'other'} />
       <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />
       <DashboardSearch />
     </div>

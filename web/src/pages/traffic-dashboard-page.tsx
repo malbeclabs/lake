@@ -9,8 +9,8 @@ import { BurstinessPanel } from '@/components/traffic-dashboard/burstiness-panel
 import { CapacityPanel } from '@/components/traffic-dashboard/capacity-panel'
 
 function DashboardContent() {
-  const { selectedEntity, pinnedEntities, timeRange, metric } = useDashboard()
-  const showCapacity = ['7d', '14d', '30d'].includes(timeRange)
+  const { selectedEntity, pinnedEntities, timeRange, metric, intfType } = useDashboard()
+  const showCapacity = ['7d', '14d', '30d'].includes(timeRange) && intfType !== 'tunnel' && intfType !== 'other'
   const isUtil = metric === 'utilization'
 
   return (
@@ -71,7 +71,7 @@ function DashboardContent() {
 
           <Section
             title="Spike Detection"
-            description="Interfaces with the largest gap between typical (P50) and peak (P99) utilization. Large gaps indicate bursty traffic."
+            description="Interfaces with the largest gap between typical (P50) and peak (P99) traffic levels. Large gaps indicate bursty traffic. Non-link interfaces below 1 Mbps typical throughput are excluded."
           >
             <BurstinessPanel />
           </Section>
