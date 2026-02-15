@@ -1747,9 +1747,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       // Determine display color based on mode
       // Default to cyan (dark) / blue (light) when no overlay is active (matches globe view)
       let displayColor = isDark ? 'rgba(0,255,204,0.7)' : 'rgba(59,130,246,0.7)'
-      // Default weight uses bandwidth sizing (matches globe); overlays may override
+      // Bandwidth sizing when overlay is active; uniform weight otherwise
       const defaultWeight = 1.5
-      let displayWeight = getBandwidthWeight(link.bandwidth_bps)
+      let displayWeight = bandwidthMode ? getBandwidthWeight(link.bandwidth_bps) : defaultWeight
       let displayOpacity = 0.7
       let useDash = false
 
