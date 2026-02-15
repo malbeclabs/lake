@@ -359,7 +359,9 @@ function TrafficPageContent() {
           {loading ? (
             <div className="flex flex-col space-y-2">
               <h3 className="text-lg font-semibold">{title}</h3>
-              <div className="animate-pulse bg-muted rounded h-[400px]" />
+              <div className="flex items-center justify-center h-[400px]">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
             </div>
           ) : error ? (
             <div className="flex flex-col space-y-2">
@@ -401,7 +403,7 @@ function TrafficPageContent() {
         <div className="flex flex-col gap-3 mb-6">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <h1 className="text-2xl font-bold">Interfaces</h1>
-            <DashboardFilters />
+            <DashboardFilters excludeMetrics={['utilization']} />
           </div>
           <DashboardFilterBadges />
           <div className="flex items-center gap-3 flex-wrap justify-end">

@@ -620,8 +620,11 @@ function BucketDropdown() {
   )
 }
 
-export function DashboardFilters() {
+export function DashboardFilters({ excludeMetrics }: { excludeMetrics?: string[] } = {}) {
   const { metric, setMetric, intfType, setIntfType } = useDashboard()
+  const filteredMetricOptions = excludeMetrics
+    ? metricOptions.filter(o => !excludeMetrics.includes(o.value))
+    : metricOptions
   const queryClient = useQueryClient()
   const isFetching = useIsFetching()
 
@@ -632,7 +635,7 @@ export function DashboardFilters() {
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <TimeRangeDropdown />
-      <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
+      <Dropdown label="Metric" value={metric} options={filteredMetricOptions} onChange={setMetric} />
       <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />
       <BucketDropdown />
       <RefreshIntervalDropdown />
