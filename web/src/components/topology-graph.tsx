@@ -1225,12 +1225,17 @@ export function TopologyGraph({
             if (!publisherSegments.has(publisherPK)) publisherSegments.set(publisherPK, new Set())
             const segs = publisherSegments.get(publisherPK)!
 
-            path.forEach(hop => treeNodePKs.add(hop.devicePK))
+            path.forEach(hop => {
+              if (cy.getElementById(hop.devicePK).length) treeNodePKs.add(hop.devicePK)
+            })
 
             for (let i = 0; i < path.length - 1; i++) {
               const from = path[i].devicePK
               const to = path[i + 1].devicePK
-              segs.add(`${from}|${to}`)
+              // Only add segment if both nodes exist in the graph
+              if (cy.getElementById(from).length && cy.getElementById(to).length) {
+                segs.add(`${from}|${to}`)
+              }
             }
           })
 
