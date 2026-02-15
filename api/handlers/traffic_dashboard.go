@@ -140,9 +140,11 @@ func dashboardTimeFilter(r *http.Request) (timeFilter string, bucketInterval str
 }
 
 // buildDimensionFilters builds SQL WHERE clauses for dimension filters.
-// It returns the filter string (including leading AND) and a flag for whether
-// dimension joins are needed.
-func buildDimensionFilters(r *http.Request) (filterSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) {
+// It returns:
+//   - filterSQL: clauses for dimension tables (m, d, l, co) with leading AND
+//   - intfFilterSQL: clause for f.intf with leading AND (must go in the CTE where f is in scope)
+//   - join flags indicating which dimension joins are needed
+func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) {
 	var clauses []string
 
 	if metros := r.URL.Query().Get("metro"); metros != "" {
@@ -193,7 +195,7 @@ func buildDimensionFilters(r *http.Request) (filterSQL string, needsDeviceJoin, 
 		for i, v := range vals {
 			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
 		}
-		clauses = append(clauses, fmt.Sprintf("f.intf IN (%s)", strings.Join(quoted, ",")))
+		intfFilterSQL = fmt.Sprintf(" AND f.intf IN (%s)", strings.Join(quoted, ","))
 	}
 
 	if len(clauses) > 0 {
@@ -209,7 +211,7 @@ func escapeSingleQuote(s string) string {
 // --- Query builders (exported for testing) ---
 
 // BuildStressQuery builds the ClickHouse query for the stress endpoint.
-func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL string, threshold float64,
+func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL string, threshold float64,
 	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) (query string, grouped bool) {
 
 	// Determine group_by column and required joins
@@ -295,6 +297,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL str
 				AND in_octets_delta >= 0
 				AND out_octets_delta >= 0
 				AND intf NOT LIKE 'Tunnel%%'
+				%s
 			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk
 		),
 		with_metric AS (
@@ -312,6 +315,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL str
 		GROUP BY %s
 		ORDER BY bucket_ts`,
 		bucketInterval, timeFilter,
+		intfFilterSQL,
 		metricExpr, groupBySelect,
 		dimJoins, filterSQL,
 		selectCols, metricFilter, groupByCols)
@@ -320,7 +324,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL str
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
-func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL string, limit int) string {
+func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL string, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -375,6 +379,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL string, li
 					AND f.in_octets_delta >= 0
 					AND f.out_octets_delta >= 0
 					AND f.intf NOT LIKE 'Tunnel%%'
+					%s
 				GROUP BY f.device_pk
 			)
 			SELECT
@@ -397,7 +402,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL string, li
 			WHERE 1=1 %s
 			ORDER BY %s %s
 			LIMIT %d`,
-			timeFilter, filterSQL, orderCol, dir, limit)
+			timeFilter, intfFilterSQL, filterSQL, orderCol, dir, limit)
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
@@ -419,6 +424,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL string, li
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
 				AND f.intf NOT LIKE 'Tunnel%%'
+				%s
 			GROUP BY f.device_pk, f.intf, f.link_pk
 		)
 		SELECT
@@ -448,7 +454,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL string, li
 		WHERE 1=1 %s
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, filterSQL, orderCol, dir, limit)
+		timeFilter, intfFilterSQL, filterSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
@@ -474,7 +480,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL string, threshold float64, limit int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL string, threshold float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -517,6 +523,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL string, thr
 				AND f.out_octets_delta >= 0
 				AND f.intf NOT LIKE 'Tunnel%%'
 				%s
+				%s
 		)
 		SELECT
 			ps.device_pk,
@@ -537,7 +544,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL string, thr
 		HAVING burstiness > 0
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, filterSQL, threshold, orderCol, dir, limit)
+		timeFilter, filterSQL, intfFilterSQL, threshold, orderCol, dir, limit)
 }
 
 // --- Stress endpoint ---
@@ -581,9 +588,9 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 		metric = "utilization"
 	}
 
-	filterSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
 
-	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, threshold,
+	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, threshold,
 		needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin)
 
 	start := time.Now()
@@ -755,9 +762,9 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filterSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, limit)
+	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -959,9 +966,9 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, threshold, limit)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, threshold, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

@@ -249,6 +249,85 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 	}
 }
 
+func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantCount int
+	}{
+		{"intf_filter_interface", "?time_range=1h&entity=interface&intf=Port-Channel1000", 1},
+		{"intf_filter_device", "?time_range=1h&entity=device&intf=Port-Channel1000", 1},
+		{"intf_filter_multi", "?time_range=1h&entity=interface&intf=Port-Channel1000,Ethernet1/1", 2},
+		{"intf_filter_no_match", "?time_range=1h&entity=interface&intf=NonExistent99", 0},
+		{"intf_and_metro_filter", "?time_range=1h&entity=interface&intf=Port-Channel1000&metro=FRA", 1},
+		{"intf_and_wrong_metro", "?time_range=1h&entity=interface&intf=Port-Channel1000&metro=AMS", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardTop(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.TopResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+			assert.Len(t, resp.Entities, tt.wantCount)
+		})
+	}
+}
+
+func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"intf_filter", "?time_range=1h&metric=throughput&intf=Port-Channel1000"},
+		{"intf_filter_grouped", "?time_range=1h&metric=throughput&group_by=device&intf=Port-Channel1000"},
+		{"intf_filter_multi", "?time_range=1h&metric=throughput&intf=Port-Channel1000,Ethernet1/1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardStress(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.StressResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
+}
+
+func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
+	apitesting.SetupTestClickHouse(t, testChDB)
+	setupDashboardSchema(t)
+	seedDashboardData(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h&intf=Port-Channel1000", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficDashboardBurstiness(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.BurstinessResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+}
+
 // --- Drilldown endpoint tests ---
 
 func TestTrafficDashboardDrilldown(t *testing.T) {
