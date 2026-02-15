@@ -2093,94 +2093,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animatedFeatureKey])
 
-  // Animated dots flowing along multicast tree paths (publisher → subscriber).
-  // Managed imperatively: adds a GeoJSON point source + circle layer and updates
-  // dot positions via setData() in a requestAnimationFrame loop.
+  // animatedDotsRef kept for external consumers (e.g. hover hit-testing)
   const animatedDotsRef = useRef<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] })
-
-  useEffect(() => {
-    if (!multicastTreesMode || !animateFlow || stableAnimatedGeoJson.features.length === 0) return
-    const map = mapRef.current?.getMap()
-    if (!map) return
-
-    const sourceId = 'multicast-flow-dots'
-    const layerId = 'multicast-flow-dots-layer'
-    const DOTS_PER_LINK = 3
-    const SPEED = 0.0003 // full traversal per ms (~3.3s per link)
-
-    // Add source + layer imperatively (avoids React prop reconciliation issues)
-    const addLayer = () => {
-      if (map.getSource(sourceId)) return
-      map.addSource(sourceId, {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      })
-      map.addLayer({
-        id: layerId,
-        type: 'circle',
-        source: sourceId,
-        paint: {
-          'circle-radius': 4,
-          'circle-color': ['get', 'color'],
-          'circle-opacity': 0.95,
-          'circle-stroke-width': 1,
-          'circle-stroke-color': 'rgba(0,0,0,0.3)',
-        },
-      })
-    }
-
-    // Build features list from current animated GeoJSON
-    const pathFeatures = stableAnimatedGeoJson.features as GeoJSON.Feature<GeoJSON.LineString>[]
-
-    let frameId: number
-    const tick = (timestamp: number) => {
-      // Re-add source/layer if removed (react-map-gl style reconciliation can
-      // destroy imperatively added layers during its first render pass).
-      if (!map.getSource(sourceId) && map.isStyleLoaded()) {
-        addLayer()
-      }
-
-      const t = (timestamp * SPEED) % 1
-
-      const points: GeoJSON.Feature<GeoJSON.Point>[] = []
-      for (const feature of pathFeatures) {
-        const coords = feature.geometry.coordinates as [number, number][]
-        const color = (feature.properties as Record<string, unknown>)?.color ?? '#a855f7'
-
-        for (let i = 0; i < DOTS_PER_LINK; i++) {
-          const dotT = (t + i / DOTS_PER_LINK) % 1
-          const pos = interpolateAlongPath(coords, dotT)
-          points.push({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: pos },
-            properties: { color },
-          })
-        }
-      }
-
-      animatedDotsRef.current = { type: 'FeatureCollection', features: points }
-      try {
-        const src = map.getSource(sourceId)
-        if (src && 'setData' in src) {
-          (src as any).setData(animatedDotsRef.current)
-        }
-      } catch {
-        // Source may be removed during cleanup
-      }
-      frameId = requestAnimationFrame(tick)
-    }
-
-    frameId = requestAnimationFrame(tick)
-    return () => {
-      cancelAnimationFrame(frameId)
-      try {
-        if (map.getLayer(layerId)) map.removeLayer(layerId)
-        if (map.getSource(sourceId)) map.removeSource(sourceId)
-      } catch {
-        // Map may already be destroyed
-      }
-    }
-  }, [multicastTreesMode, animateFlow, stableAnimatedGeoJson])
 
   // Refs so the rAF loop always reads latest values without effect re-runs
   const linkGeoJsonRef = useRef(linkGeoJson)
@@ -2189,6 +2103,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   linkAnimatingRef.current = linkAnimating
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
+  const multicastAnimatedRef = useRef(stableAnimatedGeoJson)
+  multicastAnimatedRef.current = stableAnimatedGeoJson
+  const animateFlowRef = useRef(animateFlow)
+  animateFlowRef.current = animateFlow
+  const multicastTreesModeRef = useRef(multicastTreesMode)
+  multicastTreesModeRef.current = multicastTreesMode
 
   // Animate flowing dots along links (matches globe animated arcs, works with all overlays).
   // Sets up once when map is ready; rAF loop reads refs for latest state.
@@ -2196,9 +2116,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const map = mapRef.current?.getMap()
     if (!map || !mapReady) return
 
-    const sourceId = 'link-flow-dots'
-    const layerId = 'link-flow-dots-layer'
-    const DOTS_PER_LINK = 2
+    // Link flow dots (ambient animation on all links)
+    const linkSrcId = 'link-flow-dots'
+    const linkLayerId = 'link-flow-dots-layer'
+    const LINK_DOTS = 2
+
+    // Multicast flow dots (publisher → subscriber tree animation)
+    const mcSrcId = 'multicast-flow-dots'
+    const mcLayerId = 'multicast-flow-dots-layer'
+    const MC_DOTS = 3
+    const MC_SPEED = 0.0003
+
     const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
 
     const getCycleDuration = (latencyUs: number): number => {
@@ -2207,80 +2135,106 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       return 600 + (Math.log(clamped) / Math.log(200)) * 2400
     }
 
-    const ensureLayer = () => {
-      if (map.getSource(sourceId)) return true
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ensureSource = (srcId: string, lyrId: string, paint: any) => {
+      if (map.getSource(srcId)) return true
       if (!map.isStyleLoaded()) return false
-      map.addSource(sourceId, { type: 'geojson', data: EMPTY })
-      map.addLayer({
-        id: layerId,
-        type: 'circle',
-        source: sourceId,
-        paint: {
-          'circle-radius': 2.5,
-          'circle-color': ['get', 'color'],
-          'circle-opacity': 0.8,
-        },
-      })
+      map.addSource(srcId, { type: 'geojson', data: EMPTY })
+      map.addLayer({ id: lyrId, type: 'circle', source: srcId, paint })
       return true
+    }
+
+    const removeSource = (srcId: string, lyrId: string) => {
+      try {
+        if (map.getLayer(lyrId)) map.removeLayer(lyrId)
+        if (map.getSource(srcId)) map.removeSource(srcId)
+      } catch { /* noop */ }
+    }
+
+    const setSourceData = (srcId: string, data: GeoJSON.FeatureCollection) => {
+      try {
+        const src = map.getSource(srcId)
+        if (src && 'setData' in src) (src as any).setData(data)
+      } catch { /* noop */ }
+    }
+
+    const linkPaint = {
+      'circle-radius': 2.5,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0.8,
+    }
+    const mcPaint = {
+      'circle-radius': 4,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0.95,
+      'circle-stroke-width': 1,
+      'circle-stroke-color': 'rgba(0,0,0,0.3)',
     }
 
     let frameId: number
     const tick = (timestamp: number) => {
+      // --- Link flow dots ---
       if (!linkAnimatingRef.current) {
-        // Clear dots but keep layer alive for instant resume
-        try {
-          const src = map.getSource(sourceId)
-          if (src && 'setData' in src) (src as any).setData(EMPTY)
-        } catch { /* noop */ }
-        frameId = requestAnimationFrame(tick)
-        return
-      }
+        setSourceData(linkSrcId, EMPTY)
+      } else if (ensureSource(linkSrcId, linkLayerId, linkPaint)) {
+        const features = linkGeoJsonRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
+        const points: GeoJSON.Feature<GeoJSON.Point>[] = []
 
-      if (!ensureLayer()) {
-        frameId = requestAnimationFrame(tick)
-        return
-      }
+        for (const feature of features) {
+          const props = feature.properties as Record<string, unknown>
+          if (typeof props?.opacity === 'number' && props.opacity < 0.2) continue
 
-      const features = linkGeoJsonRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
-      const points: GeoJSON.Feature<GeoJSON.Point>[] = []
+          const color = (props?.color as string) ?? (isDarkRef.current ? '#00ffcc' : '#3b82f6')
+          const latencyUs = (props?.latencyUs as number) ?? 0
+          const cycleDuration = getCycleDuration(latencyUs)
+          const t = (timestamp % cycleDuration) / cycleDuration
 
-      for (const feature of features) {
-        const props = feature.properties as Record<string, unknown>
-        if (typeof props?.opacity === 'number' && props.opacity < 0.2) continue
-
-        const color = (props?.color as string) ?? (isDarkRef.current ? '#00ffcc' : '#3b82f6')
-        const latencyUs = (props?.latencyUs as number) ?? 0
-        const cycleDuration = getCycleDuration(latencyUs)
-        const t = (timestamp % cycleDuration) / cycleDuration
-
-        const coords = feature.geometry.coordinates as [number, number][]
-        for (let i = 0; i < DOTS_PER_LINK; i++) {
-          const dotT = (t + i / DOTS_PER_LINK) % 1
-          const pos = interpolateAlongPath(coords, dotT)
-          points.push({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: pos },
-            properties: { color },
-          })
+          const coords = feature.geometry.coordinates as [number, number][]
+          for (let i = 0; i < LINK_DOTS; i++) {
+            const dotT = (t + i / LINK_DOTS) % 1
+            const pos = interpolateAlongPath(coords, dotT)
+            points.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: pos },
+              properties: { color },
+            })
+          }
         }
+        setSourceData(linkSrcId, { type: 'FeatureCollection', features: points })
       }
 
-      try {
-        const src = map.getSource(sourceId)
-        if (src && 'setData' in src) {
-          (src as any).setData({ type: 'FeatureCollection', features: points })
+      // --- Multicast flow dots ---
+      const mcFeatures = multicastAnimatedRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
+      if (!multicastTreesModeRef.current || !animateFlowRef.current || mcFeatures.length === 0) {
+        setSourceData(mcSrcId, EMPTY)
+      } else if (ensureSource(mcSrcId, mcLayerId, mcPaint)) {
+        const t = (timestamp * MC_SPEED) % 1
+        const points: GeoJSON.Feature<GeoJSON.Point>[] = []
+        for (const feature of mcFeatures) {
+          const coords = feature.geometry.coordinates as [number, number][]
+          const color = (feature.properties as Record<string, unknown>)?.color ?? '#a855f7'
+          for (let i = 0; i < MC_DOTS; i++) {
+            const dotT = (t + i / MC_DOTS) % 1
+            const pos = interpolateAlongPath(coords, dotT)
+            points.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: pos },
+              properties: { color },
+            })
+          }
         }
-      } catch { /* noop */ }
+        animatedDotsRef.current = { type: 'FeatureCollection', features: points }
+        setSourceData(mcSrcId, animatedDotsRef.current)
+      }
+
       frameId = requestAnimationFrame(tick)
     }
 
     frameId = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(frameId)
-      try {
-        if (map.getLayer(layerId)) map.removeLayer(layerId)
-        if (map.getSource(sourceId)) map.removeSource(sourceId)
-      } catch { /* noop */ }
+      removeSource(linkSrcId, linkLayerId)
+      removeSource(mcSrcId, mcLayerId)
     }
   }, [mapReady])
 
@@ -2968,8 +2922,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           </Source>
         )}
 
-        {/* Animated multicast flow dots are managed imperatively via useEffect
-            (source: multicast-flow-dots) to avoid React reconciliation issues. */}
+        {/* Link flow dots and multicast flow dots are managed imperatively
+            in a single persistent rAF loop to avoid React reconciliation issues. */}
 
         {/* Validator links (when toggled, hidden in path mode, or auto-shown for multicast tree) */}
         {visibleValidators.length > 0 && (
