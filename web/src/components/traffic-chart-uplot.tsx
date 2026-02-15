@@ -464,7 +464,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
           values: (_u, vals) => vals.map(v => formatBandwidth(bidirectional ? Math.abs(v) : v)),
-          size: 70,
+          size: 80,
         },
       ],
       cursor: {
