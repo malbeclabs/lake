@@ -886,7 +886,7 @@ export function TopologyGraph({
 
     // Clear previous path highlighting - reset styles on previously tracked path edges
     // This must happen before removing classes, as we track edges by ID not class
-    const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+    const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
     previousPathEdgeIdsRef.current.forEach(edgeId => {
       const edge = cy.getElementById(edgeId)
       if (edge.length) {
@@ -972,7 +972,7 @@ export function TopologyGraph({
     ]
 
     // Clear previous highlighting
-    const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+    const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
     previousPathEdgeIdsRef.current.forEach(edgeId => {
       const edge = cy.getElementById(edgeId)
       if (edge.length) {
@@ -1087,7 +1087,7 @@ export function TopologyGraph({
           multicastVirtualEdgeIdsRef.current.clear()
 
           // Restore real edge styles
-          const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+          const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
           cy.edges().forEach(edge => {
             edge.removeStyle('line-color target-arrow-color width opacity z-index line-style')
             edge.style({ 'line-color': defaultColor, 'target-arrow-color': defaultColor, 'width': 1, 'opacity': 0.7, 'line-style': 'solid' })
@@ -1121,7 +1121,7 @@ export function TopologyGraph({
     const cy = cyRef.current
 
     // Clear previous highlighting
-    const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+    const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
     previousPathEdgeIdsRef.current.forEach(edgeId => {
       const edge = cy.getElementById(edgeId)
       if (edge.length && !edge.data('mcVirtual')) {
@@ -1347,7 +1347,7 @@ export function TopologyGraph({
       if (cyRef.current) {
         const cy = cyRef.current
         // Reset path edge styles before removing classes
-        const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+        const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
         previousPathEdgeIdsRef.current.forEach(edgeId => {
           const edge = cy.getElementById(edgeId)
           if (edge.length) {
@@ -1400,7 +1400,7 @@ export function TopologyGraph({
       if (cyRef.current) {
         const cy = cyRef.current
         // Reset path edge styles before removing classes
-        const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+        const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
         previousPathEdgeIdsRef.current.forEach(edgeId => {
           const edge = cy.getElementById(edgeId)
           if (edge.length) {
@@ -1431,7 +1431,7 @@ export function TopologyGraph({
       if (cyRef.current) {
         const cy = cyRef.current
         // Reset path edge styles before removing classes
-        const defaultColor = isDark ? '#6b7280' : '#9ca3af'
+        const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
         previousPathEdgeIdsRef.current.forEach(edgeId => {
           const edge = cy.getElementById(edgeId)
           if (edge.length) {
@@ -1720,7 +1720,7 @@ export function TopologyGraph({
     if (!cyRef.current || inPathMode) return
     const cy = cyRef.current
 
-    const defaultColor = isDark ? '#4b5563' : '#9ca3af'
+    const defaultColor = isDark ? '#00e6b8' : '#3b82f6'
 
     cy.batch(() => {
       // Reset all edges to neutral state (skip path edges)
@@ -1846,7 +1846,7 @@ export function TopologyGraph({
     if (!cyRef.current) return
     const cy = cyRef.current
 
-    const defaultColor = isDark ? '#9ca3af' : '#1f2937'
+    const defaultColor = '#00ffcc'
 
     cy.batch(() => {
       // Reset all nodes to neutral state
@@ -2425,7 +2425,7 @@ export function TopologyGraph({
         {
           selector: 'node',
           style: {
-            'background-color': isDark ? '#9ca3af' : '#1f2937', // neutral grey/dark - overlays will override
+            'background-color': '#00ffcc', // vibrant cyan - matches globe view, overlays will override
             'label': 'data(label)',
             'text-valign': 'bottom',
             'text-halign': 'center',
@@ -2489,10 +2489,10 @@ export function TopologyGraph({
               const metric = ele.data('metric') || 100
               return Math.max(1, Math.min(6, 600 / metric))
             },
-            'line-color': isDark ? '#4b5563' : '#9ca3af',
+            'line-color': isDark ? '#00e6b8' : '#3b82f6',
             'curve-style': 'bezier',
             'target-arrow-shape': 'triangle',
-            'target-arrow-color': isDark ? '#4b5563' : '#9ca3af',
+            'target-arrow-color': isDark ? '#00e6b8' : '#3b82f6',
             'arrow-scale': 0.6,
             'opacity': 0.7,
           },
