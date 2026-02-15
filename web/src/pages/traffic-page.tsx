@@ -72,12 +72,15 @@ const aggLabels: Record<AggMethod, string> = {
 
 type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel' | 'discards'
 
-const chartSectionLabels: Record<ChartSection, string> = {
-  'non-tunnel-stacked': 'Non-Tunnel Traffic (stacked)',
-  'non-tunnel': 'Non-Tunnel Traffic',
-  'tunnel-stacked': 'Tunnel Traffic (stacked)',
-  'tunnel': 'Tunnel Traffic',
-  'discards': 'Interface Discards',
+function chartSectionLabels(intfType: string): Record<ChartSection, string> {
+  const nonTunnelLabel = intfType === 'link' ? 'Link' : intfType === 'other' ? 'Other' : 'Non-Tunnel'
+  return {
+    'non-tunnel-stacked': `${nonTunnelLabel} Traffic (stacked)`,
+    'non-tunnel': `${nonTunnelLabel} Traffic`,
+    'tunnel-stacked': 'Tunnel Traffic (stacked)',
+    'tunnel': 'Tunnel Traffic',
+    'discards': 'Interface Discards',
+  }
 }
 
 // All known chart sections (used to detect new sections added after localStorage was saved)
@@ -199,11 +202,13 @@ function ShowGraphsSelector({
   visibleSections,
   onReorder,
   onToggle,
+  labels,
 }: {
   sections: ChartSection[]
   visibleSections: Set<ChartSection>
   onReorder: (sections: ChartSection[]) => void
   onToggle: (section: ChartSection) => void
+  labels: Record<ChartSection, string>
 }) {
   const [isOpen, setIsOpen] = useState(false)
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
@@ -261,7 +266,7 @@ function ShowGraphsSelector({
                   onClick={() => onToggle(section)}
                   className="flex-1 flex items-center justify-between text-left hover:bg-muted/50 -m-1.5 p-1.5 rounded"
                 >
-                  <span className="text-foreground">{chartSectionLabels[section]}</span>
+                  <span className="text-foreground">{labels[section]}</span>
                   {visibleSections.has(section) && <Check className="h-4 w-4 flex-shrink-0" />}
                 </button>
               </div>
@@ -503,15 +508,13 @@ function TrafficPageContent() {
   const showTunnelCharts = intfType === 'all' || intfType === 'tunnel'
   const showNonTunnelCharts = intfType === 'all' || intfType === 'link' || intfType === 'other'
 
-  // Build dimension filter params from dashboard state (excludes intf_type since
-  // we handle tunnel/non-tunnel splitting at the chart level)
+  // Build dimension filter params from dashboard state.
+  // When intfType is 'all', intf_type is omitted and the per-chart tunnel_only
+  // param handles the tunnel/non-tunnel split. When a specific type is selected
+  // (link/tunnel/other), intf_type is passed through so the server filters to
+  // only that interface type.
   const filterParams = useMemo(() => {
-    const params = dashboardFilterParams(dashboardState)
-    // Remove intf_type — the per-chart tunnel_only param handles the split,
-    // and when intfType is specific (link/other/tunnel), it's already used
-    // to decide which chart sections are shown.
-    delete params.intf_type
-    return params
+    return dashboardFilterParams(dashboardState)
   }, [dashboardState])
 
   // Fetch tunnel data (only when tunnel charts are visible)
@@ -627,32 +630,33 @@ function TrafficPageContent() {
       )
     }
 
-    let title = ''
     let isTunnel = false
     let stacked = false
 
     switch (section) {
       case 'non-tunnel-stacked':
-        title = 'Non-Tunnel Traffic Per Device & Interface (stacked)'
         isTunnel = false
         stacked = true
         break
       case 'non-tunnel':
-        title = 'Non-Tunnel Traffic Per Device & Interface'
         isTunnel = false
         stacked = false
         break
       case 'tunnel-stacked':
-        title = 'Tunnel Traffic Per Device & Interface (stacked)'
         isTunnel = true
         stacked = true
         break
       case 'tunnel':
-        title = 'Tunnel Traffic Per Device & Interface'
         isTunnel = true
         stacked = false
         break
     }
+
+    // Build title based on intf type filter
+    const typeLabel = isTunnel
+      ? 'Tunnel'
+      : intfType === 'link' ? 'Link' : intfType === 'other' ? 'Other' : 'Non-Tunnel'
+    const title = `${typeLabel} Traffic Per Device & Interface${stacked ? ' (stacked)' : ''}`
 
     const data = isTunnel ? tunnelData : nonTunnelData
     const loading = isTunnel ? tunnelLoading : nonTunnelLoading
@@ -712,6 +716,7 @@ function TrafficPageContent() {
               visibleSections={visibleSections}
               onReorder={handleSectionsReorder}
               onToggle={handleSectionToggle}
+              labels={chartSectionLabels(intfType)}
             />
             <LayoutSelector value={layout} onChange={handleLayoutChange} />
             <BucketSelector
