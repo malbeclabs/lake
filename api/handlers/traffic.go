@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/malbeclabs/lake/api/metrics"
@@ -79,6 +80,44 @@ func bucketSeconds(bucket string) int {
 // maxTrafficRows is a safety limit on the number of rows returned.
 const maxTrafficRows = 500_000
 
+// trafficDimensionJoins builds the SQL JOIN clauses needed for dimension filtering
+// in the traffic/discards endpoints. The fact table must be aliased as "f" and
+// the devices CTE (with pk, code, metro_pk, contributor_pk) as "d".
+func trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin bool) string {
+	var joins []string
+	if needsLinkJoin {
+		joins = append(joins, "LEFT JOIN dz_links_current l ON f.link_pk = l.pk")
+	}
+	if needsMetroJoin {
+		joins = append(joins, "LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk")
+	}
+	if needsContributorJoin {
+		joins = append(joins, "LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk")
+	}
+	if len(joins) == 0 {
+		return ""
+	}
+	return "\n\t\t\t" + strings.Join(joins, "\n\t\t\t")
+}
+
+// trafficIntfTypeFilter resolves the interface type filter for traffic endpoints.
+// It uses intfTypeSQL from buildDimensionFilters when available, and falls back
+// to the legacy tunnel_only parameter for backward compatibility.
+func trafficIntfTypeFilter(r *http.Request, intfTypeSQL string) string {
+	if intfTypeSQL != "" {
+		return intfTypeSQL
+	}
+	// Backward compat: map tunnel_only to an interface filter
+	switch r.URL.Query().Get("tunnel_only") {
+	case "true":
+		return " AND f.intf LIKE 'Tunnel%%'"
+	case "false":
+		return " AND f.intf NOT LIKE 'Tunnel%%'"
+	default:
+		return ""
+	}
+}
+
 func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -88,9 +127,6 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	if timeRange == "" {
 		timeRange = "12h"
 	}
-
-	tunnelOnly := r.URL.Query().Get("tunnel_only")
-	isTunnel := tunnelOnly == "true"
 
 	bucket := r.URL.Query().Get("bucket")
 	if bucket == "" {
@@ -138,13 +174,10 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	}
 	bucketInterval := bucket
 
-	// Build interface filter
-	var intfFilter string
-	if isTunnel {
-		intfFilter = "AND intf LIKE 'Tunnel%'"
-	} else {
-		intfFilter = "AND intf NOT LIKE 'Tunnel%'"
-	}
+	// Build dimension filters
+	filterSQL, intfFilterSQL, intfTypeSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
+	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin)
 
 	start := time.Now()
 
@@ -152,18 +185,19 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	// Series means are computed in ClickHouse to avoid accumulating rows in Go.
 	query := fmt.Sprintf(`
 		WITH devices AS (
-			SELECT pk, code
+			SELECT pk, code, metro_pk, contributor_pk
 			FROM dz_devices_current
 		),
 		src AS (
-			SELECT c.device_pk, c.intf, c.event_ts, c.in_octets_delta, c.out_octets_delta, c.delta_duration
-			FROM fact_dz_device_interface_counters c
-			INNER JOIN devices d ON d.pk = c.device_pk
-			WHERE c.event_ts >= now() - INTERVAL %s
+			SELECT f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration
+			FROM fact_dz_device_interface_counters f
+			INNER JOIN devices d ON d.pk = f.device_pk%s
+			WHERE f.event_ts >= now() - INTERVAL %s
+				%s%s
+				AND f.delta_duration > 0
+				AND f.in_octets_delta >= 0
+				AND f.out_octets_delta >= 0
 				%s
-				AND c.delta_duration > 0
-				AND c.in_octets_delta >= 0
-				AND c.out_octets_delta >= 0
 		),
 		rates AS (
 			SELECT
@@ -187,7 +221,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		WHERE r.time_bucket IS NOT NULL
 		ORDER BY r.time_bucket, d.code, r.intf
 		LIMIT %d
-	`, rangeInterval, intfFilter, bucketInterval, aggFunc, aggFunc, maxTrafficRows)
+	`, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL, bucketInterval, aggFunc, aggFunc, maxTrafficRows)
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
@@ -204,24 +238,25 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	// This avoids accumulating all points in Go just for mean calculation.
 	meanQuery := fmt.Sprintf(`
 		WITH devices AS (
-			SELECT pk, code
+			SELECT pk, code, metro_pk, contributor_pk
 			FROM dz_devices_current
 		)
 		SELECT
 			d.code AS device,
-			c.intf,
-			AVG(c.in_octets_delta * 8 / c.delta_duration) AS mean_in_bps,
-			AVG(c.out_octets_delta * 8 / c.delta_duration) AS mean_out_bps
-		FROM fact_dz_device_interface_counters c
-		INNER JOIN devices d ON d.pk = c.device_pk
-		WHERE c.event_ts >= now() - INTERVAL %s
+			f.intf,
+			AVG(f.in_octets_delta * 8 / f.delta_duration) AS mean_in_bps,
+			AVG(f.out_octets_delta * 8 / f.delta_duration) AS mean_out_bps
+		FROM fact_dz_device_interface_counters f
+		INNER JOIN devices d ON d.pk = f.device_pk%s
+		WHERE f.event_ts >= now() - INTERVAL %s
+			%s%s
+			AND f.delta_duration > 0
+			AND f.in_octets_delta >= 0
+			AND f.out_octets_delta >= 0
 			%s
-			AND c.delta_duration > 0
-			AND c.in_octets_delta >= 0
-			AND c.out_octets_delta >= 0
-		GROUP BY d.code, c.intf
-		ORDER BY d.code, c.intf
-	`, rangeInterval, intfFilter)
+		GROUP BY d.code, f.intf
+		ORDER BY d.code, f.intf
+	`, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL)
 
 	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
@@ -367,6 +402,16 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		rangeInterval = "6 HOUR"
 	}
 
+	// Build dimension filters
+	filterSQL, intfFilterSQL, intfTypeSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
+	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin)
+
+	// Default to non-tunnel if no interface type filter specified
+	if intfTypeFilter == "" {
+		intfTypeFilter = " AND f.intf NOT LIKE 'Tunnel%%'"
+	}
+
 	start := time.Now()
 
 	// Build ClickHouse query - aggregate discards per time bucket
@@ -375,43 +420,46 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		// No bucketing - return raw data points
 		query = fmt.Sprintf(`
 			WITH devices AS (
-				SELECT pk, code
+				SELECT pk, code, metro_pk, contributor_pk
 				FROM dz_devices_current
 			)
 			SELECT
-				formatDateTime(c.event_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
-				c.device_pk,
+				formatDateTime(f.event_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+				f.device_pk,
 				d.code AS device,
-				c.intf,
-				COALESCE(c.in_discards_delta, 0) AS in_discards,
-				COALESCE(c.out_discards_delta, 0) AS out_discards
-			FROM fact_dz_device_interface_counters c
-			INNER JOIN devices d ON d.pk = c.device_pk
-			WHERE c.event_ts >= now() - INTERVAL %s
-				AND c.intf NOT LIKE 'Tunnel%%'
-				AND (COALESCE(c.in_discards_delta, 0) > 0 OR COALESCE(c.out_discards_delta, 0) > 0)
-			ORDER BY c.event_ts, d.code, c.intf
-		`, rangeInterval)
+				f.intf,
+				COALESCE(f.in_discards_delta, 0) AS in_discards,
+				COALESCE(f.out_discards_delta, 0) AS out_discards
+			FROM fact_dz_device_interface_counters f
+			INNER JOIN devices d ON d.pk = f.device_pk%s
+			WHERE f.event_ts >= now() - INTERVAL %s
+				%s%s
+				AND (COALESCE(f.in_discards_delta, 0) > 0 OR COALESCE(f.out_discards_delta, 0) > 0)
+				%s
+			ORDER BY f.event_ts, d.code, f.intf
+		`, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL)
 	} else {
 		// With bucketing - sum discards per bucket
 		// Filter for non-zero discards early to reduce data processed
 		query = fmt.Sprintf(`
 			WITH devices AS (
-				SELECT pk, code
+				SELECT pk, code, metro_pk, contributor_pk
 				FROM dz_devices_current
 			),
 			agg AS (
 				SELECT
-					c.device_pk,
-					c.intf,
-					toStartOfInterval(c.event_ts, INTERVAL %s) AS time_bucket,
-					SUM(COALESCE(c.in_discards_delta, 0)) AS in_discards,
-					SUM(COALESCE(c.out_discards_delta, 0)) AS out_discards
-				FROM fact_dz_device_interface_counters c
-				WHERE c.event_ts >= now() - INTERVAL %s
-					AND c.intf NOT LIKE 'Tunnel%%'
-					AND (COALESCE(c.in_discards_delta, 0) > 0 OR COALESCE(c.out_discards_delta, 0) > 0)
-				GROUP BY c.device_pk, c.intf, time_bucket
+					f.device_pk,
+					f.intf,
+					toStartOfInterval(f.event_ts, INTERVAL %s) AS time_bucket,
+					SUM(COALESCE(f.in_discards_delta, 0)) AS in_discards,
+					SUM(COALESCE(f.out_discards_delta, 0)) AS out_discards
+				FROM fact_dz_device_interface_counters f
+				INNER JOIN devices d ON d.pk = f.device_pk%s
+				WHERE f.event_ts >= now() - INTERVAL %s
+					%s%s
+					AND (COALESCE(f.in_discards_delta, 0) > 0 OR COALESCE(f.out_discards_delta, 0) > 0)
+					%s
+				GROUP BY f.device_pk, f.intf, time_bucket
 			)
 			SELECT
 				formatDateTime(a.time_bucket, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
@@ -424,7 +472,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 			INNER JOIN devices d ON d.pk = a.device_pk
 			WHERE a.time_bucket IS NOT NULL
 			ORDER BY a.time_bucket, d.code, a.intf
-		`, bucket, rangeInterval)
+		`, bucket, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL)
 	}
 
 	rows, err := envDB(ctx).Query(ctx, query)

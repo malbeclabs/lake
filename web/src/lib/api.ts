@@ -3565,7 +3565,8 @@ export async function fetchTrafficData(
   timeRange: string = '12h',
   tunnelOnly: boolean = true,
   bucket: string = 'auto',
-  agg: string = 'max'
+  agg: string = 'max',
+  filters?: Record<string, string>
 ): Promise<TrafficDataResponse> {
   const params = new URLSearchParams({
     time_range: timeRange,
@@ -3573,6 +3574,11 @@ export async function fetchTrafficData(
     bucket: bucket,
     agg: agg
   })
+  if (filters) {
+    for (const [k, v] of Object.entries(filters)) {
+      if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
+    }
+  }
   const res = await fetchWithRetry(`/api/traffic/data?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch traffic data')
@@ -3604,12 +3610,18 @@ export interface DiscardsDataResponse {
 
 export async function fetchDiscardsData(
   timeRange: string = '12h',
-  bucket: string = 'auto'
+  bucket: string = 'auto',
+  filters?: Record<string, string>
 ): Promise<DiscardsDataResponse> {
   const params = new URLSearchParams({
     time_range: timeRange,
     bucket: bucket
   })
+  if (filters) {
+    for (const [k, v] of Object.entries(filters)) {
+      if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
+    }
+  }
   const res = await fetchWithRetry(`/api/traffic/discards?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch discards data')

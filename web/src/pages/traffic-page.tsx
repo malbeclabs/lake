@@ -4,6 +4,8 @@ import { ChevronDown, GripVertical, Check, RefreshCw } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
+import { DashboardProvider, useDashboard, dashboardFilterParams } from '@/components/traffic-dashboard/dashboard-context'
+import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 
 export interface LinkLookupInfo {
   pk: string
@@ -47,18 +49,6 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
   )
 }
 
-type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
-
-const timeRangeLabels: Record<TimeRange, string> = {
-  '1h': 'Last 1 Hour',
-  '3h': 'Last 3 Hours',
-  '6h': 'Last 6 Hours',
-  '12h': 'Last 12 Hours',
-  '24h': 'Last 24 Hours',
-  '3d': 'Last 3 Days',
-  '7d': 'Last 7 Days',
-}
-
 type BucketSize = '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
 
 const bucketLabels: Record<BucketSize, string> = {
@@ -93,6 +83,9 @@ const chartSectionLabels: Record<ChartSection, string> = {
 // All known chart sections (used to detect new sections added after localStorage was saved)
 const ALL_KNOWN_SECTIONS: ChartSection[] = ['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards']
 
+const TUNNEL_SECTIONS: Set<ChartSection> = new Set(['tunnel-stacked', 'tunnel'])
+const NON_TUNNEL_SECTIONS: Set<ChartSection> = new Set(['non-tunnel-stacked', 'non-tunnel', 'discards'])
+
 type Layout = '1x4' | '2x2'
 
 const layoutLabels: Record<Layout, string> = {
@@ -118,51 +111,6 @@ const refreshIntervalMs: Record<RefreshInterval, number | false> = {
   '30m': 1800000,
 }
 
-
-function TimeRangeSelector({
-  value,
-  onChange,
-}: {
-  value: TimeRange
-  onChange: (value: TimeRange) => void
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-      >
-        {timeRangeLabels[value]}
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[160px]">
-            {(['1h', '3h', '6h', '12h', '24h', '3d', '7d'] as TimeRange[]).map((range) => (
-              <button
-                key={range}
-                onClick={() => {
-                  onChange(range)
-                  setIsOpen(false)
-                }}
-                className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  value === range
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-              >
-                {timeRangeLabels[range]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
 
 function BucketSelector({
   bucketValue,
@@ -415,8 +363,10 @@ function RefreshIntervalSelector({
   )
 }
 
-export function TrafficPage() {
-  const [timeRange, setTimeRange] = useState<TimeRange>('6h')
+function TrafficPageContent() {
+  const dashboardState = useDashboard()
+  const { timeRange, intfType } = dashboardState
+
   const [bucketSize, setBucketSize] = useState<BucketSize>('auto')
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
   const [chartSections, setChartSections] = useState<ChartSection[]>([
@@ -431,14 +381,6 @@ export function TrafficPage() {
   )
   const [layout, setLayout] = useState<Layout>('1x4')
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>('never')
-
-  // Load time range from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-time-range')
-    if (saved && saved in timeRangeLabels) {
-      setTimeRange(saved as TimeRange)
-    }
-  }, [])
 
   // Load chart sections order from localStorage
   useEffect(() => {
@@ -498,22 +440,6 @@ export function TrafficPage() {
     }
   }, [])
 
-  // Save time range to localStorage
-  const handleTimeRangeChange = (range: TimeRange) => {
-    setTimeRange(range)
-    localStorage.setItem('traffic-time-range', range)
-  }
-
-  // Update bucket size (not persisted)
-  const handleBucketSizeChange = (bucket: BucketSize) => {
-    setBucketSize(bucket)
-  }
-
-  // Update aggregation method (not persisted)
-  const handleAggMethodChange = (agg: AggMethod) => {
-    setAggMethod(agg)
-  }
-
   // Save chart sections order to localStorage
   const handleSectionsReorder = (sections: ChartSection[]) => {
     setChartSections(sections)
@@ -558,6 +484,8 @@ export function TrafficPage() {
           return '1 MINUTE'
         case '3d':
         case '7d':
+        case '14d':
+        case '30d':
           return '5 MINUTE'
         default:
           return '30 SECOND'
@@ -571,30 +499,47 @@ export function TrafficPage() {
     return refreshIntervalMs[refreshInterval]
   }, [refreshInterval])
 
-  // Fetch tunnel data
+  // Determine which chart categories to show based on intf type filter
+  const showTunnelCharts = intfType === 'all' || intfType === 'tunnel'
+  const showNonTunnelCharts = intfType === 'all' || intfType === 'link' || intfType === 'other'
+
+  // Build dimension filter params from dashboard state (excludes intf_type since
+  // we handle tunnel/non-tunnel splitting at the chart level)
+  const filterParams = useMemo(() => {
+    const params = dashboardFilterParams(dashboardState)
+    // Remove intf_type — the per-chart tunnel_only param handles the split,
+    // and when intfType is specific (link/other/tunnel), it's already used
+    // to decide which chart sections are shown.
+    delete params.intf_type
+    return params
+  }, [dashboardState])
+
+  // Fetch tunnel data (only when tunnel charts are visible)
   const {
     data: tunnelData,
     isLoading: tunnelLoading,
     error: tunnelError,
     refetch: refetchTunnel,
   } = useQuery({
-    queryKey: ['traffic', timeRange, true, actualBucketSize, aggMethod],
-    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod),
-    staleTime: 30000, // 30 seconds
+    queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams],
+    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod, filterParams),
+    staleTime: 30000,
     refetchInterval: refetchIntervalValue,
+    enabled: showTunnelCharts,
   })
 
-  // Fetch non-tunnel data
+  // Fetch non-tunnel data (only when non-tunnel charts are visible)
   const {
     data: nonTunnelData,
     isLoading: nonTunnelLoading,
     error: nonTunnelError,
     refetch: refetchNonTunnel,
   } = useQuery({
-    queryKey: ['traffic', timeRange, false, actualBucketSize, aggMethod],
-    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod),
-    staleTime: 30000, // 30 seconds
+    queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams],
+    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod, filterParams),
+    staleTime: 30000,
     refetchInterval: refetchIntervalValue,
+    enabled: showNonTunnelCharts,
   })
 
   // Fetch topology data for link metadata
@@ -604,28 +549,29 @@ export function TrafficPage() {
   } = useQuery({
     queryKey: ['topology'],
     queryFn: () => fetchTopology(),
-    staleTime: 60000, // 1 minute
+    staleTime: 60000,
     refetchInterval: refetchIntervalValue,
   })
 
-  // Fetch discards data
+  // Fetch discards data (only when non-tunnel charts are visible)
   const {
     data: discardsData,
     isLoading: discardsLoading,
     refetch: refetchDiscards,
   } = useQuery({
-    queryKey: ['discards', timeRange, actualBucketSize],
-    queryFn: () => fetchDiscardsData(timeRange, actualBucketSize),
-    staleTime: 30000, // 30 seconds
+    queryKey: ['discards-intf', timeRange, actualBucketSize, filterParams],
+    queryFn: () => fetchDiscardsData(timeRange, actualBucketSize, filterParams),
+    staleTime: 30000,
     refetchInterval: refetchIntervalValue,
+    enabled: showNonTunnelCharts,
   })
 
   // Manual refresh handler
   const handleManualRefresh = () => {
-    refetchTunnel()
-    refetchNonTunnel()
+    if (showTunnelCharts) refetchTunnel()
+    if (showNonTunnelCharts) refetchNonTunnel()
     refetchTopology()
-    refetchDiscards()
+    if (showNonTunnelCharts) refetchDiscards()
   }
 
   // Build link lookup: device_pk + interface -> link info
@@ -653,9 +599,17 @@ export function TrafficPage() {
     return map
   }, [topologyData])
 
+  // Check if a section should be shown based on intf type
+  const isSectionAllowed = (section: ChartSection): boolean => {
+    if (TUNNEL_SECTIONS.has(section)) return showTunnelCharts
+    if (NON_TUNNEL_SECTIONS.has(section)) return showNonTunnelCharts
+    return true
+  }
+
   // Render a chart section
   const renderChartSection = (section: ChartSection) => {
     if (!visibleSections.has(section)) return null
+    if (!isSectionAllowed(section)) return null
 
     // Handle discards chart separately
     if (section === 'discards') {
@@ -746,9 +700,13 @@ export function TrafficPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         {/* Header */}
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-          <h1 className="text-2xl font-bold">Traffic</h1>
-          <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-col gap-3 mb-6">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <h1 className="text-2xl font-bold">Interfaces</h1>
+            <DashboardFilters />
+          </div>
+          <DashboardFilterBadges />
+          <div className="flex items-center gap-3 flex-wrap justify-end">
             <ShowGraphsSelector
               sections={chartSections}
               visibleSections={visibleSections}
@@ -760,10 +718,9 @@ export function TrafficPage() {
               bucketValue={bucketSize}
               aggValue={aggMethod}
               effectiveBucket={tunnelData?.effective_bucket ?? nonTunnelData?.effective_bucket}
-              onBucketChange={handleBucketSizeChange}
-              onAggChange={handleAggMethodChange}
+              onBucketChange={setBucketSize}
+              onAggChange={setAggMethod}
             />
-            <TimeRangeSelector value={timeRange} onChange={handleTimeRangeChange} />
             <RefreshIntervalSelector value={refreshInterval} onChange={handleRefreshIntervalChange} />
             <button
               onClick={handleManualRefresh}
@@ -777,7 +734,7 @@ export function TrafficPage() {
 
         {/* Truncation warning */}
         {(tunnelData?.truncated || nonTunnelData?.truncated) && (
-          <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-200">
+          <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-700 dark:text-yellow-200">
             Results were truncated due to data volume. Try a larger bucket size or shorter time range to see all data.
           </div>
         )}
@@ -788,5 +745,13 @@ export function TrafficPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export function TrafficPage() {
+  return (
+    <DashboardProvider defaultTimeRange="6h">
+      <TrafficPageContent />
+    </DashboardProvider>
   )
 }

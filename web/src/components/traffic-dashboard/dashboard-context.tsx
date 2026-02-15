@@ -79,7 +79,7 @@ function parseList(param: string | null): string[] {
   return param.split(',').filter(Boolean)
 }
 
-export function DashboardProvider({ children }: { children: ReactNode }) {
+export function DashboardProvider({ children, defaultTimeRange = '12h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Derive all state from URL search params
@@ -88,8 +88,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     if (searchParams.has('start_time') && searchParams.has('end_time')) return 'custom'
     const param = searchParams.get('time_range')
     if (param && validTimeRanges.has(param)) return param as TimeRange
-    return '12h'
-  }, [searchParams])
+    return defaultTimeRange
+  }, [searchParams, defaultTimeRange])
 
   const intfType = useMemo<IntfType>(() => {
     const param = searchParams.get('intf_type')
@@ -164,14 +164,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         prev.delete('start_time')
         prev.delete('end_time')
       }
-      if (tr === '12h') {
+      if (tr === defaultTimeRange) {
         prev.delete('time_range')
       } else {
         prev.set('time_range', tr)
       }
       return prev
     })
-  }, [setSearchParams])
+  }, [setSearchParams, defaultTimeRange])
 
   const setThresholdAction = useCallback((t: number) => {
     setSearchParams(prev => {

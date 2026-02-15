@@ -10,7 +10,7 @@ import { HealthPanel } from '@/components/traffic-dashboard/health-panel'
 import { CapacityPanel } from '@/components/traffic-dashboard/capacity-panel'
 
 function DashboardContent() {
-  const { selectedEntity, pinnedEntities, timeRange, metric, intfType } = useDashboard()
+  const { selectedEntity, pinnedEntities, metric, intfType } = useDashboard()
   const showCapacity = intfType !== 'tunnel' && intfType !== 'other'
   const isUtil = metric === 'utilization'
 
