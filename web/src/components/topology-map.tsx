@@ -388,6 +388,23 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [showTreeValidators, setShowTreeValidators] = useState(true)
   const [linkAnimating, setLinkAnimating] = useState(true)
 
+  // Auto-disable link animation when entering analysis mode (overlays, modes, selection).
+  // User can re-enable via the toggle even while in analysis mode.
+  const anyOverlayActive = Object.entries(overlays).some(([key, value]) => key !== 'bandwidth' && value)
+  const isAnalysisActive = anyOverlayActive || mode !== 'explore' || !!selection
+  const prevAnalysisForLinks = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (!mapReady) return
+    const isFirst = prevAnalysisForLinks.current === null
+    const wasActive = prevAnalysisForLinks.current
+    prevAnalysisForLinks.current = isAnalysisActive
+    if (isFirst) {
+      if (isAnalysisActive) setLinkAnimating(false)
+    } else {
+      if (isAnalysisActive && !wasActive) setLinkAnimating(false)
+      if (!isAnalysisActive && wasActive) setLinkAnimating(true)
+    }
+  }, [mapReady, isAnalysisActive])
 
   // Handler to select multicast group
   const handleSelectMulticastGroup = useCallback((code: string | null) => {

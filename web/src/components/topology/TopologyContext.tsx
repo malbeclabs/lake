@@ -235,10 +235,10 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
     if (newMode !== 'explore') {
       setPanel(prev => ({ ...prev, isOpen: true, content: 'mode' }))
 
-      // When entering an edge-styling mode, clear all link overlays
+      // When entering an edge-styling mode, clear all link overlays and multicast
       if (edgeStylingModes.includes(newMode)) {
         setOverlays(prev => {
-          const newState = { ...prev }
+          const newState = { ...prev, multicastTrees: false }
           for (const overlay of linkOverlayKeys) {
             newState[overlay] = false
           }
@@ -307,17 +307,27 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
             if (other !== overlay) newState[other] = false
           }
         } else if (linkOverlays.includes(overlay)) {
-          // Turn off other link overlays
+          // Turn off other link overlays and multicast (both style edges)
           for (const other of linkOverlays) {
             if (other !== overlay) newState[other] = false
           }
+          newState.multicastTrees = false
           // Exit edge-styling modes when enabling a link overlay
           if (edgeStylingModes.includes(mode)) {
             setModeInternal('explore')
             setPanel(prev => prev.content === 'mode' ? { ...prev, isOpen: false } : prev)
           }
+        } else if (overlay === 'multicastTrees') {
+          // Multicast styles edges — turn off link overlays and exit edge-styling modes
+          for (const other of linkOverlays) {
+            newState[other] = false
+          }
+          if (edgeStylingModes.includes(mode)) {
+            setModeInternal('explore')
+            setPanel(prev => prev.content === 'mode' ? { ...prev, isOpen: false } : prev)
+          }
         }
-        // validators is independent, no conflicts
+        // validators and bandwidth are independent, no conflicts
       }
 
       // Update URL params
