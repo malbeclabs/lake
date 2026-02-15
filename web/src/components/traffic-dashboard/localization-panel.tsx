@@ -40,7 +40,7 @@ function utilColor(val: number): string {
 export function LocalizationPanel() {
   const state = useDashboard()
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const [limit, setLimit] = useState(20)
+  const [limit, setLimit] = useState(10)
 
   const params = useMemo(() => ({
     ...dashboardFilterParams(state),

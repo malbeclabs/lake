@@ -41,7 +41,7 @@ type SortField = 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 
 
 export function BurstinessPanel() {
   const state = useDashboard()
-  const [limit, setLimit] = useState(20)
+  const [limit, setLimit] = useState(10)
   const [sortField, setSortField] = useState<SortField>('burstiness')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(1_000_000)

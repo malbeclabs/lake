@@ -21,7 +21,7 @@ type SortField = 'total_events' | 'total_errors' | 'total_discards' | 'total_fcs
 
 export function HealthPanel() {
   const state = useDashboard()
-  const [limit, setLimit] = useState(20)
+  const [limit, setLimit] = useState(10)
   const [sortField, setSortField] = useState<SortField>('total_events')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 

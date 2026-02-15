@@ -79,7 +79,7 @@ function parseList(param: string | null): string[] {
   return param.split(',').filter(Boolean)
 }
 
-export function DashboardProvider({ children, defaultTimeRange = '12h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
+export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Derive all state from URL search params

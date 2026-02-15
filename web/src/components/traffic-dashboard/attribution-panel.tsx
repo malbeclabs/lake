@@ -38,7 +38,7 @@ function TopTable({
     (isDevice || !isUtil) ? 'max_in_bps' : 'max_util'
   )
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [limit, setLimit] = useState(20)
+  const [limit, setLimit] = useState(10)
 
   // Reset sort when metric mode changes so we don't sort by a hidden column
   useEffect(() => {

@@ -56,7 +56,7 @@ export function CapacityPanel() {
     entity: 'interface' as const,
     metric: sortField as DashboardTopParams['metric'],
     dir: sortDir,
-    limit: 20,
+    limit: 10,
   }), [state, sortField, sortDir])
 
   const { data, isLoading, isFetching } = useQuery({
