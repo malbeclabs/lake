@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchISISTopology, fetchISISPaths, fetchTopologyCompare, fetchWhatIfRemoval, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchTopology, fetchLinkHealth, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
 import type { WhatIfRemovalResponse, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
-import { useTopology, TopologyPanel, TopologyControlBar, DeviceDetails, LinkDetails, EntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceInfo, type LinkInfo, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyPanel, TopologyControlBar, DeviceDetails, LinkDetails, EntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceInfo, type LinkInfo, type DeviceOption, type MetroOption } from '@/components/topology'
 import { ErrorState } from '@/components/ui/error-state'
 
 // Device type colors (types from serviceability smart contract: hybrid, transit, edge)
@@ -3710,9 +3710,6 @@ export function TopologyGraph({
               getDeviceLabel={(pk) => cyRef.current?.getElementById(pk)?.data('label') || pk.substring(0, 8)}
               isLoading={!topologyData}
             />
-          )}
-          {bandwidthEnabled && (
-            <BandwidthOverlayPanel />
           )}
           {linkHealthOverlayEnabled && (
             <LinkHealthOverlayPanel

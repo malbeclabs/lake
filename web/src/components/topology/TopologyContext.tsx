@@ -218,8 +218,8 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
 
   // Path-related modes that style edges (mutually exclusive with link overlays)
   const edgeStylingModes: TopologyMode[] = ['path', 'metro-path', 'whatif-removal', 'whatif-addition']
-  // Link overlays (defined here for use in setMode)
-  const linkOverlayKeys: (keyof OverlayState)[] = ['linkType', 'bandwidth', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
+  // Link overlays (defined here for use in setMode); bandwidth is independent (always-on sizing)
+  const linkOverlayKeys: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
 
   // Set mode with side effects
   const setMode = useCallback((newMode: TopologyMode) => {
@@ -289,8 +289,8 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
 
   // Device overlays (mutually exclusive within group)
   const deviceOverlays: (keyof OverlayState)[] = ['deviceType', 'stake', 'metroClustering', 'contributorDevices']
-  // Link overlays (mutually exclusive within group)
-  const linkOverlays: (keyof OverlayState)[] = ['linkType', 'bandwidth', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
+  // Link overlays (mutually exclusive within group); bandwidth is independent (always-on sizing)
+  const linkOverlays: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
 
   // Overlay toggle - one device overlay + one link overlay allowed (validators independent)
   // Enabling a link overlay exits edge-styling modes (path, whatif)

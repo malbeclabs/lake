@@ -6,7 +6,7 @@ import type { GlobeInstance } from 'react-globe.gl'
 import { useQuery } from '@tanstack/react-query'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import type { LinkInfo, SelectedItemData } from '@/components/topology'
 import { formatBandwidth, formatTrafficRate } from '@/components/topology'
 
@@ -2316,7 +2316,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             linkTypeMode ? 'Link Types' :
             stakeOverlayMode ? 'Stake' :
             isisHealthMode ? 'ISIS' :
-            bandwidthMode ? 'Bandwidth' :
             linkHealthMode ? 'Health' :
             trafficFlowMode ? 'Traffic' :
             criticalityOverlayEnabled ? 'Link Criticality' :
@@ -2330,7 +2329,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
             linkTypeMode ? 'Links colored by type (fiber, wavelength, etc.).' :
             stakeOverlayMode ? 'Devices sized by validator stake.' :
             isisHealthMode ? 'Compare current topology to baseline.' :
-            bandwidthMode ? 'Links sized by bandwidth capacity.' :
             linkHealthMode ? 'Links colored by latency, jitter, and loss.' :
             trafficFlowMode ? 'Links sized by traffic volume.' :
             criticalityOverlayEnabled ? 'Links ranked by impact if removed.' :
@@ -2368,7 +2366,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               isLoading={devices.length === 0}
             />
           )}
-          {bandwidthMode && <BandwidthOverlayPanel />}
           {isisHealthMode && <ComparePanel data={compareData ?? null} isLoading={compareLoading} />}
           {linkHealthMode && <LinkHealthOverlayPanel linkHealthData={linkHealthData} isLoading={!linkHealthData} />}
           {trafficFlowMode && <TrafficFlowOverlayPanel edgeTrafficMap={edgeTrafficMap} links={links} isLoading={links.length === 0} />}

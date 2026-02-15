@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -3664,7 +3664,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Link Types' :
             stakeOverlayMode ? 'Stake' :
             isisHealthMode ? 'ISIS' :
-            bandwidthMode ? 'Bandwidth' :
             linkHealthMode ? 'Health' :
             trafficFlowMode ? 'Traffic' :
             criticalityOverlayEnabled ? 'Link Criticality' :
@@ -3678,7 +3677,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Links colored by type (fiber, wavelength, etc.).' :
             stakeOverlayMode ? 'Devices sized by validator stake.' :
             isisHealthMode ? 'Compare current topology to baseline.' :
-            bandwidthMode ? 'Links sized by bandwidth capacity.' :
             linkHealthMode ? 'Links colored by latency, jitter, and loss.' :
             trafficFlowMode ? 'Links sized by traffic volume.' :
             criticalityOverlayEnabled ? 'Links ranked by impact if removed.' :
@@ -3715,9 +3713,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               getDeviceLabel={(pk) => deviceMap.get(pk)?.code || pk.substring(0, 8)}
               isLoading={devices.length === 0}
             />
-          )}
-          {bandwidthMode && (
-            <BandwidthOverlayPanel />
           )}
           {isisHealthMode && (
             <ComparePanel
