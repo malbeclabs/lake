@@ -108,7 +108,7 @@ function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'glo
     metroClustering: false,
     contributorDevices: false,
     linkType: showTypeOverlays,     // Default link overlay (graph only)
-    bandwidth: false,
+    bandwidth: true,              // Always on - sizing is the default visual
     linkHealth: false,
     trafficFlow: false,
     contributorLinks: false,
