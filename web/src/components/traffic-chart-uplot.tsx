@@ -27,14 +27,11 @@ interface TrafficChartProps {
 
 // Format bandwidth for display
 function formatBandwidth(bps: number): string {
-  if (bps >= 1e9) {
-    return `${(bps / 1e9).toFixed(2)} Gb/s`
-  } else if (bps >= 1e6) {
-    return `${(bps / 1e6).toFixed(2)} Mb/s`
-  } else if (bps >= 1e3) {
-    return `${(bps / 1e3).toFixed(2)} Kb/s`
-  }
-  return `${bps.toFixed(2)} b/s`
+  if (bps >= 1e12) return (bps / 1e12).toFixed(1) + ' Tbps'
+  if (bps >= 1e9) return (bps / 1e9).toFixed(1) + ' Gbps'
+  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps'
+  if (bps >= 1e3) return (bps / 1e3).toFixed(1) + ' Kbps'
+  return bps.toFixed(0) + ' bps'
 }
 
 function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: TrafficChartProps) {
@@ -313,7 +310,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
           values: (_u, vals) => vals.map(v => formatBandwidth(v)),
-          size: 80,
+          size: 70,
         },
       ],
       cursor: {
@@ -664,11 +661,11 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
 
       {/* Series selection list */}
       <div ref={listContainerRef} className="relative" style={{ height: `${listHeight}px` }}>
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full text-xs">
           {/* Sticky header */}
-          <div className="flex-none px-3 pt-3">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="text-sm font-medium whitespace-nowrap">
+          <div className="flex-none px-2 pt-2">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="text-xs font-medium whitespace-nowrap">
                 Series ({visibleSeriesList.length}/{sortedFilteredSeries.length})
               </div>
               {/* Collapsible search */}
@@ -728,7 +725,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
               </button>
             </div>
             {/* Column headers */}
-            <div className="flex items-center justify-between px-2 mb-1">
+            <div className="flex items-center justify-between px-1 mb-1">
               <button
                 onClick={() => { setSortBy('name'); setSortDir(sortBy === 'name' ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
                 className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
@@ -746,8 +743,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
             </div>
           </div>
           {/* Scrollable items */}
-          <div className="flex-1 overflow-y-auto px-3 pb-3">
-            <div className="space-y-1">
+          <div className="flex-1 overflow-y-auto px-2 pb-2">
+            <div className="space-y-0.5">
               {sortedFilteredSeries.map((s, filteredIndex) => {
               const originalIndex = series.indexOf(s)
               const isSelected = visibleSeries.has(s.key)
@@ -755,19 +752,19 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
               return (
                 <div
                   key={s.key}
-                  className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
+                  className={`flex items-center justify-between px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
                     isSelected ? '' : 'opacity-40'
                   }`}
                   onClick={(e) => handleSeriesClick(s.key, filteredIndex, e)}
                 >
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
                     <div
-                      className="w-3 h-3 rounded-sm"
+                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
                       style={{ backgroundColor: color }}
                     />
-                    <span className="text-sm">{s.key}</span>
+                    <span className="text-xs truncate">{s.key}</span>
                   </div>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-xs text-muted-foreground font-mono tabular-nums whitespace-nowrap ml-2">
                     {formatBandwidth(s.mean)}
                   </span>
                 </div>
