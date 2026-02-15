@@ -149,7 +149,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
         { stroke: axisStroke, grid: { stroke: 'rgba(128,128,128,0.06)' } },
         {
           values: (_: uPlot, vals: number[]) => vals.map(v => fmt(Math.abs(v))),
-          size: 70,
+          size: 80,
           stroke: axisStroke,
           grid: { stroke: 'rgba(128,128,128,0.06)' },
         },
