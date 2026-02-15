@@ -192,6 +192,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Logger:          cfg.Logger,
 			Clock:           cfg.Clock,
 			RevDistClient:   cfg.RevDistClient,
+			PriceOracle:     cfg.RevDistOracle,
 			RefreshInterval: cfg.RefreshInterval,
 			ClickHouse:      cfg.ClickHouse,
 			ProgramID:       cfg.RevDistProgramID,

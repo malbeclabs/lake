@@ -88,6 +88,8 @@ func (s *DistributionSchema) PayloadColumns() []string {
 		"inflation_rewards_pct:INTEGER",
 		"jito_tips_pct:INTEGER",
 		"fixed_sol_amount:BIGINT",
+		"sol_price_usd:DOUBLE",
+		"twoz_price_usd:DOUBLE",
 	}
 }
 func (s *DistributionSchema) ToRow(d Distribution) []any {
@@ -112,6 +114,8 @@ func (s *DistributionSchema) ToRow(d Distribution) []any {
 		int(d.InflationRewardsPct),
 		int(d.JitoTipsPct),
 		int64(d.FixedSOLAmount),
+		d.SOLPriceUSD,
+		d.TwoZPriceUSD,
 	}
 }
 func (s *DistributionSchema) GetPrimaryKey(d Distribution) string {
@@ -222,6 +226,27 @@ func (s *RewardShareFactSchema) PartitionByTime() bool        { return false }
 func (s *RewardShareFactSchema) DedupMode() dataset.DedupMode { return dataset.DedupReplacing }
 func (s *RewardShareFactSchema) DedupVersionColumn() string   { return "ingested_at" }
 
+// PriceSnapshotFactSchema defines the schema for periodic price snapshots.
+type PriceSnapshotFactSchema struct{}
+
+func (s *PriceSnapshotFactSchema) Name() string { return "dz_revdist_prices" }
+func (s *PriceSnapshotFactSchema) UniqueKeyColumns() []string {
+	return []string{"ts"}
+}
+func (s *PriceSnapshotFactSchema) Columns() []string {
+	return []string{
+		"ts:TIMESTAMP",
+		"sol_price_usd:DOUBLE",
+		"twoz_price_usd:DOUBLE",
+		"swap_rate:DOUBLE",
+		"ingested_at:TIMESTAMP",
+	}
+}
+func (s *PriceSnapshotFactSchema) TimeColumn() string           { return "ts" }
+func (s *PriceSnapshotFactSchema) PartitionByTime() bool        { return true }
+func (s *PriceSnapshotFactSchema) DedupMode() dataset.DedupMode { return dataset.DedupReplacing }
+func (s *PriceSnapshotFactSchema) DedupVersionColumn() string   { return "ingested_at" }
+
 // Schema instances
 var (
 	configSchema             = &ConfigSchema{}
@@ -231,6 +256,7 @@ var (
 	contributorRewardsSchema = &ContributorRewardsSchema{}
 	validatorDebtFactSchema  = &ValidatorDebtFactSchema{}
 	rewardShareFactSchema    = &RewardShareFactSchema{}
+	priceSnapshotFactSchema  = &PriceSnapshotFactSchema{}
 )
 
 // Dataset constructors
@@ -261,4 +287,8 @@ func NewValidatorDebtFactDataset(log *slog.Logger) (*dataset.FactDataset, error)
 
 func NewRewardShareFactDataset(log *slog.Logger) (*dataset.FactDataset, error) {
 	return dataset.NewFactDataset(log, rewardShareFactSchema)
+}
+
+func NewPriceSnapshotFactDataset(log *slog.Logger) (*dataset.FactDataset, error) {
+	return dataset.NewFactDataset(log, priceSnapshotFactSchema)
 }

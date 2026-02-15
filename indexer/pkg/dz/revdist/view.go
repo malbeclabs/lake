@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,10 +27,16 @@ type RevDistClient interface {
 	FetchRewardShares(ctx context.Context, epoch uint64) (*revdist.ShapleyOutputStorage, error)
 }
 
+// PriceOracle fetches current SOL/2Z prices.
+type PriceOracle interface {
+	FetchSwapRate(ctx context.Context) (*revdist.SwapRate, error)
+}
+
 type ViewConfig struct {
 	Logger          *slog.Logger
 	Clock           clockwork.Clock
 	RevDistClient   RevDistClient
+	PriceOracle     PriceOracle // optional — if nil, price snapshots are skipped
 	RefreshInterval time.Duration
 	ClickHouse      clickhouse.Client
 	ProgramID       solana.PublicKey
@@ -167,7 +174,23 @@ func (v *View) Refresh(ctx context.Context) error {
 		return fmt.Errorf("failed to replace config: %w", err)
 	}
 
-	// 2. Fetch newly completed epochs (distributions + off-chain data)
+	// 2. Fetch current prices from oracle (optional, best-effort)
+	var prices *PriceSnapshot
+	if v.cfg.PriceOracle != nil {
+		swapRate, err := v.cfg.PriceOracle.FetchSwapRate(ctx)
+		if err != nil {
+			v.log.Warn("revdist: failed to fetch prices from oracle", "error", err)
+		} else {
+			prices = convertPriceSnapshot(swapRate)
+
+			// Store periodic price snapshot
+			if err := v.store.InsertPriceSnapshot(ctx, *prices); err != nil {
+				v.log.Warn("revdist: failed to insert price snapshot", "error", err)
+			}
+		}
+	}
+
+	// 3. Fetch newly completed epochs (distributions + off-chain data)
 	nextCompleted := programConfig.NextCompletedDZEpoch
 	if nextCompleted > 0 {
 		for epoch := v.lastFetchedEpoch + 1; epoch < nextCompleted; epoch++ {
@@ -184,7 +207,13 @@ func (v *View) Refresh(ctx context.Context) error {
 				v.log.Warn("revdist: failed to fetch distribution", "epoch", epoch, "error", err)
 				break
 			}
-			if err := v.store.ReplaceDistributions(ctx, []Distribution{convertDistribution(dist)}); err != nil {
+			d := convertDistribution(dist)
+			// Attach current prices to the distribution for historical USD context
+			if prices != nil {
+				d.SOLPriceUSD = prices.SOLPriceUSD
+				d.TwoZPriceUSD = prices.TwoZPriceUSD
+			}
+			if err := v.store.ReplaceDistributions(ctx, []Distribution{d}); err != nil {
 				return fmt.Errorf("failed to replace distribution for epoch %d: %w", epoch, err)
 			}
 
@@ -214,7 +243,7 @@ func (v *View) Refresh(ctx context.Context) error {
 		}
 	}
 
-	// 3. Fetch journal (singleton, always refreshed)
+	// 4. Fetch journal (singleton, always refreshed)
 	journal, err := v.cfg.RevDistClient.FetchJournal(ctx)
 	if err != nil {
 		v.log.Warn("revdist: failed to fetch journal", "error", err)
@@ -224,7 +253,7 @@ func (v *View) Refresh(ctx context.Context) error {
 		}
 	}
 
-	// 4. Fetch all validator deposits (snapshot, always refreshed)
+	// 5. Fetch all validator deposits (snapshot, always refreshed)
 	deposits, err := v.cfg.RevDistClient.FetchAllValidatorDeposits(ctx)
 	if err != nil {
 		v.log.Warn("revdist: failed to fetch validator deposits", "error", err)
@@ -236,7 +265,7 @@ func (v *View) Refresh(ctx context.Context) error {
 		}
 	}
 
-	// 5. Fetch all contributor rewards (snapshot, always refreshed)
+	// 6. Fetch all contributor rewards (snapshot, always refreshed)
 	rewards, err := v.cfg.RevDistClient.FetchAllContributorRewards(ctx)
 	if err != nil {
 		v.log.Warn("revdist: failed to fetch contributor rewards", "error", err)
@@ -361,6 +390,16 @@ func convertValidatorDebts(epoch uint64, debts *revdist.ComputedSolanaValidatorD
 		}
 	}
 	return result
+}
+
+func convertPriceSnapshot(sr *revdist.SwapRate) *PriceSnapshot {
+	solPriceUSD, _ := strconv.ParseFloat(sr.SOLPriceUSD, 64)
+	twoZPriceUSD, _ := strconv.ParseFloat(sr.TwoZPriceUSD, 64)
+	return &PriceSnapshot{
+		SOLPriceUSD:  solPriceUSD,
+		TwoZPriceUSD: twoZPriceUSD,
+		SwapRate:     sr.Rate,
+	}
 }
 
 func convertRewardShares(epoch uint64, shares *revdist.ShapleyOutputStorage) []RewardShare {

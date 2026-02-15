@@ -197,6 +197,39 @@ func (s *Store) InsertValidatorDebts(ctx context.Context, debts []ValidatorDebt)
 	return nil
 }
 
+func (s *Store) InsertPriceSnapshot(ctx context.Context, snapshot PriceSnapshot) error {
+	s.log.Debug("revdist/store: inserting price snapshot",
+		"sol_price_usd", snapshot.SOLPriceUSD,
+		"twoz_price_usd", snapshot.TwoZPriceUSD,
+		"swap_rate", snapshot.SwapRate)
+
+	d, err := NewPriceSnapshotFactDataset(s.log)
+	if err != nil {
+		return fmt.Errorf("failed to create dataset: %w", err)
+	}
+
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	now := time.Now().UTC()
+	if err := d.WriteBatch(ctx, conn, 1, func(_ int) ([]any, error) {
+		return []any{
+			now,
+			snapshot.SOLPriceUSD,
+			snapshot.TwoZPriceUSD,
+			snapshot.SwapRate,
+			now,
+		}, nil
+	}); err != nil {
+		return fmt.Errorf("failed to write price snapshot to ClickHouse: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Store) InsertRewardShares(ctx context.Context, shares []RewardShare) error {
 	s.log.Debug("revdist/store: inserting reward shares", "count", len(shares))
 

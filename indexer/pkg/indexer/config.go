@@ -54,6 +54,7 @@ type Config struct {
 	// Revenue distribution configuration (optional, mainnet-beta only).
 	RevDistClient    dzrevdist.RevDistClient
 	RevDistProgramID solana.PublicKey
+	RevDistOracle    dzrevdist.PriceOracle
 
 	// Solana configuration.
 	SolanaRPC sol.SolanaRPC

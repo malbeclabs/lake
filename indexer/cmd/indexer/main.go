@@ -267,6 +267,7 @@ func run() error {
 	revDistEnabled := *dzEnvFlag == config.EnvMainnetBeta
 	var revDistClient *revdist.Client
 	var revDistProgramID solana.PublicKey
+	var revDistOracle *revdist.OracleClient
 	if revDistEnabled {
 		revDistSolanaRPC := rpc.NewWithRetries(networkConfig.SolanaRPCURL, nil)
 		defer revDistSolanaRPC.Close()
@@ -275,6 +276,7 @@ func run() error {
 		ledgerClient := &rpcLedgerClient{rpc: ledgerRPC}
 		revDistProgramID = networkConfig.RevenueDistributionProgramID
 		revDistClient = revdist.NewWithLedger(revDistSolanaRPC, revDistProgramID, ledgerClient)
+		revDistOracle = revdist.NewOracleClient(networkConfig.TwoZOracleURL)
 		log.Info("revdist client initialized", "program_id", revDistProgramID.String())
 	} else {
 		log.Info("revdist disabled for non-mainnet env")
@@ -457,6 +459,7 @@ func run() error {
 			// Revenue distribution configuration
 			RevDistClient:    revDistClient,
 			RevDistProgramID: revDistProgramID,
+			RevDistOracle:    revDistOracle,
 
 			// Solana configuration
 			SolanaRPC: solanaRPC,

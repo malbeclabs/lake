@@ -45,6 +45,8 @@ type Distribution struct {
 	InflationRewardsPct              uint16
 	JitoTipsPct                      uint16
 	FixedSOLAmount                   uint32
+	SOLPriceUSD                      float64
+	TwoZPriceUSD                     float64
 }
 
 // Journal represents the revdist journal (on-chain).
@@ -92,4 +94,11 @@ type RewardShare struct {
 	TotalUnitShares  uint32
 	IsBlocked        bool
 	EconomicBurnRate uint32
+}
+
+// PriceSnapshot represents a point-in-time price observation from the oracle.
+type PriceSnapshot struct {
+	SOLPriceUSD  float64
+	TwoZPriceUSD float64
+	SwapRate     float64
 }
