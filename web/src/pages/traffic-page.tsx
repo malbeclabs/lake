@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, GripVertical, Check, RefreshCw, ArrowUpDown } from 'lucide-react'
+import { ChevronDown, RefreshCw, ArrowUpDown } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
@@ -72,18 +72,6 @@ const aggLabels: Record<AggMethod, string> = {
 
 type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel' | 'discards'
 
-function chartSectionLabels(intfType: string): Record<ChartSection, string> {
-  const nonTunnelLabel = intfType === 'link' ? 'Link' : intfType === 'other' ? 'Other' : 'Non-Tunnel'
-  return {
-    'non-tunnel-stacked': `${nonTunnelLabel} Traffic (stacked)`,
-    'non-tunnel': `${nonTunnelLabel} Traffic`,
-    'tunnel-stacked': 'Tunnel Traffic (stacked)',
-    'tunnel': 'Tunnel Traffic',
-    'discards': 'Interface Discards',
-  }
-}
-
-// All known chart sections (used to detect new sections added after localStorage was saved)
 const ALL_KNOWN_SECTIONS: ChartSection[] = ['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards']
 
 const TUNNEL_SECTIONS: Set<ChartSection> = new Set(['tunnel-stacked', 'tunnel'])
@@ -197,87 +185,6 @@ function BucketSelector({
   )
 }
 
-function ShowGraphsSelector({
-  sections,
-  visibleSections,
-  onReorder,
-  onToggle,
-  labels,
-}: {
-  sections: ChartSection[]
-  visibleSections: Set<ChartSection>
-  onReorder: (sections: ChartSection[]) => void
-  onToggle: (section: ChartSection) => void
-  labels: Record<ChartSection, string>
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
-
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedIndex(index)
-    e.dataTransfer.effectAllowed = 'move'
-  }
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault()
-    if (draggedIndex === null || draggedIndex === index) return
-
-    const newSections = [...sections]
-    const draggedSection = newSections[draggedIndex]
-    newSections.splice(draggedIndex, 1)
-    newSections.splice(index, 0, draggedSection)
-
-    onReorder(newSections)
-    setDraggedIndex(index)
-  }
-
-  const handleDragEnd = () => {
-    setDraggedIndex(null)
-  }
-
-  const visibleCount = Array.from(visibleSections).filter(s => sections.includes(s)).length
-
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-      >
-        Show Graphs ({visibleCount}/{sections.length})
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[280px]">
-            {sections.map((section, index) => (
-              <div
-                key={section}
-                draggable
-                onDragStart={(e) => handleDragStart(e, index)}
-                onDragOver={(e) => handleDragOver(e, index)}
-                onDragEnd={handleDragEnd}
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm transition-colors cursor-move ${
-                  draggedIndex === index ? 'opacity-50' : ''
-                }`}
-              >
-                <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                <button
-                  onClick={() => onToggle(section)}
-                  className="flex-1 flex items-center justify-between text-left hover:bg-muted/50 -m-1.5 p-1.5 rounded"
-                >
-                  <span className="text-foreground">{labels[section]}</span>
-                  {visibleSections.has(section) && <Check className="h-4 w-4 flex-shrink-0" />}
-                </button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 function LayoutSelector({
   value,
   onChange,
@@ -374,61 +281,9 @@ function TrafficPageContent() {
 
   const [bucketSize, setBucketSize] = useState<BucketSize>('auto')
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
-  const [chartSections, setChartSections] = useState<ChartSection[]>([
-    'non-tunnel-stacked',
-    'non-tunnel',
-    'tunnel-stacked',
-    'tunnel',
-    'discards',
-  ])
-  const [visibleSections, setVisibleSections] = useState<Set<ChartSection>>(
-    new Set(['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards'])
-  )
   const [layout, setLayout] = useState<Layout>('1x4')
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>('never')
   const [bidirectional, setBidirectional] = useState(true)
-
-  // Load chart sections order from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-chart-sections')
-    if (saved) {
-      try {
-        const sections = JSON.parse(saved) as ChartSection[]
-        // Add any new sections that weren't in localStorage
-        const missingSections = ALL_KNOWN_SECTIONS.filter(s => !sections.includes(s))
-        if (missingSections.length > 0) {
-          const updatedSections = [...sections, ...missingSections]
-          setChartSections(updatedSections)
-          localStorage.setItem('traffic-chart-sections', JSON.stringify(updatedSections))
-        } else {
-          setChartSections(sections)
-        }
-      } catch {
-        // Ignore invalid data
-      }
-    }
-  }, [])
-
-  // Load visible sections from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-visible-sections')
-    if (saved) {
-      try {
-        const sections = JSON.parse(saved) as ChartSection[]
-        // Add any new sections that weren't in localStorage (make them visible by default)
-        const missingSections = ALL_KNOWN_SECTIONS.filter(s => !sections.includes(s))
-        if (missingSections.length > 0) {
-          const updatedSections = [...sections, ...missingSections]
-          setVisibleSections(new Set(updatedSections))
-          localStorage.setItem('traffic-visible-sections', JSON.stringify(updatedSections))
-        } else {
-          setVisibleSections(new Set(sections))
-        }
-      } catch {
-        // Ignore invalid data
-      }
-    }
-  }, [])
 
   // Load layout from localStorage
   useEffect(() => {
@@ -445,24 +300,6 @@ function TrafficPageContent() {
       setRefreshInterval(saved as RefreshInterval)
     }
   }, [])
-
-  // Save chart sections order to localStorage
-  const handleSectionsReorder = (sections: ChartSection[]) => {
-    setChartSections(sections)
-    localStorage.setItem('traffic-chart-sections', JSON.stringify(sections))
-  }
-
-  // Toggle section visibility
-  const handleSectionToggle = (section: ChartSection) => {
-    const newVisible = new Set(visibleSections)
-    if (newVisible.has(section)) {
-      newVisible.delete(section)
-    } else {
-      newVisible.add(section)
-    }
-    setVisibleSections(newVisible)
-    localStorage.setItem('traffic-visible-sections', JSON.stringify(Array.from(newVisible)))
-  }
 
   // Save layout to localStorage
   const handleLayoutChange = (newLayout: Layout) => {
@@ -612,7 +449,6 @@ function TrafficPageContent() {
 
   // Render a chart section
   const renderChartSection = (section: ChartSection) => {
-    if (!visibleSections.has(section)) return null
     if (!isSectionAllowed(section)) return null
 
     // Handle discards chart separately
@@ -725,13 +561,6 @@ function TrafficPageContent() {
               <ArrowUpDown className="h-4 w-4" />
               Rx/Tx
             </button>
-            <ShowGraphsSelector
-              sections={chartSections}
-              visibleSections={visibleSections}
-              onReorder={handleSectionsReorder}
-              onToggle={handleSectionToggle}
-              labels={chartSectionLabels(intfType)}
-            />
             <LayoutSelector value={layout} onChange={handleLayoutChange} />
             <BucketSelector
               bucketValue={bucketSize}
@@ -760,7 +589,7 @@ function TrafficPageContent() {
 
         {/* Charts */}
         <div className={gridClass}>
-          {chartSections.map(section => renderChartSection(section))}
+          {ALL_KNOWN_SECTIONS.map(section => renderChartSection(section))}
         </div>
       </div>
     </div>
