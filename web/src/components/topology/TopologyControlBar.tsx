@@ -183,10 +183,13 @@ export function TopologyControlBar({
     toggleOverlay(overlay)
 
     if (!currentlyActive) {
-      openPanel('overlay')
+      // Bandwidth has no info panel — it's always-on sizing
+      if (overlay !== 'bandwidth') {
+        openPanel('overlay')
+      }
     } else {
       const otherOverlays = Object.entries(overlays)
-        .filter(([key]) => key !== overlay)
+        .filter(([key]) => key !== overlay && key !== 'bandwidth')
         .some(([, value]) => value)
 
       if (!otherOverlays && panel.content === 'overlay') {
