@@ -3617,6 +3617,180 @@ export async function fetchDiscardsData(
   return res.json()
 }
 
+// Traffic Dashboard types and functions
+
+export interface DashboardStressResponse {
+  timestamps: string[]
+  p50: number[]
+  p95: number[]
+  max: number[]
+  stressed_count: number[]
+  total_count: number[]
+  effective_bucket: string
+  groups?: DashboardStressGroup[]
+}
+
+export interface DashboardStressGroup {
+  key: string
+  label: string
+  p50: number[]
+  p95: number[]
+  max: number[]
+  stressed_count: number[]
+}
+
+export interface DashboardStressParams {
+  time_range?: string
+  bucket?: string
+  threshold?: number
+  group_by?: string
+  metric?: 'utilization' | 'throughput'
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+}
+
+export async function fetchDashboardStress(
+  params: DashboardStressParams = {}
+): Promise<DashboardStressResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/stress?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard stress data')
+  return res.json()
+}
+
+export interface DashboardTopEntity {
+  device_pk: string
+  device_code: string
+  intf: string
+  metro_code: string
+  link_type: string
+  contributor_code: string
+  bandwidth_bps: number
+  max_util: number
+  avg_util: number
+  p95_util: number
+  max_in_bps: number
+  max_out_bps: number
+}
+
+export interface DashboardTopResponse {
+  entities: DashboardTopEntity[]
+}
+
+export interface DashboardTopParams {
+  time_range?: string
+  entity?: 'device' | 'interface'
+  metric?: 'max_util' | 'p95_util' | 'avg_util' | 'max_throughput'
+  limit?: number
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+}
+
+export async function fetchDashboardTop(
+  params: DashboardTopParams = {}
+): Promise<DashboardTopResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/top?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard top data')
+  return res.json()
+}
+
+export interface DashboardDrilldownPoint {
+  time: string
+  intf: string
+  in_bps: number
+  out_bps: number
+  in_discards: number
+  out_discards: number
+}
+
+export interface DashboardDrilldownSeries {
+  intf: string
+  bandwidth_bps: number
+  link_type: string
+}
+
+export interface DashboardDrilldownResponse {
+  points: DashboardDrilldownPoint[]
+  series: DashboardDrilldownSeries[]
+  effective_bucket: string
+}
+
+export interface DashboardDrilldownParams {
+  time_range?: string
+  bucket?: string
+  device_pk: string
+  intf?: string
+}
+
+export async function fetchDashboardDrilldown(
+  params: DashboardDrilldownParams
+): Promise<DashboardDrilldownResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/drilldown?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard drilldown data')
+  return res.json()
+}
+
+export interface DashboardBurstinessEntity {
+  device_pk: string
+  device_code: string
+  intf: string
+  metro_code: string
+  bandwidth_bps: number
+  p50_util: number
+  p99_util: number
+  burstiness: number
+  pct_time_stressed: number
+}
+
+export interface DashboardBurstinessResponse {
+  entities: DashboardBurstinessEntity[]
+}
+
+export interface DashboardBurstinessParams {
+  time_range?: string
+  limit?: number
+  threshold?: number
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+}
+
+export async function fetchDashboardBurstiness(
+  params: DashboardBurstinessParams = {}
+): Promise<DashboardBurstinessResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/burstiness?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard burstiness data')
+  return res.json()
+}
+
 // Search types and functions
 export type SearchEntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip'
 

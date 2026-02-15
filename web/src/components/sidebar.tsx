@@ -32,6 +32,7 @@ import {
   Wrench,
   AlertTriangle,
   Gauge,
+  BarChart3,
   Zap,
   Sun,
   Moon,
@@ -147,7 +148,9 @@ export function Sidebar() {
   const isTimelineRoute = location.pathname === '/timeline'
   const isOutagesRoute = location.pathname === '/outages'
   const isPerformanceRoute = location.pathname.startsWith('/performance')
-  const isTrafficRoute = location.pathname === '/traffic'
+  const isTrafficRoute = location.pathname.startsWith('/traffic')
+  const isTrafficDashboard = location.pathname === '/traffic/dashboard'
+  const isTrafficInterfaces = location.pathname === '/traffic/interfaces'
   const isQuerySessions = location.pathname === '/query/sessions'
   const isChatSessions = location.pathname === '/chat/sessions'
 
@@ -334,7 +337,7 @@ export function Sidebar() {
 
         {/* Traffic nav item */}
         <Link
-          to="/traffic"
+          to="/traffic/dashboard"
           className={cn(
             'p-2 rounded transition-colors',
             isTrafficRoute
@@ -358,8 +361,35 @@ export function Sidebar() {
         {/* Divider */}
         <div className="w-6 border-t border-border/50 my-2" />
 
-        {/* Topology sub-pages when on topology route */}
-        {isTopologyRoute ? (
+        {/* Traffic sub-pages when on traffic route */}
+        {isTrafficRoute ? (
+          <>
+            <Link
+              to="/traffic/dashboard"
+              className={cn(
+                'p-2 rounded transition-colors',
+                isTrafficDashboard
+                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+              title="Dashboard"
+            >
+              <BarChart3 className="h-4 w-4" />
+            </Link>
+            <Link
+              to="/traffic/interfaces"
+              className={cn(
+                'p-2 rounded transition-colors',
+                isTrafficInterfaces
+                  ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+              title="Interfaces"
+            >
+              <Network className="h-4 w-4" />
+            </Link>
+          </>
+        ) : isTopologyRoute ? (
           <>
             <Link
               to="/topology/map"
@@ -655,7 +685,7 @@ export function Sidebar() {
             Performance
           </Link>
           <Link
-            to="/traffic"
+            to="/traffic/dashboard"
             className={cn(
               'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
               isTrafficRoute
@@ -678,7 +708,7 @@ export function Sidebar() {
       </div>
 
       {/* DoubleZero section - hidden on tool pages */}
-      {!isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && (
+      {!isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && !isTrafficRoute && (
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">DoubleZero</span>
@@ -749,7 +779,7 @@ export function Sidebar() {
       )}
 
       {/* Solana section - hidden on tool pages and non-mainnet envs */}
-      {hasSolana && !isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && (
+      {hasSolana && !isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && !isTrafficRoute && (
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Solana</span>
@@ -1071,8 +1101,46 @@ export function Sidebar() {
         </div>
       )}
 
+      {/* Traffic sub-section */}
+      {isTrafficRoute && (
+        <div className="flex-1 flex flex-col min-h-0 mt-6">
+          {/* Section title */}
+          <div className="px-3 mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Traffic</span>
+          </div>
+
+          {/* Sub-nav */}
+          <div className="px-3 space-y-1">
+            <Link
+              to="/traffic/dashboard"
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                isTrafficDashboard
+                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+            >
+              <BarChart3 className="h-4 w-4" />
+              Dashboard
+            </Link>
+            <Link
+              to="/traffic/interfaces"
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                isTrafficInterfaces
+                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+              )}
+            >
+              <Network className="h-4 w-4" />
+              Interfaces
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Spacer when no section is active */}
-      {!isQueryRoute && !isChatRoute && !isTopologyRoute && !isPerformanceRoute && <div className="flex-1" />}
+      {!isQueryRoute && !isChatRoute && !isTopologyRoute && !isPerformanceRoute && !isTrafficRoute && <div className="flex-1" />}
       </div>
 
       {/* Footer */}

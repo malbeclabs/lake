@@ -460,6 +460,12 @@ func main() {
 		r.Get("/api/traffic/data", handlers.GetTrafficData)
 		r.Get("/api/traffic/discards", handlers.GetDiscardsData)
 
+		// Traffic dashboard routes
+		r.Get("/api/traffic/dashboard/stress", handlers.GetTrafficDashboardStress)
+		r.Get("/api/traffic/dashboard/top", handlers.GetTrafficDashboardTop)
+		r.Get("/api/traffic/dashboard/drilldown", handlers.GetTrafficDashboardDrilldown)
+		r.Get("/api/traffic/dashboard/burstiness", handlers.GetTrafficDashboardBurstiness)
+
 		// Topology endpoints (ClickHouse only)
 		r.Get("/api/topology", handlers.GetTopology)
 		r.Get("/api/topology/traffic", handlers.GetTopologyTraffic)
