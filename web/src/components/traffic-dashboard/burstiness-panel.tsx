@@ -153,14 +153,16 @@ export function BurstinessPanel() {
                         {isLink ? formatPercent(e.p99_util) : formatRate(e.p99_bps)}
                       </td>
                       <td className="py-1.5 px-2 text-right">
-                        <span className={cn('px-1.5 py-0.5 rounded text-xs border', burstColor(e.burstiness, isLink))}>
-                          {isLink ? formatPercent(e.burstiness) : formatRatio(e.burstiness)}
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className={cn('px-1.5 py-0.5 rounded text-xs border', burstColor(e.burstiness, isLink))}>
+                            {isLink ? formatPercent(e.burstiness) : formatRatio(e.burstiness)}
+                          </span>
+                          {!isLink && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatRate(e.p99_bps - e.p50_bps)}
+                            </span>
+                          )}
                         </span>
-                        {!isLink && (
-                          <div className="text-[10px] text-muted-foreground mt-0.5">
-                            {formatRate(e.p99_bps - e.p50_bps)}
-                          </div>
-                        )}
                       </td>
                       <td className="py-1.5 px-2 text-right font-mono">
                         {isLink ? formatPercent(e.pct_time_stressed) : '\u2014'}
@@ -177,7 +179,7 @@ export function BurstinessPanel() {
             </span>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
-                <span>Min</span>
+                <span className="font-medium text-foreground/60">Min</span>
                 {minBpsOptions.map(opt => (
                   <button
                     key={opt.value}
@@ -191,8 +193,9 @@ export function BurstinessPanel() {
                   </button>
                 ))}
               </div>
+              <div className="h-3 w-px bg-border" />
               <div className="flex items-center gap-1.5">
-                <span>Show</span>
+                <span className="font-medium text-foreground/60">Show</span>
                 {[10, 20, 50].map(n => (
                   <button
                     key={n}
