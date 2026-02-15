@@ -14,6 +14,13 @@ function formatRate(val: number): string {
   return val.toFixed(0) + ' bps'
 }
 
+function formatPps(val: number): string {
+  if (val >= 1e9) return (val / 1e9).toFixed(1) + ' Gpps'
+  if (val >= 1e6) return (val / 1e6).toFixed(1) + ' Mpps'
+  if (val >= 1e3) return (val / 1e3).toFixed(1) + ' Kpps'
+  return val.toFixed(0) + ' pps'
+}
+
 function entityLabel(e: SelectedEntity): string {
   return e.intf ? `${e.deviceCode} ${e.intf}` : e.deviceCode
 }
@@ -35,6 +42,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const isPinned = state.pinnedEntities.some(
     p => p.devicePk === entity.devicePk && p.intf === entity.intf
   )
+  const isPps = state.metric === 'packets'
+  const fmt = isPps ? formatPps : formatRate
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard-drilldown', entity.devicePk, entity.intf, state.timeRange, state.intfType],
@@ -66,15 +75,20 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       lookup.get(p.time)!.set(p.intf, p)
     })
 
-    // Build series arrays: for each interface, in_bps and out_bps
+    // Build series arrays: for each interface, in and out values
     const seriesData: (number | null)[][] = []
     intfs.forEach(intf => {
       const inData: (number | null)[] = []
       const outData: (number | null)[] = [];
       [...tsSet].sort().forEach(t => {
         const point = lookup.get(t)?.get(intf)
-        inData.push(point?.in_bps ?? null)
-        outData.push(point ? -(point.out_bps) : null) // negative for out (below axis)
+        if (isPps) {
+          inData.push(point?.in_pps ?? null)
+          outData.push(point ? -(point.out_pps) : null)
+        } else {
+          inData.push(point?.in_bps ?? null)
+          outData.push(point ? -(point.out_bps) : null)
+        }
       })
       seriesData.push(inData)
       seriesData.push(outData)
@@ -84,7 +98,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       aligned: [timestamps, ...seriesData] as uPlot.AlignedData,
       intfs,
     }
-  }, [data])
+  }, [data, isPps])
 
   useEffect(() => {
     if (!chartRef.current || !uplotData) return
@@ -120,7 +134,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       axes: [
         {},
         {
-          values: (_: uPlot, vals: number[]) => vals.map(v => formatRate(Math.abs(v))),
+          values: (_: uPlot, vals: number[]) => vals.map(v => fmt(Math.abs(v))),
           size: 70,
         },
       ],
@@ -145,7 +159,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [uplotData])
+  }, [uplotData, fmt])
 
   // Build per-interface metadata: bandwidth and link type from series data
   const intfMeta = useMemo(() => {
@@ -250,10 +264,10 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
                         {meta && meta.bandwidth > 0 ? formatRate(meta.bandwidth) : '—'}
                       </td>
                       <td className="py-1 text-right font-mono tabular-nums">
-                        {hv ? <span className="text-foreground">{formatRate(hv.rx)}</span> : <span className="text-muted-foreground">—</span>}
+                        {hv ? <span className="text-foreground">{fmt(hv.rx)}</span> : <span className="text-muted-foreground">—</span>}
                       </td>
                       <td className="py-1 text-right font-mono tabular-nums">
-                        {hv ? <span className="text-foreground">{formatRate(hv.tx)}</span> : <span className="text-muted-foreground">—</span>}
+                        {hv ? <span className="text-foreground">{fmt(hv.tx)}</span> : <span className="text-muted-foreground">—</span>}
                       </td>
                     </tr>
                   )
@@ -275,8 +289,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
                     if (!hv) return null
                     return (
                       <>
-                        <span>Rx: <span className="font-medium text-foreground">{formatRate(hv.rx)}</span></span>
-                        <span>Tx: <span className="font-medium text-foreground">{formatRate(hv.tx)}</span></span>
+                        <span>Rx: <span className="font-medium text-foreground">{fmt(hv.rx)}</span></span>
+                        <span>Tx: <span className="font-medium text-foreground">{fmt(hv.tx)}</span></span>
                       </>
                     )
                   })()}

@@ -28,7 +28,9 @@ func setupDashboardSchema(t *testing.T) {
 			delta_duration Nullable(Float64),
 			in_discards_delta Nullable(Int64),
 			out_discards_delta Nullable(Int64),
-			user_tunnel_id Nullable(Int64)
+			user_tunnel_id Nullable(Int64),
+			in_pkts_delta Nullable(Int64),
+			out_pkts_delta Nullable(Int64)
 		) ENGINE = Memory`,
 
 		`CREATE TABLE IF NOT EXISTS dz_devices_current (
@@ -110,6 +112,7 @@ func TestTrafficDashboardStress(t *testing.T) {
 	}{
 		{"utilization", "?time_range=1h&metric=utilization", false},
 		{"throughput", "?time_range=1h&metric=throughput", false},
+		{"packets", "?time_range=1h&metric=packets", false},
 		{"group_by_metro", "?time_range=1h&group_by=metro", true},
 		{"group_by_device", "?time_range=1h&group_by=device", true},
 		{"group_by_link_type", "?time_range=1h&group_by=link_type", true},

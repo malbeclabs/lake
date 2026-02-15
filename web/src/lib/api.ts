@@ -3644,7 +3644,7 @@ export interface DashboardStressParams {
   bucket?: string
   threshold?: number
   group_by?: string
-  metric?: 'utilization' | 'throughput'
+  metric?: 'utilization' | 'throughput' | 'packets'
   metro?: string
   device?: string
   link_type?: string
@@ -3717,6 +3717,8 @@ export interface DashboardDrilldownPoint {
   out_bps: number
   in_discards: number
   out_discards: number
+  in_pps: number
+  out_pps: number
 }
 
 export interface DashboardDrilldownSeries {

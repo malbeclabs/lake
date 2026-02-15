@@ -17,9 +17,10 @@ const presetTimeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: '30d', label: '30 days' },
 ]
 
-const metricOptions: { value: 'utilization' | 'throughput'; label: string }[] = [
-  { value: 'utilization', label: 'Utilization' },
+const metricOptions: { value: 'utilization' | 'throughput' | 'packets'; label: string }[] = [
   { value: 'throughput', label: 'Throughput' },
+  { value: 'packets', label: 'Packets' },
+  { value: 'utilization', label: 'Utilization' },
 ]
 
 const intfTypeOptions: { value: IntfType; label: string }[] = [
@@ -560,7 +561,7 @@ export function DashboardFilters() {
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <TimeRangeDropdown />
-      <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} disabled={intfType === 'tunnel' || intfType === 'other'} />
+      <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
       <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />
       <DashboardSearch />
     </div>

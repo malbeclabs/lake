@@ -17,7 +17,7 @@ export interface SelectedEntity {
 export interface DashboardState {
   timeRange: TimeRange
   threshold: number
-  metric: 'utilization' | 'throughput'
+  metric: 'utilization' | 'throughput' | 'packets'
   groupBy: string
   intfType: IntfType
 
@@ -39,7 +39,7 @@ export interface DashboardState {
   // Actions
   setTimeRange: (tr: TimeRange) => void
   setThreshold: (t: number) => void
-  setMetric: (m: 'utilization' | 'throughput') => void
+  setMetric: (m: 'utilization' | 'throughput' | 'packets') => void
   setGroupBy: (g: string) => void
   setIntfType: (t: IntfType) => void
   setMetroFilter: (f: string[]) => void
@@ -99,11 +99,15 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const groupBy = useMemo(() => searchParams.get('group_by') ?? 'device', [searchParams])
 
-  // Force throughput when intf_type is non-link (utilization requires bandwidth)
-  const metric = useMemo<'utilization' | 'throughput'>(() => {
-    if (intfType === 'tunnel' || intfType === 'other') return 'throughput'
+  // Force away from utilization when intf_type is non-link (utilization requires bandwidth)
+  const metric = useMemo<'utilization' | 'throughput' | 'packets'>(() => {
     const param = searchParams.get('metric')
-    if (param === 'utilization' || param === 'throughput') return param
+    if (param === 'packets') return 'packets'
+    if (param === 'utilization') {
+      if (intfType === 'tunnel' || intfType === 'other') return 'throughput'
+      return 'utilization'
+    }
+    if (param === 'throughput') return 'throughput'
     return 'throughput'
   }, [searchParams, intfType])
 
@@ -180,7 +184,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     })
   }, [setSearchParams])
 
-  const setMetricAction = useCallback((m: 'utilization' | 'throughput') => {
+  const setMetricAction = useCallback((m: 'utilization' | 'throughput' | 'packets') => {
     setSearchParams(prev => {
       if (m === 'throughput') {
         prev.delete('metric')

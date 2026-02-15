@@ -272,9 +272,12 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 
 	// Build the metric expression and filter
 	var metricExpr, metricFilter string
-	if metric == "throughput" {
+	switch metric {
+	case "throughput":
 		metricExpr = "greatest(ir.in_bps, ir.out_bps)"
-	} else {
+	case "packets":
+		metricExpr = "greatest(ir.in_pps, ir.out_pps)"
+	default: // utilization
 		metricExpr = `CASE WHEN l.bandwidth_bps > 0
 			THEN greatest(ir.in_bps, ir.out_bps) / l.bandwidth_bps
 			ELSE NULL END`
@@ -310,7 +313,9 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 				toStartOfInterval(event_ts, INTERVAL %s) AS bucket_ts,
 				f.device_pk, f.intf, f.link_pk,
 				max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
-				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps
+				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
+				max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
+				max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
 			FROM fact_dz_device_interface_counters f
 			WHERE %s
 				AND delta_duration > 0
@@ -486,7 +491,9 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 			max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
 			max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
 			sum(COALESCE(f.in_discards_delta, 0)) AS in_discards,
-			sum(COALESCE(f.out_discards_delta, 0)) AS out_discards
+			sum(COALESCE(f.out_discards_delta, 0)) AS out_discards,
+			max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
+			max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
 		FROM fact_dz_device_interface_counters f
 		WHERE %s
 			AND f.device_pk = '%s'
@@ -848,6 +855,8 @@ type DrilldownPoint struct {
 	OutBps      float64 `json:"out_bps"`
 	InDiscards  int64   `json:"in_discards"`
 	OutDiscards int64   `json:"out_discards"`
+	InPps       float64 `json:"in_pps"`
+	OutPps      float64 `json:"out_pps"`
 }
 
 type DrilldownSeries struct {
@@ -903,7 +912,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p DrilldownPoint
 		var inDisc, outDisc int64
-		if err := rows.Scan(&p.Time, &p.Intf, &p.InBps, &p.OutBps, &inDisc, &outDisc); err != nil {
+		if err := rows.Scan(&p.Time, &p.Intf, &p.InBps, &p.OutBps, &inDisc, &outDisc, &p.InPps, &p.OutPps); err != nil {
 			log.Printf("Traffic dashboard drilldown row scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

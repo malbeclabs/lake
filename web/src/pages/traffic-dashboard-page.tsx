@@ -26,19 +26,23 @@ function DashboardContent() {
 
         <div className="space-y-4">
           <Section
-            title={isUtil ? 'System Stress' : 'Aggregate Throughput'}
+            title={isUtil ? 'System Stress' : metric === 'packets' ? 'Aggregate Packet Rate' : 'Aggregate Throughput'}
             description={isUtil
               ? 'P50, P95, and max utilization across all interfaces per time bucket. Spikes indicate widespread congestion.'
-              : 'P50, P95, and max throughput across all interfaces per time bucket.'}
+              : metric === 'packets'
+                ? 'P50, P95, and max packet rate across all interfaces per time bucket.'
+                : 'P50, P95, and max throughput across all interfaces per time bucket.'}
           >
             <StressPanel />
           </Section>
 
           <Section
-            title={isUtil ? 'Utilization by Group' : 'Throughput by Group'}
+            title={isUtil ? 'Utilization by Group' : metric === 'packets' ? 'Packet Rate by Group' : 'Throughput by Group'}
             description={isUtil
               ? 'Average P95 utilization per group. Click a group to filter the panels below.'
-              : 'Average P95 throughput per group. Click a group to filter the panels below.'}
+              : metric === 'packets'
+                ? 'Average P95 packet rate per group. Click a group to filter the panels below.'
+                : 'Average P95 throughput per group. Click a group to filter the panels below.'}
           >
             <LocalizationPanel />
           </Section>
@@ -54,7 +58,9 @@ function DashboardContent() {
               title="Top Interfaces"
               description={isUtil
                 ? 'Interfaces ranked by utilization. Click a row to drill down.'
-                : 'Interfaces ranked by peak throughput. Click a row to drill down.'}
+                : metric === 'packets'
+                  ? 'Interfaces ranked by peak packet rate. Click a row to drill down.'
+                  : 'Interfaces ranked by peak throughput. Click a row to drill down.'}
             >
               <TopInterfacesPanel />
             </Section>

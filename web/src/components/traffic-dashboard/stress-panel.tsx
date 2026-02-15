@@ -18,6 +18,13 @@ function formatPercent(val: number): string {
   return (val * 100).toFixed(1) + '%'
 }
 
+function formatPps(val: number): string {
+  if (val >= 1e9) return (val / 1e9).toFixed(1) + ' Gpps'
+  if (val >= 1e6) return (val / 1e6).toFixed(1) + ' Mpps'
+  if (val >= 1e3) return (val / 1e3).toFixed(1) + ' Kpps'
+  return val.toFixed(0) + ' pps'
+}
+
 export function StressPanel() {
   const state = useDashboard()
   const { setCustomRange } = state
@@ -37,6 +44,7 @@ export function StressPanel() {
   })
 
   const isUtil = state.metric === 'utilization'
+  const fmt = isUtil ? formatPercent : state.metric === 'packets' ? formatPps : formatRate
 
   const uplotData = useMemo(() => {
     if (!data?.timestamps?.length) return null
@@ -74,7 +82,7 @@ export function StressPanel() {
       axes: [
         {},
         {
-          values: (_: uPlot, vals: number[]) => vals.map(v => isUtil ? formatPercent(v) : formatRate(v)),
+          values: (_: uPlot, vals: number[]) => vals.map(v => fmt(v)),
           size: 70,
         },
       ],
@@ -114,7 +122,7 @@ export function StressPanel() {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [uplotData, isUtil, setCustomRange])
+  }, [uplotData, isUtil, fmt, setCustomRange])
 
   // Tooltip values
   const tooltipValues = useMemo(() => {
@@ -128,8 +136,6 @@ export function StressPanel() {
       total: data.total_count?.[hoveredIdx] ?? 0,
     }
   }, [hoveredIdx, data])
-
-  const fmt = isUtil ? formatPercent : formatRate
 
   return (
     <div>

@@ -24,6 +24,13 @@ function formatRate(val: number): string {
   return val.toFixed(0) + ' bps'
 }
 
+function formatPps(val: number): string {
+  if (val >= 1e9) return (val / 1e9).toFixed(1) + ' Gpps'
+  if (val >= 1e6) return (val / 1e6).toFixed(1) + ' Mpps'
+  if (val >= 1e3) return (val / 1e3).toFixed(1) + ' Kpps'
+  return val.toFixed(0) + ' pps'
+}
+
 function utilColor(val: number): string {
   if (val >= 0.8) return 'bg-red-500/20 text-red-400'
   if (val >= 0.5) return 'bg-yellow-500/20 text-yellow-400'
@@ -67,6 +74,7 @@ export function LocalizationPanel() {
   }, [data, limit])
 
   const isUtil = state.metric === 'utilization'
+  const fmtVal = isUtil ? formatPercent : state.metric === 'packets' ? formatPps : formatRate
   const maxBar = Math.max(...groupStats.map(g => g.avgP95), 0.01)
 
   const handleGroupClick = (key: string) => {
@@ -164,7 +172,7 @@ export function LocalizationPanel() {
                 />
               </div>
               <span className="w-20 text-xs text-right font-mono">
-                {isUtil ? formatPercent(g.avgP95) : formatRate(g.avgP95)}
+                {fmtVal(g.avgP95)}
               </span>
               {isUtil && g.totalStressed > 0 && (
                 <span className="text-xs text-red-400 w-16 text-right">
