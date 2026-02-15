@@ -2182,11 +2182,14 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     }
   }, [multicastTreesMode, animateFlow, linkAnimating, stableAnimatedGeoJson])
 
+  // Keep a ref to linkGeoJson so the rAF loop always reads the latest value
+  const linkGeoJsonRef = useRef(linkGeoJson)
+  linkGeoJsonRef.current = linkGeoJson
+
   // Animate flowing dots along links (matches globe animated arcs, works with all overlays)
   useEffect(() => {
-    if (!mapReady || !linkAnimating) return
     const map = mapRef.current?.getMap()
-    if (!map) return
+    if (!map || !mapReady) return
 
     const sourceId = 'link-flow-dots'
     const layerId = 'link-flow-dots-layer'
@@ -2219,6 +2222,21 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       })
     }
 
+    const removeLayer = () => {
+      try {
+        if (map.getLayer(layerId)) map.removeLayer(layerId)
+        if (map.getSource(sourceId)) map.removeSource(sourceId)
+      } catch {
+        // Map may already be destroyed
+      }
+    }
+
+    if (!linkAnimating) {
+      // Ensure layer is removed when animation is off
+      removeLayer()
+      return
+    }
+
     // Add layer immediately at setup
     if (map.isStyleLoaded()) {
       addLayer()
@@ -2227,11 +2245,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     let frameId: number
     const tick = (timestamp: number) => {
       // Re-add if react-map-gl removed it during style reconciliation
-      if (!map.getSource(sourceId) && map.isStyleLoaded()) {
-        addLayer()
+      if (!map.getSource(sourceId)) {
+        if (map.isStyleLoaded()) addLayer()
+        frameId = requestAnimationFrame(tick)
+        return
       }
 
-      const features = linkGeoJson.features as GeoJSON.Feature<GeoJSON.LineString>[]
+      const features = linkGeoJsonRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
       const points: GeoJSON.Feature<GeoJSON.Point>[] = []
 
       for (const feature of features) {
@@ -2270,14 +2290,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     frameId = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(frameId)
-      try {
-        if (map.getLayer(layerId)) map.removeLayer(layerId)
-        if (map.getSource(sourceId)) map.removeSource(sourceId)
-      } catch {
-        // Map may already be destroyed
-      }
+      removeLayer()
     }
-  }, [linkAnimating, mapReady, isDark, linkGeoJson])
+  }, [linkAnimating, mapReady, isDark])
 
   // Colors
   const deviceColor = '#00ffcc' // vibrant cyan - matches globe view, overlays will override
