@@ -288,6 +288,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
   useEffect(() => {
     if (!chartRef.current || uplotData[0].length === 0) return
 
+    const axisStroke = document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 400,
@@ -302,14 +304,14 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
       },
       axes: [
         {
-          stroke: '#94a3b8',
-          grid: { stroke: '#e2e8f0', width: 1 },
-          ticks: { stroke: '#e2e8f0', width: 1 },
+          stroke: axisStroke,
+          grid: { stroke: 'rgba(128,128,128,0.06)' },
+          ticks: { stroke: 'rgba(128,128,128,0.1)' },
         },
         {
-          stroke: '#94a3b8',
-          grid: { stroke: '#e2e8f0', width: 1 },
-          ticks: { stroke: '#e2e8f0', width: 1 },
+          stroke: axisStroke,
+          grid: { stroke: 'rgba(128,128,128,0.06)' },
+          ticks: { stroke: 'rgba(128,128,128,0.1)' },
           values: (_u, vals) => vals.map(v => formatBandwidth(v)),
           size: 80,
         },
@@ -778,7 +780,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup }: 
         <div
           onMouseDown={handleResizeStart}
           onDoubleClick={handleResizeDoubleClick}
-          className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-accent/50 transition-colors flex items-center justify-center"
+          className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-muted transition-colors flex items-center justify-center"
         >
           <div className="w-12 h-1 bg-border rounded-full" />
         </div>

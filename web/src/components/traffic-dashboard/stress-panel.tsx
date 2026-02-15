@@ -80,10 +80,12 @@ export function StressPanel() {
         },
       },
       axes: [
-        {},
+        { stroke: document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)', grid: { stroke: 'rgba(128,128,128,0.06)' } },
         {
           values: (_: uPlot, vals: number[]) => vals.map(v => fmt(v)),
           size: 70,
+          stroke: document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)',
+          grid: { stroke: 'rgba(128,128,128,0.06)' },
         },
       ],
       cursor: {

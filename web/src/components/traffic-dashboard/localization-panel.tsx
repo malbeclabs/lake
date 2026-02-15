@@ -32,9 +32,9 @@ function formatPps(val: number): string {
 }
 
 function utilColor(val: number): string {
-  if (val >= 0.8) return 'bg-red-500/20 text-red-400'
-  if (val >= 0.5) return 'bg-yellow-500/20 text-yellow-400'
-  return 'bg-green-500/20 text-green-400'
+  if (val >= 0.8) return 'bg-red-500/20 dark:bg-red-500/40 text-red-400'
+  if (val >= 0.5) return 'bg-yellow-500/20 dark:bg-yellow-500/40 text-yellow-400'
+  return 'bg-green-500/20 dark:bg-green-500/40 text-green-400'
 }
 
 export function LocalizationPanel() {
@@ -167,7 +167,7 @@ export function LocalizationPanel() {
               </span>
               <div className="flex-1 h-5 bg-muted/30 rounded-sm overflow-hidden relative">
                 <div
-                  className={cn('h-full rounded-sm transition-all', isUtil ? utilColor(g.avgP95) : 'bg-blue-500/20 text-blue-400')}
+                  className={cn('h-full rounded-sm transition-all', isUtil ? utilColor(g.avgP95) : 'bg-blue-500/20 dark:bg-blue-500/40 text-blue-400')}
                   style={{ width: `${(g.avgP95 / maxBar) * 100}%` }}
                 />
               </div>

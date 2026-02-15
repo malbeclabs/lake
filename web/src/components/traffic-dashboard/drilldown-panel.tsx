@@ -4,7 +4,7 @@ import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { fetchDashboardDrilldown, type DashboardDrilldownPoint } from '@/lib/api'
 import { useDashboard, type SelectedEntity } from './dashboard-context'
-import { Loader2, Pin, PinOff, X } from 'lucide-react'
+import { Loader2, Pin, PinOff, X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 
 function formatRate(val: number): string {
   if (val >= 1e12) return (val / 1e12).toFixed(1) + ' Tbps'
@@ -38,6 +38,15 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [selectedIntfs, setSelectedIntfs] = useState<Set<string>>(new Set())
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
+  const [searchText, setSearchText] = useState('')
+  const [searchExpanded, setSearchExpanded] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [sortBy, setSortBy] = useState<'value' | 'name'>('value')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [listHeight, setListHeight] = useState(160)
+  const listContainerRef = useRef<HTMLDivElement>(null)
 
   const isPinned = state.pinnedEntities.some(
     p => p.devicePk === entity.devicePk && p.intf === entity.intf
@@ -123,6 +132,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       })
     })
 
+    const axisStroke = document.documentElement.classList.contains('dark') ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 240,
@@ -132,10 +143,12 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
         y: { auto: true },
       },
       axes: [
-        {},
+        { stroke: axisStroke, grid: { stroke: 'rgba(128,128,128,0.06)' } },
         {
           values: (_: uPlot, vals: number[]) => vals.map(v => fmt(Math.abs(v))),
           size: 70,
+          stroke: axisStroke,
+          grid: { stroke: 'rgba(128,128,128,0.06)' },
         },
       ],
       hooks: {
@@ -161,16 +174,6 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
     }
   }, [uplotData, fmt])
 
-  // Build per-interface metadata: bandwidth and link type from series data
-  const intfMeta = useMemo(() => {
-    if (!data?.series) return new Map<string, { bandwidth: number; linkType: string }>()
-    const m = new Map<string, { bandwidth: number; linkType: string }>()
-    for (const s of data.series) {
-      m.set(s.intf, { bandwidth: s.bandwidth_bps, linkType: s.link_type })
-    }
-    return m
-  }, [data?.series])
-
   // Find bandwidth for header (single-interface drilldown)
   const bandwidth = data?.series?.find(s => s.intf === entity.intf)?.bandwidth_bps
 
@@ -187,6 +190,131 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
     })
     return m
   }, [hoveredIdx, uplotData])
+
+  // Latest values: last non-null Rx/Tx per interface
+  const latestValues = useMemo(() => {
+    if (!uplotData) return new Map<string, { rx: number; tx: number }>()
+    const m = new Map<string, { rx: number; tx: number }>()
+    uplotData.intfs.forEach((intf, i) => {
+      const rxArr = uplotData.aligned[1 + i * 2]
+      const txArr = uplotData.aligned[2 + i * 2]
+      let rx = 0, tx = 0
+      for (let j = (rxArr?.length ?? 0) - 1; j >= 0; j--) {
+        const v = rxArr?.[j]
+        if (v != null) { rx = v as number; break }
+      }
+      for (let j = (txArr?.length ?? 0) - 1; j >= 0; j--) {
+        const v = txArr?.[j]
+        if (v != null) { tx = Math.abs(v as number); break }
+      }
+      m.set(intf, { rx, tx })
+    })
+    return m
+  }, [uplotData])
+
+  // Visible interfaces (selected or all if none selected)
+  const visibleIntfs = useMemo(() => {
+    if (selectedIntfs.has('__none__')) return new Set<string>()
+    if (selectedIntfs.size > 0) return selectedIntfs
+    return new Set(uplotData?.intfs ?? [])
+  }, [selectedIntfs, uplotData?.intfs])
+
+  // Filter interfaces by search text
+  const filteredIntfs = useMemo(() => {
+    if (!uplotData) return [] as string[]
+    if (!searchText.trim()) return uplotData.intfs
+    const pattern = searchText.toLowerCase()
+    if (pattern.includes('*')) {
+      try {
+        const regex = new RegExp(pattern.replace(/\*/g, '.*'))
+        return uplotData.intfs.filter(name => regex.test(name.toLowerCase()))
+      } catch {
+        return uplotData.intfs.filter(name => name.toLowerCase().includes(pattern))
+      }
+    }
+    return uplotData.intfs.filter(name => name.toLowerCase().includes(pattern))
+  }, [uplotData?.intfs, searchText])
+
+  // Sort filtered interfaces
+  const sortedFilteredIntfs = useMemo(() => {
+    return [...filteredIntfs].sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1
+      if (sortBy === 'value') {
+        const va = latestValues.get(a)
+        const vb = latestValues.get(b)
+        return ((va ? va.rx + va.tx : 0) - (vb ? vb.rx + vb.tx : 0)) * dir
+      }
+      return a.localeCompare(b) * dir
+    })
+  }, [filteredIntfs, sortBy, sortDir, latestValues])
+
+  // Toggle uPlot series visibility when selection changes
+  useEffect(() => {
+    if (!plotRef.current || !uplotData) return
+    uplotData.intfs.forEach((intf, i) => {
+      const show = visibleIntfs.has(intf)
+      plotRef.current!.setSeries(1 + i * 2, { show })
+      plotRef.current!.setSeries(2 + i * 2, { show })
+    })
+  }, [visibleIntfs, uplotData])
+
+  // Handlers
+  const handleIntfClick = (intf: string, filteredIndex: number, event: React.MouseEvent) => {
+    if (event.shiftKey && lastClickedIndex !== null) {
+      const start = Math.min(lastClickedIndex, filteredIndex)
+      const end = Math.max(lastClickedIndex, filteredIndex)
+      const newSelection = new Set(selectedIntfs)
+      for (let i = start; i <= end; i++) {
+        newSelection.add(sortedFilteredIntfs[i])
+      }
+      setSelectedIntfs(newSelection)
+    } else if (event.ctrlKey || event.metaKey) {
+      const newSelection = new Set(selectedIntfs)
+      if (newSelection.has(intf)) {
+        newSelection.delete(intf)
+      } else {
+        newSelection.add(intf)
+      }
+      setSelectedIntfs(newSelection)
+    } else {
+      if (selectedIntfs.has(intf)) {
+        const newSelection = new Set(selectedIntfs)
+        newSelection.delete(intf)
+        setSelectedIntfs(newSelection)
+      } else {
+        setSelectedIntfs(new Set([intf]))
+      }
+    }
+    setLastClickedIndex(filteredIndex)
+  }
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = listHeight
+    const handleMouseMove = (e: MouseEvent) => {
+      const newHeight = Math.max(80, Math.min(400, startHeight + (e.clientY - startY)))
+      setListHeight(newHeight)
+    }
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  const handleResizeDoubleClick = () => {
+    if (listHeight <= 90) {
+      setListHeight(160)
+    } else {
+      setListHeight(80)
+    }
+  }
 
   const multiIntf = uplotData && uplotData.intfs.length > 1
 
@@ -230,50 +358,136 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
         </div>
       ) : (
         <>
-          <div ref={chartRef} className="w-full" />
+          <div className="relative w-full">
+            <div ref={chartRef} className="w-full" />
+            <span className="absolute top-1 left-[72px] text-[10px] text-muted-foreground/60 pointer-events-none">▲ Rx (in)</span>
+            <span className="absolute bottom-8 left-[72px] text-[10px] text-muted-foreground/60 pointer-events-none">▼ Tx (out)</span>
+          </div>
           {multiIntf ? (
-            <table className="w-full mt-2 text-xs table-fixed">
-              <colgroup>
-                <col />
-                <col className="w-24" />
-                <col className="w-24" />
-                <col className="w-24" />
-              </colgroup>
-              <thead>
-                <tr className="text-muted-foreground">
-                  <th className="text-left font-normal pb-1">Interface</th>
-                  <th className="text-right font-normal pb-1">Capacity</th>
-                  <th className="text-right font-normal pb-1">Rx</th>
-                  <th className="text-right font-normal pb-1">Tx</th>
-                </tr>
-              </thead>
-              <tbody>
-                {uplotData.intfs.map((intf, i) => {
-                  const color = seriesColors[i % seriesColors.length]
-                  const meta = intfMeta.get(intf)
-                  const hv = hoverValues?.get(intf)
-                  return (
-                    <tr key={intf} className="border-t border-border/30">
-                      <td className="py-1">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
-                          <span className="font-mono text-foreground truncate">{intf}</span>
-                        </span>
-                      </td>
-                      <td className="py-1 text-right text-muted-foreground font-mono tabular-nums">
-                        {meta && meta.bandwidth > 0 ? formatRate(meta.bandwidth) : '—'}
-                      </td>
-                      <td className="py-1 text-right font-mono tabular-nums">
-                        {hv ? <span className="text-foreground">{fmt(hv.rx)}</span> : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="py-1 text-right font-mono tabular-nums">
-                        {hv ? <span className="text-foreground">{fmt(hv.tx)}</span> : <span className="text-muted-foreground">—</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+            <div ref={listContainerRef} className="relative mt-2" style={{ height: `${listHeight}px` }}>
+              <div className="flex flex-col h-full text-xs">
+                {/* Sticky header */}
+                <div className="flex-none px-2 pt-2">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="text-xs font-medium whitespace-nowrap">
+                      Interfaces ({visibleIntfs.size === 0 ? 0 : [...visibleIntfs].filter(i => uplotData.intfs.includes(i)).length}/{sortedFilteredIntfs.length})
+                    </div>
+                    {searchExpanded ? (
+                      <div className="relative flex-1">
+                        <input
+                          ref={searchInputRef}
+                          type="text"
+                          value={searchText}
+                          onChange={(e) => setSearchText(e.target.value)}
+                          onBlur={() => { if (!searchText) setSearchExpanded(false) }}
+                          placeholder="Filter"
+                          className="w-full px-1.5 py-0.5 pr-6 text-xs bg-transparent border-b border-border focus:outline-none focus:border-foreground placeholder:text-muted-foreground/60"
+                        />
+                        {searchText && (
+                          <button
+                            onClick={() => { setSearchText(''); searchInputRef.current?.focus() }}
+                            className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
+                            aria-label="Clear search"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setSearchExpanded(true); setTimeout(() => searchInputRef.current?.focus(), 0) }}
+                        className="text-muted-foreground hover:text-foreground"
+                        aria-label="Search interfaces"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        const top10 = [...uplotData.intfs]
+                          .sort((a, b) => {
+                            const va = latestValues.get(a)
+                            const vb = latestValues.get(b)
+                            return (vb ? vb.rx + vb.tx : 0) - (va ? va.rx + va.tx : 0)
+                          })
+                          .slice(0, 10)
+                        setSelectedIntfs(new Set(top10))
+                      }}
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      Top 10
+                    </button>
+                    <button
+                      onClick={() => setSelectedIntfs(new Set(filteredIntfs))}
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={() => setSelectedIntfs(new Set(['__none__']))}
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      None
+                    </button>
+                  </div>
+                  {/* Column headers */}
+                  <div className="flex items-center justify-between px-1 mb-1">
+                    <button
+                      onClick={() => { setSortBy('name'); setSortDir(sortBy === 'name' ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
+                      className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Name
+                      {sortBy === 'name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                    </button>
+                    <button
+                      onClick={() => { setSortBy('value'); setSortDir(sortBy === 'value' ? (sortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
+                      className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      {hoveredIdx !== null ? 'Current (Rx / Tx)' : 'Latest (Rx / Tx)'}
+                      {sortBy === 'value' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                    </button>
+                  </div>
+                </div>
+                {/* Scrollable items */}
+                <div className="flex-1 overflow-y-auto px-2 pb-2">
+                  <div className="space-y-0.5">
+                    {sortedFilteredIntfs.map((intf, filteredIndex) => {
+                      const originalIndex = uplotData.intfs.indexOf(intf)
+                      const color = seriesColors[originalIndex % seriesColors.length]
+                      const isVisible = visibleIntfs.has(intf)
+                      const hv = hoverValues?.get(intf)
+                      const lv = latestValues.get(intf)
+                      const displayVal = hv ?? lv
+                      return (
+                        <div
+                          key={intf}
+                          className={`flex items-center justify-between px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
+                            isVisible ? '' : 'opacity-40'
+                          }`}
+                          onClick={(e) => handleIntfClick(intf, filteredIndex, e)}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
+                            <span className="font-mono text-foreground truncate">{intf}</span>
+                          </div>
+                          <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap ml-2">
+                            {displayVal ? `${fmt(displayVal.rx)} / ${fmt(displayVal.tx)}` : '—'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              {/* Resize handle */}
+              <div
+                onMouseDown={handleResizeStart}
+                onDoubleClick={handleResizeDoubleClick}
+                className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-muted transition-colors flex items-center justify-center"
+              >
+                <div className="w-12 h-1 bg-border rounded-full" />
+              </div>
+            </div>
           ) : (
             <div className="flex items-center justify-between mt-1 h-5">
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
