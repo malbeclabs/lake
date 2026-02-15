@@ -547,6 +547,7 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 	}{
 		{"with_intf", "?time_range=1h&device_pk=dev-1&intf=Port-Channel1000", http.StatusOK},
 		{"all_interfaces", "?time_range=1h&device_pk=dev-1", http.StatusOK},
+		{"custom_time_range", "?start_time=1700000000&end_time=1700086400&device_pk=dev-1", http.StatusOK},
 		{"missing_device_pk", "?time_range=1h", http.StatusBadRequest},
 	}
 

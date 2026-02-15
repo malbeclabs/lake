@@ -3568,12 +3568,15 @@ export async function fetchTrafficData(
   agg: string = 'max',
   filters?: Record<string, string>
 ): Promise<TrafficDataResponse> {
+  const hasCustomRange = filters?.start_time && filters?.end_time
   const params = new URLSearchParams({
-    time_range: timeRange,
     tunnel_only: String(tunnelOnly),
     bucket: bucket,
     agg: agg
   })
+  if (!hasCustomRange) {
+    params.set('time_range', timeRange)
+  }
   if (filters) {
     for (const [k, v] of Object.entries(filters)) {
       if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
@@ -3613,10 +3616,13 @@ export async function fetchDiscardsData(
   bucket: string = 'auto',
   filters?: Record<string, string>
 ): Promise<DiscardsDataResponse> {
+  const hasCustomRange = filters?.start_time && filters?.end_time
   const params = new URLSearchParams({
-    time_range: timeRange,
     bucket: bucket
   })
+  if (!hasCustomRange) {
+    params.set('time_range', timeRange)
+  }
   if (filters) {
     for (const [k, v] of Object.entries(filters)) {
       if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)

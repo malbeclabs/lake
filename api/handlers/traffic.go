@@ -123,16 +123,6 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Parse query parameters
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "12h"
-	}
-
-	bucket := r.URL.Query().Get("bucket")
-	if bucket == "" {
-		bucket = "30 SECOND"
-	}
-
 	agg := r.URL.Query().Get("agg")
 	if agg == "" {
 		agg = "max"
@@ -142,37 +132,8 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		aggFunc = "AVG"
 	}
 
-	// Convert time range to interval
-	var rangeInterval string
-	switch timeRange {
-	case "1h":
-		rangeInterval = "1 HOUR"
-	case "3h":
-		rangeInterval = "3 HOUR"
-	case "6h":
-		rangeInterval = "6 HOUR"
-	case "12h":
-		rangeInterval = "12 HOUR"
-	case "24h":
-		rangeInterval = "24 HOUR"
-	case "3d":
-		rangeInterval = "3 DAY"
-	case "7d":
-		rangeInterval = "7 DAY"
-	default:
-		rangeInterval = "6 HOUR"
-	}
-
-	// Enforce minimum bucket size based on time range to prevent OOM
-	if bucket == "none" {
-		bucket = minBucketForRange(timeRange)
-	} else {
-		minBucket := minBucketForRange(timeRange)
-		if bucketSeconds(bucket) < bucketSeconds(minBucket) {
-			bucket = minBucket
-		}
-	}
-	bucketInterval := bucket
+	// Use shared time filter (supports both preset time_range and custom start_time/end_time)
+	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	// Build dimension filters
 	filterSQL, intfFilterSQL, intfTypeSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
@@ -192,7 +153,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			SELECT f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration
 			FROM fact_dz_device_interface_counters f
 			INNER JOIN devices d ON d.pk = f.device_pk%s
-			WHERE f.event_ts >= now() - INTERVAL %s
+			WHERE f.%s
 				%s%s
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
@@ -221,7 +182,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		WHERE r.time_bucket IS NOT NULL
 		ORDER BY r.time_bucket, d.code, r.intf
 		LIMIT %d
-	`, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL, bucketInterval, aggFunc, aggFunc, maxTrafficRows)
+	`, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, bucketInterval, aggFunc, aggFunc, maxTrafficRows)
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
@@ -248,7 +209,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			AVG(f.out_octets_delta * 8 / f.delta_duration) AS mean_out_bps
 		FROM fact_dz_device_interface_counters f
 		INNER JOIN devices d ON d.pk = f.device_pk%s
-		WHERE f.event_ts >= now() - INTERVAL %s
+		WHERE f.%s
 			%s%s
 			AND f.delta_duration > 0
 			AND f.in_octets_delta >= 0
@@ -256,7 +217,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			%s
 		GROUP BY d.code, f.intf
 		ORDER BY d.code, f.intf
-	`, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL)
+	`, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL)
 
 	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
@@ -336,7 +297,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	_, _ = bw.WriteString(`],"series":`)
 	seriesJSON, _ := json.Marshal(series)
 	_, _ = bw.Write(seriesJSON)
-	_, _ = fmt.Fprintf(bw, `,"effective_bucket":%q,"truncated":%t}`, bucket, pointCount >= maxTrafficRows)
+	_, _ = fmt.Fprintf(bw, `,"effective_bucket":%q,"truncated":%t}`, bucketInterval, pointCount >= maxTrafficRows)
 	_, _ = bw.WriteString("\n")
 	_ = bw.Flush()
 }
@@ -370,37 +331,8 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Parse query parameters
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "12h"
-	}
-
-	bucket := r.URL.Query().Get("bucket")
-	if bucket == "" {
-		bucket = "30 SECOND"
-	}
-
-	// Convert time range to interval
-	var rangeInterval string
-	switch timeRange {
-	case "1h":
-		rangeInterval = "1 HOUR"
-	case "3h":
-		rangeInterval = "3 HOUR"
-	case "6h":
-		rangeInterval = "6 HOUR"
-	case "12h":
-		rangeInterval = "12 HOUR"
-	case "24h":
-		rangeInterval = "24 HOUR"
-	case "3d":
-		rangeInterval = "3 DAY"
-	case "7d":
-		rangeInterval = "7 DAY"
-	default:
-		rangeInterval = "6 HOUR"
-	}
+	// Use shared time filter (supports both preset time_range and custom start_time/end_time)
+	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	// Build dimension filters
 	filterSQL, intfFilterSQL, intfTypeSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
@@ -415,65 +347,38 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// Build ClickHouse query - aggregate discards per time bucket
-	var query string
-	if bucket == "none" {
-		// No bucketing - return raw data points
-		query = fmt.Sprintf(`
-			WITH devices AS (
-				SELECT pk, code, metro_pk, contributor_pk
-				FROM dz_devices_current
-			)
+	query := fmt.Sprintf(`
+		WITH devices AS (
+			SELECT pk, code, metro_pk, contributor_pk
+			FROM dz_devices_current
+		),
+		agg AS (
 			SELECT
-				formatDateTime(f.event_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
 				f.device_pk,
-				d.code AS device,
 				f.intf,
-				COALESCE(f.in_discards_delta, 0) AS in_discards,
-				COALESCE(f.out_discards_delta, 0) AS out_discards
+				toStartOfInterval(f.event_ts, INTERVAL %s) AS time_bucket,
+				SUM(COALESCE(f.in_discards_delta, 0)) AS in_discards,
+				SUM(COALESCE(f.out_discards_delta, 0)) AS out_discards
 			FROM fact_dz_device_interface_counters f
 			INNER JOIN devices d ON d.pk = f.device_pk%s
-			WHERE f.event_ts >= now() - INTERVAL %s
+			WHERE f.%s
 				%s%s
 				AND (COALESCE(f.in_discards_delta, 0) > 0 OR COALESCE(f.out_discards_delta, 0) > 0)
 				%s
-			ORDER BY f.event_ts, d.code, f.intf
-		`, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL)
-	} else {
-		// With bucketing - sum discards per bucket
-		// Filter for non-zero discards early to reduce data processed
-		query = fmt.Sprintf(`
-			WITH devices AS (
-				SELECT pk, code, metro_pk, contributor_pk
-				FROM dz_devices_current
-			),
-			agg AS (
-				SELECT
-					f.device_pk,
-					f.intf,
-					toStartOfInterval(f.event_ts, INTERVAL %s) AS time_bucket,
-					SUM(COALESCE(f.in_discards_delta, 0)) AS in_discards,
-					SUM(COALESCE(f.out_discards_delta, 0)) AS out_discards
-				FROM fact_dz_device_interface_counters f
-				INNER JOIN devices d ON d.pk = f.device_pk%s
-				WHERE f.event_ts >= now() - INTERVAL %s
-					%s%s
-					AND (COALESCE(f.in_discards_delta, 0) > 0 OR COALESCE(f.out_discards_delta, 0) > 0)
-					%s
-				GROUP BY f.device_pk, f.intf, time_bucket
-			)
-			SELECT
-				formatDateTime(a.time_bucket, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
-				a.device_pk,
-				d.code AS device,
-				a.intf,
-				a.in_discards,
-				a.out_discards
-			FROM agg a
-			INNER JOIN devices d ON d.pk = a.device_pk
-			WHERE a.time_bucket IS NOT NULL
-			ORDER BY a.time_bucket, d.code, a.intf
-		`, bucket, dimJoins, rangeInterval, intfFilterSQL, intfTypeFilter, filterSQL)
-	}
+			GROUP BY f.device_pk, f.intf, time_bucket
+		)
+		SELECT
+			formatDateTime(a.time_bucket, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+			a.device_pk,
+			d.code AS device,
+			a.intf,
+			a.in_discards,
+			a.out_discards
+		FROM agg a
+		INNER JOIN devices d ON d.pk = a.device_pk
+		WHERE a.time_bucket IS NOT NULL
+		ORDER BY a.time_bucket, d.code, a.intf
+	`, bucketInterval, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL)
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
