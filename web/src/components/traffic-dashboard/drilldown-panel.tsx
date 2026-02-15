@@ -148,7 +148,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <h3 className="text-xs font-semibold font-mono">{entityLabel(entity)}</h3>
-          {bandwidth && bandwidth > 0 && (
+          {bandwidth != null && bandwidth > 0 && (
             <span className="text-xs text-muted-foreground">
               ({formatRate(bandwidth)} capacity)
             </span>

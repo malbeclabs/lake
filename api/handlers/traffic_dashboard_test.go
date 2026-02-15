@@ -175,9 +175,16 @@ func TestTrafficDashboardTop(t *testing.T) {
 		{"interface_p95_util", "?time_range=1h&entity=interface&metric=p95_util"},
 		{"interface_avg_util", "?time_range=1h&entity=interface&metric=avg_util"},
 		{"interface_max_throughput", "?time_range=1h&entity=interface&metric=max_throughput"},
+		{"interface_max_in_bps", "?time_range=1h&entity=interface&metric=max_in_bps"},
+		{"interface_max_out_bps", "?time_range=1h&entity=interface&metric=max_out_bps"},
+		{"interface_bandwidth_bps", "?time_range=1h&entity=interface&metric=bandwidth_bps"},
+		{"interface_headroom", "?time_range=1h&entity=interface&metric=headroom"},
+		{"interface_dir_asc", "?time_range=1h&entity=interface&metric=max_util&dir=asc"},
+		{"interface_dir_desc", "?time_range=1h&entity=interface&metric=max_util&dir=desc"},
 		{"device_default", "?time_range=1h&entity=device"},
 		{"device_max_util", "?time_range=1h&entity=device&metric=max_util"},
 		{"device_max_throughput", "?time_range=1h&entity=device&metric=max_throughput"},
+		{"device_dir_asc", "?time_range=1h&entity=device&metric=max_throughput&dir=asc"},
 	}
 
 	for _, tt := range tests {
@@ -301,16 +308,32 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 	setupDashboardSchema(t)
 	seedDashboardData(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h", nil)
-	rr := httptest.NewRecorder()
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"default", "?time_range=1h"},
+		{"sort_burstiness", "?time_range=1h&sort=burstiness"},
+		{"sort_p50_util", "?time_range=1h&sort=p50_util"},
+		{"sort_p99_util", "?time_range=1h&sort=p99_util"},
+		{"sort_pct_time_stressed", "?time_range=1h&sort=pct_time_stressed"},
+		{"dir_asc", "?time_range=1h&sort=burstiness&dir=asc"},
+		{"dir_desc", "?time_range=1h&sort=burstiness&dir=desc"},
+	}
 
-	handlers.GetTrafficDashboardBurstiness(rr, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
+			rr := httptest.NewRecorder()
 
-	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+			handlers.GetTrafficDashboardBurstiness(rr, req)
 
-	var resp handlers.BurstinessResponse
-	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
-	// Burstiness results depend on data variance; key assertion is the query succeeds
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.BurstinessResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
 }
 
 func TestTrafficDashboardBurstiness_Empty(t *testing.T) {

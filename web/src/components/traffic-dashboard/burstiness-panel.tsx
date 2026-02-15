@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2 } from 'lucide-react'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { fetchDashboardBurstiness } from '@/lib/api'
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { cn } from '@/lib/utils'
@@ -15,19 +15,47 @@ function burstColor(val: number): string {
   return 'bg-blue-500/15 text-blue-400 border-blue-500/20'
 }
 
+type SortField = 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed'
+
 export function BurstinessPanel() {
   const state = useDashboard()
   const [limit, setLimit] = useState(20)
+  const [sortField, setSortField] = useState<SortField>('burstiness')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return null
+    return sortDir === 'asc'
+      ? <ChevronUp className="h-3 w-3" />
+      : <ChevronDown className="h-3 w-3" />
+  }
+
+  const sortAria = (field: SortField) => {
+    if (sortField !== field) return 'none' as const
+    return sortDir === 'asc' ? 'ascending' as const : 'descending' as const
+  }
 
   const params = useMemo(() => ({
     ...dashboardFilterParams(state),
+    sort: sortField,
+    dir: sortDir,
     limit,
-  }), [state, limit])
+  }), [state, sortField, sortDir, limit])
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['dashboard-burstiness', params],
     queryFn: () => fetchDashboardBurstiness(params),
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 
   const entities = data?.entities ?? []
@@ -44,16 +72,32 @@ export function BurstinessPanel() {
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto">
+          <div className={cn('overflow-x-auto transition-opacity', isFetching && 'opacity-50')}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Interface</th>
                   <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
-                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Typical (P50)</th>
-                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Peak (P99)</th>
-                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Spike Gap</th>
-                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">% Time &ge; 80%</th>
+                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p50_util')}>
+                    <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p50_util')}>
+                      Typical (P50) <SortIcon field="p50_util" />
+                    </button>
+                  </th>
+                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p99_util')}>
+                    <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p99_util')}>
+                      Peak (P99) <SortIcon field="p99_util" />
+                    </button>
+                  </th>
+                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('burstiness')}>
+                    <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('burstiness')}>
+                      Spike Gap <SortIcon field="burstiness" />
+                    </button>
+                  </th>
+                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('pct_time_stressed')}>
+                    <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('pct_time_stressed')}>
+                      % Time &ge; 80% <SortIcon field="pct_time_stressed" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>

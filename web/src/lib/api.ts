@@ -3687,7 +3687,8 @@ export interface DashboardTopResponse {
 export interface DashboardTopParams {
   time_range?: string
   entity?: 'device' | 'interface'
-  metric?: 'max_util' | 'p95_util' | 'avg_util' | 'max_throughput'
+  metric?: 'max_util' | 'p95_util' | 'avg_util' | 'max_throughput' | 'max_in_bps' | 'max_out_bps' | 'bandwidth_bps' | 'headroom'
+  dir?: 'asc' | 'desc'
   limit?: number
   metro?: string
   device?: string
@@ -3769,6 +3770,8 @@ export interface DashboardBurstinessResponse {
 
 export interface DashboardBurstinessParams {
   time_range?: string
+  sort?: 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed'
+  dir?: 'asc' | 'desc'
   limit?: number
   threshold?: number
   metro?: string

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { ArrowUpDown, Loader2 } from 'lucide-react'
-import { fetchDashboardTop, type DashboardTopEntity } from '@/lib/api'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { fetchDashboardTop, type DashboardTopEntity, type DashboardTopParams } from '@/lib/api'
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { cn } from '@/lib/utils'
 
@@ -23,7 +23,7 @@ function utilBadgeClass(val: number): string {
   return 'bg-green-500/15 text-green-400 border-green-500/20'
 }
 
-type SortField = 'max_util' | 'p95_util' | 'avg_util' | 'max_throughput'
+type SortField = 'max_util' | 'p95_util' | 'avg_util' | 'max_throughput' | 'max_in_bps' | 'max_out_bps'
 
 function TopTable({
   entityType,
@@ -35,31 +35,52 @@ function TopTable({
   const isUtil = state.metric === 'utilization'
   const showUtilCols = !isDevice && isUtil
   const [sortField, setSortField] = useState<SortField>(
-    (isDevice || !isUtil) ? 'max_throughput' : 'max_util'
+    (isDevice || !isUtil) ? 'max_in_bps' : 'max_util'
   )
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [limit, setLimit] = useState(20)
 
   // Reset sort when metric mode changes so we don't sort by a hidden column
   useEffect(() => {
-    setSortField((isDevice || state.metric !== 'utilization') ? 'max_throughput' : 'max_util')
+    setSortField((isDevice || state.metric !== 'utilization') ? 'max_in_bps' : 'max_util')
+    setSortDir('desc')
   }, [state.metric, isDevice])
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return null
+    return sortDir === 'asc'
+      ? <ChevronUp className="h-3 w-3" />
+      : <ChevronDown className="h-3 w-3" />
+  }
+
+  const sortAria = (field: SortField) => {
+    if (sortField !== field) return 'none' as const
+    return sortDir === 'asc' ? 'ascending' as const : 'descending' as const
+  }
 
   const params = useMemo(() => ({
     ...dashboardFilterParams(state),
     entity: entityType,
-    metric: sortField,
+    metric: sortField as DashboardTopParams['metric'],
+    dir: sortDir,
     limit,
-  }), [state, entityType, sortField, limit])
+  }), [state, entityType, sortField, sortDir, limit])
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['dashboard-top', params],
     queryFn: () => fetchDashboardTop(params),
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
-
-  const handleSort = (field: SortField) => {
-    setSortField(field)
-  }
 
   const handleRowClick = (entity: DashboardTopEntity) => {
     state.selectEntity({
@@ -82,7 +103,7 @@ function TopTable({
           No data
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className={cn('overflow-x-auto transition-opacity', isFetching && 'opacity-50')}>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border">
@@ -93,17 +114,41 @@ function TopTable({
                 {showUtilCols && (
                   <>
                     <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Link</th>
-                    <SortHeader field="max_util" current={sortField} onSort={handleSort}>Max</SortHeader>
-                    <SortHeader field="p95_util" current={sortField} onSort={handleSort}>P95</SortHeader>
-                    <SortHeader field="avg_util" current={sortField} onSort={handleSort}>Avg</SortHeader>
+                    <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_util')}>
+                      <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_util')}>
+                        Max <SortIcon field="max_util" />
+                      </button>
+                    </th>
+                    <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p95_util')}>
+                      <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p95_util')}>
+                        P95 <SortIcon field="p95_util" />
+                      </button>
+                    </th>
+                    <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('avg_util')}>
+                      <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('avg_util')}>
+                        Avg <SortIcon field="avg_util" />
+                      </button>
+                    </th>
                   </>
                 )}
                 {showUtilCols ? (
-                  <SortHeader field="max_throughput" current={sortField} onSort={handleSort}>Peak</SortHeader>
+                  <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_throughput')}>
+                    <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_throughput')}>
+                      Peak <SortIcon field="max_throughput" />
+                    </button>
+                  </th>
                 ) : (
                   <>
-                    <SortHeader field="max_throughput" current={sortField} onSort={handleSort}>Peak Rx</SortHeader>
-                    <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Peak Tx</th>
+                    <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_in_bps')}>
+                      <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_in_bps')}>
+                        Peak Rx <SortIcon field="max_in_bps" />
+                      </button>
+                    </th>
+                    <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_out_bps')}>
+                      <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_out_bps')}>
+                        Peak Tx <SortIcon field="max_out_bps" />
+                      </button>
+                    </th>
                   </>
                 )}
               </tr>
@@ -192,30 +237,6 @@ function TopTable({
         </div>
       )}
     </div>
-  )
-}
-
-function SortHeader({
-  field,
-  current,
-  onSort,
-  children,
-}: {
-  field: SortField
-  current: SortField
-  onSort: (f: SortField) => void
-  children: React.ReactNode
-}) {
-  return (
-    <th
-      className="text-right py-1.5 px-2 font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
-      onClick={() => onSort(field)}
-    >
-      <span className="inline-flex items-center gap-0.5">
-        {children}
-        {current === field && <ArrowUpDown className="h-3 w-3" />}
-      </span>
-    </th>
   )
 }
 

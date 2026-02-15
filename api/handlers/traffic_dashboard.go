@@ -262,7 +262,13 @@ func BuildStressQuery(rangeInterval, bucketInterval, metric, groupBy, filterSQL 
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
-func BuildTopQuery(rangeInterval, entity, sortMetric, filterSQL string, limit int) string {
+func BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL string, limit int) string {
+	// Validate sort direction
+	dir := "DESC"
+	if sortDir == "ASC" {
+		dir = "ASC"
+	}
+
 	// Validate sort metric
 	orderCol := "max_util"
 	switch sortMetric {
@@ -274,12 +280,25 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, filterSQL string, limit in
 		orderCol = "avg_util"
 	case "max_throughput":
 		orderCol = "max_in_bps + max_out_bps"
+	case "max_in_bps":
+		orderCol = "max_in_bps"
+	case "max_out_bps":
+		orderCol = "max_out_bps"
+	case "bandwidth_bps":
+		orderCol = "bandwidth_bps"
+	case "headroom":
+		orderCol = "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(ir.p95_in_bps, ir.p95_out_bps)"
 	}
 
 	if entity == "device" {
 		// Device-level: aggregate across all interfaces per device.
 		// No link_pk in GROUP BY (a device has many links) → no utilization.
-		if orderCol == "max_util" || orderCol == "p95_util" || orderCol == "avg_util" {
+		switch orderCol {
+		case "max_util", "p95_util", "avg_util":
+			orderCol = "max_in_bps + max_out_bps"
+		case "bandwidth_bps":
+			orderCol = "max_in_bps + max_out_bps"
+		case "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(ir.p95_in_bps, ir.p95_out_bps)":
 			orderCol = "max_in_bps + max_out_bps"
 		}
 		return fmt.Sprintf(`
@@ -318,9 +337,9 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, filterSQL string, limit in
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
 			WHERE 1=1 %s
-			ORDER BY %s DESC
+			ORDER BY %s %s
 			LIMIT %d`,
-			rangeInterval, filterSQL, orderCol, limit)
+			rangeInterval, filterSQL, orderCol, dir, limit)
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
@@ -369,9 +388,9 @@ func BuildTopQuery(rangeInterval, entity, sortMetric, filterSQL string, limit in
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
 		WHERE 1=1 %s
-		ORDER BY %s DESC
+		ORDER BY %s %s
 		LIMIT %d`,
-		rangeInterval, filterSQL, orderCol, limit)
+		rangeInterval, filterSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
@@ -397,7 +416,26 @@ func BuildDrilldownQuery(rangeInterval, bucketInterval, devicePk, intfFilter str
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-func BuildBurstinessQuery(rangeInterval, filterSQL string, threshold float64, limit int) string {
+func BuildBurstinessQuery(rangeInterval, sortMetric, sortDir, filterSQL string, threshold float64, limit int) string {
+	// Validate sort direction
+	dir := "DESC"
+	if sortDir == "ASC" {
+		dir = "ASC"
+	}
+
+	// Validate sort metric
+	orderCol := "burstiness"
+	switch sortMetric {
+	case "burstiness":
+		orderCol = "burstiness"
+	case "p50_util":
+		orderCol = "p50_util"
+	case "p99_util":
+		orderCol = "p99_util"
+	case "pct_time_stressed":
+		orderCol = "pct_time_stressed"
+	}
+
 	return fmt.Sprintf(`
 		WITH per_sample AS (
 			SELECT
@@ -439,9 +477,9 @@ func BuildBurstinessQuery(rangeInterval, filterSQL string, threshold float64, li
 		WHERE ps.utilization IS NOT NULL
 		GROUP BY ps.device_pk, ps.intf, ps.link_pk, d.code, m.code, l.bandwidth_bps
 		HAVING burstiness > 0
-		ORDER BY burstiness DESC
+		ORDER BY %s %s
 		LIMIT %d`,
-		rangeInterval, filterSQL, threshold, limit)
+		rangeInterval, filterSQL, threshold, orderCol, dir, limit)
 }
 
 // --- Stress endpoint ---
@@ -661,6 +699,8 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 		sortMetric = "max_util"
 	}
 
+	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
+
 	limit := 20
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 100 {
@@ -670,7 +710,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildTopQuery(rangeInterval, entity, sortMetric, filterSQL, limit)
+	query := BuildTopQuery(rangeInterval, entity, sortMetric, sortDir, filterSQL, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -877,9 +917,15 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sortMetric := r.URL.Query().Get("sort")
+	if sortMetric == "" {
+		sortMetric = "burstiness"
+	}
+	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
+
 	filterSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(rangeInterval, filterSQL, threshold, limit)
+	query := BuildBurstinessQuery(rangeInterval, sortMetric, sortDir, filterSQL, threshold, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2 } from 'lucide-react'
-import { fetchDashboardTop } from '@/lib/api'
+import { useState, useMemo } from 'react'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { fetchDashboardTop, type DashboardTopParams } from '@/lib/api'
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { cn } from '@/lib/utils'
 
@@ -23,20 +23,47 @@ function utilBadgeClass(val: number): string {
   return 'bg-green-500/15 text-green-400 border-green-500/20'
 }
 
+type SortField = 'bandwidth_bps' | 'p95_util' | 'headroom'
+
 export function CapacityPanel() {
   const state = useDashboard()
+  const [sortField, setSortField] = useState<SortField>('p95_util')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return null
+    return sortDir === 'asc'
+      ? <ChevronUp className="h-3 w-3" />
+      : <ChevronDown className="h-3 w-3" />
+  }
+
+  const sortAria = (field: SortField) => {
+    if (sortField !== field) return 'none' as const
+    return sortDir === 'asc' ? 'ascending' as const : 'descending' as const
+  }
 
   const params = useMemo(() => ({
     ...dashboardFilterParams(state),
     entity: 'interface' as const,
-    metric: 'p95_util' as const,
+    metric: sortField as DashboardTopParams['metric'],
+    dir: sortDir,
     limit: 20,
-  }), [state])
+  }), [state, sortField, sortDir])
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: ['dashboard-capacity', params],
     queryFn: () => fetchDashboardTop(params),
     staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
 
   const entities = data?.entities ?? []
@@ -52,16 +79,28 @@ export function CapacityPanel() {
           No data available
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className={cn('overflow-x-auto transition-opacity', isFetching && 'opacity-50')}>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Interface</th>
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
                 <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Link</th>
-                <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Capacity</th>
-                <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">P95 Util</th>
-                <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Headroom</th>
+                <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('bandwidth_bps')}>
+                  <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('bandwidth_bps')}>
+                    Capacity <SortIcon field="bandwidth_bps" />
+                  </button>
+                </th>
+                <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p95_util')}>
+                  <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p95_util')}>
+                    P95 Util <SortIcon field="p95_util" />
+                  </button>
+                </th>
+                <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('headroom')}>
+                  <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('headroom')}>
+                    Headroom <SortIcon field="headroom" />
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -90,7 +129,7 @@ export function CapacityPanel() {
                     <td className="py-1.5 px-2">{e.metro_code}</td>
                     <td className="py-1.5 px-2">{e.link_type}</td>
                     <td className="py-1.5 px-2 text-right font-mono">
-                      {e.bandwidth_bps > 0 ? formatRate(e.bandwidth_bps) : '—'}
+                      {e.bandwidth_bps > 0 ? formatRate(e.bandwidth_bps) : '\u2014'}
                     </td>
                     <td className="py-1.5 px-2 text-right">
                       <span className={cn('px-1.5 py-0.5 rounded text-xs border', utilBadgeClass(e.p95_util))}>
@@ -98,7 +137,7 @@ export function CapacityPanel() {
                       </span>
                     </td>
                     <td className="py-1.5 px-2 text-right font-mono">
-                      {headroom > 0 ? formatRate(headroom) : '—'}
+                      {headroom > 0 ? formatRate(headroom) : '\u2014'}
                     </td>
                   </tr>
                 )
