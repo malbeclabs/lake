@@ -3779,6 +3779,7 @@ export interface DashboardBurstinessParams {
   dir?: 'asc' | 'desc'
   limit?: number
   threshold?: number
+  min_bps?: number
   metro?: string
   device?: string
   link_type?: string

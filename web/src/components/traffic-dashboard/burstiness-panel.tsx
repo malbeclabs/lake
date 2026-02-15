@@ -29,6 +29,14 @@ function burstColor(val: number, isLink: boolean): string {
   return 'bg-blue-500/15 text-blue-400 border-blue-500/20'
 }
 
+const minBpsOptions = [
+  { value: 0, label: 'None' },
+  { value: 1_000_000, label: '1 Mbps' },
+  { value: 10_000_000, label: '10 Mbps' },
+  { value: 100_000_000, label: '100 Mbps' },
+  { value: 1_000_000_000, label: '1 Gbps' },
+]
+
 type SortField = 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 'p50_bps' | 'p99_bps'
 
 export function BurstinessPanel() {
@@ -36,6 +44,7 @@ export function BurstinessPanel() {
   const [limit, setLimit] = useState(20)
   const [sortField, setSortField] = useState<SortField>('burstiness')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [minBps, setMinBps] = useState(1_000_000)
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -63,7 +72,8 @@ export function BurstinessPanel() {
     sort: sortField,
     dir: sortDir,
     limit,
-  }), [state, sortField, sortDir, limit])
+    min_bps: minBps,
+  }), [state, sortField, sortDir, limit, minBps])
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['dashboard-burstiness', params],
@@ -146,6 +156,11 @@ export function BurstinessPanel() {
                         <span className={cn('px-1.5 py-0.5 rounded text-xs border', burstColor(e.burstiness, isLink))}>
                           {isLink ? formatPercent(e.burstiness) : formatRatio(e.burstiness)}
                         </span>
+                        {!isLink && (
+                          <div className="text-[10px] text-muted-foreground mt-0.5">
+                            {formatRate(e.p99_bps - e.p50_bps)}
+                          </div>
+                        )}
                       </td>
                       <td className="py-1.5 px-2 text-right font-mono">
                         {isLink ? formatPercent(e.pct_time_stressed) : '\u2014'}
@@ -160,20 +175,37 @@ export function BurstinessPanel() {
             <span className="text-xs text-muted-foreground">
               Showing top {entities.length}
             </span>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span>Show</span>
-              {[10, 20, 50].map(n => (
-                <button
-                  key={n}
-                  onClick={() => setLimit(n)}
-                  className={cn(
-                    'px-1.5 py-0.5 rounded transition-colors',
-                    limit === n ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span>Min</span>
+                {minBpsOptions.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setMinBps(opt.value)}
+                    className={cn(
+                      'px-1.5 py-0.5 rounded transition-colors',
+                      minBps === opt.value ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span>Show</span>
+                {[10, 20, 50].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setLimit(n)}
+                    className={cn(
+                      'px-1.5 py-0.5 rounded transition-colors',
+                      limit === n ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </>

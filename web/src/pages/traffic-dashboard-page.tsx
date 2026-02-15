@@ -77,7 +77,7 @@ function DashboardContent() {
 
           <Section
             title="Spike Detection"
-            description="Interfaces with the largest gap between typical (P50) and peak (P99) traffic levels. Large gaps indicate bursty traffic. Non-link interfaces below 1 Mbps typical throughput are excluded."
+            description="Interfaces with the largest gap between typical (P50) and peak (P99) traffic levels. Large gaps indicate bursty traffic."
           >
             <BurstinessPanel />
           </Section>

@@ -507,7 +507,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64, limit int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64, minBps float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -590,10 +590,10 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		GROUP BY ps.device_pk, ps.intf, ps.link_pk, d.code, m.code, l.bandwidth_bps
 		HAVING burstiness > 0
-			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= 1000000)
+			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= %f)
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, orderCol, dir, limit)
+		timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, minBps, orderCol, dir, limit)
 }
 
 // --- Stress endpoint ---
@@ -1014,6 +1014,13 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	minBps := 1000000.0 // 1 Mbps default
+	if m := r.URL.Query().Get("min_bps"); m != "" {
+		if v, err := strconv.ParseFloat(m, 64); err == nil && v >= 0 {
+			minBps = v
+		}
+	}
+
 	sortMetric := r.URL.Query().Get("sort")
 	if sortMetric == "" {
 		sortMetric = "burstiness"
@@ -1022,7 +1029,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, threshold, limit)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, threshold, minBps, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
