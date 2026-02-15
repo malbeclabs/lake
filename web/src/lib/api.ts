@@ -3747,6 +3747,8 @@ export interface DashboardDrilldownResponse {
 
 export interface DashboardDrilldownParams {
   time_range?: string
+  start_time?: string
+  end_time?: string
   bucket?: string
   device_pk: string
   intf?: string

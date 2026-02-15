@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { fetchDashboardDrilldown, type DashboardDrilldownPoint } from '@/lib/api'
-import { useDashboard, type SelectedEntity } from './dashboard-context'
+import { useDashboard, type SelectedEntity, dashboardFilterParams } from './dashboard-context'
 import { Loader2, Pin, PinOff, X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 
@@ -39,6 +39,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
+  const setCustomRangeRef = useRef(state.setCustomRange)
+  setCustomRangeRef.current = state.setCustomRange
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [selectedIntfs, setSelectedIntfs] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
@@ -56,13 +58,14 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const isPps = state.metric === 'packets'
   const fmt = isPps ? formatPps : formatRate
 
+  const filterParams = dashboardFilterParams(state)
+
   const { data, isLoading } = useQuery({
-    queryKey: ['dashboard-drilldown', entity.devicePk, entity.intf, state.timeRange, state.intfType],
+    queryKey: ['dashboard-drilldown', entity.devicePk, entity.intf, filterParams],
     queryFn: () => fetchDashboardDrilldown({
       device_pk: entity.devicePk,
       intf: entity.intf,
-      time_range: state.timeRange,
-      intf_type: state.intfType !== 'all' ? state.intfType : undefined,
+      ...filterParams,
     }),
     staleTime: 30_000,
     refetchInterval: state.refetchInterval,
@@ -154,9 +157,20 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
           grid: { stroke: 'rgba(128,128,128,0.06)' },
         },
       ],
+      cursor: {
+        drag: { x: true, y: false, setScale: false },
+      },
       hooks: {
         setCursor: [(u: uPlot) => {
           setHoveredIdx(u.cursor.idx ?? null)
+        }],
+        setSelect: [(u: uPlot) => {
+          const min = u.posToVal(u.select.left, 'x')
+          const max = u.posToVal(u.select.left + u.select.width, 'x')
+          if (max - min >= 1) {
+            setCustomRangeRef.current(Math.floor(min), Math.floor(max))
+          }
+          u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false)
         }],
       },
       legend: { show: false },
