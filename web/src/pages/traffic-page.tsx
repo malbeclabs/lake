@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, GripVertical, Check, RefreshCw } from 'lucide-react'
+import { ChevronDown, GripVertical, Check, RefreshCw, ArrowUpDown } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
@@ -386,6 +386,7 @@ function TrafficPageContent() {
   )
   const [layout, setLayout] = useState<Layout>('1x4')
   const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>('never')
+  const [bidirectional, setBidirectional] = useState(true)
 
   // Load chart sections order from localStorage
   useEffect(() => {
@@ -684,6 +685,7 @@ function TrafficPageContent() {
               series={data.series}
               stacked={stacked}
               linkLookup={linkLookup}
+              bidirectional={bidirectional}
             />
           ) : (
             <div className="flex flex-col space-y-2">
@@ -711,6 +713,18 @@ function TrafficPageContent() {
           </div>
           <DashboardFilterBadges />
           <div className="flex items-center gap-3 flex-wrap justify-end">
+            <button
+              onClick={() => setBidirectional(!bidirectional)}
+              className={`px-3 py-1.5 text-sm border rounded-md transition-colors inline-flex items-center gap-1.5 ${
+                bidirectional
+                  ? 'border-foreground/30 text-foreground bg-muted'
+                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+              title={bidirectional ? 'Switch to all-positive view' : 'Switch to bidirectional (Rx up / Tx down)'}
+            >
+              <ArrowUpDown className="h-4 w-4" />
+              Rx/Tx
+            </button>
             <ShowGraphsSelector
               sections={chartSections}
               visibleSections={visibleSections}
