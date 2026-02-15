@@ -138,6 +138,15 @@ func buildDimensionFilters(r *http.Request) (filterSQL string, needsDeviceJoin, 
 		clauses = append(clauses, fmt.Sprintf("co.code IN (%s)", strings.Join(quoted, ",")))
 	}
 
+	if intfs := r.URL.Query().Get("intf"); intfs != "" {
+		vals := strings.Split(intfs, ",")
+		quoted := make([]string, len(vals))
+		for i, v := range vals {
+			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
+		}
+		clauses = append(clauses, fmt.Sprintf("f.intf IN (%s)", strings.Join(quoted, ",")))
+	}
+
 	if len(clauses) > 0 {
 		filterSQL = " AND " + strings.Join(clauses, " AND ")
 	}

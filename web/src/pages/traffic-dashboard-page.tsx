@@ -1,5 +1,5 @@
 import { DashboardProvider, useDashboard } from '@/components/traffic-dashboard/dashboard-context'
-import { DashboardFilters } from '@/components/traffic-dashboard/dashboard-filters'
+import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 import { Section } from '@/components/traffic-dashboard/section'
 import { StressPanel } from '@/components/traffic-dashboard/stress-panel'
 import { LocalizationPanel } from '@/components/traffic-dashboard/localization-panel'
@@ -16,9 +16,12 @@ function DashboardContent() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-          <h1 className="text-2xl font-bold">Traffic Dashboard</h1>
-          <DashboardFilters />
+        <div className="flex flex-col gap-3 mb-6">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <h1 className="text-2xl font-bold">Traffic Overview</h1>
+            <DashboardFilters />
+          </div>
+          <DashboardFilterBadges />
         </div>
 
         <div className="space-y-4">

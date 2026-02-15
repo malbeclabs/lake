@@ -372,7 +372,7 @@ export function Sidebar() {
                   ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
                   : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
-              title="Dashboard"
+              title="Overview"
             >
               <BarChart3 className="h-4 w-4" />
             </Link>
@@ -1121,7 +1121,7 @@ export function Sidebar() {
               )}
             >
               <BarChart3 className="h-4 w-4" />
-              Dashboard
+              Overview
             </Link>
             <Link
               to="/traffic/interfaces"

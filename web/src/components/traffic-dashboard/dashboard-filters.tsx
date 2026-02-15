@@ -1,7 +1,9 @@
-import { useState } from 'react'
-import { ChevronDown, X } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { ChevronDown, X, Search, Filter, Loader2 } from 'lucide-react'
 import { useDashboard, type TimeRange } from './dashboard-context'
 import { cn } from '@/lib/utils'
+import { fetchFieldValues } from '@/lib/api'
 
 const timeRangeOptions: { value: TimeRange; label: string }[] = [
   { value: '1h', label: '1 hour' },
@@ -71,58 +73,376 @@ function Dropdown<T extends string>({
 
 function FilterBadge({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-accent text-accent-foreground rounded-full">
+    <button
+      onClick={onRemove}
+      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+    >
       {label}
-      <button onClick={onRemove} className="hover:text-foreground">
-        <X className="h-3 w-3" />
-      </button>
-    </span>
+      <X className="h-3 w-3" />
+    </button>
   )
 }
 
-export function DashboardFilters() {
+const DEBOUNCE_MS = 150
+
+const fieldPrefixes = [
+  { prefix: 'metro:', description: 'Filter by metro code', contextKey: 'metro' },
+  { prefix: 'device:', description: 'Filter by device code', contextKey: 'device' },
+  { prefix: 'intf:', description: 'Filter by interface name', contextKey: 'intf' },
+  { prefix: 'link:', description: 'Filter by link type', contextKey: 'link_type' },
+  { prefix: 'contributor:', description: 'Filter by contributor', contextKey: 'contributor' },
+] as const
+
+type ContextKey = typeof fieldPrefixes[number]['contextKey']
+
+const autocompleteConfig: Record<string, { entity: string; field: string } | null> = {
+  'metro': { entity: 'devices', field: 'metro' },
+  'device': null,
+  'intf': { entity: 'interfaces', field: 'intf' },
+  'link': { entity: 'links', field: 'type' },
+  'contributor': { entity: 'devices', field: 'contributor' },
+}
+
+function DashboardSearch() {
   const {
-    timeRange, setTimeRange,
-    metric, setMetric,
     metroFilter, setMetroFilter,
     deviceFilter, setDeviceFilter,
     linkTypeFilter, setLinkTypeFilter,
     contributorFilter, setContributorFilter,
+    intfFilter, setIntfFilter,
+  } = useDashboard()
+
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [isFocused, setIsFocused] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  // Parse field:value from query
+  const fieldValueMatch = useMemo(() => {
+    const colonIndex = query.indexOf(':')
+    if (colonIndex <= 0) return null
+    const field = query.slice(0, colonIndex).toLowerCase()
+    const value = query.slice(colonIndex + 1).toLowerCase()
+    const prefixEntry = fieldPrefixes.find(p => p.prefix === field + ':')
+    if (!prefixEntry) return null
+    return { field, value, contextKey: prefixEntry.contextKey }
+  }, [query])
+
+  // Autocomplete query config
+  const acConfig = fieldValueMatch ? autocompleteConfig[fieldValueMatch.field] : null
+
+  const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
+    queryKey: ['field-values', acConfig?.entity, acConfig?.field],
+    queryFn: () => fetchFieldValues(acConfig!.entity, acConfig!.field),
+    enabled: acConfig !== null && acConfig !== undefined,
+    staleTime: 60000,
+  })
+
+  const filteredFieldValues = useMemo(() => {
+    if (!fieldValueMatch || !fieldValuesData) return []
+    const needle = fieldValueMatch.value
+    if (!needle) return fieldValuesData
+    return fieldValuesData.filter(v => v.toLowerCase().includes(needle))
+  }, [fieldValueMatch, fieldValuesData])
+
+  const matchingPrefixes = useMemo(() => {
+    if (query.length === 0 || query.includes(':')) return []
+    return fieldPrefixes.filter(p =>
+      p.prefix.toLowerCase().startsWith(query.toLowerCase())
+    )
+  }, [query])
+
+  const showAllPrefixes = query.length === 0 && isFocused
+
+  const commitToDashboard = useCallback((contextKey: ContextKey, value: string) => {
+    const setters: Record<ContextKey, { get: string[]; set: (f: string[]) => void }> = {
+      metro: { get: metroFilter, set: setMetroFilter },
+      device: { get: deviceFilter, set: setDeviceFilter },
+      intf: { get: intfFilter, set: setIntfFilter },
+      link_type: { get: linkTypeFilter, set: setLinkTypeFilter },
+      contributor: { get: contributorFilter, set: setContributorFilter },
+    }
+    const { get, set } = setters[contextKey]
+    if (!get.includes(value)) {
+      set([...get, value])
+    }
+    setQuery('')
+    inputRef.current?.focus()
+  }, [metroFilter, setMetroFilter, deviceFilter, setDeviceFilter, intfFilter, setIntfFilter, linkTypeFilter, setLinkTypeFilter, contributorFilter, setContributorFilter])
+
+  const commitFilter = useCallback((filterStr: string) => {
+    const colonIndex = filterStr.indexOf(':')
+    if (colonIndex > 0) {
+      const field = filterStr.slice(0, colonIndex).toLowerCase()
+      const value = filterStr.slice(colonIndex + 1)
+      const prefixEntry = fieldPrefixes.find(p => p.prefix === field + ':')
+      if (prefixEntry && value) {
+        commitToDashboard(prefixEntry.contextKey, value)
+        return
+      }
+    }
+    // Free text: commit as device filter
+    if (filterStr) {
+      commitToDashboard('device', filterStr)
+    }
+  }, [commitToDashboard])
+
+  // Build dropdown items
+  type DropdownItem =
+    | { type: 'prefix'; prefix: string; description: string }
+    | { type: 'field-value'; field: string; value: string; contextKey: ContextKey }
+    | { type: 'apply-filter' }
+
+  const items: DropdownItem[] = useMemo(() => {
+    const result: DropdownItem[] = []
+
+    if (fieldValueMatch && filteredFieldValues.length > 0) {
+      result.push(...filteredFieldValues.map(v => ({
+        type: 'field-value' as const,
+        field: fieldValueMatch.field,
+        value: v,
+        contextKey: fieldValueMatch.contextKey,
+      })))
+    } else if (query.length >= 1 && !showAllPrefixes && matchingPrefixes.length === 0) {
+      result.push({ type: 'apply-filter' })
+    }
+
+    if (showAllPrefixes) {
+      result.push(...fieldPrefixes.map(p => ({
+        type: 'prefix' as const,
+        prefix: p.prefix,
+        description: p.description,
+      })))
+    } else if (matchingPrefixes.length > 0 && filteredFieldValues.length === 0) {
+      result.push(...matchingPrefixes.map(p => ({
+        type: 'prefix' as const,
+        prefix: p.prefix,
+        description: p.description,
+      })))
+    }
+
+    return result
+  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes])
+
+  useEffect(() => {
+    setSelectedIndex(-1)
+  }, [debouncedQuery, matchingPrefixes.length, showAllPrefixes])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const isDropdownOpen = isFocused && items.length > 0
+
+    switch (e.key) {
+      case 'ArrowDown':
+        if (isDropdownOpen) {
+          e.preventDefault()
+          setSelectedIndex(prev => Math.min(prev + 1, items.length - 1))
+        }
+        break
+      case 'ArrowUp':
+        if (isDropdownOpen) {
+          e.preventDefault()
+          setSelectedIndex(prev => Math.max(prev - 1, -1))
+        }
+        break
+      case 'Enter': {
+        e.preventDefault()
+        const indexToUse = selectedIndex >= 0 ? selectedIndex : 0
+        if (indexToUse < items.length) {
+          const item = items[indexToUse]
+          if (item.type === 'prefix') {
+            setQuery(item.prefix)
+          } else if (item.type === 'field-value') {
+            commitToDashboard(item.contextKey, item.value)
+          } else if (item.type === 'apply-filter' && query.trim()) {
+            commitFilter(query.trim())
+          }
+        } else if (query.trim()) {
+          commitFilter(query.trim())
+        }
+        break
+      }
+      case 'Tab':
+        if (selectedIndex >= 0 && selectedIndex < items.length) {
+          const item = items[selectedIndex]
+          if (item.type === 'prefix') {
+            e.preventDefault()
+            setQuery(item.prefix)
+          }
+        }
+        break
+      case 'Escape':
+        e.preventDefault()
+        setQuery('')
+        inputRef.current?.blur()
+        break
+    }
+  }, [items, selectedIndex, query, commitFilter, commitToDashboard, isFocused])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsFocused(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const showDropdown = isFocused && items.length > 0
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center gap-1.5 px-2 py-1 text-sm border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
+        <Search className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          placeholder="Filter..."
+          className="w-32 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-sm"
+        />
+        {fieldValuesLoading && (
+          <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />
+        )}
+      </div>
+
+      {showDropdown && (
+        <div className="absolute top-full right-0 mt-1 w-64 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg z-40">
+          {showAllPrefixes && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border flex items-center gap-1">
+              <Filter className="h-3 w-3" />
+              Filter by field
+            </div>
+          )}
+
+          {items.map((item, index) => {
+            if (item.type === 'apply-filter') {
+              return (
+                <button
+                  key="apply-filter"
+                  onClick={() => commitFilter(query.trim())}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
+                    index === selectedIndex && 'bg-muted'
+                  )}
+                >
+                  <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <span>Filter by "<span className="font-medium">{query}</span>"</span>
+                </button>
+              )
+            }
+
+            if (item.type === 'field-value') {
+              return (
+                <button
+                  key={`field-value-${item.value}`}
+                  onClick={() => commitToDashboard(item.contextKey, item.value)}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
+                    index === selectedIndex && 'bg-muted'
+                  )}
+                >
+                  <span className="flex-1 truncate">{item.value}</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                    {item.field}
+                  </span>
+                </button>
+              )
+            }
+
+            if (item.type === 'prefix') {
+              return (
+                <button
+                  key={item.prefix}
+                  onClick={() => {
+                    setQuery(item.prefix)
+                    inputRef.current?.focus()
+                  }}
+                  className={cn(
+                    'w-full flex flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
+                    index === selectedIndex && 'bg-muted'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{item.prefix.slice(0, -1)}</span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                      filter
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{item.description}</span>
+                </button>
+              )
+            }
+
+            return null
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function DashboardFilters() {
+  const { timeRange, setTimeRange, metric, setMetric } = useDashboard()
+
+  return (
+    <div className="flex items-center gap-3 flex-wrap">
+      <Dropdown label="Time" value={timeRange} options={timeRangeOptions} onChange={setTimeRange} />
+      <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
+      <DashboardSearch />
+    </div>
+  )
+}
+
+export function DashboardFilterBadges() {
+  const {
+    metroFilter, setMetroFilter,
+    deviceFilter, setDeviceFilter,
+    linkTypeFilter, setLinkTypeFilter,
+    contributorFilter, setContributorFilter,
+    intfFilter, setIntfFilter,
     clearFilters,
   } = useDashboard()
 
   const hasFilters = metroFilter.length > 0 || deviceFilter.length > 0 ||
-    linkTypeFilter.length > 0 || contributorFilter.length > 0
+    linkTypeFilter.length > 0 || contributorFilter.length > 0 || intfFilter.length > 0
+
+  if (!hasFilters) return null
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Dropdown label="Time" value={timeRange} options={timeRangeOptions} onChange={setTimeRange} />
-        <Dropdown label="Metric" value={metric} options={metricOptions} onChange={setMetric} />
-      </div>
-      {hasFilters && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-muted-foreground">Filters:</span>
-          {metroFilter.map(v => (
-            <FilterBadge key={`metro-${v}`} label={`Metro: ${v}`} onRemove={() => setMetroFilter(metroFilter.filter(f => f !== v))} />
-          ))}
-          {deviceFilter.map(v => (
-            <FilterBadge key={`device-${v}`} label={`Device: ${v}`} onRemove={() => setDeviceFilter(deviceFilter.filter(f => f !== v))} />
-          ))}
-          {linkTypeFilter.map(v => (
-            <FilterBadge key={`lt-${v}`} label={`Link: ${v}`} onRemove={() => setLinkTypeFilter(linkTypeFilter.filter(f => f !== v))} />
-          ))}
-          {contributorFilter.map(v => (
-            <FilterBadge key={`cont-${v}`} label={`Contributor: ${v}`} onRemove={() => setContributorFilter(contributorFilter.filter(f => f !== v))} />
-          ))}
-          <button
-            onClick={clearFilters}
-            className="text-xs text-muted-foreground hover:text-foreground underline"
-          >
-            Clear all
-          </button>
-        </div>
-      )}
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs text-muted-foreground">Filters:</span>
+      {metroFilter.map(v => (
+        <FilterBadge key={`metro-${v}`} label={`Metro: ${v}`} onRemove={() => setMetroFilter(metroFilter.filter(f => f !== v))} />
+      ))}
+      {deviceFilter.map(v => (
+        <FilterBadge key={`device-${v}`} label={`Device: ${v}`} onRemove={() => setDeviceFilter(deviceFilter.filter(f => f !== v))} />
+      ))}
+      {intfFilter.map(v => (
+        <FilterBadge key={`intf-${v}`} label={`Intf: ${v}`} onRemove={() => setIntfFilter(intfFilter.filter(f => f !== v))} />
+      ))}
+      {linkTypeFilter.map(v => (
+        <FilterBadge key={`lt-${v}`} label={`Link: ${v}`} onRemove={() => setLinkTypeFilter(linkTypeFilter.filter(f => f !== v))} />
+      ))}
+      {contributorFilter.map(v => (
+        <FilterBadge key={`cont-${v}`} label={`Contributor: ${v}`} onRemove={() => setContributorFilter(contributorFilter.filter(f => f !== v))} />
+      ))}
+      <button
+        onClick={clearFilters}
+        className="text-xs text-muted-foreground hover:text-foreground underline"
+      >
+        Clear all
+      </button>
     </div>
   )
 }

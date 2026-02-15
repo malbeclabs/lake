@@ -19,6 +19,7 @@ export interface DashboardState {
   deviceFilter: string[]
   linkTypeFilter: string[]
   contributorFilter: string[]
+  intfFilter: string[]
 
   // Selections
   selectedEntity: SelectedEntity | null
@@ -33,6 +34,7 @@ export interface DashboardState {
   setDeviceFilter: (f: string[]) => void
   setLinkTypeFilter: (f: string[]) => void
   setContributorFilter: (f: string[]) => void
+  setIntfFilter: (f: string[]) => void
   selectEntity: (e: SelectedEntity | null) => void
   pinEntity: (e: SelectedEntity) => void
   unpinEntity: (e: SelectedEntity) => void
@@ -54,6 +56,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   const [deviceFilter, setDeviceFilter] = useState<string[]>([])
   const [linkTypeFilter, setLinkTypeFilter] = useState<string[]>([])
   const [contributorFilter, setContributorFilter] = useState<string[]>([])
+  const [intfFilter, setIntfFilter] = useState<string[]>([])
 
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null)
   const [pinnedEntities, setPinnedEntities] = useState<SelectedEntity[]>([])
@@ -86,6 +89,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     setDeviceFilter([])
     setLinkTypeFilter([])
     setContributorFilter([])
+    setIntfFilter([])
     setSelectedEntity(null)
     setPinnedEntities([])
   }, [])
@@ -94,10 +98,10 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     <DashboardContext.Provider
       value={{
         timeRange, threshold, metric, groupBy,
-        metroFilter, deviceFilter, linkTypeFilter, contributorFilter,
+        metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold, setMetric, setGroupBy,
-        setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter,
+        setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
         selectEntity, pinEntity, unpinEntity, clearFilters,
       }}
     >
@@ -122,5 +126,6 @@ export function dashboardFilterParams(state: DashboardState): Record<string, str
   if (state.deviceFilter.length > 0) params.device = state.deviceFilter.join(',')
   if (state.linkTypeFilter.length > 0) params.link_type = state.linkTypeFilter.join(',')
   if (state.contributorFilter.length > 0) params.contributor = state.contributorFilter.join(',')
+  if (state.intfFilter.length > 0) params.intf = state.intfFilter.join(',')
   return params
 }
