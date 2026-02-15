@@ -149,7 +149,7 @@ export function Sidebar() {
   const isOutagesRoute = location.pathname === '/outages'
   const isPerformanceRoute = location.pathname.startsWith('/performance')
   const isTrafficRoute = location.pathname.startsWith('/traffic')
-  const isTrafficDashboard = location.pathname === '/traffic/dashboard'
+  const isTrafficDashboard = location.pathname === '/traffic/overview'
   const isTrafficInterfaces = location.pathname === '/traffic/interfaces'
   const isQuerySessions = location.pathname === '/query/sessions'
   const isChatSessions = location.pathname === '/chat/sessions'
@@ -337,7 +337,7 @@ export function Sidebar() {
 
         {/* Traffic nav item */}
         <Link
-          to="/traffic/dashboard"
+          to="/traffic/overview"
           className={cn(
             'p-2 rounded transition-colors',
             isTrafficRoute
@@ -365,7 +365,7 @@ export function Sidebar() {
         {isTrafficRoute ? (
           <>
             <Link
-              to="/traffic/dashboard"
+              to="/traffic/overview"
               className={cn(
                 'p-2 rounded transition-colors',
                 isTrafficDashboard
@@ -685,7 +685,7 @@ export function Sidebar() {
             Performance
           </Link>
           <Link
-            to="/traffic/dashboard"
+            to="/traffic/overview"
             className={cn(
               'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
               isTrafficRoute
@@ -1112,7 +1112,7 @@ export function Sidebar() {
           {/* Sub-nav */}
           <div className="px-3 space-y-1">
             <Link
-              to="/traffic/dashboard"
+              to="/traffic/overview"
               className={cn(
                 'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
                 isTrafficDashboard

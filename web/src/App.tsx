@@ -635,8 +635,9 @@ function AppContent() {
             <Route path="/performance/path-latency" element={<PathLatencyPage />} />
 
             {/* Traffic routes */}
-            <Route path="/traffic" element={<Navigate to="/traffic/dashboard" replace />} />
-            <Route path="/traffic/dashboard" element={<TrafficDashboardPage />} />
+            <Route path="/traffic" element={<Navigate to="/traffic/overview" replace />} />
+            <Route path="/traffic/dashboard" element={<Navigate to="/traffic/overview" replace />} />
+            <Route path="/traffic/overview" element={<TrafficDashboardPage />} />
             <Route path="/traffic/interfaces" element={<TrafficPage />} />
 
             {/* Status routes */}
