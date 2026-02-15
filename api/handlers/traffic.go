@@ -32,51 +32,6 @@ type SeriesInfo struct {
 
 // minBucketForRange returns the minimum allowed bucket interval for a given
 // time range to prevent unbounded queries from returning millions of rows.
-func minBucketForRange(timeRange string) string {
-	switch timeRange {
-	case "1h":
-		return "2 SECOND"
-	case "3h":
-		return "10 SECOND"
-	case "6h", "12h":
-		return "30 SECOND"
-	case "24h":
-		return "1 MINUTE"
-	case "3d":
-		return "5 MINUTE"
-	case "7d":
-		return "10 MINUTE"
-	default:
-		return "30 SECOND"
-	}
-}
-
-// bucketSeconds parses a ClickHouse interval string into seconds for comparison.
-func bucketSeconds(bucket string) int {
-	switch bucket {
-	case "2 SECOND":
-		return 2
-	case "10 SECOND":
-		return 10
-	case "30 SECOND":
-		return 30
-	case "1 MINUTE":
-		return 60
-	case "5 MINUTE":
-		return 300
-	case "10 MINUTE":
-		return 600
-	case "15 MINUTE":
-		return 900
-	case "30 MINUTE":
-		return 1800
-	case "1 HOUR":
-		return 3600
-	default:
-		return 0
-	}
-}
-
 // maxTrafficRows is a safety limit on the number of rows returned.
 const maxTrafficRows = 500_000
 

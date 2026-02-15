@@ -2,9 +2,11 @@ package handlers_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
@@ -543,6 +545,11 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 	setupDashboardSchema(t)
 	seedDashboardData(t)
 
+	// Use dynamic timestamps that cover the seeded data (now-30m to now)
+	now := time.Now()
+	startTs := fmt.Sprintf("%d", now.Add(-1*time.Hour).Unix())
+	endTs := fmt.Sprintf("%d", now.Add(1*time.Minute).Unix())
+
 	tests := []struct {
 		name   string
 		query  string
@@ -550,7 +557,7 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 	}{
 		{"with_intf", "?time_range=1h&device_pk=dev-1&intf=Port-Channel1000", http.StatusOK},
 		{"all_interfaces", "?time_range=1h&device_pk=dev-1", http.StatusOK},
-		{"custom_time_range", "?start_time=1700000000&end_time=1700086400&device_pk=dev-1", http.StatusOK},
+		{"custom_time_range", "?start_time=" + startTs + "&end_time=" + endTs + "&device_pk=dev-1", http.StatusOK},
 		{"missing_device_pk", "?time_range=1h", http.StatusBadRequest},
 	}
 

@@ -250,7 +250,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       }
     }
     return uplotData.intfs.filter(name => name.toLowerCase().includes(pattern))
-  }, [uplotData?.intfs, searchText])
+  }, [uplotData, searchText])
 
   // Sort filtered interfaces
   const sortedFilteredIntfs = useMemo(() => {
