@@ -2121,9 +2121,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
 
     const getCycleDuration = (latencyUs: number): number => {
+      // 0 or missing latency = unknown; use a calm default
+      if (!latencyUs || latencyUs <= 0) return 2000
       const latencyMs = latencyUs / 1000
       const clamped = Math.max(1, Math.min(200, latencyMs))
-      return 600 + (Math.log(clamped) / Math.log(200)) * 2400
+      // Low latency (1ms) → 1200ms cycle (fast), high latency (200ms) → 3600ms cycle (slow)
+      return 1200 + (Math.log(clamped) / Math.log(200)) * 2400
     }
 
     const paint = {
