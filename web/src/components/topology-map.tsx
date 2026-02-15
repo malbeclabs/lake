@@ -2149,6 +2149,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const setData = (data: GeoJSON.FeatureCollection) => {
       try {
         const src = map.getSource(srcId)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if (src && 'setData' in src) (src as any).setData(data)
       } catch { /* noop */ }
     }

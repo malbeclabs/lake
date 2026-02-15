@@ -10,9 +10,41 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
-    date: 'February 4, 2026',
+    date: 'February 14, 2026',
+    changes: [
+      { type: 'feature', description: 'Redesigned multicast overlay with per-publisher tree paths and animated flow dots' },
+      { type: 'improvement', description: 'Vibrant default topology colors and animated link dots across all views' },
+    ],
+  },
+  {
+    date: 'February 13, 2026',
+    changes: [
+      { type: 'feature', description: '3D globe view for topology page' },
+    ],
+  },
+  {
+    date: 'February 10, 2026',
+    changes: [
+      { type: 'improvement', description: 'Agent flags links as down when recent 5 minutes show 100% packet loss' },
+      { type: 'fix', description: 'Connection pool exhaustion from concurrent cache refreshes' },
+    ],
+  },
+  {
+    date: 'February 6, 2026',
+    changes: [
+      { type: 'fix', description: 'Multiple filters not being applied on entity pages' },
+    ],
+  },
+  {
+    date: 'February 5, 2026',
     changes: [
       { type: 'feature', description: 'MCP server for using DoubleZero Data tools in MCP clients' },
+      { type: 'improvement', description: 'Multi-hop latency and metro path query reliability in agent' },
+    ],
+  },
+  {
+    date: 'February 4, 2026',
+    changes: [
       { type: 'fix', description: 'Chat no longer incorrectly sums in+out when reporting link utilization' },
       { type: 'improvement', description: 'Device selector in path finder now searches by metro name (e.g. "Tokyo") in addition to metro code' },
     ],
