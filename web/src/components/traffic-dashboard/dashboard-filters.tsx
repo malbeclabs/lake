@@ -56,7 +56,7 @@ function Dropdown<T extends string>({
         )}
       >
         <span className="text-muted-foreground">{label}:</span>
-        <span className="font-medium">{selectedLabel}</span>
+        <span>{selectedLabel}</span>
         <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
       </button>
       {isOpen && (
@@ -478,7 +478,7 @@ function TimeRangeDropdown() {
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-md bg-background hover:bg-muted transition-colors"
         >
           <span className="text-muted-foreground">Time:</span>
-          <span className="font-medium max-w-[200px] truncate">{selectedLabel}</span>
+          <span className="max-w-[200px] truncate">{selectedLabel}</span>
           <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
         </button>
         {isOpen && (
