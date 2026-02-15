@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ArrowUpDown } from 'lucide-react'
+import { ChevronDown, ArrowUpDown, Loader2 } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
@@ -210,6 +210,7 @@ function TrafficPageContent() {
   const {
     data: tunnelData,
     isLoading: tunnelLoading,
+    isFetching: tunnelFetching,
     error: tunnelError,
   } = useQuery({
     queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams, metric],
@@ -223,6 +224,7 @@ function TrafficPageContent() {
   const {
     data: nonTunnelData,
     isLoading: nonTunnelLoading,
+    isFetching: nonTunnelFetching,
     error: nonTunnelError,
   } = useQuery({
     queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams, metric],
@@ -246,6 +248,7 @@ function TrafficPageContent() {
   const {
     data: discardsData,
     isLoading: discardsLoading,
+    isFetching: discardsFetching,
   } = useQuery({
     queryKey: ['discards-intf', timeRange, actualBucketSize, filterParams],
     queryFn: () => fetchDiscardsData(timeRange, actualBucketSize, filterParams),
@@ -293,7 +296,12 @@ function TrafficPageContent() {
     // Handle discards chart separately
     if (section === 'discards') {
       return (
-        <div key={section} className="border border-border rounded-lg p-4">
+        <div key={section} className="border border-border rounded-lg p-4 relative">
+          {discardsFetching && !discardsLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
           <LazyChart key={`${section}-${layout}`}>
             <DiscardsChart
               title="Interface Discards"
@@ -337,10 +345,16 @@ function TrafficPageContent() {
 
     const data = isTunnel ? tunnelData : nonTunnelData
     const loading = isTunnel ? tunnelLoading : nonTunnelLoading
+    const fetching = isTunnel ? tunnelFetching : nonTunnelFetching
     const error = isTunnel ? tunnelError : nonTunnelError
 
     return (
-      <div key={section} className="border border-border rounded-lg p-4">
+      <div key={section} className="border border-border rounded-lg p-4 relative">
+        {fetching && !loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
         <LazyChart key={section}>
           {loading ? (
             <div className="flex flex-col space-y-2">
