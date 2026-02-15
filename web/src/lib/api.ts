@@ -3566,7 +3566,8 @@ export async function fetchTrafficData(
   tunnelOnly: boolean = true,
   bucket: string = 'auto',
   agg: string = 'max',
-  filters?: Record<string, string>
+  filters?: Record<string, string>,
+  metric?: string
 ): Promise<TrafficDataResponse> {
   const hasCustomRange = filters?.start_time && filters?.end_time
   const params = new URLSearchParams({
@@ -3574,6 +3575,9 @@ export async function fetchTrafficData(
     bucket: bucket,
     agg: agg
   })
+  if (metric && metric !== 'throughput') {
+    params.set('metric', metric)
+  }
   if (!hasCustomRange) {
     params.set('time_range', timeRange)
   }

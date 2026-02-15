@@ -132,6 +132,32 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		aggFunc = "AVG"
 	}
 
+	metric := r.URL.Query().Get("metric")
+	// Determine SQL expressions based on metric.
+	// inExpr/outExpr are used in the rates CTE (no table prefix).
+	// fInExpr/fOutExpr are used in the mean query (with f. prefix).
+	var inExpr, outExpr, fInExpr, fOutExpr, srcColumns, srcFilters string
+	switch metric {
+	case "packets":
+		srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration"
+		inExpr = "in_pkts_delta / delta_duration"
+		outExpr = "out_pkts_delta / delta_duration"
+		fInExpr = "f.in_pkts_delta / f.delta_duration"
+		fOutExpr = "f.out_pkts_delta / f.delta_duration"
+		srcFilters = `AND f.delta_duration > 0
+				AND f.in_pkts_delta >= 0
+				AND f.out_pkts_delta >= 0`
+	default: // throughput
+		srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration"
+		inExpr = "in_octets_delta * 8 / delta_duration"
+		outExpr = "out_octets_delta * 8 / delta_duration"
+		fInExpr = "f.in_octets_delta * 8 / f.delta_duration"
+		fOutExpr = "f.out_octets_delta * 8 / f.delta_duration"
+		srcFilters = `AND f.delta_duration > 0
+				AND f.in_octets_delta >= 0
+				AND f.out_octets_delta >= 0`
+	}
+
 	// Use shared time filter (supports both preset time_range and custom start_time/end_time)
 	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
@@ -150,14 +176,12 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			FROM dz_devices_current
 		),
 		src AS (
-			SELECT f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration
+			SELECT %s
 			FROM fact_dz_device_interface_counters f
 			INNER JOIN devices d ON d.pk = f.device_pk%s
 			WHERE f.%s
 				%s%s
-				AND f.delta_duration > 0
-				AND f.in_octets_delta >= 0
-				AND f.out_octets_delta >= 0
+				%s
 				%s
 		),
 		rates AS (
@@ -165,8 +189,8 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				device_pk,
 				intf,
 				toStartOfInterval(event_ts, INTERVAL %s) AS time_bucket,
-				%s(in_octets_delta * 8 / delta_duration) AS in_bps,
-				%s(out_octets_delta * 8 / delta_duration) AS out_bps
+				%s(%s) AS in_bps,
+				%s(%s) AS out_bps
 			FROM src
 			GROUP BY device_pk, intf, time_bucket
 		)
@@ -182,7 +206,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		WHERE r.time_bucket IS NOT NULL
 		ORDER BY r.time_bucket, d.code, r.intf
 		LIMIT %d
-	`, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, bucketInterval, aggFunc, aggFunc, maxTrafficRows)
+	`, srcColumns, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, bucketInterval, aggFunc, inExpr, aggFunc, outExpr, maxTrafficRows)
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
@@ -205,19 +229,17 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			d.code AS device,
 			f.intf,
-			AVG(f.in_octets_delta * 8 / f.delta_duration) AS mean_in_bps,
-			AVG(f.out_octets_delta * 8 / f.delta_duration) AS mean_out_bps
+			AVG(%s) AS mean_in_bps,
+			AVG(%s) AS mean_out_bps
 		FROM fact_dz_device_interface_counters f
 		INNER JOIN devices d ON d.pk = f.device_pk%s
 		WHERE f.%s
 			%s%s
-			AND f.delta_duration > 0
-			AND f.in_octets_delta >= 0
-			AND f.out_octets_delta >= 0
+			%s
 			%s
 		GROUP BY d.code, f.intf
 		ORDER BY d.code, f.intf
-	`, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL)
+	`, fInExpr, fOutExpr, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL)
 
 	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration

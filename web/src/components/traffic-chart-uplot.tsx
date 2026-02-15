@@ -26,6 +26,7 @@ interface TrafficChartProps {
   linkLookup?: Map<string, LinkLookupInfo>
   bidirectional?: boolean
   onTimeRangeSelect?: (startSec: number, endSec: number) => void
+  metric?: 'throughput' | 'packets' | 'utilization'
 }
 
 // Represents one interface with paired in/out in bidirectional mode
@@ -47,13 +48,22 @@ function formatBandwidth(bps: number): string {
   return bps.toFixed(0) + ' bps'
 }
 
-function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect }: TrafficChartProps) {
+function formatPps(pps: number): string {
+  if (pps >= 1e12) return (pps / 1e12).toFixed(1) + ' Tpps'
+  if (pps >= 1e9) return (pps / 1e9).toFixed(1) + ' Gpps'
+  if (pps >= 1e6) return (pps / 1e6).toFixed(1) + ' Mpps'
+  if (pps >= 1e3) return (pps / 1e3).toFixed(1) + ' Kpps'
+  return pps.toFixed(0) + ' pps'
+}
+
+function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput' }: TrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const linkLookupRef = useRef(linkLookup)
   const onTimeRangeSelectRef = useRef(onTimeRangeSelect)
   onTimeRangeSelectRef.current = onTimeRangeSelect
+  const fmtValue = metric === 'packets' ? formatPps : formatBandwidth
   const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
@@ -468,7 +478,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           stroke: axisStroke,
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
-          values: (_u, vals) => vals.map(v => formatBandwidth(bidirectional ? Math.abs(v) : v)),
+          values: (_u, vals) => vals.map(v => fmtValue(bidirectional ? Math.abs(v) : v)),
           size: 90,
         },
       ],
@@ -568,7 +578,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                   y: top ?? 0,
                   time: timeStr,
                   label: seriesLabel,
-                  value: formatBandwidth(valueBps),
+                  value: fmtValue(valueBps),
                   valueBps,
                   devicePk: metadata?.devicePk || '',
                   device: metadata?.device || '',
@@ -625,7 +635,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         plotRef.current = null
       }
     }
-  }, [uplotData, uplotSeries, stacked, bidirectional, resolvedTheme])
+  }, [uplotData, uplotSeries, stacked, bidirectional, resolvedTheme, fmtValue])
 
   // Separate effect for handling click to pin/unpin tooltip
   useEffect(() => {
@@ -921,11 +931,11 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const getLegendValue = (s: SeriesInfo): string => {
     if (hoveredIdx !== null && hoverValues) {
       const hv = (hoverValues as Map<string, number>).get(s.key)
-      if (hv != null) return formatBandwidth(hv)
+      if (hv != null) return fmtValue(hv)
     }
     const lv = (latestValues as Map<string, number>).get(s.key)
-    if (lv != null) return formatBandwidth(lv)
-    return formatBandwidth(s.mean)
+    if (lv != null) return fmtValue(lv)
+    return fmtValue(s.mean)
   }
 
   // Value column header
@@ -1163,7 +1173,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                         <span className="text-xs truncate">{g.intfKey}</span>
                       </div>
                       <span className="text-xs text-muted-foreground font-mono tabular-nums whitespace-nowrap ml-2">
-                        {displayVal ? `${formatBandwidth(displayVal.rx)} / ${formatBandwidth(displayVal.tx)}` : '—'}
+                        {displayVal ? `${fmtValue(displayVal.rx)} / ${fmtValue(displayVal.tx)}` : '—'}
                       </span>
                     </div>
                   )

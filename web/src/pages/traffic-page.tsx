@@ -164,7 +164,7 @@ function LayoutSelector({
 
 function TrafficPageContent() {
   const dashboardState = useDashboard()
-  const { timeRange, intfType } = dashboardState
+  const { timeRange, intfType, metric } = dashboardState
 
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
   const [layout, setLayout] = useState<Layout>('1x4')
@@ -212,8 +212,8 @@ function TrafficPageContent() {
     isLoading: tunnelLoading,
     error: tunnelError,
   } = useQuery({
-    queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams],
-    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod, filterParams),
+    queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams, metric],
+    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod, filterParams, metric),
     staleTime: 30000,
     refetchInterval: dashboardState.refetchInterval,
     enabled: showTunnelCharts,
@@ -225,8 +225,8 @@ function TrafficPageContent() {
     isLoading: nonTunnelLoading,
     error: nonTunnelError,
   } = useQuery({
-    queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams],
-    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod, filterParams),
+    queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams, metric],
+    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod, filterParams, metric),
     staleTime: 30000,
     refetchInterval: dashboardState.refetchInterval,
     enabled: showNonTunnelCharts,
@@ -328,11 +328,12 @@ function TrafficPageContent() {
         break
     }
 
-    // Build title based on intf type filter
+    // Build title based on intf type filter and metric
     const typeLabel = isTunnel
       ? 'Tunnel'
       : intfType === 'link' ? 'Link' : intfType === 'other' ? 'Other' : 'Non-Tunnel'
-    const title = `${typeLabel} Traffic Per Device & Interface${stacked ? ' (stacked)' : ''}`
+    const metricLabel = metric === 'packets' ? 'Packets' : 'Traffic'
+    const title = `${typeLabel} ${metricLabel} Per Device & Interface${stacked ? ' (stacked)' : ''}`
 
     const data = isTunnel ? tunnelData : nonTunnelData
     const loading = isTunnel ? tunnelLoading : nonTunnelLoading
@@ -362,6 +363,7 @@ function TrafficPageContent() {
               linkLookup={linkLookup}
               bidirectional={bidirectional}
               onTimeRangeSelect={dashboardState.setCustomRange}
+              metric={metric}
             />
           ) : (
             <div className="flex flex-col space-y-2">
