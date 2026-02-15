@@ -213,6 +213,9 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic query error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -245,6 +248,9 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	meanDuration := time.Since(start) - duration
 	metrics.RecordClickHouseQuery(meanDuration, err)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic mean query error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -407,6 +413,9 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Discards query error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

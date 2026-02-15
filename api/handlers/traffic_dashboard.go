@@ -732,6 +732,9 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic dashboard health query error: %v\nQuery: %s", err, query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -814,6 +817,9 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic dashboard stress query error: %v\nQuery: %s", err, query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1007,6 +1013,9 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic dashboard top query error: %v\nQuery: %s", err, query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1087,6 +1096,9 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic dashboard drilldown query error: %v\nQuery: %s", err, query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1225,6 +1237,9 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		log.Printf("Traffic dashboard burstiness query error: %v\nQuery: %s", err, query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
