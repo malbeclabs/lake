@@ -64,6 +64,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const onTimeRangeSelectRef = useRef(onTimeRangeSelect)
   onTimeRangeSelectRef.current = onTimeRangeSelect
   const fmtValue = metric === 'packets' ? formatPps : formatBandwidth
+  const fmtValueRef = useRef(fmtValue)
+  fmtValueRef.current = fmtValue
   const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
@@ -478,7 +480,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           stroke: axisStroke,
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
-          values: (_u, vals) => vals.map(v => fmtValue(bidirectional ? Math.abs(v) : v)),
+          values: (_u, vals) => vals.map(v => fmtValueRef.current(bidirectional ? Math.abs(v) : v)),
           size: 90,
         },
       ],
@@ -578,7 +580,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                   y: top ?? 0,
                   time: timeStr,
                   label: seriesLabel,
-                  value: fmtValue(valueBps),
+                  value: fmtValueRef.current(valueBps),
                   valueBps,
                   devicePk: metadata?.devicePk || '',
                   device: metadata?.device || '',
@@ -635,7 +637,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         plotRef.current = null
       }
     }
-  }, [uplotData, uplotSeries, stacked, bidirectional, resolvedTheme, fmtValue])
+  }, [uplotData, uplotSeries, stacked, bidirectional, resolvedTheme])
 
   // Separate effect for handling click to pin/unpin tooltip
   useEffect(() => {
