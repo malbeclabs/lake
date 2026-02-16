@@ -216,6 +216,20 @@ export function TopologyControlBar({
     }
   }
 
+  if (isFullscreen) {
+    return (
+      <div className="absolute top-4 right-4 z-[999]">
+        <button
+          onClick={toggleFullscreen}
+          className="bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-sm p-2 hover:bg-[var(--muted)] transition-colors"
+          title="Exit fullscreen"
+        >
+          <Minimize className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div
       className="absolute top-4 right-4 z-[999] flex flex-col max-h-[calc(100vh-2rem)]"
@@ -321,14 +335,14 @@ export function TopologyControlBar({
             />
           )}
 
-          <NavItem
-            icon={isFullscreen ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
-            label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            onClick={toggleFullscreen}
-            active={isFullscreen}
-            activeColor="blue"
-            collapsed={collapsed}
-          />
+          {view === 'globe' && (
+            <NavItem
+              icon={<Maximize className="h-3.5 w-3.5" />}
+              label="Fullscreen"
+              onClick={toggleFullscreen}
+              collapsed={collapsed}
+            />
+          )}
 
           {/* Find paths (Neo4j-dependent) */}
           {hasNeo4j && (
