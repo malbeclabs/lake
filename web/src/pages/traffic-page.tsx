@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ArrowUpDown, Loader2 } from 'lucide-react'
+import { ChevronDown, Loader2 } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
@@ -414,10 +414,9 @@ function TrafficPageContent() {
                   ? 'border-foreground/30 text-foreground bg-muted'
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
               }`}
-              title={bidirectional ? 'Switch to all-positive view' : 'Switch to bidirectional (Rx up / Tx down)'}
+              title={bidirectional ? 'Rx and Tx are shown separately (Rx up, Tx down). Click to combine into a single line per interface.' : 'Rx and Tx are combined into a single line per interface. Click to split into separate Rx (up) and Tx (down).'}
             >
-              <ArrowUpDown className="h-4 w-4" />
-              Rx/Tx
+              {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
             </button>
             <LayoutSelector value={layout} onChange={handleLayoutChange} />
             <AggSelector value={aggMethod} onChange={setAggMethod} />
