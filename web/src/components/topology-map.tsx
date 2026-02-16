@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '@/hooks/use-theme'
 import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
 import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, BandwidthOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 
 // Path colors for multi-path visualization
 const PATH_COLORS = [
@@ -56,6 +56,20 @@ const DEVICE_TYPE_COLORS: Record<string, string> = {
   transit: '#f97316',   // orange
   edge: '#22d3ee',      // cyan
   default: '#9ca3af',   // gray
+}
+
+// Interpolate a position along a polyline path at parameter t (0..1)
+function interpolateAlongPath(coords: [number, number][], t: number): [number, number] {
+  const n = coords.length
+  if (n === 0) return [0, 0]
+  if (n === 1) return coords[0]
+  const idx = t * (n - 1)
+  const i = Math.min(Math.floor(idx), n - 2)
+  const frac = idx - i
+  return [
+    coords[i][0] + (coords[i + 1][0] - coords[i][0]) * frac,
+    coords[i][1] + (coords[i + 1][1] - coords[i][1]) * frac,
+  ]
 }
 
 interface TopologyMapProps {
@@ -245,6 +259,16 @@ function calculateDevicePosition(
   return [metroLng + lngOffset, metroLat + latOffset]
 }
 
+// Get per-publisher curve offset for parallel multicast tree lines.
+// Distributes N publishers symmetrically around the default curve (0.15).
+function getPublisherOffset(publisherIndex: number, totalPublishers: number): number {
+  if (totalPublishers === 1) return 0.15
+  const spread = 0.06
+  const center = 0.15
+  const start = center - (spread * (totalPublishers - 1)) / 2
+  return start + spread * publisherIndex
+}
+
 // Calculate curved path between two points (returns GeoJSON coordinates [lng, lat])
 function calculateCurvedPath(
   start: [number, number],
@@ -351,20 +375,40 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const multicastTreesMode = overlays.multicastTrees
 
   // Multicast trees operational state (local)
-  const [selectedMulticastGroups, setSelectedMulticastGroups] = useState<string[]>([])
+  const [selectedMulticastGroup, setSelectedMulticastGroup] = useState<string | null>(null)
   const [multicastGroupDetails, setMulticastGroupDetails] = useState<Map<string, MulticastGroupDetail>>(new Map())
   const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
+  // PKs to skip during auto-enable (restored from URL on initial load)
+  const initialDisabledPubsRef = useRef<Set<string> | null>(null)
+  const initialDisabledSubsRef = useRef<Set<string> | null>(null)
+  const [dimOtherLinks, setDimOtherLinks] = useState(true)
+  const [animateFlow, setAnimateFlow] = useState(true)
+  const [showTreeValidators, setShowTreeValidators] = useState(true)
+  const [linkAnimating, setLinkAnimating] = useState(true)
 
-  // Handler to toggle multicast group selection
-  const handleToggleMulticastGroup = useCallback((code: string) => {
-    setSelectedMulticastGroups(prev => {
-      if (prev.includes(code)) {
-        return prev.filter(c => c !== code)
-      }
-      return [...prev, code]
-    })
+  // Auto-disable link animation when entering analysis mode (overlays, modes, selection).
+  // User can re-enable via the toggle even while in analysis mode.
+  const anyOverlayActive = Object.entries(overlays).some(([key, value]) => key !== 'bandwidth' && value)
+  const isAnalysisActive = anyOverlayActive || mode !== 'explore' || !!selection
+  const prevAnalysisForLinks = useRef<boolean | null>(null)
+  useEffect(() => {
+    if (!mapReady) return
+    const isFirst = prevAnalysisForLinks.current === null
+    const wasActive = prevAnalysisForLinks.current
+    prevAnalysisForLinks.current = isAnalysisActive
+    if (isFirst) {
+      if (isAnalysisActive) setLinkAnimating(false)
+    } else {
+      if (isAnalysisActive && !wasActive) setLinkAnimating(false)
+      if (!isAnalysisActive && wasActive) setLinkAnimating(true)
+    }
+  }, [mapReady, isAnalysisActive])
+
+  // Handler to select multicast group
+  const handleSelectMulticastGroup = useCallback((code: string | null) => {
+    setSelectedMulticastGroup(code)
   }, [])
 
   // Handler to toggle individual publisher
@@ -393,56 +437,56 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     })
   }, [])
 
-  // Handler to load multicast group details
-  const handleLoadMulticastGroupDetail = useCallback((code: string) => {
-    if (multicastGroupDetails.has(code)) return
+
+  // Fetch multicast tree paths when group is selected
+  useEffect(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return
+
+    // Fetch tree paths for selected group if we don't have it yet
+    if (multicastTreePaths.has(selectedMulticastGroup)) return
+    const code = selectedMulticastGroup
+    fetchMulticastTreePaths(code)
+      .then(result => {
+        setMulticastTreePaths(prev => new Map(prev).set(code, result))
+      })
+      .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths])
+
+  // Auto-load group details when group is selected
+  useEffect(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return
+    if (multicastGroupDetails.has(selectedMulticastGroup)) return
+    const code = selectedMulticastGroup
     fetchMulticastGroup(code)
-      .then(detail => {
-        setMulticastGroupDetails(prev => new Map(prev).set(code, detail))
-      })
+      .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
       .catch(err => console.error('Failed to fetch multicast group:', err))
-  }, [multicastGroupDetails])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
-  // Fetch multicast tree paths when groups are selected
+  // Set enabled publishers/subscribers when group details are loaded
   useEffect(() => {
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return
+    if (!multicastTreesMode || !selectedMulticastGroup) return
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return
 
-    // Fetch tree paths for each selected group that we don't have yet
-    for (const code of selectedMulticastGroups) {
-      if (multicastTreePaths.has(code)) continue
-      fetchMulticastTreePaths(code)
-        .then(result => {
-          setMulticastTreePaths(prev => new Map(prev).set(code, result))
-        })
-        .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
-    }
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
+    // On first load, skip PKs that were disabled in the URL
+    const skipPubs = initialDisabledPubsRef.current
+    const skipSubs = initialDisabledSubsRef.current
+    initialDisabledPubsRef.current = null
+    initialDisabledSubsRef.current = null
 
-  // Auto-enable publishers/subscribers when group details are loaded
-  useEffect(() => {
-    if (!multicastTreesMode) return
-
-    selectedMulticastGroups.forEach(code => {
-      const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-
-      // Enable all publishers and subscribers from this group
-      detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') {
-          setEnabledPublishers(prev => {
-            if (prev.has(m.device_pk)) return prev
-            return new Set(prev).add(m.device_pk)
-          })
-        }
-        if (m.mode === 'S' || m.mode === 'P+S') {
-          setEnabledSubscribers(prev => {
-            if (prev.has(m.device_pk)) return prev
-            return new Set(prev).add(m.device_pk)
-          })
-        }
-      })
+    const pubs = new Set<string>()
+    const subs = new Set<string>()
+    detail.members.forEach(m => {
+      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.device_pk)) {
+        pubs.add(m.device_pk)
+      }
+      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.device_pk)) {
+        subs.add(m.device_pk)
+      }
     })
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails])
+    setEnabledPublishers(pubs)
+    setEnabledSubscribers(subs)
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
 
   // Path finding operational state (local)
   const [pathSource, setPathSource] = useState<string | null>(null)
@@ -1152,10 +1196,32 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // Impact mode params (comma-separated list of device PKs)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
 
+    // Multicast group selection and disabled publishers/subscribers
+    setParam('multicast', multicastTreesMode && !!selectedMulticastGroup ? selectedMulticastGroup : null)
+    if (multicastTreesMode && selectedMulticastGroup) {
+      const detail = multicastGroupDetails.get(selectedMulticastGroup)
+      if (detail?.members) {
+        const disabledPubs = detail.members
+          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.device_pk))
+          .map(m => m.device_pk)
+        const disabledSubs = detail.members
+          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.device_pk))
+          .map(m => m.device_pk)
+        setParam('mc_pub_off', disabledPubs.length > 0 ? disabledPubs.join(',') : null)
+        setParam('mc_sub_off', disabledSubs.length > 0 ? disabledSubs.join(',') : null)
+      } else {
+        setParam('mc_pub_off', null)
+        setParam('mc_sub_off', null)
+      }
+    } else {
+      setParam('mc_pub_off', null)
+      setParam('mc_sub_off', null)
+    }
+
     if (changed) {
       setSearchParams(params, { replace: true })
     }
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers, enabledSubscribers])
 
   // When entering analysis modes with a device already selected, use it as source
   const prevMapModeRef = useRef<string>(mode)
@@ -1353,150 +1419,246 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return map
   }, [metroPathsResult, links])
 
-  // Build map of device PKs to publisher PKs for multicast trees (filtered by enabled publishers/subscribers)
-  const multicastDevicePathMap = useMemo(() => {
-    const map = new Map<string, string[]>()
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
+  // Build per-publisher tree segments with device PKs and positions for drawing offset parallel lines.
+  // Each publisher's tree is an array of directed segments with from/to device PKs and positions.
+  const multicastPublisherPaths = useMemo(() => {
+    const result: Array<{ publisherPK: string; segments: Array<{ fromPK: string; toPK: string; from: [number, number]; to: [number, number] }> }> = []
+    if (!multicastTreesMode || !selectedMulticastGroup) return result
 
-    selectedMulticastGroups.forEach(code => {
-      const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
+    const publisherSegments = new Map<string, Map<string, { fromPK: string; toPK: string; from: [number, number]; to: [number, number] }>>()
 
-      treeData.paths.forEach(treePath => {
-        const publisherPK = treePath.publisherDevicePK
-        const subscriberPK = treePath.subscriberDevicePK
-        // Filter: only include if publisher AND subscriber are enabled
-        if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
-
-        treePath.path?.forEach(hop => {
-          const existing = map.get(hop.devicePK) || []
-          if (!existing.includes(publisherPK)) {
-            existing.push(publisherPK)
-          }
-          map.set(hop.devicePK, existing)
-        })
-      })
-    })
-    return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths, enabledPublishers, enabledSubscribers])
-
-  // Build map of link PKs to publisher PKs for multicast trees (for coloring by publisher, filtered)
-  const multicastLinkPathMap = useMemo(() => {
-    const map = new Map<string, string[]>()
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
-
-    selectedMulticastGroups.forEach(code => {
-      const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
-
+    const treeData = multicastTreePaths.get(selectedMulticastGroup)
+    if (treeData?.paths?.length) {
       treeData.paths.forEach(treePath => {
         const path = treePath.path
         const publisherPK = treePath.publisherDevicePK
         const subscriberPK = treePath.subscriberDevicePK
         if (!path?.length) return
-        // Filter: only include if publisher AND subscriber are enabled
         if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
+
+        if (!publisherSegments.has(publisherPK)) publisherSegments.set(publisherPK, new Map())
+        const segs = publisherSegments.get(publisherPK)!
 
         for (let i = 0; i < path.length - 1; i++) {
           const fromPK = path[i].devicePK
           const toPK = path[i + 1].devicePK
+          const key = `${fromPK}|${toPK}`
+          if (segs.has(key)) continue
 
+          const fromPos = devicePositions.get(fromPK)
+          const toPos = devicePositions.get(toPK)
+          if (fromPos && toPos) {
+            segs.set(key, { fromPK, toPK, from: fromPos, to: toPos })
+          }
+        }
+      })
+    }
+
+    for (const [publisherPK, segs] of publisherSegments) {
+      const segments = Array.from(segs.values())
+      if (segments.length > 0) result.push({ publisherPK, segments })
+    }
+
+    return result
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers, devicePositions])
+
+  // Map from canonical segment key (sorted device PKs) -> ordered publisher PKs (for offset calculation)
+  const multicastSegmentPublishers = useMemo(() => {
+    const map = new Map<string, string[]>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
+
+    const treeData = multicastTreePaths.get(selectedMulticastGroup)
+    if (treeData?.paths?.length) {
+      treeData.paths.forEach(treePath => {
+        const path = treePath.path
+        if (!path?.length) return
+        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+
+        for (let i = 0; i < path.length - 1; i++) {
+          const canonicalKey = [path[i].devicePK, path[i + 1].devicePK].sort().join('|')
+          if (!map.has(canonicalKey)) map.set(canonicalKey, [])
+          const pubs = map.get(canonicalKey)!
+          if (!pubs.includes(treePath.publisherDevicePK)) pubs.push(treePath.publisherDevicePK)
+        }
+      })
+    }
+    return map
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
+
+  // Set of device PKs that are in any multicast tree path (for dimming non-tree links)
+  const multicastTreeDevicePKs = useMemo(() => {
+    const set = new Set<string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return set
+    const treeData = multicastTreePaths.get(selectedMulticastGroup)
+    if (treeData?.paths?.length) {
+      treeData.paths.forEach(treePath => {
+        if (!treePath.path?.length) return
+        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+        treePath.path.forEach(hop => set.add(hop.devicePK))
+      })
+    }
+    return set
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
+
+
+  // Set of link PKs that are in any multicast tree (for dimming)
+  const multicastTreeLinkPKs = useMemo(() => {
+    const set = new Set<string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return set
+    const treeData = multicastTreePaths.get(selectedMulticastGroup)
+    if (treeData?.paths?.length) {
+      treeData.paths.forEach(treePath => {
+        const path = treePath.path
+        if (!path?.length) return
+        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+        for (let i = 0; i < path.length - 1; i++) {
+          const fromPK = path[i].devicePK
+          const toPK = path[i + 1].devicePK
           for (const link of links) {
             if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
                 (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
-              const existing = map.get(link.pk) || []
-              if (!existing.includes(publisherPK)) {
-                existing.push(publisherPK)
-              }
-              map.set(link.pk, existing)
+              set.add(link.pk)
               break
             }
           }
         }
       })
-    })
-    return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
+    }
+    return set
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublishers, enabledSubscribers])
 
   // Build ordered list of unique publisher PKs for consistent color assignment
   const multicastPublisherColorMap = useMemo(() => {
     const map = new Map<string, number>()
-    if (!multicastTreesMode || selectedMulticastGroups.length === 0) return map
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
 
     let colorIndex = 0
-    selectedMulticastGroups.forEach(code => {
-      const treeData = multicastTreePaths.get(code)
-      if (!treeData?.paths?.length) return
-
-      // Get unique publishers in order of first appearance
-      const seenPublishers = new Set<string>()
-      treeData.paths.forEach(treePath => {
-        if (!seenPublishers.has(treePath.publisherDevicePK)) {
-          seenPublishers.add(treePath.publisherDevicePK)
-          map.set(treePath.publisherDevicePK, colorIndex++)
-        }
-      })
-    })
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
+      const detail = multicastGroupDetails.get(code)
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .forEach(m => {
+            if (!map.has(m.device_pk)) {
+              map.set(m.device_pk, colorIndex++)
+            }
+          })
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastTreePaths])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
+
+  // Map device_pk -> role color for validators on multicast member devices
+  // Respects enabled state: P+S devices only get publisher color when enabled as publisher
+  const multicastDeviceRoleColorMap = useMemo(() => {
+    const map = new Map<string, string>()
+    if (!multicastTreesMode || !selectedMulticastGroup) return map
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return map
+    for (const m of detail.members) {
+      const isPub = (m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)
+      const isSub = (m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.device_pk)
+      if (isPub) {
+        const colorIndex = multicastPublisherColorMap.get(m.device_pk) ?? 0
+        const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
+        map.set(m.device_pk, isDark ? c.dark : c.light)
+      } else if (isSub) {
+        map.set(m.device_pk, '#ef4444') // red for subscriber
+      }
+    }
+    return map
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, enabledPublishers, enabledSubscribers, isDark])
 
   // Build set of publisher and subscriber device PKs for multicast trees (filtered by enabled)
   const multicastPublisherDevices = useMemo(() => {
     const set = new Set<string>()
     if (!multicastTreesMode) return set
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'P' || m.mode === 'P+S')
-        .filter(m => enabledPublishers.has(m.device_pk))
-        .forEach(m => set.add(m.device_pk))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .filter(m => enabledPublishers.has(m.device_pk))
+          .forEach(m => set.add(m.device_pk))
+      }
+    }
     return set
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledPublishers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
 
   const multicastSubscriberDevices = useMemo(() => {
     const set = new Set<string>()
     if (!multicastTreesMode) return set
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'S' || m.mode === 'P+S')
-        .filter(m => enabledSubscribers.has(m.device_pk))
-        .forEach(m => set.add(m.device_pk))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'S' || m.mode === 'P+S')
+          .filter(m => enabledSubscribers.has(m.device_pk))
+          .forEach(m => set.add(m.device_pk))
+      }
+    }
     return set
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
+
+  // Validators on multicast publisher/subscriber devices (auto-shown when tree is active)
+  // Deduplicated to 1 per device — avoids showing many markers for multi-validator devices
+  const multicastTreeValidators = useMemo(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup) return []
+    if (multicastPublisherDevices.size === 0 && multicastSubscriberDevices.size === 0) return []
+    const seen = new Set<string>()
+    return validators.filter(v => {
+      if (seen.has(v.device_pk)) return false
+      if (!multicastPublisherDevices.has(v.device_pk) && !multicastSubscriberDevices.has(v.device_pk)) return false
+      seen.add(v.device_pk)
+      return true
+    })
+  }, [multicastTreesMode, selectedMulticastGroup, multicastPublisherDevices, multicastSubscriberDevices, validators])
+
+  // Validators to render: either all (overlay toggle) or tree-filtered (multicast mode, if toggled on)
+  const visibleValidators = useMemo(() => {
+    // When multicast tree is active, show only tree-relevant validators (unless tree validators toggled off)
+    if (multicastTreesMode && selectedMulticastGroup && multicastTreeValidators.length > 0) {
+      return showTreeValidators ? multicastTreeValidators : []
+    }
+    if (showValidators && !pathModeEnabled) return validators
+    return []
+  }, [multicastTreesMode, selectedMulticastGroup, showValidators, pathModeEnabled, validators, showTreeValidators, multicastTreeValidators])
 
   // Count publishers and subscribers per device for multicast hover tooltip (filtered by enabled)
   const multicastPublisherCount = useMemo(() => {
     const map = new Map<string, number>()
     if (!multicastTreesMode) return map
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'P' || m.mode === 'P+S')
-        .filter(m => enabledPublishers.has(m.device_pk))
-        .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'P' || m.mode === 'P+S')
+          .filter(m => enabledPublishers.has(m.device_pk))
+          .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledPublishers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
 
   const multicastSubscriberCount = useMemo(() => {
     const map = new Map<string, number>()
     if (!multicastTreesMode) return map
-    selectedMulticastGroups.forEach(code => {
+    if (selectedMulticastGroup) {
+      const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
-      if (!detail?.members) return
-      detail.members
-        .filter(m => m.mode === 'S' || m.mode === 'P+S')
-        .filter(m => enabledSubscribers.has(m.device_pk))
-        .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
-    })
+      if (detail?.members) {
+        detail.members
+          .filter(m => m.mode === 'S' || m.mode === 'P+S')
+          .filter(m => enabledSubscribers.has(m.device_pk))
+          .forEach(m => map.set(m.device_pk, (map.get(m.device_pk) || 0) + 1))
+      }
+    }
     return map
-  }, [multicastTreesMode, selectedMulticastGroups, multicastGroupDetails, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
   // Handle device click for path finding
   const handlePathDeviceClick = useCallback((devicePK: string) => {
@@ -1594,19 +1756,18 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       const metroLinkPathIndices = metroLinkPathMap.get(link.pk)
       const isInAnyMetroPath = metroLinkPathIndices && metroLinkPathIndices.length > 0
       const isInSelectedMetroPath = metroPathSelectedPairs.length > 0 && metroLinkPathIndices?.some(idx => metroPathSelectedPairs.includes(idx))
-      // Multicast tree mode - now tracks publisher PKs for per-publisher coloring
-      const multicastLinkPublisherPKs = multicastLinkPathMap.get(link.pk)
-      const isInAnyMulticastTree = multicastLinkPublisherPKs && multicastLinkPublisherPKs.length > 0
+      // Multicast tree mode - check if link is in any tree path (for dimming only)
+      const isInAnyMulticastTree = multicastTreeLinkPKs.has(link.pk)
       const criticality = linkCriticalityMap.get(link.pk)
       const isRemovedLink = removalLink?.linkPK === link.pk
 
       // Determine display color based on mode
-      // Default to solid grey when no overlay is active (like graph view)
-      let displayColor = isDark ? '#4b5563' : '#9ca3af'
-      // Default weight is uniform; bandwidth overlay applies thickness based on capacity
+      // Default to cyan (dark) / blue (light) when no overlay is active (matches globe view)
+      let displayColor = isDark ? 'rgba(0,255,204,0.7)' : 'rgba(59,130,246,0.7)'
+      // Bandwidth sizing when overlay is active; uniform weight otherwise
       const defaultWeight = 1.5
       let displayWeight = bandwidthMode ? getBandwidthWeight(link.bandwidth_bps) : defaultWeight
-      let displayOpacity = 0.6
+      let displayOpacity = 0.7
       let useDash = false
 
       if (whatifRemovalMode && isRemovedLink) {
@@ -1727,19 +1888,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayColor = PATH_COLORS[firstPairIndex % PATH_COLORS.length]
         displayWeight = defaultWeight + 1
         displayOpacity = 0.3
-      } else if (multicastTreesMode && isInAnyMulticastTree && multicastLinkPublisherPKs) {
-        // Multicast tree: color by publisher (first publisher if multiple)
-        const firstPublisherPK = multicastLinkPublisherPKs[0]
-        const publisherColorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
-        displayColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
-        // If multiple publishers share this link, make it thicker and dashed
-        if (multicastLinkPublisherPKs.length > 1) {
-          displayWeight = defaultWeight + 4
-          useDash = true
-        } else {
-          displayWeight = defaultWeight + 2
-        }
-        displayOpacity = 0.9
       } else if (isSelected) {
         displayColor = '#3b82f6' // blue - selection color
         displayWeight = defaultWeight + 3
@@ -1748,6 +1896,11 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayColor = hoverHighlight
         displayWeight = defaultWeight + 2
         displayOpacity = 1
+      }
+
+      // Dim non-highlighted links when multicast overlay is active and dimming enabled
+      if (multicastTreesMode && dimOtherLinks && !isInAnyMulticastTree && !isSelected && !isHovered) {
+        displayOpacity = 0.08
       }
 
       return {
@@ -1760,6 +1913,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           opacity: displayOpacity,
           useDash,
           isSelected: isSelected ? 1 : 0,
+          latencyUs: link.latency_us ?? 0,
         },
         geometry: {
           type: 'LineString' as const,
@@ -1813,26 +1967,27 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       features,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, multicastLinkPathMap, multicastPublisherColorMap])
+  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, multicastTreeLinkPKs, dimOtherLinks])
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {
-    if (!showValidators) return { type: 'FeatureCollection' as const, features: [] }
+    if (visibleValidators.length === 0) return { type: 'FeatureCollection' as const, features: [] }
 
-    const validatorLinkColor = isDark ? '#7c3aed' : '#6d28d9'
-    const features = validators.map(validator => {
+    const defaultLinkColor = '#7c3aed'
+    const features = visibleValidators.map(validator => {
       const devicePos = devicePositions.get(validator.device_pk)
       if (!devicePos) return null
 
       const isHovered = hoveredValidator?.votePubkey === validator.vote_pubkey
+      const roleColor = multicastDeviceRoleColorMap.get(validator.device_pk)
 
       return {
         type: 'Feature' as const,
         properties: {
           votePubkey: validator.vote_pubkey,
-          color: isHovered ? hoverHighlight : validatorLinkColor,
-          weight: isHovered ? 2 : 1,
-          opacity: isHovered ? 0.9 : 0.4,
+          color: isHovered ? hoverHighlight : roleColor || defaultLinkColor,
+          weight: isHovered ? 2 : roleColor ? 1.5 : 1,
+          opacity: isHovered ? 0.9 : roleColor ? 0.6 : 0.4,
         },
         geometry: {
           type: 'LineString' as const,
@@ -1848,12 +2003,259 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       type: 'FeatureCollection' as const,
       features,
     }
-  }, [validators, devicePositions, showValidators, isDark, hoveredValidator, hoverHighlight])
+  }, [visibleValidators, devicePositions, isDark, hoveredValidator, hoverHighlight, multicastDeviceRoleColorMap])
+
+  // GeoJSON for per-publisher multicast tree lines (static, with offset curves)
+  const multicastTreeGeoJson = useMemo(() => {
+    if (!multicastTreesMode || !selectedMulticastGroup || multicastPublisherPaths.length === 0) {
+      return { type: 'FeatureCollection' as const, features: [] }
+    }
+    const features: GeoJSON.Feature<GeoJSON.LineString>[] = []
+    for (const { publisherPK, segments } of multicastPublisherPaths) {
+      const colorIndex = multicastPublisherColorMap.get(publisherPK) ?? 0
+      const mc = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
+      const color = isDark ? mc.dark : mc.light
+
+      for (const seg of segments) {
+        const canonicalKey = [seg.fromPK, seg.toPK].sort().join('|')
+        const pubs = multicastSegmentPublishers.get(canonicalKey) ?? [publisherPK]
+        const offset = getPublisherOffset(pubs.indexOf(publisherPK), pubs.length)
+
+        features.push({
+          type: 'Feature',
+          properties: {
+            pk: `mc-${publisherPK}-${seg.fromPK}-${seg.toPK}`,
+            color,
+            weight: 3.5,
+            opacity: 0.9,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: calculateCurvedPath(seg.from, seg.to, offset),
+          },
+        })
+      }
+    }
+    return { type: 'FeatureCollection' as const, features }
+  }, [multicastTreesMode, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, isDark])
+
+  // GeoJSON for animated multicast tree links overlay (per-publisher offset dots)
+  const multicastAnimatedGeoJson = useMemo(() => {
+    if (!multicastTreesMode || !animateFlow || !selectedMulticastGroup || multicastPublisherPaths.length === 0) {
+      return { type: 'FeatureCollection' as const, features: [] }
+    }
+    const features: GeoJSON.Feature<GeoJSON.LineString>[] = []
+    for (const { publisherPK, segments } of multicastPublisherPaths) {
+      const colorIndex = multicastPublisherColorMap.get(publisherPK) ?? 0
+      const mc = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
+      const color = isDark ? mc.dark : mc.light
+
+      for (const seg of segments) {
+        const canonicalKey = [seg.fromPK, seg.toPK].sort().join('|')
+        const pubs = multicastSegmentPublishers.get(canonicalKey) ?? [publisherPK]
+        const offset = getPublisherOffset(pubs.indexOf(publisherPK), pubs.length)
+
+        features.push({
+          type: 'Feature',
+          properties: {
+            pk: `mc-anim-${publisherPK}-${seg.fromPK}-${seg.toPK}`,
+            color,
+            weight: 3.5,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: calculateCurvedPath(seg.from, seg.to, offset),
+          },
+        })
+      }
+    }
+    // Add validator-to-device flow lines (only for pub/sub validators shown on tree)
+    if (showTreeValidators) {
+      for (const v of multicastTreeValidators) {
+        const devicePos = devicePositions.get(v.device_pk)
+        if (!devicePos) continue
+        const roleColor = multicastDeviceRoleColorMap.get(v.device_pk)
+        const color = roleColor || (isDark ? '#a855f7' : '#7c3aed')
+        const isPub = multicastPublisherDevices.has(v.device_pk)
+        // Publishers: flow from validator → device; Subscribers: flow from device → validator
+        const from: [number, number] = isPub ? [v.longitude, v.latitude] : devicePos
+        const to: [number, number] = isPub ? devicePos : [v.longitude, v.latitude]
+        features.push({
+          type: 'Feature',
+          properties: {
+            pk: `mc-val-${v.vote_pubkey}`,
+            color,
+            weight: 3,
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [from, to],
+          },
+        })
+      }
+    }
+
+    return { type: 'FeatureCollection' as const, features }
+  }, [multicastTreesMode, animateFlow, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, isDark, showTreeValidators, multicastTreeValidators, devicePositions, multicastDeviceRoleColorMap, multicastPublisherDevices])
+
+  // animatedDotsRef kept for external consumers (e.g. hover hit-testing)
+  const animatedDotsRef = useRef<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] })
+
+  // Refs so the rAF loop always reads latest values without effect re-runs
+  const linkGeoJsonRef = useRef(linkGeoJson)
+  linkGeoJsonRef.current = linkGeoJson
+  const linkAnimatingRef = useRef(linkAnimating)
+  linkAnimatingRef.current = linkAnimating
+  const isDarkRef = useRef(isDark)
+  isDarkRef.current = isDark
+
+  // Animate flowing dots along links (matches globe animated arcs, works with all overlays).
+  // Persistent rAF loop reads refs for latest state; only handles link dots.
+  useEffect(() => {
+    const map = mapRef.current?.getMap()
+    if (!map || !mapReady) return
+
+    const srcId = 'link-flow-dots'
+    const layerId = 'link-flow-dots-layer'
+    const DOTS_PER_LINK = 2
+    const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
+
+    const getCycleDuration = (latencyUs: number): number => {
+      // 0 or missing latency = unknown; use a calm default
+      if (!latencyUs || latencyUs <= 0) return 2000
+      const latencyMs = latencyUs / 1000
+      const clamped = Math.max(1, Math.min(200, latencyMs))
+      // Low latency (1ms) → 1200ms cycle (fast), high latency (200ms) → 3600ms cycle (slow)
+      return 1200 + (Math.log(clamped) / Math.log(200)) * 2400
+    }
+
+    const paint = {
+      'circle-radius': 2.5,
+      'circle-color': ['get', 'color'],
+      'circle-opacity': 0.8,
+    }
+
+    const ensureLayer = () => {
+      try {
+        if (!map.isStyleLoaded()) return false
+        if (!map.getSource(srcId)) {
+          map.addSource(srcId, { type: 'geojson', data: EMPTY })
+        }
+        if (!map.getLayer(layerId)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          map.addLayer({ id: layerId, type: 'circle', source: srcId, paint } as any)
+        }
+        return true
+      } catch { return false }
+    }
+
+    const setData = (data: GeoJSON.FeatureCollection) => {
+      try {
+        const src = map.getSource(srcId)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (src && 'setData' in src) (src as any).setData(data)
+      } catch { /* noop */ }
+    }
+
+    let frameId: number
+    const tick = (timestamp: number) => {
+      if (!linkAnimatingRef.current) {
+        setData(EMPTY)
+      } else if (ensureLayer()) {
+        const features = linkGeoJsonRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
+        const points: GeoJSON.Feature<GeoJSON.Point>[] = []
+
+        for (const feature of features) {
+          const props = feature.properties as Record<string, unknown>
+          if (typeof props?.opacity === 'number' && props.opacity < 0.2) continue
+
+          const color = (props?.color as string) ?? (isDarkRef.current ? '#00ffcc' : '#3b82f6')
+          const latencyUs = (props?.latencyUs as number) ?? 0
+          const cycleDuration = getCycleDuration(latencyUs)
+          const t = (timestamp % cycleDuration) / cycleDuration
+
+          const coords = feature.geometry.coordinates as [number, number][]
+          for (let i = 0; i < DOTS_PER_LINK; i++) {
+            const dotT = (t + i / DOTS_PER_LINK) % 1
+            const pos = interpolateAlongPath(coords, dotT)
+            points.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: pos },
+              properties: { color },
+            })
+          }
+        }
+        setData({ type: 'FeatureCollection', features: points })
+      }
+
+      frameId = requestAnimationFrame(tick)
+    }
+
+    frameId = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(frameId)
+      try {
+        if (map.getLayer(layerId)) map.removeLayer(layerId)
+        if (map.getSource(srcId)) map.removeSource(srcId)
+      } catch { /* noop */ }
+    }
+  }, [mapReady])
+
+  // Multicast flow dots — declarative Source/Layer driven by state updated from rAF.
+  const [multicastDotsGeoJson, setMulticastDotsGeoJson] = useState<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] })
+
+  useEffect(() => {
+    if (!multicastTreesMode || !animateFlow || multicastAnimatedGeoJson.features.length === 0) {
+      setMulticastDotsGeoJson({ type: 'FeatureCollection', features: [] })
+      return
+    }
+
+    const MC_DOTS = 3
+    const MC_SPEED = 0.0003
+    let frameId: number
+    let lastUpdate = 0
+
+    const tick = (timestamp: number) => {
+      // Throttle state updates to ~30fps to avoid excessive renders
+      if (timestamp - lastUpdate < 33) {
+        frameId = requestAnimationFrame(tick)
+        return
+      }
+      lastUpdate = timestamp
+
+      const features = multicastAnimatedGeoJson.features as GeoJSON.Feature<GeoJSON.LineString>[]
+      const t = (timestamp * MC_SPEED) % 1
+      const points: GeoJSON.Feature<GeoJSON.Point>[] = []
+
+      for (const feature of features) {
+        const coords = feature.geometry.coordinates as [number, number][]
+        const color = (feature.properties as Record<string, unknown>)?.color ?? '#a855f7'
+        for (let i = 0; i < MC_DOTS; i++) {
+          const dotT = (t + i / MC_DOTS) % 1
+          const pos = interpolateAlongPath(coords, dotT)
+          points.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: pos },
+            properties: { color },
+          })
+        }
+      }
+
+      const fc = { type: 'FeatureCollection' as const, features: points }
+      animatedDotsRef.current = fc
+      setMulticastDotsGeoJson(fc)
+
+      frameId = requestAnimationFrame(tick)
+    }
+
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [multicastTreesMode, animateFlow, multicastAnimatedGeoJson])
 
   // Colors
-  const deviceColor = isDark ? '#6b7280' : '#1f2937' // neutral grey/dark - overlays will override
-  const metroColor = isDark ? '#4b5563' : '#9ca3af' // gray
-  const validatorColor = isDark ? '#a855f7' : '#9333ea' // purple
+  const deviceColor = '#00ffcc' // vibrant cyan - matches globe view, overlays will override
+  const metroColor = '#00ccaa' // muted cyan - matches globe view
+  const validatorColor = '#a855f7' // purple - matches globe view
   const selectionColor = '#3b82f6' // blue - consistent with graph view
 
   // Build hover info for links
@@ -1952,6 +2354,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const additionSourceParam = searchParams.get('addition_source')
     const additionTargetParam = searchParams.get('addition_target')
     const impactDevicesParam = searchParams.get('impact_devices')
+    const multicastParam = searchParams.get('multicast')
 
     // Restore path mode
     if (pathSourceParam || pathTargetParam) {
@@ -2127,9 +2530,27 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       return
     }
 
+    // Restore multicast group selection and disabled publishers/subscribers
+    if (multicastParam) {
+      const codes = multicastParam.split(',').filter(Boolean)
+      if (codes.length > 0) {
+        setSelectedMulticastGroup(codes[0] ?? null)
+        if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
+        openPanel('overlay')
+      }
+      const pubOffParam = searchParams.get('mc_pub_off')
+      const subOffParam = searchParams.get('mc_sub_off')
+      if (pubOffParam) {
+        initialDisabledPubsRef.current = new Set(pubOffParam.split(',').filter(Boolean))
+      }
+      if (subOffParam) {
+        initialDisabledSubsRef.current = new Set(subOffParam.split(',').filter(Boolean))
+      }
+    }
+
     // No mode params to restore
     setModeParamsRestored(true)
-  }, [modeParamsRestored, searchParams, deviceMap, linkMap, metroMap, mapReady, mode, setMode, openPanel, impactDevices, toggleImpactDevice])
+  }, [modeParamsRestored, searchParams, deviceMap, linkMap, metroMap, mapReady, mode, setMode, openPanel, impactDevices, toggleImpactDevice, overlays.multicastTrees, toggleOverlay])
 
   // Restore selected item from URL params when they change
   // Track last processed params to avoid re-processing the same selection
@@ -2343,6 +2764,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const handleLinkMouseEnter = useCallback((e: MapLayerMouseEvent) => {
     if (e.features && e.features[0]) {
       const pk = e.features[0].properties?.pk
+
+      // Skip hover on dimmed links when multicast overlay is active
+      if (multicastTreesMode && dimOtherLinks && pk && !multicastTreeLinkPKs.has(pk)) {
+        return
+      }
+
       const props = e.features[0].properties
 
       // Handle inter-metro links
@@ -2386,7 +2813,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setHoveredLink(buildLinkInfo(link))
       }
     }
-  }, [linkMap, buildLinkInfo])
+  }, [linkMap, buildLinkInfo, multicastTreesMode, dimOtherLinks, multicastTreeLinkPKs])
 
   const handleLinkMouseLeave = useCallback(() => {
     setHoveredLink(null)
@@ -2423,6 +2850,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onReset={fitBounds}
+          linkAnimating={linkAnimating}
+          onToggleLinkAnimation={() => setLinkAnimating(prev => !prev)}
         />
 
         {/* Link lines source and layers */}
@@ -2488,8 +2917,46 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           />
         </Source>
 
-        {/* Validator links (when toggled, hidden in path mode) */}
-        {showValidators && !pathModeEnabled && (
+        {/* Per-publisher multicast tree lines (each publisher gets its own offset curve) */}
+        {multicastTreesMode && multicastTreeGeoJson.features.length > 0 && (
+          <Source id="multicast-tree-lines" type="geojson" data={multicastTreeGeoJson}>
+            <Layer
+              id="multicast-tree-lines-layer"
+              type="line"
+              paint={{
+                'line-color': ['get', 'color'],
+                'line-width': ['get', 'weight'],
+                'line-opacity': ['get', 'opacity'],
+              }}
+              layout={{
+                'line-cap': 'round',
+                'line-join': 'round',
+              }}
+            />
+          </Source>
+        )}
+
+        {/* Multicast flow dots (animated dots along tree paths, declarative layer) */}
+        {multicastDotsGeoJson.features.length > 0 && (
+          <Source id="multicast-flow-dots" type="geojson" data={multicastDotsGeoJson}>
+            <Layer
+              id="multicast-flow-dots-layer"
+              type="circle"
+              paint={{
+                'circle-radius': 4,
+                'circle-color': ['get', 'color'],
+                'circle-opacity': 0.95,
+                'circle-stroke-width': 1,
+                'circle-stroke-color': 'rgba(0,0,0,0.3)',
+              }}
+            />
+          </Source>
+        )}
+
+        {/* Link flow dots are managed imperatively in a persistent rAF loop. */}
+
+        {/* Validator links (when toggled, hidden in path mode, or auto-shown for multicast tree) */}
+        {visibleValidators.length > 0 && (
           <Source id="validator-links" type="geojson" data={validatorLinksGeoJson}>
             <Layer
               id="validator-link-lines"
@@ -2570,9 +3037,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           const metroDevicePathIndices = metroDevicePathMap.get(device.pk)
           const isInSelectedMetroPath = metroPathSelectedPairs.length > 0 && metroDevicePathIndices?.some(idx => metroPathSelectedPairs.includes(idx))
           const isInAnyMetroPath = metroDevicePathIndices && metroDevicePathIndices.length > 0
-          // Multicast tree mode - tracks publisher PKs for per-publisher coloring
-          const multicastDevicePublisherPKs = multicastDevicePathMap.get(device.pk)
-          const isInAnyMulticastTree = multicastDevicePublisherPKs && multicastDevicePublisherPKs.length > 0
+          // Multicast tree mode
+          const isInAnyMulticastTree = multicastTreeDevicePKs.has(device.pk)
           const isMulticastPublisher = multicastPublisherDevices.has(device.pk)
           const isMulticastSubscriber = multicastSubscriberDevices.has(device.pk)
           // Check if device has ISIS data (can participate in path finding)
@@ -2715,7 +3181,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           } else if (multicastTreesMode && isMulticastPublisher) {
             // Multicast publisher: color by publisher's assigned color
             const publisherColorIndex = multicastPublisherColorMap.get(device.pk) ?? 0
-            markerColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
+            const mcPub = MULTICAST_PUBLISHER_COLORS[publisherColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+            markerColor = isDark ? mcPub.dark : mcPub.light
             borderColor = markerColor
             markerSize = 20
             borderWidth = 4
@@ -2727,11 +3194,13 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             markerSize = 18
             borderWidth = 3
             opacity = 1
-          } else if (multicastTreesMode && isInAnyMulticastTree && multicastDevicePublisherPKs) {
-            // Multicast transit: in tree path, color by first publisher
-            const firstPublisherPK = multicastDevicePublisherPKs[0]
-            const publisherColorIndex = multicastPublisherColorMap.get(firstPublisherPK) ?? 0
-            markerColor = PATH_COLORS[publisherColorIndex % PATH_COLORS.length]
+          } else if (multicastTreesMode && isInAnyMulticastTree) {
+            // Multicast transit: in tree path, color by first publisher found for this device
+            const firstPub = multicastPublisherPaths.find(pp => pp.segments.some(s => s.fromPK === device.pk || s.toPK === device.pk))
+            const firstPubPK = firstPub?.publisherPK
+            const publisherColorIndex = firstPubPK ? (multicastPublisherColorMap.get(firstPubPK) ?? 0) : 0
+            const mcTransit = MULTICAST_PUBLISHER_COLORS[publisherColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+            markerColor = isDark ? mcTransit.dark : mcTransit.light
             borderColor = markerColor
             markerSize = 14
             borderWidth = 2
@@ -2899,8 +3368,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           )
         })}
 
-        {/* Validator markers (when toggled, hidden in path mode) */}
-        {showValidators && !pathModeEnabled && validators.map(validator => {
+        {/* Validator markers (when toggled, hidden in path mode, or auto-shown for multicast tree) */}
+        {visibleValidators.length > 0 && visibleValidators.map(validator => {
           const devicePos = devicePositions.get(validator.device_pk)
           if (!devicePos) return null
 
@@ -2932,6 +3401,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           }
 
           const size = (isThisSelected ? baseRadius + 3 : isThisHovered ? baseRadius + 2 : baseRadius) * 2
+          const roleColor = multicastDeviceRoleColorMap.get(validator.device_pk)
 
           return (
             <Marker
@@ -2946,13 +3416,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
                   width: size,
                   height: size,
                   backgroundColor: validatorColor,
-                  border: `${isThisSelected ? 3 : isThisHovered ? 2 : 1}px solid ${isThisSelected ? selectionColor : hoverHighlight}`,
+                  border: `${isThisSelected ? 3 : isThisHovered ? 2 : roleColor ? 2 : 1}px solid ${isThisSelected ? selectionColor : isThisHovered ? hoverHighlight : roleColor || hoverHighlight}`,
                   opacity: isThisHovered || isThisSelected ? 1 : 0.9,
                   boxShadow: isThisSelected
                     ? `0 0 0 4px ${selectionColor}40, 0 0 12px ${selectionColor}60`
                     : isThisHovered
                       ? `0 0 0 2px ${hoverHighlight}40`
-                      : undefined,
+                      : roleColor
+                        ? `0 0 0 3px ${roleColor}50`
+                        : undefined,
                 }}
                 onMouseEnter={() => {
                   setHoveredValidator(validatorInfo)
@@ -3186,7 +3658,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Link Types' :
             stakeOverlayMode ? 'Stake' :
             isisHealthMode ? 'ISIS' :
-            bandwidthMode ? 'Bandwidth' :
             linkHealthMode ? 'Health' :
             trafficFlowMode ? 'Traffic' :
             criticalityOverlayEnabled ? 'Link Criticality' :
@@ -3200,7 +3671,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             linkTypeMode ? 'Links colored by type (fiber, wavelength, etc.).' :
             stakeOverlayMode ? 'Devices sized by validator stake.' :
             isisHealthMode ? 'Compare current topology to baseline.' :
-            bandwidthMode ? 'Links sized by bandwidth capacity.' :
             linkHealthMode ? 'Links colored by latency, jitter, and loss.' :
             trafficFlowMode ? 'Links sized by traffic volume.' :
             criticalityOverlayEnabled ? 'Links ranked by impact if removed.' :
@@ -3237,9 +3707,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               getDeviceLabel={(pk) => deviceMap.get(pk)?.code || pk.substring(0, 8)}
               isLoading={devices.length === 0}
             />
-          )}
-          {bandwidthMode && (
-            <BandwidthOverlayPanel />
           )}
           {isisHealthMode && (
             <ComparePanel
@@ -3299,20 +3766,21 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           {multicastTreesMode && (
             <MulticastTreesOverlayPanel
               isDark={isDark}
-              selectedGroups={selectedMulticastGroups}
-              onToggleGroup={handleToggleMulticastGroup}
-              onClearGroups={() => {
-                setSelectedMulticastGroups([])
-                setEnabledPublishers(new Set())
-                setEnabledSubscribers(new Set())
-              }}
+              selectedGroup={selectedMulticastGroup}
+              onSelectGroup={handleSelectMulticastGroup}
               groupDetails={multicastGroupDetails}
-              onLoadGroupDetail={handleLoadMulticastGroupDetail}
               enabledPublishers={enabledPublishers}
               enabledSubscribers={enabledSubscribers}
               onTogglePublisher={handleTogglePublisher}
               onToggleSubscriber={handleToggleSubscriber}
               publisherColorMap={multicastPublisherColorMap}
+              dimOtherLinks={dimOtherLinks}
+              onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
+              animateFlow={animateFlow}
+              onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
+              validators={validators}
+              showTreeValidators={showTreeValidators}
+              onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
             />
           )}
         </TopologyPanel>

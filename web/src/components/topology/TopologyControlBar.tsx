@@ -183,10 +183,13 @@ export function TopologyControlBar({
     toggleOverlay(overlay)
 
     if (!currentlyActive) {
-      openPanel('overlay')
+      // Bandwidth has no info panel — it's always-on sizing
+      if (overlay !== 'bandwidth') {
+        openPanel('overlay')
+      }
     } else {
       const otherOverlays = Object.entries(overlays)
-        .filter(([key]) => key !== overlay)
+        .filter(([key]) => key !== overlay && key !== 'bandwidth')
         .some(([, value]) => value)
 
       if (!otherOverlays && panel.content === 'overlay') {
@@ -501,21 +504,17 @@ export function TopologyControlBar({
             collapsed={collapsed}
           />
 
-          {/* Multicast Trees (Neo4j-dependent) */}
-          {hasNeo4j && (
-            <>
-              <SectionHeader title="Multicast Trees" collapsed={collapsed} />
+          {/* Multicast */}
+          <SectionHeader title="Multicast" collapsed={collapsed} />
 
-              <NavItem
-                icon={<Radio className="h-3.5 w-3.5" />}
-                label="Multicast"
-                onClick={() => handleToggleOverlay('multicastTrees')}
-                active={overlays.multicastTrees}
-                activeColor="purple"
-                collapsed={collapsed}
-              />
-            </>
-          )}
+          <NavItem
+            icon={<Radio className="h-3.5 w-3.5" />}
+            label="Multicast"
+            onClick={() => handleToggleOverlay('multicastTrees')}
+            active={overlays.multicastTrees}
+            activeColor="purple"
+            collapsed={collapsed}
+          />
         </div>
       </div>
     </div>

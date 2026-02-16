@@ -99,16 +99,16 @@ const DEFAULT_PANEL_WIDTH = 320
 // Parse overlays from URL param (comma-separated)
 // If no param, use view-specific defaults
 function parseOverlaysFromUrl(param: string | null, view: 'map' | 'graph' | 'globe'): OverlayState {
-  // Globe view defaults to no overlays to preserve the vibrant color scheme
-  const showTypeOverlays = view !== 'globe'
+  // Map and globe default to no overlays to preserve vibrant color scheme; graph uses type overlays
+  const showTypeOverlays = view === 'graph'
   const defaultState: OverlayState = {
     validators: false,
-    deviceType: showTypeOverlays,   // Default device overlay (except globe)
+    deviceType: showTypeOverlays,   // Default device overlay (graph only)
     stake: false,
     metroClustering: false,
     contributorDevices: false,
-    linkType: showTypeOverlays,     // Default link overlay (except globe)
-    bandwidth: false,
+    linkType: showTypeOverlays,     // Default link overlay (graph only)
+    bandwidth: true,              // Always on - sizing is the default visual
     linkHealth: false,
     trafficFlow: false,
     contributorLinks: false,
@@ -218,8 +218,8 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
 
   // Path-related modes that style edges (mutually exclusive with link overlays)
   const edgeStylingModes: TopologyMode[] = ['path', 'metro-path', 'whatif-removal', 'whatif-addition']
-  // Link overlays (defined here for use in setMode)
-  const linkOverlayKeys: (keyof OverlayState)[] = ['linkType', 'bandwidth', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
+  // Link overlays (defined here for use in setMode); bandwidth is independent (always-on sizing)
+  const linkOverlayKeys: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
 
   // Set mode with side effects
   const setMode = useCallback((newMode: TopologyMode) => {
@@ -235,10 +235,10 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
     if (newMode !== 'explore') {
       setPanel(prev => ({ ...prev, isOpen: true, content: 'mode' }))
 
-      // When entering an edge-styling mode, clear all link overlays
+      // When entering an edge-styling mode, clear all link overlays and multicast
       if (edgeStylingModes.includes(newMode)) {
         setOverlays(prev => {
-          const newState = { ...prev }
+          const newState = { ...prev, multicastTrees: false }
           for (const overlay of linkOverlayKeys) {
             newState[overlay] = false
           }
@@ -289,8 +289,8 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
 
   // Device overlays (mutually exclusive within group)
   const deviceOverlays: (keyof OverlayState)[] = ['deviceType', 'stake', 'metroClustering', 'contributorDevices']
-  // Link overlays (mutually exclusive within group)
-  const linkOverlays: (keyof OverlayState)[] = ['linkType', 'bandwidth', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
+  // Link overlays (mutually exclusive within group); bandwidth is independent (always-on sizing)
+  const linkOverlays: (keyof OverlayState)[] = ['linkType', 'linkHealth', 'trafficFlow', 'contributorLinks', 'criticality', 'isisHealth']
 
   // Overlay toggle - one device overlay + one link overlay allowed (validators independent)
   // Enabling a link overlay exits edge-styling modes (path, whatif)
@@ -307,17 +307,27 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
             if (other !== overlay) newState[other] = false
           }
         } else if (linkOverlays.includes(overlay)) {
-          // Turn off other link overlays
+          // Turn off other link overlays and multicast (both style edges)
           for (const other of linkOverlays) {
             if (other !== overlay) newState[other] = false
           }
+          newState.multicastTrees = false
           // Exit edge-styling modes when enabling a link overlay
           if (edgeStylingModes.includes(mode)) {
             setModeInternal('explore')
             setPanel(prev => prev.content === 'mode' ? { ...prev, isOpen: false } : prev)
           }
+        } else if (overlay === 'multicastTrees') {
+          // Multicast styles edges — turn off link overlays and exit edge-styling modes
+          for (const other of linkOverlays) {
+            newState[other] = false
+          }
+          if (edgeStylingModes.includes(mode)) {
+            setModeInternal('explore')
+            setPanel(prev => prev.content === 'mode' ? { ...prev, isOpen: false } : prev)
+          }
         }
-        // validators is independent, no conflicts
+        // validators and bandwidth are independent, no conflicts
       }
 
       // Update URL params
