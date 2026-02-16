@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Search,
   ZoomIn,
   ZoomOut,
   Maximize,
+  Minimize,
   Users,
   Route,
   Shield,
@@ -136,6 +137,26 @@ export function TopologyControlBar({
     const params = searchParams.toString()
     navigate(`/topology/${targetView}${params ? `?${params}` : ''}`)
   }
+
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    // Find the main content container (parent of the topology view)
+    const el = document.querySelector('[data-topology-container]') as HTMLElement | null
+    if (!el) return
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      el.requestFullscreen()
+    }
+  }, [])
 
   const STORAGE_KEY = 'topology-nav-collapsed'
 
@@ -299,6 +320,15 @@ export function TopologyControlBar({
               collapsed={collapsed}
             />
           )}
+
+          <NavItem
+            icon={isFullscreen ? <Minimize className="h-3.5 w-3.5" /> : <Maximize className="h-3.5 w-3.5" />}
+            label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            onClick={toggleFullscreen}
+            active={isFullscreen}
+            activeColor="blue"
+            collapsed={collapsed}
+          />
 
           {/* Find paths (Neo4j-dependent) */}
           {hasNeo4j && (

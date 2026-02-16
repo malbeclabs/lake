@@ -81,7 +81,7 @@ export function TopologyPage({ view }: TopologyPageProps) {
 
   return (
     <TopologyProvider view={view}>
-      <div className="absolute inset-0 z-0">
+      <div className="absolute inset-0 z-0 bg-background" data-topology-container>
         {view === 'map' && data && (
           <TopologyMap
             metros={data.metros}
