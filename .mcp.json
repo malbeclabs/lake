@@ -3,6 +3,10 @@
     "doublezero": {
       "type": "http",
       "url": "http://localhost:8080/api/mcp"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
     }
   }
 }
