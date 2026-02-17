@@ -4,6 +4,7 @@ import { execSync } from 'child_process'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 function getGitCommit(): string {
   // In CI, use the commit SHA passed via env var to match the API's build commit
@@ -34,7 +35,7 @@ function versionPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), versionPlugin()],
+  plugins: [react(), tailwindcss(), versionPlugin(), basicSsl()],
   define: {
     __BUILD_COMMIT__: JSON.stringify(buildCommit),
   },
