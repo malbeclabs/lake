@@ -29,7 +29,7 @@
     "clsx": "^2.1.1",
     "cytoscape": "^3.33.1",
     "globe.gl": "^2.45.0",
-    "lucide-react": "^0.563.0",
+    "lucide-react": "^0.574.0",
     "maplibre-gl": "^5.16.0",
     "marked": "^17.0.1",
     "react": "^19.2.0",
