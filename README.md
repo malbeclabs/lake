@@ -111,6 +111,9 @@ go run ./api/main.go
 cd web
 bun install
 bun dev
+
+# Optional: for non-localhost access (HTTPS needed for WebGPU)
+VITE_HTTPS=1 bun dev --host 0.0.0.0
 ```
 
 The web app will be at http://localhost:5173, API at http://localhost:8080.
