@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, Cell } from 'recharts'
-import { X } from 'lucide-react'
+import { X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import type { DiscardsPoint, DiscardSeriesInfo } from '@/lib/api'
 
@@ -61,6 +61,10 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
   const [searchText, setSearchText] = useState('')
+  const [searchExpanded, setSearchExpanded] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [sortBy, setSortBy] = useState<'value' | 'name'>('value')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [listHeight, setListHeight] = useState(() => calculateListHeight(series.length))
   const listContainerRef = useRef<HTMLDivElement>(null)
   const userHasResizedRef = useRef(false)
@@ -131,10 +135,16 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
     return [...series].sort((a, b) => b.total - a.total)
   }, [series])
 
-  // Sort filtered series by total
+  // Sort filtered series
   const sortedFilteredSeries = useMemo(() => {
-    return [...filteredSeries].sort((a, b) => b.total - a.total)
-  }, [filteredSeries])
+    return [...filteredSeries].sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1
+      if (sortBy === 'value') {
+        return (a.total - b.total) * dir
+      }
+      return a.key.localeCompare(b.key) * dir
+    })
+  }, [filteredSeries, sortBy, sortDir])
 
   // Transform data for Recharts - aggregate by time bucket with series as keys
   // Always show at least 24 time columns for consistent display
@@ -298,7 +308,7 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
       const end = Math.max(lastClickedIndex, filteredIndex)
       const newSelection = new Set(selectedSeries)
       for (let i = start; i <= end; i++) {
-        newSelection.add(filteredSeries[i].key)
+        newSelection.add(sortedFilteredSeries[i].key)
       }
       setSelectedSeries(newSelection)
     } else if (event.ctrlKey || event.metaKey) {
@@ -326,84 +336,120 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
 
   // Render the series list (shared between multiple render paths)
   const renderSeriesList = () => (
-    <div ref={listContainerRef} className="border border-border rounded-lg relative">
-      <div className="p-3 overflow-y-auto" style={{ height: `${listHeight}px` }}>
-        <div className="flex items-center gap-2 mb-2">
-          <div className="text-sm font-medium whitespace-nowrap">
-            Interfaces ({visibleSeriesList.length}/{sortedFilteredSeries.length})
-          </div>
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Filter"
-              className="w-full px-2 py-1 pr-7 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {searchText && (
+    <div ref={listContainerRef} className="relative" style={{ height: `${listHeight}px` }}>
+      <div className="flex flex-col h-full">
+        {/* Sticky header */}
+        <div className="flex-none px-3 pt-3">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="text-sm font-medium whitespace-nowrap">
+              Interfaces ({visibleSeriesList.length}/{sortedFilteredSeries.length})
+            </div>
+            {/* Collapsible search */}
+            {searchExpanded ? (
+              <div className="relative flex-1">
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  onBlur={() => { if (!searchText) setSearchExpanded(false) }}
+                  placeholder="Filter"
+                  className="w-full px-1.5 py-0.5 pr-6 text-xs bg-transparent border-b border-border focus:outline-none focus:border-foreground placeholder:text-muted-foreground/60"
+                />
+                {searchText && (
+                  <button
+                    onClick={() => { setSearchText(''); searchInputRef.current?.focus() }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            ) : (
               <button
-                onClick={() => setSearchText('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
-                aria-label="Clear search"
+                onClick={() => { setSearchExpanded(true); setTimeout(() => searchInputRef.current?.focus(), 0) }}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Search series"
               >
-                <X className="h-3 w-3" />
+                <Search className="h-3.5 w-3.5" />
               </button>
             )}
+            <button
+              onClick={() => {
+                const top10 = sortedSeries.slice(0, 10).map(s => s.key)
+                setSelectedSeries(new Set(top10))
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+            >
+              Top 10
+            </button>
+            <button
+              onClick={() => setSelectedSeries(new Set(filteredSeries.map(s => s.key)))}
+              className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+            >
+              All
+            </button>
+            <button
+              onClick={() => setSelectedSeries(new Set(['__none__']))}
+              className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+            >
+              None
+            </button>
           </div>
-          <button
-            onClick={() => {
-              const top10 = sortedSeries.slice(0, 10).map(s => s.key)
-              setSelectedSeries(new Set(top10))
-            }}
-            className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
-          >
-            Top 10
-          </button>
-          <button
-            onClick={() => setSelectedSeries(new Set(filteredSeries.map(s => s.key)))}
-            className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
-          >
-            All
-          </button>
-          <button
-            onClick={() => setSelectedSeries(new Set(['__none__']))}
-            className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
-          >
-            None
-          </button>
+          {/* Column headers */}
+          <div className="flex items-center justify-between px-2 mb-1">
+            <button
+              onClick={() => { setSortBy('name'); setSortDir(sortBy === 'name' ? (sortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
+              className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Name
+              {sortBy === 'name' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+            </button>
+            <button
+              onClick={() => { setSortBy('value'); setSortDir(sortBy === 'value' ? (sortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
+              className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Total
+              {sortBy === 'value' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+            </button>
+          </div>
         </div>
-        <div className="space-y-1">
-          {sortedFilteredSeries.map((s, filteredIndex) => {
-            const originalIndex = sortedSeries.indexOf(s)
-            const isSelected = visibleSeries.has(s.key)
-            const color = COLORS[originalIndex % COLORS.length]
-            return (
-              <div
-                key={s.key}
-                className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-muted transition-colors ${
-                  isSelected ? 'bg-muted' : ''
-                }`}
-                onClick={(e) => handleSeriesClick(s.key, filteredIndex, e)}
-              >
-                <div className="flex items-center space-x-2">
-                  <div
-                    className="w-3 h-3 rounded-sm"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="text-sm">{s.key}</span>
+        {/* Scrollable items */}
+        <div className="flex-1 overflow-y-auto px-3 pb-3">
+          <div className="space-y-1">
+            {sortedFilteredSeries.map((s, filteredIndex) => {
+              const originalIndex = sortedSeries.indexOf(s)
+              const isSelected = visibleSeries.has(s.key)
+              const color = COLORS[originalIndex % COLORS.length]
+              return (
+                <div
+                  key={s.key}
+                  className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
+                    isSelected ? '' : 'opacity-40'
+                  }`}
+                  onClick={(e) => handleSeriesClick(s.key, filteredIndex, e)}
+                >
+                  <div className="flex items-center space-x-2">
+                    <div
+                      className="w-3 h-3 rounded-sm"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="text-sm">{s.key}</span>
+                  </div>
+                  <span className="text-sm text-muted-foreground">
+                    {formatCount(s.total)}
+                  </span>
                 </div>
-                <span className="text-sm text-muted-foreground">
-                  {formatCount(s.total)} total
-                </span>
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       </div>
       <div
         onMouseDown={handleResizeStart}
         onDoubleClick={handleResizeDoubleClick}
-        className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-accent/50 transition-colors flex items-center justify-center rounded-b-lg"
+        className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-accent/50 transition-colors flex items-center justify-center"
       >
         <div className="w-12 h-1 bg-border rounded-full" />
       </div>

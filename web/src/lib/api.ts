@@ -3565,14 +3565,27 @@ export async function fetchTrafficData(
   timeRange: string = '12h',
   tunnelOnly: boolean = true,
   bucket: string = 'auto',
-  agg: string = 'max'
+  agg: string = 'max',
+  filters?: Record<string, string>,
+  metric?: string
 ): Promise<TrafficDataResponse> {
+  const hasCustomRange = filters?.start_time && filters?.end_time
   const params = new URLSearchParams({
-    time_range: timeRange,
     tunnel_only: String(tunnelOnly),
     bucket: bucket,
     agg: agg
   })
+  if (metric && metric !== 'throughput') {
+    params.set('metric', metric)
+  }
+  if (!hasCustomRange) {
+    params.set('time_range', timeRange)
+  }
+  if (filters) {
+    for (const [k, v] of Object.entries(filters)) {
+      if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
+    }
+  }
   const res = await fetchWithRetry(`/api/traffic/data?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch traffic data')
@@ -3604,16 +3617,267 @@ export interface DiscardsDataResponse {
 
 export async function fetchDiscardsData(
   timeRange: string = '12h',
-  bucket: string = 'auto'
+  bucket: string = 'auto',
+  filters?: Record<string, string>
 ): Promise<DiscardsDataResponse> {
+  const hasCustomRange = filters?.start_time && filters?.end_time
   const params = new URLSearchParams({
-    time_range: timeRange,
     bucket: bucket
   })
+  if (!hasCustomRange) {
+    params.set('time_range', timeRange)
+  }
+  if (filters) {
+    for (const [k, v] of Object.entries(filters)) {
+      if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
+    }
+  }
   const res = await fetchWithRetry(`/api/traffic/discards?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch discards data')
   }
+  return res.json()
+}
+
+// Traffic Dashboard types and functions
+
+export interface DashboardStressResponse {
+  timestamps: string[]
+  p50_in: number[]
+  p95_in: number[]
+  max_in: number[]
+  p50_out: number[]
+  p95_out: number[]
+  max_out: number[]
+  stressed_count: number[]
+  total_count: number[]
+  effective_bucket: string
+  groups?: DashboardStressGroup[]
+}
+
+export interface DashboardStressGroup {
+  key: string
+  label: string
+  p50_in: number[]
+  p95_in: number[]
+  max_in: number[]
+  p50_out: number[]
+  p95_out: number[]
+  max_out: number[]
+  stressed_count: number[]
+}
+
+export interface DashboardStressParams {
+  time_range?: string
+  bucket?: string
+  threshold?: number
+  group_by?: string
+  metric?: 'utilization' | 'throughput' | 'packets'
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+}
+
+export async function fetchDashboardStress(
+  params: DashboardStressParams = {}
+): Promise<DashboardStressResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/stress?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard stress data')
+  return res.json()
+}
+
+export interface DashboardTopEntity {
+  device_pk: string
+  device_code: string
+  intf: string
+  metro_code: string
+  link_type: string
+  contributor_code: string
+  bandwidth_bps: number
+  max_util: number
+  avg_util: number
+  p95_util: number
+  max_in_bps: number
+  max_out_bps: number
+}
+
+export interface DashboardTopResponse {
+  entities: DashboardTopEntity[]
+}
+
+export interface DashboardTopParams {
+  time_range?: string
+  entity?: 'device' | 'interface'
+  metric?: 'max_util' | 'p95_util' | 'avg_util' | 'max_throughput' | 'max_in_bps' | 'max_out_bps' | 'bandwidth_bps' | 'headroom'
+  dir?: 'asc' | 'desc'
+  limit?: number
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+}
+
+export async function fetchDashboardTop(
+  params: DashboardTopParams = {}
+): Promise<DashboardTopResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/top?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard top data')
+  return res.json()
+}
+
+export interface DashboardDrilldownPoint {
+  time: string
+  intf: string
+  in_bps: number
+  out_bps: number
+  in_discards: number
+  out_discards: number
+  in_pps: number
+  out_pps: number
+}
+
+export interface DashboardDrilldownSeries {
+  intf: string
+  bandwidth_bps: number
+  link_type: string
+}
+
+export interface DashboardDrilldownResponse {
+  points: DashboardDrilldownPoint[]
+  series: DashboardDrilldownSeries[]
+  effective_bucket: string
+}
+
+export interface DashboardDrilldownParams {
+  time_range?: string
+  start_time?: string
+  end_time?: string
+  bucket?: string
+  device_pk: string
+  intf?: string
+  intf_type?: string
+}
+
+export async function fetchDashboardDrilldown(
+  params: DashboardDrilldownParams
+): Promise<DashboardDrilldownResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/drilldown?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard drilldown data')
+  return res.json()
+}
+
+export interface DashboardBurstinessEntity {
+  device_pk: string
+  device_code: string
+  intf: string
+  metro_code: string
+  contributor_code: string
+  bandwidth_bps: number
+  p50_util: number
+  p99_util: number
+  burstiness: number
+  pct_time_stressed: number
+  p50_bps: number
+  p99_bps: number
+  peak_direction: 'rx' | 'tx'
+}
+
+export interface DashboardBurstinessResponse {
+  entities: DashboardBurstinessEntity[]
+}
+
+export interface DashboardBurstinessParams {
+  time_range?: string
+  sort?: 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 'p50_bps' | 'p99_bps'
+  dir?: 'asc' | 'desc'
+  limit?: number
+  threshold?: number
+  min_bps?: number
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+}
+
+export async function fetchDashboardBurstiness(
+  params: DashboardBurstinessParams = {}
+): Promise<DashboardBurstinessResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/burstiness?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard burstiness data')
+  return res.json()
+}
+
+// Dashboard health types and functions
+
+export interface DashboardHealthEntity {
+  device_pk: string
+  device_code: string
+  intf: string
+  metro_code: string
+  contributor_code: string
+  total_errors: number
+  total_discards: number
+  total_fcs_errors: number
+  total_carrier_transitions: number
+  total_events: number
+}
+
+export interface DashboardHealthResponse {
+  entities: DashboardHealthEntity[]
+}
+
+export interface DashboardHealthParams {
+  time_range?: string
+  sort?: 'total_events' | 'total_errors' | 'total_discards' | 'total_fcs_errors' | 'total_carrier_transitions'
+  dir?: 'asc' | 'desc'
+  limit?: number
+  metro?: string
+  device?: string
+  link_type?: string
+  contributor?: string
+  intf?: string
+  intf_type?: string
+  start_time?: string
+  end_time?: string
+  threshold?: string
+}
+
+export async function fetchDashboardHealth(
+  params: DashboardHealthParams = {}
+): Promise<DashboardHealthResponse> {
+  const searchParams = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') {
+      searchParams.set(key, String(value))
+    }
+  }
+  const res = await fetchWithRetry(`/api/traffic/dashboard/health?${searchParams}`)
+  if (!res.ok) throw new Error('Failed to fetch dashboard health data')
   return res.json()
 }
 
@@ -3920,8 +4184,14 @@ export interface FieldValuesResponse {
   values: string[]
 }
 
-export async function fetchFieldValues(entity: string, field: string): Promise<string[]> {
-  const res = await fetchWithRetry(`/api/dz/field-values?entity=${encodeURIComponent(entity)}&field=${encodeURIComponent(field)}`)
+export async function fetchFieldValues(entity: string, field: string, filters?: Record<string, string>): Promise<string[]> {
+  const params = new URLSearchParams({ entity, field })
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value)
+    }
+  }
+  const res = await fetchWithRetry(`/api/dz/field-values?${params}`)
   if (!res.ok) {
     return []
   }

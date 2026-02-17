@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, GripVertical, Check, RefreshCw } from 'lucide-react'
+import { ChevronDown, Loader2 } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
+import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
+import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 
 export interface LinkLookupInfo {
   pk: string
@@ -47,32 +49,6 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
   )
 }
 
-type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
-
-const timeRangeLabels: Record<TimeRange, string> = {
-  '1h': 'Last 1 Hour',
-  '3h': 'Last 3 Hours',
-  '6h': 'Last 6 Hours',
-  '12h': 'Last 12 Hours',
-  '24h': 'Last 24 Hours',
-  '3d': 'Last 3 Days',
-  '7d': 'Last 7 Days',
-}
-
-type BucketSize = '2 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | 'auto'
-
-const bucketLabels: Record<BucketSize, string> = {
-  '2 SECOND': '2 seconds',
-  '30 SECOND': '30 seconds',
-  '1 MINUTE': '1 minute',
-  '5 MINUTE': '5 minutes',
-  '10 MINUTE': '10 minutes',
-  '15 MINUTE': '15 minutes',
-  '30 MINUTE': '30 minutes',
-  '1 HOUR': '1 hour',
-  'auto': 'Auto',
-}
-
 type AggMethod = 'max' | 'avg'
 
 const aggLabels: Record<AggMethod, string> = {
@@ -82,16 +58,10 @@ const aggLabels: Record<AggMethod, string> = {
 
 type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel' | 'discards'
 
-const chartSectionLabels: Record<ChartSection, string> = {
-  'non-tunnel-stacked': 'Non-Tunnel Traffic (stacked)',
-  'non-tunnel': 'Non-Tunnel Traffic',
-  'tunnel-stacked': 'Tunnel Traffic (stacked)',
-  'tunnel': 'Tunnel Traffic',
-  'discards': 'Interface Discards',
-}
-
-// All known chart sections (used to detect new sections added after localStorage was saved)
 const ALL_KNOWN_SECTIONS: ChartSection[] = ['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards']
+
+const TUNNEL_SECTIONS: Set<ChartSection> = new Set(['tunnel-stacked', 'tunnel'])
+const NON_TUNNEL_SECTIONS: Set<ChartSection> = new Set(['non-tunnel-stacked', 'non-tunnel', 'discards'])
 
 type Layout = '1x4' | '2x2'
 
@@ -100,31 +70,14 @@ const layoutLabels: Record<Layout, string> = {
   '2x2': '2',
 }
 
-type RefreshInterval = 'never' | '30s' | '1m' | '10m' | '30m'
-
-const refreshIntervalLabels: Record<RefreshInterval, string> = {
-  'never': 'Never',
-  '30s': '30 seconds',
-  '1m': '1 minute',
-  '10m': '10 minutes',
-  '30m': '30 minutes',
-}
-
-const refreshIntervalMs: Record<RefreshInterval, number | false> = {
-  'never': false,
-  '30s': 30000,
-  '1m': 60000,
-  '10m': 600000,
-  '30m': 1800000,
-}
 
 
-function TimeRangeSelector({
+function AggSelector({
   value,
   onChange,
 }: {
-  value: TimeRange
-  onChange: (value: TimeRange) => void
+  value: AggMethod
+  onChange: (value: AggMethod) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
 
@@ -134,189 +87,28 @@ function TimeRangeSelector({
         onClick={() => setIsOpen(!isOpen)}
         className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
       >
-        {timeRangeLabels[value]}
+        Agg: {aggLabels[value]}
         <ChevronDown className="h-4 w-4" />
       </button>
       {isOpen && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[160px]">
-            {(['1h', '3h', '6h', '12h', '24h', '3d', '7d'] as TimeRange[]).map((range) => (
-              <button
-                key={range}
-                onClick={() => {
-                  onChange(range)
-                  setIsOpen(false)
-                }}
-                className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  value === range
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-              >
-                {timeRangeLabels[range]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function BucketSelector({
-  bucketValue,
-  aggValue,
-  effectiveBucket,
-  onBucketChange,
-  onAggChange,
-}: {
-  bucketValue: BucketSize
-  aggValue: AggMethod
-  effectiveBucket?: string
-  onBucketChange: (value: BucketSize) => void
-  onAggChange: (value: AggMethod) => void
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-
-  // Show effective bucket: for "auto" show the resolved value, for manual show if the API adjusted it
-  const effectiveLabel = effectiveBucket ? (bucketLabels[effectiveBucket as BucketSize] || effectiveBucket) : undefined
-  let displayBucket: string
-  if (bucketValue === 'auto' && effectiveLabel) {
-    displayBucket = `Auto (${effectiveLabel})`
-  } else if (effectiveBucket && effectiveBucket !== bucketValue) {
-    displayBucket = `${bucketLabels[bucketValue]} → ${effectiveLabel}`
-  } else {
-    displayBucket = bucketLabels[bucketValue]
-  }
-
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-      >
-        Coalesce: {displayBucket} ({aggLabels[aggValue]})
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[200px]">
-            <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground border-b border-border">
-              Bucket Size
-            </div>
-            {(['2 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', 'auto'] as BucketSize[]).map((bucket) => (
-              <button
-                key={bucket}
-                onClick={() => {
-                  onBucketChange(bucket)
-                }}
-                className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  bucketValue === bucket
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-              >
-                {bucketLabels[bucket]}
-              </button>
-            ))}
-            <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground border-t border-b border-border mt-1">
-              Aggregation
-            </div>
+          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[140px]">
             {(['max', 'avg'] as AggMethod[]).map((agg) => (
               <button
                 key={agg}
                 onClick={() => {
-                  onAggChange(agg)
+                  onChange(agg)
+                  setIsOpen(false)
                 }}
                 className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  aggValue === agg
+                  value === agg
                     ? 'bg-muted text-foreground'
                     : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                 }`}
               >
                 {aggLabels[agg]}
               </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function ShowGraphsSelector({
-  sections,
-  visibleSections,
-  onReorder,
-  onToggle,
-}: {
-  sections: ChartSection[]
-  visibleSections: Set<ChartSection>
-  onReorder: (sections: ChartSection[]) => void
-  onToggle: (section: ChartSection) => void
-}) {
-  const [isOpen, setIsOpen] = useState(false)
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
-
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedIndex(index)
-    e.dataTransfer.effectAllowed = 'move'
-  }
-
-  const handleDragOver = (e: React.DragEvent, index: number) => {
-    e.preventDefault()
-    if (draggedIndex === null || draggedIndex === index) return
-
-    const newSections = [...sections]
-    const draggedSection = newSections[draggedIndex]
-    newSections.splice(draggedIndex, 1)
-    newSections.splice(index, 0, draggedSection)
-
-    onReorder(newSections)
-    setDraggedIndex(index)
-  }
-
-  const handleDragEnd = () => {
-    setDraggedIndex(null)
-  }
-
-  const visibleCount = Array.from(visibleSections).filter(s => sections.includes(s)).length
-
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-      >
-        Show Graphs ({visibleCount}/{sections.length})
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[280px]">
-            {sections.map((section, index) => (
-              <div
-                key={section}
-                draggable
-                onDragStart={(e) => handleDragStart(e, index)}
-                onDragOver={(e) => handleDragOver(e, index)}
-                onDragEnd={handleDragEnd}
-                className={`flex items-center gap-2 px-3 py-1.5 text-sm transition-colors cursor-move ${
-                  draggedIndex === index ? 'opacity-50' : ''
-                }`}
-              >
-                <GripVertical className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                <button
-                  onClick={() => onToggle(section)}
-                  className="flex-1 flex items-center justify-between text-left hover:bg-muted/50 -m-1.5 p-1.5 rounded"
-                >
-                  <span className="text-foreground">{chartSectionLabels[section]}</span>
-                  {visibleSections.has(section) && <Check className="h-4 w-4 flex-shrink-0" />}
-                </button>
-              </div>
             ))}
           </div>
         </>
@@ -370,117 +162,13 @@ function LayoutSelector({
   )
 }
 
-function RefreshIntervalSelector({
-  value,
-  onChange,
-}: {
-  value: RefreshInterval
-  onChange: (value: RefreshInterval) => void
-}) {
-  const [isOpen, setIsOpen] = useState(false)
+function TrafficPageContent() {
+  const dashboardState = useDashboard()
+  const { timeRange, intfType, metric } = dashboardState
 
-  return (
-    <div className="relative inline-block">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-      >
-        Auto-refresh: {refreshIntervalLabels[value]}
-        <ChevronDown className="h-4 w-4" />
-      </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[180px]">
-            {(['never', '30s', '1m', '10m', '30m'] as RefreshInterval[]).map((interval) => (
-              <button
-                key={interval}
-                onClick={() => {
-                  onChange(interval)
-                  setIsOpen(false)
-                }}
-                className={`w-full px-3 py-1.5 text-left text-sm transition-colors ${
-                  value === interval
-                    ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-              >
-                {refreshIntervalLabels[interval]}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-export function TrafficPage() {
-  const [timeRange, setTimeRange] = useState<TimeRange>('6h')
-  const [bucketSize, setBucketSize] = useState<BucketSize>('auto')
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
-  const [chartSections, setChartSections] = useState<ChartSection[]>([
-    'non-tunnel-stacked',
-    'non-tunnel',
-    'tunnel-stacked',
-    'tunnel',
-    'discards',
-  ])
-  const [visibleSections, setVisibleSections] = useState<Set<ChartSection>>(
-    new Set(['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards'])
-  )
   const [layout, setLayout] = useState<Layout>('1x4')
-  const [refreshInterval, setRefreshInterval] = useState<RefreshInterval>('never')
-
-  // Load time range from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-time-range')
-    if (saved && saved in timeRangeLabels) {
-      setTimeRange(saved as TimeRange)
-    }
-  }, [])
-
-  // Load chart sections order from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-chart-sections')
-    if (saved) {
-      try {
-        const sections = JSON.parse(saved) as ChartSection[]
-        // Add any new sections that weren't in localStorage
-        const missingSections = ALL_KNOWN_SECTIONS.filter(s => !sections.includes(s))
-        if (missingSections.length > 0) {
-          const updatedSections = [...sections, ...missingSections]
-          setChartSections(updatedSections)
-          localStorage.setItem('traffic-chart-sections', JSON.stringify(updatedSections))
-        } else {
-          setChartSections(sections)
-        }
-      } catch {
-        // Ignore invalid data
-      }
-    }
-  }, [])
-
-  // Load visible sections from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-visible-sections')
-    if (saved) {
-      try {
-        const sections = JSON.parse(saved) as ChartSection[]
-        // Add any new sections that weren't in localStorage (make them visible by default)
-        const missingSections = ALL_KNOWN_SECTIONS.filter(s => !sections.includes(s))
-        if (missingSections.length > 0) {
-          const updatedSections = [...sections, ...missingSections]
-          setVisibleSections(new Set(updatedSections))
-          localStorage.setItem('traffic-visible-sections', JSON.stringify(updatedSections))
-        } else {
-          setVisibleSections(new Set(sections))
-        }
-      } catch {
-        // Ignore invalid data
-      }
-    }
-  }, [])
+  const [bidirectional, setBidirectional] = useState(true)
 
   // Load layout from localStorage
   useEffect(() => {
@@ -490,143 +178,84 @@ export function TrafficPage() {
     }
   }, [])
 
-  // Load refresh interval from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('traffic-refresh-interval')
-    if (saved && saved in refreshIntervalLabels) {
-      setRefreshInterval(saved as RefreshInterval)
-    }
-  }, [])
-
-  // Save time range to localStorage
-  const handleTimeRangeChange = (range: TimeRange) => {
-    setTimeRange(range)
-    localStorage.setItem('traffic-time-range', range)
-  }
-
-  // Update bucket size (not persisted)
-  const handleBucketSizeChange = (bucket: BucketSize) => {
-    setBucketSize(bucket)
-  }
-
-  // Update aggregation method (not persisted)
-  const handleAggMethodChange = (agg: AggMethod) => {
-    setAggMethod(agg)
-  }
-
-  // Save chart sections order to localStorage
-  const handleSectionsReorder = (sections: ChartSection[]) => {
-    setChartSections(sections)
-    localStorage.setItem('traffic-chart-sections', JSON.stringify(sections))
-  }
-
-  // Toggle section visibility
-  const handleSectionToggle = (section: ChartSection) => {
-    const newVisible = new Set(visibleSections)
-    if (newVisible.has(section)) {
-      newVisible.delete(section)
-    } else {
-      newVisible.add(section)
-    }
-    setVisibleSections(newVisible)
-    localStorage.setItem('traffic-visible-sections', JSON.stringify(Array.from(newVisible)))
-  }
-
   // Save layout to localStorage
   const handleLayoutChange = (newLayout: Layout) => {
     setLayout(newLayout)
     localStorage.setItem('traffic-layout', newLayout)
   }
 
-  // Save refresh interval to localStorage
-  const handleRefreshIntervalChange = (interval: RefreshInterval) => {
-    setRefreshInterval(interval)
-    localStorage.setItem('traffic-refresh-interval', interval)
-  }
-
   // Compute actual bucket size to send to API
   const actualBucketSize = useMemo(() => {
-    if (bucketSize === 'auto') {
-      // Auto-select based on time range
-      switch (timeRange) {
-        case '1h':
-        case '3h':
-        case '6h':
-        case '12h':
-          return '30 SECOND'
-        case '24h':
-          return '1 MINUTE'
-        case '3d':
-        case '7d':
-          return '5 MINUTE'
-        default:
-          return '30 SECOND'
-      }
+    if (dashboardState.bucket === 'auto') {
+      return resolveAutoBucket(timeRange)
     }
-    return bucketSize
-  }, [bucketSize, timeRange])
+    return dashboardState.bucket
+  }, [dashboardState.bucket, timeRange])
 
-  // Get refetch interval based on selected refresh interval
-  const refetchIntervalValue = useMemo(() => {
-    return refreshIntervalMs[refreshInterval]
-  }, [refreshInterval])
 
-  // Fetch tunnel data
+  // Determine which chart categories to show based on intf type filter
+  const showTunnelCharts = intfType === 'all' || intfType === 'tunnel'
+  const showNonTunnelCharts = intfType === 'all' || intfType === 'link' || intfType === 'other'
+
+  // Build dimension filter params from dashboard state.
+  // When intfType is 'all', intf_type is omitted and the per-chart tunnel_only
+  // param handles the tunnel/non-tunnel split. When a specific type is selected
+  // (link/tunnel/other), intf_type is passed through so the server filters to
+  // only that interface type.
+  const filterParams = useMemo(() => {
+    return dashboardFilterParams(dashboardState)
+  }, [dashboardState])
+
+  // Fetch tunnel data (only when tunnel charts are visible)
   const {
     data: tunnelData,
     isLoading: tunnelLoading,
+    isFetching: tunnelFetching,
     error: tunnelError,
-    refetch: refetchTunnel,
   } = useQuery({
-    queryKey: ['traffic', timeRange, true, actualBucketSize, aggMethod],
-    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod),
-    staleTime: 30000, // 30 seconds
-    refetchInterval: refetchIntervalValue,
+    queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams, metric],
+    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod, filterParams, metric),
+    staleTime: 30000,
+    refetchInterval: dashboardState.refetchInterval,
+    enabled: showTunnelCharts,
   })
 
-  // Fetch non-tunnel data
+  // Fetch non-tunnel data (only when non-tunnel charts are visible)
   const {
     data: nonTunnelData,
     isLoading: nonTunnelLoading,
+    isFetching: nonTunnelFetching,
     error: nonTunnelError,
-    refetch: refetchNonTunnel,
   } = useQuery({
-    queryKey: ['traffic', timeRange, false, actualBucketSize, aggMethod],
-    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod),
-    staleTime: 30000, // 30 seconds
-    refetchInterval: refetchIntervalValue,
+    queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams, metric],
+    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod, filterParams, metric),
+    staleTime: 30000,
+    refetchInterval: dashboardState.refetchInterval,
+    enabled: showNonTunnelCharts,
   })
 
   // Fetch topology data for link metadata
   const {
     data: topologyData,
-    refetch: refetchTopology,
   } = useQuery({
     queryKey: ['topology'],
     queryFn: () => fetchTopology(),
-    staleTime: 60000, // 1 minute
-    refetchInterval: refetchIntervalValue,
+    staleTime: 60000,
+    refetchInterval: dashboardState.refetchInterval,
   })
 
-  // Fetch discards data
+  // Fetch discards data (only when non-tunnel charts are visible)
   const {
     data: discardsData,
     isLoading: discardsLoading,
-    refetch: refetchDiscards,
+    isFetching: discardsFetching,
   } = useQuery({
-    queryKey: ['discards', timeRange, actualBucketSize],
-    queryFn: () => fetchDiscardsData(timeRange, actualBucketSize),
-    staleTime: 30000, // 30 seconds
-    refetchInterval: refetchIntervalValue,
+    queryKey: ['discards-intf', timeRange, actualBucketSize, filterParams],
+    queryFn: () => fetchDiscardsData(timeRange, actualBucketSize, filterParams),
+    staleTime: 30000,
+    refetchInterval: dashboardState.refetchInterval,
+    enabled: showNonTunnelCharts,
   })
-
-  // Manual refresh handler
-  const handleManualRefresh = () => {
-    refetchTunnel()
-    refetchNonTunnel()
-    refetchTopology()
-    refetchDiscards()
-  }
 
   // Build link lookup: device_pk + interface -> link info
   const linkLookup = useMemo(() => {
@@ -653,14 +282,26 @@ export function TrafficPage() {
     return map
   }, [topologyData])
 
+  // Check if a section should be shown based on intf type
+  const isSectionAllowed = (section: ChartSection): boolean => {
+    if (TUNNEL_SECTIONS.has(section)) return showTunnelCharts
+    if (NON_TUNNEL_SECTIONS.has(section)) return showNonTunnelCharts
+    return true
+  }
+
   // Render a chart section
   const renderChartSection = (section: ChartSection) => {
-    if (!visibleSections.has(section)) return null
+    if (!isSectionAllowed(section)) return null
 
     // Handle discards chart separately
     if (section === 'discards') {
       return (
-        <div key={section} className="border border-border rounded-lg p-4">
+        <div key={section} className="border border-border rounded-lg p-4 relative">
+          {discardsFetching && !discardsLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
           <LazyChart key={`${section}-${layout}`}>
             <DiscardsChart
               title="Interface Discards"
@@ -673,44 +314,54 @@ export function TrafficPage() {
       )
     }
 
-    let title = ''
     let isTunnel = false
     let stacked = false
 
     switch (section) {
       case 'non-tunnel-stacked':
-        title = 'Non-Tunnel Traffic Per Device & Interface (stacked)'
         isTunnel = false
         stacked = true
         break
       case 'non-tunnel':
-        title = 'Non-Tunnel Traffic Per Device & Interface'
         isTunnel = false
         stacked = false
         break
       case 'tunnel-stacked':
-        title = 'Tunnel Traffic Per Device & Interface (stacked)'
         isTunnel = true
         stacked = true
         break
       case 'tunnel':
-        title = 'Tunnel Traffic Per Device & Interface'
         isTunnel = true
         stacked = false
         break
     }
 
+    // Build title based on intf type filter and metric
+    const typeLabel = isTunnel
+      ? 'Tunnel'
+      : intfType === 'link' ? 'Link' : intfType === 'other' ? 'Other' : 'Non-Tunnel'
+    const metricLabel = metric === 'packets' ? 'Packets' : 'Traffic'
+    const title = `${typeLabel} ${metricLabel} Per Device & Interface${stacked ? ' (stacked)' : ''}`
+
     const data = isTunnel ? tunnelData : nonTunnelData
     const loading = isTunnel ? tunnelLoading : nonTunnelLoading
+    const fetching = isTunnel ? tunnelFetching : nonTunnelFetching
     const error = isTunnel ? tunnelError : nonTunnelError
 
     return (
-      <div key={section} className="border border-border rounded-lg p-4">
+      <div key={section} className="border border-border rounded-lg p-4 relative">
+        {fetching && !loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
         <LazyChart key={section}>
           {loading ? (
             <div className="flex flex-col space-y-2">
               <h3 className="text-lg font-semibold">{title}</h3>
-              <div className="animate-pulse bg-muted rounded h-[400px]" />
+              <div className="flex items-center justify-center h-[400px]">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
             </div>
           ) : error ? (
             <div className="flex flex-col space-y-2">
@@ -726,6 +377,9 @@ export function TrafficPage() {
               series={data.series}
               stacked={stacked}
               linkLookup={linkLookup}
+              bidirectional={bidirectional}
+              onTimeRangeSelect={dashboardState.setCustomRange}
+              metric={metric}
             />
           ) : (
             <div className="flex flex-col space-y-2">
@@ -746,47 +400,49 @@ export function TrafficPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         {/* Header */}
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-          <h1 className="text-2xl font-bold">Traffic</h1>
-          <div className="flex items-center gap-3 flex-wrap">
-            <ShowGraphsSelector
-              sections={chartSections}
-              visibleSections={visibleSections}
-              onReorder={handleSectionsReorder}
-              onToggle={handleSectionToggle}
-            />
-            <LayoutSelector value={layout} onChange={handleLayoutChange} />
-            <BucketSelector
-              bucketValue={bucketSize}
-              aggValue={aggMethod}
-              effectiveBucket={tunnelData?.effective_bucket ?? nonTunnelData?.effective_bucket}
-              onBucketChange={handleBucketSizeChange}
-              onAggChange={handleAggMethodChange}
-            />
-            <TimeRangeSelector value={timeRange} onChange={handleTimeRangeChange} />
-            <RefreshIntervalSelector value={refreshInterval} onChange={handleRefreshIntervalChange} />
+        <div className="flex flex-col gap-3 mb-6">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <h1 className="text-2xl font-bold">Interfaces</h1>
+            <DashboardFilters excludeMetrics={['utilization']} />
+          </div>
+          <DashboardFilterBadges />
+          <div className="flex items-center gap-3 flex-wrap justify-end">
             <button
-              onClick={handleManualRefresh}
-              className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors inline-flex items-center gap-1.5"
-              title="Refresh now"
+              onClick={() => setBidirectional(!bidirectional)}
+              className={`px-3 py-1.5 text-sm border rounded-md transition-colors inline-flex items-center gap-1.5 ${
+                bidirectional
+                  ? 'border-foreground/30 text-foreground bg-muted'
+                  : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+              title={bidirectional ? 'Rx and Tx are shown separately (Rx up, Tx down). Click to combine into a single line per interface.' : 'Rx and Tx are combined into a single line per interface. Click to split into separate Rx (up) and Tx (down).'}
             >
-              <RefreshCw className="h-4 w-4" />
+              {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
             </button>
+            <LayoutSelector value={layout} onChange={handleLayoutChange} />
+            <AggSelector value={aggMethod} onChange={setAggMethod} />
           </div>
         </div>
 
         {/* Truncation warning */}
         {(tunnelData?.truncated || nonTunnelData?.truncated) && (
-          <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-200">
+          <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-700 dark:text-yellow-200">
             Results were truncated due to data volume. Try a larger bucket size or shorter time range to see all data.
           </div>
         )}
 
         {/* Charts */}
         <div className={gridClass}>
-          {chartSections.map(section => renderChartSection(section))}
+          {ALL_KNOWN_SECTIONS.map(section => renderChartSection(section))}
         </div>
       </div>
     </div>
+  )
+}
+
+export function TrafficPage() {
+  return (
+    <DashboardProvider>
+      <TrafficPageContent />
+    </DashboardProvider>
   )
 }
