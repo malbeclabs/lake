@@ -89,6 +89,7 @@ export interface DashboardState {
   linkTypeFilter: string[]
   contributorFilter: string[]
   intfFilter: string[]
+  userKindFilter: string[]
 
   // Custom time range (unix seconds)
   customStart: number | null
@@ -111,6 +112,7 @@ export interface DashboardState {
   setLinkTypeFilter: (f: string[]) => void
   setContributorFilter: (f: string[]) => void
   setIntfFilter: (f: string[]) => void
+  setUserKindFilter: (f: string[]) => void
   setCustomRange: (start: number, end: number) => void
   clearCustomRange: () => void
   selectEntity: (e: SelectedEntity | null) => void
@@ -219,6 +221,7 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
   const linkTypeFilter = useMemo(() => parseList(searchParams.get('link_type')), [searchParams])
   const contributorFilter = useMemo(() => parseList(searchParams.get('contributor')), [searchParams])
   const intfFilter = useMemo(() => parseList(searchParams.get('intf')), [searchParams])
+  const userKindFilter = useMemo(() => parseList(searchParams.get('user_kind')), [searchParams])
 
   const selectedEntity = useMemo<SelectedEntity | null>(() => {
     const param = searchParams.get('sel')
@@ -320,6 +323,7 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
   const setLinkTypeFilter = useCallback((f: string[]) => setListParam('link_type', f), [setListParam])
   const setContributorFilter = useCallback((f: string[]) => setListParam('contributor', f), [setListParam])
   const setIntfFilter = useCallback((f: string[]) => setListParam('intf', f), [setListParam])
+  const setUserKindFilter = useCallback((f: string[]) => setListParam('user_kind', f), [setListParam])
 
   const setCustomRange = useCallback((start: number, end: number) => {
     setSearchParams(prev => {
@@ -383,6 +387,7 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
       prev.delete('link_type')
       prev.delete('contributor')
       prev.delete('intf')
+      prev.delete('user_kind')
       prev.delete('sel')
       prev.delete('pinned')
       return prev
@@ -393,12 +398,12 @@ export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRan
     <DashboardContext.Provider
       value={{
         timeRange, threshold, metric, groupBy, intfType, bucket, refreshInterval: refreshIntervalKey, refetchInterval,
-        metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter,
+        metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter,
         customStart, customEnd,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold: setThresholdAction, setMetric: setMetricAction, setGroupBy: setGroupByAction,
         setIntfType: setIntfTypeAction, setBucket: setBucketAction, setRefreshInterval,
-        setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter,
+        setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter, setUserKindFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
       }}
@@ -432,5 +437,6 @@ export function dashboardFilterParams(state: DashboardState): Record<string, str
   if (state.linkTypeFilter.length > 0) params.link_type = state.linkTypeFilter.join(',')
   if (state.contributorFilter.length > 0) params.contributor = state.contributorFilter.join(',')
   if (state.intfFilter.length > 0) params.intf = state.intfFilter.join(',')
+  if (state.userKindFilter.length > 0) params.user_kind = state.userKindFilter.join(',')
   return params
 }

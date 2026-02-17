@@ -5,11 +5,12 @@ import { fetchDashboardStress } from '@/lib/api'
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { cn } from '@/lib/utils'
 
-const groupByOptions = [
+const allGroupByOptions = [
   { value: 'metro', label: 'Metro' },
   { value: 'device', label: 'Device' },
   { value: 'link_type', label: 'Link Type' },
   { value: 'contributor', label: 'Contributor' },
+  { value: 'user_kind', label: 'User Kind' },
 ]
 
 function formatPercent(val: number): string {
@@ -79,6 +80,12 @@ export function LocalizationPanel() {
   const fmtVal = isUtil ? formatPercent : state.metric === 'packets' ? formatPps : formatRate
   const maxBar = Math.max(...groupStats.map(g => g.avgP95), 0.01)
 
+  // Only show "User Kind" group-by when viewing tunnel traffic
+  const groupByOptions = useMemo(() => {
+    if (state.intfType === 'tunnel') return allGroupByOptions
+    return allGroupByOptions.filter(o => o.value !== 'user_kind')
+  }, [state.intfType])
+
   const handleGroupClick = (key: string) => {
     const dim = state.groupBy
     switch (dim) {
@@ -108,6 +115,13 @@ export function LocalizationPanel() {
           state.setContributorFilter(state.contributorFilter.filter(f => f !== key))
         } else {
           state.setContributorFilter([...state.contributorFilter, key])
+        }
+        break
+      case 'user_kind':
+        if (state.userKindFilter.includes(key)) {
+          state.setUserKindFilter(state.userKindFilter.filter(f => f !== key))
+        } else {
+          state.setUserKindFilter([...state.userKindFilter, key])
         }
         break
     }

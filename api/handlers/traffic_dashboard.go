@@ -144,8 +144,9 @@ func dashboardTimeFilter(r *http.Request) (timeFilter string, bucketInterval str
 //   - filterSQL: clauses for dimension tables (m, d, l, co) with leading AND
 //   - intfFilterSQL: clause for f.intf with leading AND (must go in the CTE where f is in scope)
 //   - intfTypeSQL: clause for interface type filtering with leading AND (must go in CTE)
+//   - userKindSQL: clause for user kind filtering with leading AND (requires user join)
 //   - join flags indicating which dimension joins are needed
-func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) {
+func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin bool) {
 	var clauses []string
 
 	if metros := r.URL.Query().Get("metro"); metros != "" {
@@ -190,6 +191,16 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 		clauses = append(clauses, fmt.Sprintf("co.code IN (%s)", strings.Join(quoted, ",")))
 	}
 
+	if userKinds := r.URL.Query().Get("user_kind"); userKinds != "" {
+		needsUserJoin = true
+		vals := strings.Split(userKinds, ",")
+		quoted := make([]string, len(vals))
+		for i, v := range vals {
+			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
+		}
+		userKindSQL = fmt.Sprintf(" AND u.kind IN (%s)", strings.Join(quoted, ","))
+	}
+
 	if intfs := r.URL.Query().Get("intf"); intfs != "" {
 		vals := strings.Split(intfs, ",")
 		quoted := make([]string, len(vals))
@@ -231,8 +242,8 @@ func escapeSingleQuote(s string) string {
 // --- Query builders (exported for testing) ---
 
 // BuildStressQuery builds the ClickHouse query for the stress endpoint.
-func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64,
-	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin bool) (query string, grouped bool) {
+func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, threshold float64,
+	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin bool) (query string, grouped bool) {
 
 	// Determine group_by column and required joins
 	var groupBySelect string
@@ -254,6 +265,18 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		needsContributorJoin = true
 		grouped = true
 		groupBySelect = ", co.code AS group_key, co.name AS group_label"
+	case "user_kind":
+		needsUserJoin = true
+		grouped = true
+		groupBySelect = ", u.kind AS group_key, u.kind AS group_label"
+	}
+
+	// When user join is needed, pass user_tunnel_id through the CTEs
+	var userTunnelSelect, userTunnelGroupBy, userTunnelPassthrough string
+	if needsUserJoin {
+		userTunnelSelect = ", f.user_tunnel_id"
+		userTunnelGroupBy = ", f.user_tunnel_id"
+		userTunnelPassthrough = ", ir.user_tunnel_id"
 	}
 
 	// Build dimension join clauses
@@ -268,6 +291,9 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 	}
 	if needsContributorJoin {
 		dimJoins += " LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk"
+	}
+	if needsUserJoin {
+		dimJoins += " LEFT JOIN dz_users_current u ON ir.user_tunnel_id = u.tunnel_id"
 	}
 
 	// Build the metric expressions (separate in/out) and filter
@@ -322,7 +348,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		WITH interface_rates AS (
 			SELECT
 				toStartOfInterval(event_ts, INTERVAL %s) AS bucket_ts,
-				f.device_pk, f.intf, f.link_pk,
+				f.device_pk, f.intf, f.link_pk%s,
 				max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
 				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
 				max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
@@ -334,7 +360,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 				AND out_octets_delta >= 0
 				%s
 				%s
-			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk
+			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk%s
 		),
 		with_metric AS (
 			SELECT
@@ -342,26 +368,29 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 				%s AS metric_val_in,
 				%s AS metric_val_out
 				%s
+				%s
 			FROM interface_rates ir
 			%s
-			WHERE 1=1 %s
+			WHERE 1=1 %s%s
 		)
 		SELECT %s
 		FROM with_metric
 		WHERE 1=1 %s
 		GROUP BY %s
 		ORDER BY bucket_ts`,
-		bucketInterval, timeFilter,
+		bucketInterval, userTunnelSelect, timeFilter,
 		intfTypeSQL, intfFilterSQL,
+		userTunnelGroupBy,
 		metricExprIn, metricExprOut, groupBySelect,
-		dimJoins, filterSQL,
+		userTunnelPassthrough,
+		dimJoins, filterSQL, userKindSQL,
 		selectCols, metricFilter, groupByCols)
 
 	return
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
-func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, limit int) string {
+func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -389,6 +418,12 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 		orderCol = "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(ir.p95_in_bps, ir.p95_out_bps)"
 	}
 
+	// When user join is needed, add user_tunnel_id to CTE and join users in outer query
+	var userJoinSQL string
+	if needsUserJoin {
+		userJoinSQL = " LEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+	}
+
 	if entity == "device" {
 		// Device-level: aggregate across all interfaces per device.
 		// No link_pk in GROUP BY (a device has many links) → no utilization.
@@ -403,18 +438,19 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 		return fmt.Sprintf(`
 			WITH device_rates AS (
 				SELECT
-					f.device_pk,
+					f.device_pk AS device_pk,
 					max(f.in_octets_delta * 8 / f.delta_duration) AS max_in_bps,
 					max(f.out_octets_delta * 8 / f.delta_duration) AS max_out_bps,
 					avg(f.in_octets_delta * 8 / f.delta_duration) AS avg_in_bps,
 					avg(f.out_octets_delta * 8 / f.delta_duration) AS avg_out_bps,
 					quantile(0.95)(f.in_octets_delta * 8 / f.delta_duration) AS p95_in_bps,
 					quantile(0.95)(f.out_octets_delta * 8 / f.delta_duration) AS p95_out_bps
-				FROM fact_dz_device_interface_counters f
+				FROM fact_dz_device_interface_counters f%s
 				WHERE %s
 					AND f.delta_duration > 0
 					AND f.in_octets_delta >= 0
 					AND f.out_octets_delta >= 0
+					%s
 					%s
 					%s
 				GROUP BY f.device_pk
@@ -439,16 +475,24 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 			WHERE 1=1 %s
 			ORDER BY %s %s
 			LIMIT %d`,
-			timeFilter, intfTypeSQL, intfFilterSQL, filterSQL, orderCol, dir, limit)
+			userJoinSQL, timeFilter, intfTypeSQL, intfFilterSQL, userKindSQL, filterSQL, orderCol, dir, limit)
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
+	var userTunnelSelect, userTunnelGroupBy, userTunnelPassthrough, irUserJoinSQL string
+	if needsUserJoin {
+		userTunnelSelect = ",\n\t\t\t\tf.user_tunnel_id"
+		userTunnelGroupBy = ", f.user_tunnel_id"
+		userTunnelPassthrough = " LEFT JOIN dz_users_current u ON ir.user_tunnel_id = u.tunnel_id"
+		irUserJoinSQL = userKindSQL
+	}
+
 	return fmt.Sprintf(`
 		WITH interface_rates AS (
 			SELECT
 				f.device_pk,
 				f.intf,
-				f.link_pk,
+				f.link_pk%s,
 				max(f.in_octets_delta * 8 / f.delta_duration) AS max_in_bps,
 				max(f.out_octets_delta * 8 / f.delta_duration) AS max_out_bps,
 				avg(f.in_octets_delta * 8 / f.delta_duration) AS avg_in_bps,
@@ -462,7 +506,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 				AND f.out_octets_delta >= 0
 				%s
 				%s
-			GROUP BY f.device_pk, f.intf, f.link_pk
+			GROUP BY f.device_pk, f.intf, f.link_pk%s
 		)
 		SELECT
 			ir.device_pk,
@@ -487,11 +531,13 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 		INNER JOIN dz_devices_current d ON ir.device_pk = d.pk
 		LEFT JOIN dz_links_current l ON ir.link_pk = l.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
-		WHERE 1=1 %s
+		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk%s
+		WHERE 1=1 %s%s
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, intfTypeSQL, intfFilterSQL, filterSQL, orderCol, dir, limit)
+		userTunnelSelect, timeFilter, intfTypeSQL, intfFilterSQL,
+		userTunnelGroupBy,
+		userTunnelPassthrough, filterSQL, irUserJoinSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
@@ -521,7 +567,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
 // It pre-aggregates raw samples into time buckets (using max per bucket per interface)
 // before computing P50/P99, so the results align with what time-series charts display.
-func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, threshold float64, minBps float64, limit int) string {
+func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -545,13 +591,19 @@ func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filte
 		orderCol = "p99_bps"
 	}
 
+	var userJoinCTE, userKindFilter string
+	if needsUserJoin {
+		userJoinCTE = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userKindFilter = userKindSQL
+	}
+
 	return fmt.Sprintf(`
 		WITH bucketed AS (
 			SELECT
 				toStartOfInterval(f.event_ts, INTERVAL %s) AS bucket_ts,
-				f.device_pk,
-				f.intf,
-				f.link_pk,
+				f.device_pk AS device_pk,
+				f.intf AS intf,
+				f.link_pk AS link_pk,
 				max(greatest(
 					f.in_octets_delta * 8 / f.delta_duration,
 					f.out_octets_delta * 8 / f.delta_duration
@@ -570,11 +622,12 @@ func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filte
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
+			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk%s
 			WHERE %s
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
+				%s
 				%s
 				%s
 				%s
@@ -616,11 +669,11 @@ func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filte
 			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= %f)
 		ORDER BY %s %s
 		LIMIT %d`,
-		bucketInterval, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, threshold, minBps, orderCol, dir, limit)
+		bucketInterval, userJoinCTE, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter, threshold, minBps, orderCol, dir, limit)
 }
 
 // BuildHealthQuery builds the ClickHouse query for the interface health endpoint.
-func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL string, limit int) string {
+func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -642,19 +695,26 @@ func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL,
 		orderCol = "total_carrier_transitions"
 	}
 
+	var userJoinCTE, userKindFilter string
+	if needsUserJoin {
+		userJoinCTE = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userKindFilter = userKindSQL
+	}
+
 	return fmt.Sprintf(`
 		WITH health AS (
 			SELECT
-				f.device_pk,
-				f.intf,
-				f.link_pk,
+				f.device_pk AS device_pk,
+				f.intf AS intf,
+				f.link_pk AS link_pk,
 				sum(COALESCE(f.in_errors_delta, 0)) + sum(COALESCE(f.out_errors_delta, 0)) AS total_errors,
 				sum(COALESCE(f.in_discards_delta, 0)) + sum(COALESCE(f.out_discards_delta, 0)) AS total_discards,
 				sum(COALESCE(f.in_fcs_errors_delta, 0)) AS total_fcs_errors,
 				sum(COALESCE(f.carrier_transitions_delta, 0)) AS total_carrier_transitions,
 				count() AS sample_count
-			FROM fact_dz_device_interface_counters f
+			FROM fact_dz_device_interface_counters f%s
 			WHERE %s
+				%s
 				%s
 				%s
 			GROUP BY f.device_pk, f.intf, f.link_pk
@@ -679,7 +739,7 @@ func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL,
 		HAVING total_events > 0
 		ORDER BY %s %s
 		LIMIT %d`,
-		timeFilter, intfTypeSQL, intfFilterSQL,
+		userJoinCTE, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter,
 		filterSQL,
 		orderCol, dir, limit)
 }
@@ -722,9 +782,9 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin := buildDimensionFilters(r)
 
-	query := BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, limit)
+	query := BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -806,10 +866,10 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 		metric = "utilization"
 	}
 
-	filterSQL, intfFilterSQL, intfTypeSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
 
-	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, threshold,
-		needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin)
+	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, threshold,
+		needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -1003,9 +1063,9 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin := buildDimensionFilters(r)
 
-	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, limit)
+	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -1227,9 +1287,9 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, intfFilterSQL, intfTypeSQL, _, _, _, _ := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, threshold, minBps, limit)
+	query := BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

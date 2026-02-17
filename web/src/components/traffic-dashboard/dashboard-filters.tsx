@@ -108,6 +108,7 @@ const fieldPrefixes = [
   { prefix: 'intf:', description: 'Filter by interface name', contextKey: 'intf' },
   { prefix: 'link:', description: 'Filter by link type', contextKey: 'link_type' },
   { prefix: 'contributor:', description: 'Filter by contributor', contextKey: 'contributor' },
+  { prefix: 'user_kind:', description: 'Filter by user kind', contextKey: 'user_kind' },
 ] as const
 
 type ContextKey = typeof fieldPrefixes[number]['contextKey']
@@ -118,6 +119,7 @@ const autocompleteConfig: Record<string, { entity: string; field: string } | nul
   'intf': { entity: 'interfaces', field: 'intf' },
   'link': { entity: 'links', field: 'type' },
   'contributor': { entity: 'devices', field: 'contributor' },
+  'user_kind': { entity: 'users', field: 'kind' },
 }
 
 function DashboardSearch() {
@@ -127,6 +129,7 @@ function DashboardSearch() {
     linkTypeFilter, setLinkTypeFilter,
     contributorFilter, setContributorFilter,
     intfFilter, setIntfFilter,
+    userKindFilter, setUserKindFilter,
   } = useDashboard()
 
   // Build scope filters to pass to field-values API so autocomplete
@@ -138,8 +141,9 @@ function DashboardSearch() {
     if (linkTypeFilter.length > 0) f.link_type = linkTypeFilter.join(',')
     if (contributorFilter.length > 0) f.contributor = contributorFilter.join(',')
     if (intfFilter.length > 0) f.intf = intfFilter.join(',')
+    if (userKindFilter.length > 0) f.user_kind = userKindFilter.join(',')
     return Object.keys(f).length > 0 ? f : undefined
-  }, [metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter])
+  }, [metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter])
 
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -197,6 +201,7 @@ function DashboardSearch() {
       intf: { get: intfFilter, set: setIntfFilter },
       link_type: { get: linkTypeFilter, set: setLinkTypeFilter },
       contributor: { get: contributorFilter, set: setContributorFilter },
+      user_kind: { get: userKindFilter, set: setUserKindFilter },
     }
     const { get, set } = setters[contextKey]
     if (!get.includes(value)) {
@@ -204,7 +209,7 @@ function DashboardSearch() {
     }
     setQuery('')
     inputRef.current?.focus()
-  }, [metroFilter, setMetroFilter, deviceFilter, setDeviceFilter, intfFilter, setIntfFilter, linkTypeFilter, setLinkTypeFilter, contributorFilter, setContributorFilter])
+  }, [metroFilter, setMetroFilter, deviceFilter, setDeviceFilter, intfFilter, setIntfFilter, linkTypeFilter, setLinkTypeFilter, contributorFilter, setContributorFilter, userKindFilter, setUserKindFilter])
 
   const commitFilter = useCallback((filterStr: string) => {
     const colonIndex = filterStr.indexOf(':')
@@ -662,11 +667,13 @@ export function DashboardFilterBadges() {
     linkTypeFilter, setLinkTypeFilter,
     contributorFilter, setContributorFilter,
     intfFilter, setIntfFilter,
+    userKindFilter, setUserKindFilter,
     clearFilters,
   } = useDashboard()
 
   const hasFilters = metroFilter.length > 0 || deviceFilter.length > 0 ||
-    linkTypeFilter.length > 0 || contributorFilter.length > 0 || intfFilter.length > 0
+    linkTypeFilter.length > 0 || contributorFilter.length > 0 || intfFilter.length > 0 ||
+    userKindFilter.length > 0
 
   if (!hasFilters) return null
 
@@ -687,6 +694,9 @@ export function DashboardFilterBadges() {
       ))}
       {contributorFilter.map(v => (
         <FilterBadge key={`cont-${v}`} label={`Contributor: ${v}`} onRemove={() => setContributorFilter(contributorFilter.filter(f => f !== v))} />
+      ))}
+      {userKindFilter.map(v => (
+        <FilterBadge key={`uk-${v}`} label={`User Kind: ${v}`} onRemove={() => setUserKindFilter(userKindFilter.filter(f => f !== v))} />
       ))}
       <button
         onClick={clearFilters}

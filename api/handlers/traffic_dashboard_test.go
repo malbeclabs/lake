@@ -15,100 +15,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupDashboardSchema creates Memory engine tables for the traffic dashboard endpoints.
-func setupDashboardSchema(t *testing.T) {
-	ctx := t.Context()
-
-	tables := []string{
-		`CREATE TABLE IF NOT EXISTS fact_dz_device_interface_counters (
-			event_ts DateTime64(3),
-			device_pk String,
-			intf String,
-			link_pk String,
-			in_octets_delta Nullable(Int64),
-			out_octets_delta Nullable(Int64),
-			delta_duration Nullable(Float64),
-			in_discards_delta Nullable(Int64),
-			out_discards_delta Nullable(Int64),
-			user_tunnel_id Nullable(Int64),
-			in_pkts_delta Nullable(Int64),
-			out_pkts_delta Nullable(Int64),
-			in_errors_delta Nullable(Int64),
-			out_errors_delta Nullable(Int64),
-			in_fcs_errors_delta Nullable(Int64),
-			carrier_transitions_delta Nullable(Int64)
-		) ENGINE = Memory`,
-
-		`CREATE TABLE IF NOT EXISTS dz_devices_current (
-			pk String,
-			code String,
-			metro_pk String,
-			contributor_pk String
-		) ENGINE = Memory`,
-
-		`CREATE TABLE IF NOT EXISTS dz_links_current (
-			pk String,
-			bandwidth_bps Int64,
-			link_type String,
-			contributor_pk String
-		) ENGINE = Memory`,
-
-		`CREATE TABLE IF NOT EXISTS dz_metros_current (
-			pk String,
-			code String,
-			name String
-		) ENGINE = Memory`,
-
-		`CREATE TABLE IF NOT EXISTS dz_contributors_current (
-			pk String,
-			code String,
-			name String
-		) ENGINE = Memory`,
-	}
-
-	for _, ddl := range tables {
-		require.NoError(t, config.DB.Exec(ctx, ddl))
-	}
-}
-
 // seedDashboardData inserts dimension and fact data for testing dashboard queries.
 // Two devices in different metros with different link types, each with 3 recent samples.
+// Uses _history tables (SCD2 pattern) since the schema comes from migrations.
 func seedDashboardData(t *testing.T) {
 	ctx := t.Context()
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_metros_current VALUES
-		('metro-1', 'FRA', 'Frankfurt'), ('metro-2', 'AMS', 'Amsterdam')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
+		VALUES
+		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt'),
+		('metro-2', now(), now(), generateUUIDv4(), 0, 2, 'metro-2', 'AMS', 'Amsterdam')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_contributors_current VALUES
-		('contrib-1', 'ACME', 'Acme Corp'), ('contrib-2', 'BETA', 'Beta Inc')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
+		VALUES
+		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp'),
+		('contrib-2', now(), now(), generateUUIDv4(), 0, 2, 'contrib-2', 'BETA', 'Beta Inc')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_devices_current VALUES
-		('dev-1', 'ROUTER-FRA-1', 'metro-1', 'contrib-1'),
-		('dev-2', 'ROUTER-AMS-1', 'metro-2', 'contrib-2')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
+		VALUES
+		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0),
+		('dev-2', now(), now(), generateUUIDv4(), 0, 2, 'dev-2', 'active', 'router', 'ROUTER-AMS-1', '', 'contrib-2', 'metro-2', 0)`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_links_current VALUES
-		('link-1', 100000000000, 'WAN', 'contrib-1'),
-		('link-2', 10000000000, 'PNI', 'contrib-2')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
+		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
+		 committed_jitter_ns, bandwidth_bps, isis_delay_override_ns)
+		VALUES
+		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'active', '', '', 'contrib-1', '', '', '', '', 'WAN', 0, 0, 100000000000, 0),
+		('link-2', now(), now(), generateUUIDv4(), 0, 2, 'link-2', 'active', '', '', 'contrib-2', '', '', '', '', 'PNI', 0, 0, 10000000000, 0)`))
 
 	// Device 1: Port-Channel1000 on 100Gbps WAN link
 	// Device 2: Ethernet1/1 on 10Gbps PNI link
 	// Varying traffic levels to produce meaningful percentile spreads
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta)
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta)
 		VALUES
-		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Port-Channel1000', 'link-1', 300000000000, 200000000000, 30.0, 0, 0),
-		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Port-Channel1000', 'link-1', 350000000000, 250000000000, 30.0, 5, 2),
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Port-Channel1000', 'link-1', 100000000000, 50000000000, 30.0, 0, 0),
-		(now() - INTERVAL 30 MINUTE, 'dev-2', 'Ethernet1/1', 'link-2', 18750000000, 12500000000, 30.0, 0, 0),
-		(now() - INTERVAL 20 MINUTE, 'dev-2', 'Ethernet1/1', 'link-2', 22500000000, 15000000000, 30.0, 0, 1),
-		(now() - INTERVAL 10 MINUTE, 'dev-2', 'Ethernet1/1', 'link-2', 7500000000, 3750000000, 30.0, 0, 0)`))
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 300000000000, 200000000000, 30.0, 0, 0),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 350000000000, 250000000000, 30.0, 5, 2),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 100000000000, 50000000000, 30.0, 0, 0),
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-2', 'Ethernet1/1', 'link-2', 18750000000, 12500000000, 30.0, 0, 0),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-2', 'Ethernet1/1', 'link-2', 22500000000, 15000000000, 30.0, 0, 1),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-2', 'Ethernet1/1', 'link-2', 7500000000, 3750000000, 30.0, 0, 0)`))
 }
 
 // --- Stress endpoint tests ---
 
 func TestTrafficDashboardStress(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -157,8 +115,7 @@ func TestTrafficDashboardStress(t *testing.T) {
 }
 
 func TestTrafficDashboardStress_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress?time_range=1h", nil)
 	rr := httptest.NewRecorder()
@@ -175,8 +132,7 @@ func TestTrafficDashboardStress_Empty(t *testing.T) {
 // --- Top endpoint tests ---
 
 func TestTrafficDashboardTop(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -220,8 +176,7 @@ func TestTrafficDashboardTop(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top?time_range=1h", nil)
 	rr := httptest.NewRecorder()
@@ -236,8 +191,7 @@ func TestTrafficDashboardTop_Empty(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -266,8 +220,7 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -300,8 +253,7 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 }
 
 func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -329,8 +281,7 @@ func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h&intf=Port-Channel1000", nil)
@@ -348,50 +299,78 @@ func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 
 // seedTrafficTypeData inserts data with different traffic types: link, tunnel, and other.
 // Multiple samples per interface to produce meaningful percentile spreads for burstiness.
+// Uses _history tables (SCD2 pattern) since the schema comes from migrations.
 func seedTrafficTypeData(t *testing.T) {
 	ctx := t.Context()
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_metros_current VALUES
-		('metro-1', 'FRA', 'Frankfurt')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
+		VALUES
+		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_contributors_current VALUES
-		('contrib-1', 'ACME', 'Acme Corp')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
+		VALUES
+		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_devices_current VALUES
-		('dev-1', 'ROUTER-FRA-1', 'metro-1', 'contrib-1')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
+		VALUES
+		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0)`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_links_current VALUES
-		('link-1', 100000000000, 'WAN', 'contrib-1')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
+		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
+		 committed_jitter_ns, bandwidth_bps, isis_delay_override_ns)
+		VALUES
+		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'active', '', '', 'contrib-1', '', '', '', '', 'WAN', 0, 0, 100000000000, 0)`))
 
 	// Link interface: has link_pk (3 samples with varying traffic)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
-		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL),
-		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 200000000000, 100000000000, 30.0, 0, 0, NULL),
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 50000000000, 25000000000, 30.0, 0, 0, NULL)`))
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 200000000000, 100000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 50000000000, 25000000000, 30.0, 0, 0, NULL)`))
 
-	// Tunnel interface: has user_tunnel_id (3 samples with varying traffic)
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+	// Users: tunnel_id 42 = ibrl kind, tunnel_id 99 = validator kind
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_users_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id)
 		VALUES
-		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Tunnel100', '', 50000000000, 25000000000, 30.0, 0, 0, 42),
-		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Tunnel100', '', 100000000000, 50000000000, 30.0, 0, 0, 42),
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Tunnel100', '', 25000000000, 12500000000, 30.0, 0, 0, 42)`))
+		('user-1', now(), now(), generateUUIDv4(), 0, 1, 'user-1', 'pubkey1', 'active', 'ibrl', '', '10.0.0.1', 'dev-1', 42),
+		('user-2', now(), now(), generateUUIDv4(), 0, 2, 'user-2', 'pubkey2', 'active', 'validator', '', '10.0.0.2', 'dev-1', 99)`))
+
+	// Tunnel interface for user 42 (ibrl): 3 samples with varying traffic
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		VALUES
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Tunnel100', '', 50000000000, 25000000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Tunnel100', '', 100000000000, 50000000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Tunnel100', '', 25000000000, 12500000000, 30.0, 0, 0, 42)`))
+
+	// Tunnel interface for user 99 (validator): 3 samples with varying traffic
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		VALUES
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Tunnel200', '', 20000000000, 10000000000, 30.0, 0, 0, 99),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Tunnel200', '', 40000000000, 20000000000, 30.0, 0, 0, 99),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Tunnel200', '', 10000000000, 5000000000, 30.0, 0, 0, 99)`))
 
 	// Other interface: no link_pk, no user_tunnel_id (3 samples with varying traffic)
 	// Traffic must be above 1 Mbps (p50) to pass the burstiness minimum throughput filter.
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
-		(now() - INTERVAL 30 MINUTE, 'dev-1', 'Loopback0', '', 10000000000, 5000000000, 30.0, 0, 0, NULL),
-		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Loopback0', '', 30000000000, 15000000000, 30.0, 0, 0, NULL),
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Loopback0', '', 5000000000, 2500000000, 30.0, 0, 0, NULL)`))
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Loopback0', '', 10000000000, 5000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Loopback0', '', 30000000000, 15000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Loopback0', '', 5000000000, 2500000000, 30.0, 0, 0, NULL)`))
 }
 
 func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
 	tests := []struct {
@@ -402,12 +381,12 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 		{
 			name:      "all_traffic",
 			query:     "?time_range=1h&entity=interface",
-			wantIntfs: []string{"Ethernet1", "Loopback0", "Tunnel100"},
+			wantIntfs: []string{"Ethernet1", "Loopback0", "Tunnel100", "Tunnel200"},
 		},
 		{
 			name:      "all_traffic_explicit",
 			query:     "?time_range=1h&entity=interface&intf_type=all",
-			wantIntfs: []string{"Ethernet1", "Loopback0", "Tunnel100"},
+			wantIntfs: []string{"Ethernet1", "Loopback0", "Tunnel100", "Tunnel200"},
 		},
 		{
 			name:      "link_only",
@@ -417,7 +396,7 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 		{
 			name:      "tunnel_only",
 			query:     "?time_range=1h&entity=interface&intf_type=tunnel",
-			wantIntfs: []string{"Tunnel100"},
+			wantIntfs: []string{"Tunnel100", "Tunnel200"},
 		},
 		{
 			name:      "other_only",
@@ -448,8 +427,7 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 }
 
 func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
 	tests := []struct {
@@ -478,8 +456,7 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
 	tests := []struct {
@@ -490,17 +467,17 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 		{
 			name:      "all_traffic",
 			query:     "?time_range=1h",
-			wantIntfs: []string{"Ethernet1", "Tunnel100", "Loopback0"},
+			wantIntfs: []string{"Ethernet1", "Tunnel100", "Tunnel200", "Loopback0"},
 		},
 		{
 			name:      "all_traffic_explicit",
 			query:     "?time_range=1h&intf_type=all",
-			wantIntfs: []string{"Ethernet1", "Tunnel100", "Loopback0"},
+			wantIntfs: []string{"Ethernet1", "Tunnel100", "Tunnel200", "Loopback0"},
 		},
 		{
 			name:      "tunnel_only",
 			query:     "?time_range=1h&intf_type=tunnel",
-			wantIntfs: []string{"Tunnel100"},
+			wantIntfs: []string{"Tunnel100", "Tunnel200"},
 		},
 		{
 			name:      "other_only",
@@ -538,11 +515,165 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 	}
 }
 
+// --- User kind filter tests ---
+// These tests verify that user_kind filtering works across all dashboard endpoints.
+// The dz_users_current table has a device_pk column which previously caused
+// ClickHouse column resolution errors when joined (ambiguity between f.device_pk
+// and u.device_pk in CTEs).
+
+func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedTrafficTypeData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"user_kind_filter", "?time_range=1h&metric=throughput&intf_type=tunnel&user_kind=ibrl"},
+		{"user_kind_filter_multi", "?time_range=1h&metric=throughput&intf_type=tunnel&user_kind=ibrl,validator"},
+		{"user_kind_group_by", "?time_range=1h&metric=throughput&intf_type=tunnel&group_by=user_kind"},
+		{"user_kind_group_by_with_filter", "?time_range=1h&metric=throughput&intf_type=tunnel&group_by=user_kind&user_kind=ibrl"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardStress(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.StressResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
+}
+
+func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedTrafficTypeData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantIntfs []string
+	}{
+		{
+			name:      "filter_ibrl",
+			query:     "?time_range=1h&entity=interface&intf_type=tunnel&user_kind=ibrl",
+			wantIntfs: []string{"Tunnel100"},
+		},
+		{
+			name:      "filter_validator",
+			query:     "?time_range=1h&entity=interface&intf_type=tunnel&user_kind=validator",
+			wantIntfs: []string{"Tunnel200"},
+		},
+		{
+			name:      "filter_both",
+			query:     "?time_range=1h&entity=interface&intf_type=tunnel&user_kind=ibrl,validator",
+			wantIntfs: []string{"Tunnel100", "Tunnel200"},
+		},
+		{
+			name:      "device_level_filter",
+			query:     "?time_range=1h&entity=device&intf_type=tunnel&user_kind=ibrl",
+			wantIntfs: nil, // device-level has empty intf
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardTop(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.TopResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			if tt.wantIntfs != nil {
+				var gotIntfs []string
+				for _, e := range resp.Entities {
+					gotIntfs = append(gotIntfs, e.Intf)
+				}
+				assert.ElementsMatch(t, tt.wantIntfs, gotIntfs)
+			} else {
+				assert.NotEmpty(t, resp.Entities)
+			}
+		})
+	}
+}
+
+func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedTrafficTypeData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantIntfs []string
+	}{
+		{
+			name:      "filter_ibrl",
+			query:     "?time_range=1h&intf_type=tunnel&user_kind=ibrl",
+			wantIntfs: []string{"Tunnel100"},
+		},
+		{
+			name:      "filter_validator",
+			query:     "?time_range=1h&intf_type=tunnel&user_kind=validator",
+			wantIntfs: []string{"Tunnel200"},
+		},
+		{
+			name:      "filter_both",
+			query:     "?time_range=1h&intf_type=tunnel&user_kind=ibrl,validator",
+			wantIntfs: []string{"Tunnel100", "Tunnel200"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardBurstiness(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.BurstinessResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			var gotIntfs []string
+			for _, e := range resp.Entities {
+				gotIntfs = append(gotIntfs, e.Intf)
+			}
+			assert.ElementsMatch(t, tt.wantIntfs, gotIntfs)
+		})
+	}
+}
+
+func TestTrafficDashboardHealth_WithUserKind(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedTrafficTypeData(t)
+
+	// Health endpoint should succeed with user_kind filter (even if no events match,
+	// the query must not error out due to column resolution)
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=tunnel&user_kind=ibrl", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficDashboardHealth(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.HealthResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+}
+
 // --- Drilldown endpoint tests ---
 
 func TestTrafficDashboardDrilldown(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	// Use dynamic timestamps that cover the seeded data (now-30m to now)
@@ -581,8 +712,7 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 }
 
 func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown?time_range=1h&device_pk=nonexistent", nil)
 	rr := httptest.NewRecorder()
@@ -599,8 +729,7 @@ func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
 // --- Burstiness endpoint tests ---
 
 func TestTrafficDashboardBurstiness(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -637,8 +766,7 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 // --- Scoped field values tests ---
 
 func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
 	tests := []struct {
@@ -716,8 +844,7 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h", nil)
 	rr := httptest.NewRecorder()
@@ -734,55 +861,68 @@ func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 // --- Health endpoint tests ---
 
 // seedHealthData inserts data with nonzero error/discard/carrier values for health testing.
+// Uses _history tables (SCD2 pattern) since the schema comes from migrations.
 func seedHealthData(t *testing.T) {
 	ctx := t.Context()
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_metros_current VALUES
-		('metro-1', 'FRA', 'Frankfurt'), ('metro-2', 'AMS', 'Amsterdam')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
+		VALUES
+		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt'),
+		('metro-2', now(), now(), generateUUIDv4(), 0, 2, 'metro-2', 'AMS', 'Amsterdam')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_contributors_current VALUES
-		('contrib-1', 'ACME', 'Acme Corp')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
+		VALUES
+		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_devices_current VALUES
-		('dev-1', 'ROUTER-FRA-1', 'metro-1', 'contrib-1'),
-		('dev-2', 'ROUTER-AMS-1', 'metro-2', 'contrib-1')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
+		VALUES
+		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0),
+		('dev-2', now(), now(), generateUUIDv4(), 0, 2, 'dev-2', 'active', 'router', 'ROUTER-AMS-1', '', 'contrib-1', 'metro-2', 0)`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dz_links_current VALUES
-		('link-1', 100000000000, 'WAN', 'contrib-1')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
+		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
+		 committed_jitter_ns, bandwidth_bps, isis_delay_override_ns)
+		VALUES
+		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'active', '', '', 'contrib-1', '', '', '', '', 'WAN', 0, 0, 100000000000, 0)`))
 
 	// dev-1 Ethernet1: has errors and discards (link interface)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
 		 in_errors_delta, out_errors_delta, in_discards_delta, out_discards_delta,
 		 in_fcs_errors_delta, carrier_transitions_delta)
 		VALUES
-		(now() - INTERVAL 20 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000, 50000000, 30.0,
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 100000000, 50000000, 30.0,
 		 10, 5, 3, 2, 1, 0),
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Ethernet1', 'link-1', 100000000, 50000000, 30.0,
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 100000000, 50000000, 30.0,
 		 20, 10, 0, 0, 0, 2)`))
 
 	// dev-2 Ethernet2: has carrier transitions only (no link)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
 		 in_errors_delta, out_errors_delta, in_discards_delta, out_discards_delta,
 		 in_fcs_errors_delta, carrier_transitions_delta)
 		VALUES
-		(now() - INTERVAL 20 MINUTE, 'dev-2', 'Ethernet2', '', 100000000, 50000000, 30.0,
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-2', 'Ethernet2', '', 100000000, 50000000, 30.0,
 		 0, 0, 0, 0, 0, 5)`))
 
 	// dev-1 Loopback0: zero errors (should not appear in results)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
-		(event_ts, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration,
 		 in_errors_delta, out_errors_delta, in_discards_delta, out_discards_delta,
 		 in_fcs_errors_delta, carrier_transitions_delta)
 		VALUES
-		(now() - INTERVAL 10 MINUTE, 'dev-1', 'Loopback0', '', 100000000, 50000000, 30.0,
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Loopback0', '', 100000000, 50000000, 30.0,
 		 0, 0, 0, 0, 0, 0)`))
 }
 
 func TestTrafficDashboardHealth(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedHealthData(t)
 
 	t.Run("default", func(t *testing.T) {
@@ -850,8 +990,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 }
 
 func TestTrafficDashboardHealth_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupDashboardSchema(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
 	rr := httptest.NewRecorder()

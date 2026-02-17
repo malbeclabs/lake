@@ -117,9 +117,16 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	// Build dimension filters
-	filterSQL, intfFilterSQL, intfTypeSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
 	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin)
+
+	// Add user join when user_kind filter is present
+	var userJoinSQL, userKindFilter string
+	if needsUserJoin {
+		userJoinSQL = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userKindFilter = userKindSQL
+	}
 
 	start := time.Now()
 
@@ -133,9 +140,10 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		src AS (
 			SELECT %s
 			FROM fact_dz_device_interface_counters f
-			INNER JOIN devices d ON d.pk = f.device_pk%s
+			INNER JOIN devices d ON d.pk = f.device_pk%s%s
 			WHERE f.%s
 				%s%s
+				%s
 				%s
 				%s
 		),
@@ -161,7 +169,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		WHERE r.time_bucket IS NOT NULL
 		ORDER BY r.time_bucket, d.code, r.intf
 		LIMIT %d
-	`, srcColumns, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, bucketInterval, aggFunc, inExpr, aggFunc, outExpr, maxTrafficRows)
+	`, srcColumns, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, userKindFilter, bucketInterval, aggFunc, inExpr, aggFunc, outExpr, maxTrafficRows)
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
@@ -190,14 +198,15 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			AVG(%s) AS mean_in_bps,
 			AVG(%s) AS mean_out_bps
 		FROM fact_dz_device_interface_counters f
-		INNER JOIN devices d ON d.pk = f.device_pk%s
+		INNER JOIN devices d ON d.pk = f.device_pk%s%s
 		WHERE f.%s
 			%s%s
 			%s
 			%s
+			%s
 		GROUP BY d.code, f.intf
 		ORDER BY d.code, f.intf
-	`, fInExpr, fOutExpr, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL)
+	`, fInExpr, fOutExpr, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, userKindFilter)
 
 	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
@@ -318,9 +327,16 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	timeFilter, bucketInterval := dashboardTimeFilter(r)
 
 	// Build dimension filters
-	filterSQL, intfFilterSQL, intfTypeSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
 	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin)
+
+	// Add user join when user_kind filter is present
+	var userJoinSQL, userKindFilter string
+	if needsUserJoin {
+		userJoinSQL = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userKindFilter = userKindSQL
+	}
 
 	// Default to non-tunnel if no interface type filter specified
 	if intfTypeFilter == "" {
@@ -343,10 +359,11 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 				SUM(COALESCE(f.in_discards_delta, 0)) AS in_discards,
 				SUM(COALESCE(f.out_discards_delta, 0)) AS out_discards
 			FROM fact_dz_device_interface_counters f
-			INNER JOIN devices d ON d.pk = f.device_pk%s
+			INNER JOIN devices d ON d.pk = f.device_pk%s%s
 			WHERE f.%s
 				%s%s
 				AND (COALESCE(f.in_discards_delta, 0) > 0 OR COALESCE(f.out_discards_delta, 0) > 0)
+				%s
 				%s
 			GROUP BY f.device_pk, f.intf, time_bucket
 		)
@@ -361,7 +378,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		INNER JOIN devices d ON d.pk = a.device_pk
 		WHERE a.time_bucket IS NOT NULL
 		ORDER BY a.time_bucket, d.code, a.intf
-	`, bucketInterval, dimJoins, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL)
+	`, bucketInterval, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
