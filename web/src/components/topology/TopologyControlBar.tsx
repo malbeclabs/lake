@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Search,
   ZoomIn,
   ZoomOut,
   Maximize,
+  Minimize,
   Users,
   Route,
   Shield,
@@ -137,6 +138,26 @@ export function TopologyControlBar({
     navigate(`/topology/${targetView}${params ? `?${params}` : ''}`)
   }
 
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  const toggleFullscreen = useCallback(() => {
+    // Find the main content container (parent of the topology view)
+    const el = document.querySelector('[data-topology-container]') as HTMLElement | null
+    if (!el) return
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      el.requestFullscreen()
+    }
+  }, [])
+
   const STORAGE_KEY = 'topology-nav-collapsed'
 
   // Persist collapsed state
@@ -196,6 +217,20 @@ export function TopologyControlBar({
         closePanel()
       }
     }
+  }
+
+  if (isFullscreen) {
+    return (
+      <div className="absolute top-4 right-4 z-[999]">
+        <button
+          onClick={toggleFullscreen}
+          className="bg-[var(--card)] border border-[var(--border)] rounded-lg shadow-sm p-2 hover:bg-[var(--muted)] transition-colors"
+          title="Exit fullscreen"
+        >
+          <Minimize className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </div>
+    )
   }
 
   return (
@@ -299,6 +334,15 @@ export function TopologyControlBar({
               onClick={onToggleLinkAnimation}
               active={linkAnimating}
               activeColor="cyan"
+              collapsed={collapsed}
+            />
+          )}
+
+          {view === 'globe' && (
+            <NavItem
+              icon={<Maximize className="h-3.5 w-3.5" />}
+              label="Fullscreen"
+              onClick={toggleFullscreen}
               collapsed={collapsed}
             />
           )}
