@@ -106,7 +106,7 @@ const fieldPrefixes = [
   { prefix: 'metro:', description: 'Filter by metro code', contextKey: 'metro' },
   { prefix: 'device:', description: 'Filter by device code', contextKey: 'device' },
   { prefix: 'intf:', description: 'Filter by interface name', contextKey: 'intf' },
-  { prefix: 'link:', description: 'Filter by link type', contextKey: 'link_type' },
+  { prefix: 'link_type:', description: 'Filter by link type', contextKey: 'link_type' },
   { prefix: 'contributor:', description: 'Filter by contributor', contextKey: 'contributor' },
   { prefix: 'user_kind:', description: 'Filter by user kind', contextKey: 'user_kind' },
 ] as const
@@ -117,7 +117,7 @@ const autocompleteConfig: Record<string, { entity: string; field: string } | nul
   'metro': { entity: 'devices', field: 'metro' },
   'device': null,
   'intf': { entity: 'interfaces', field: 'intf' },
-  'link': { entity: 'links', field: 'type' },
+  'link_type': { entity: 'links', field: 'type' },
   'contributor': { entity: 'devices', field: 'contributor' },
   'user_kind': { entity: 'users', field: 'kind' },
 }
@@ -690,7 +690,7 @@ export function DashboardFilterBadges() {
         <FilterBadge key={`intf-${v}`} label={`Intf: ${v}`} onRemove={() => setIntfFilter(intfFilter.filter(f => f !== v))} />
       ))}
       {linkTypeFilter.map(v => (
-        <FilterBadge key={`lt-${v}`} label={`Link: ${v}`} onRemove={() => setLinkTypeFilter(linkTypeFilter.filter(f => f !== v))} />
+        <FilterBadge key={`lt-${v}`} label={`Link Type: ${v}`} onRemove={() => setLinkTypeFilter(linkTypeFilter.filter(f => f !== v))} />
       ))}
       {contributorFilter.map(v => (
         <FilterBadge key={`cont-${v}`} label={`Contributor: ${v}`} onRemove={() => setContributorFilter(contributorFilter.filter(f => f !== v))} />
