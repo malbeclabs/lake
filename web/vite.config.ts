@@ -1,10 +1,12 @@
 import path from 'path'
 import fs from 'fs'
 import { execSync } from 'child_process'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import basicSsl from '@vitejs/plugin-basic-ssl'
+
+// Enable HTTPS with `VITE_HTTPS=1 bun run dev` (needed for WebGPU on non-localhost)
+const useHttps = process.env.VITE_HTTPS === '1'
 
 function getGitCommit(): string {
   // In CI, use the commit SHA passed via env var to match the API's build commit
@@ -21,7 +23,7 @@ function getGitCommit(): string {
 const buildCommit = getGitCommit()
 
 // Plugin to write version.json to dist folder after build
-function versionPlugin(): Plugin {
+function versionPlugin(): PluginOption {
   return {
     name: 'version-plugin',
     writeBundle() {
@@ -34,22 +36,31 @@ function versionPlugin(): Plugin {
   }
 }
 
-export default defineConfig({
-  plugins: [react(), tailwindcss(), versionPlugin(), basicSsl()],
-  define: {
-    __BUILD_COMMIT__: JSON.stringify(buildCommit),
-  },
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
+export default defineConfig(async () => {
+  const plugins: PluginOption[] = [react(), tailwindcss(), versionPlugin()]
+
+  if (useHttps) {
+    const basicSsl = await import('@vitejs/plugin-basic-ssl')
+    plugins.push(basicSsl.default())
+  }
+
+  return {
+    plugins,
+    define: {
+      __BUILD_COMMIT__: JSON.stringify(buildCommit),
     },
-  },
-  server: {
-    proxy: {
-      '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:8080',
-        changeOrigin: true,
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
       },
     },
-  },
+    server: {
+      proxy: {
+        '/api': {
+          target: process.env.VITE_API_URL || 'http://localhost:8080',
+          changeOrigin: true,
+        },
+      },
+    },
+  }
 })
