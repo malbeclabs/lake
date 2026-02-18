@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/malbeclabs/lake/controlcenter/internal/logs"
 	"github.com/malbeclabs/lake/controlcenter/internal/process"
 	"github.com/malbeclabs/lake/controlcenter/internal/scheduler"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 //go:embed all:ui/dist
@@ -143,7 +143,7 @@ func (s *Server) serveUI() {
 		s.logger.Error("failed to load UI files", "error", err)
 		s.router.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("Control Center - UI not built. Run 'cd ui && bun run build' to build the UI."))
+			_, _ = w.Write([]byte("Control Center - UI not built. Run 'cd ui && bun run build' to build the UI."))
 		})
 		return
 	}
@@ -173,13 +173,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("handleStatus called", "service_count", len(services))
 
 	type serviceStatus struct {
-		Name      string             `json:"name"`
+		Name      string                `json:"name"`
 		Status    process.ServiceStatus `json:"status"`
-		PID       int                `json:"pid"`
-		StartedAt *time.Time         `json:"startedAt,omitempty"`
-		StoppedAt *time.Time         `json:"stoppedAt,omitempty"`
-		Error     string             `json:"error,omitempty"`
-		Uptime    string             `json:"uptime,omitempty"`
+		PID       int                   `json:"pid"`
+		StartedAt *time.Time            `json:"startedAt,omitempty"`
+		StoppedAt *time.Time            `json:"stoppedAt,omitempty"`
+		Error     string                `json:"error,omitempty"`
+		Uptime    string                `json:"uptime,omitempty"`
 	}
 
 	response := make([]serviceStatus, 0, len(services))

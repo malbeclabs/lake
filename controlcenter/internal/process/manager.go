@@ -198,10 +198,14 @@ func (m *Manager) Start(name string) error {
 
 		// Signal exit after releasing lock so Stop() can proceed
 		close(svc.exitCh)
-		m.SaveState()
+		if err := m.SaveState(); err != nil {
+			m.logger.Error("failed to save state", "error", err)
+		}
 	}()
 
-	m.SaveState()
+	if err := m.SaveState(); err != nil {
+		m.logger.Error("failed to save state", "error", err)
+	}
 	return nil
 }
 
@@ -307,12 +311,14 @@ func (m *Manager) GetService(name string) (*Service, error) {
 	svc.mu.RLock()
 	defer svc.mu.RUnlock()
 
-	// Return a copy to avoid race conditions
-	copy := *svc
-	copy.cmd = nil
-	copy.ctx = nil
-	copy.cancel = nil
-	return &copy, nil
+	return &Service{
+		Config:    svc.Config,
+		PID:       svc.PID,
+		Status:    svc.Status,
+		StartedAt: svc.StartedAt,
+		StoppedAt: svc.StoppedAt,
+		Error:     svc.Error,
+	}, nil
 }
 
 // GetAllServices returns a map of all service states
@@ -323,12 +329,15 @@ func (m *Manager) GetAllServices() map[string]*Service {
 	result := make(map[string]*Service)
 	for name, svc := range m.services {
 		svc.mu.RLock()
-		copy := *svc
-		copy.cmd = nil
-		copy.ctx = nil
-		copy.cancel = nil
+		result[name] = &Service{
+			Config:    svc.Config,
+			PID:       svc.PID,
+			Status:    svc.Status,
+			StartedAt: svc.StartedAt,
+			StoppedAt: svc.StoppedAt,
+			Error:     svc.Error,
+		}
 		svc.mu.RUnlock()
-		result[name] = &copy
 	}
 	return result
 }
@@ -392,12 +401,15 @@ func (m *Manager) SaveState() error {
 	states := make(map[string]*Service)
 	for name, svc := range m.services {
 		svc.mu.RLock()
-		copy := *svc
-		copy.cmd = nil
-		copy.ctx = nil
-		copy.cancel = nil
+		states[name] = &Service{
+			Config:    svc.Config,
+			PID:       svc.PID,
+			Status:    svc.Status,
+			StartedAt: svc.StartedAt,
+			StoppedAt: svc.StoppedAt,
+			Error:     svc.Error,
+		}
 		svc.mu.RUnlock()
-		states[name] = &copy
 	}
 
 	data, err := json.MarshalIndent(states, "", "  ")

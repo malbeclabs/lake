@@ -154,8 +154,8 @@ func (a *Aggregator) Append(entry LogEntry) {
 }
 
 const (
-	maxLogFileSize    = 10 * 1024 * 1024 // 10MB
-	maxRotatedFiles   = 5
+	maxLogFileSize  = 10 * 1024 * 1024 // 10MB
+	maxRotatedFiles = 5
 )
 
 // rotateLogFile renames SERVICE.log → SERVICE.1.log, shifts older files up, keeps max 5.
