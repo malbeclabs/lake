@@ -11,7 +11,7 @@ import { DeviceStatusTimelines } from '@/components/device-status-timelines'
 import { MetroStatusTimelines, type MetroHealthFilter, type MetroIssueFilter } from '@/components/metro-status-timelines'
 
 type TimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
-type IssueFilter = 'packet_loss' | 'high_latency' | 'extended_loss' | 'drained' | 'no_data' | 'interface_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'no_issues'
+type IssueFilter = 'packet_loss' | 'high_latency' | 'extended_loss' | 'drained' | 'no_data' | 'interface_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'down' | 'no_issues'
 type DeviceIssueFilter = 'interface_errors' | 'discards' | 'carrier_transitions' | 'drained' | 'no_issues'
 type HealthFilter = 'healthy' | 'degraded' | 'unhealthy' | 'disabled'
 
@@ -63,6 +63,7 @@ interface IssueCounts {
   interface_errors: number
   discards: number
   carrier_transitions: number
+  down: number
   no_issues: number
   total: number
 }
@@ -595,6 +596,7 @@ interface HealthIssueBreakdown {
   discards: number
   carrier_transitions: number
   high_utilization: number
+  down: number
 }
 
 interface DeviceIssueBreakdown {
@@ -635,6 +637,7 @@ function HealthFilterItem({
   const [showTooltip, setShowTooltip] = useState(false)
 
   const issueLabels: { key: keyof HealthIssueBreakdown; label: string; color: string }[] = [
+    { key: 'down', label: 'Down', color: 'bg-gray-900 dark:bg-gray-950' },
     { key: 'packet_loss', label: 'Packet Loss', color: 'bg-purple-500' },
     { key: 'high_latency', label: 'High Latency', color: 'bg-blue-500' },
     { key: 'high_utilization', label: 'High Utilization', color: 'bg-indigo-500' },
@@ -755,6 +758,7 @@ interface HealthByIssue {
   discards: IssueHealthBreakdown
   carrier_transitions: IssueHealthBreakdown
   high_utilization: IssueHealthBreakdown
+  down: IssueHealthBreakdown
   no_issues: IssueHealthBreakdown
 }
 
@@ -886,7 +890,7 @@ function LinkIssuesFilterCard({
   healthByIssue?: HealthByIssue
   timeRange: TimeRange
 }) {
-  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'no_data', 'interface_errors', 'discards', 'carrier_transitions', 'no_issues']
+  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'down', 'no_data', 'interface_errors', 'discards', 'carrier_transitions', 'no_issues']
 
   const toggleFilter = (filter: IssueFilter) => {
     if (selected.includes(filter)) {
@@ -908,6 +912,7 @@ function LinkIssuesFilterCard({
     { filter: 'discards', label: 'Discards', color: 'bg-teal-500', description: 'Interface discards detected on link endpoints.' },
     { filter: 'interface_errors', label: 'Errors', color: 'bg-red-500', description: 'Interface errors detected on link endpoints.' },
     { filter: 'extended_loss', label: 'Extended Loss', color: 'bg-orange-500', description: 'Link has 100% packet loss for 2+ hours.' },
+    { filter: 'down', label: 'Down', color: 'bg-gray-900 dark:bg-gray-950', description: 'Link is currently down (100% packet loss in all recent samples).' },
     { filter: 'drained', label: 'Drained', color: 'bg-slate-500 dark:bg-slate-600', description: 'Link is soft-drained, hard-drained, or has ISIS delay override.' },
     { filter: 'no_data', label: 'No Data', color: 'bg-pink-500', description: 'No telemetry received for this link.' },
     { filter: 'no_issues', label: 'No Issues', color: 'bg-cyan-500', description: 'Link with no detected issues in the time range.' },
@@ -932,6 +937,7 @@ function LinkIssuesFilterCard({
   const packetLossPct = (counts.packet_loss / grandTotal) * 100
   const highLatencyPct = (counts.high_latency / grandTotal) * 100
   const extendedLossPct = (counts.extended_loss / grandTotal) * 100
+  const downPct = (counts.down / grandTotal) * 100
   const drainedPct = (counts.drained / grandTotal) * 100
   const noDataPct = (counts.no_data / grandTotal) * 100
   const noIssuesPct = (counts.no_issues / grandTotal) * 100
@@ -975,6 +981,12 @@ function LinkIssuesFilterCard({
           <div
             className={`bg-orange-500 h-full transition-all ${!selected.includes('extended_loss') ? 'opacity-30' : ''}`}
             style={{ width: `${extendedLossPct}%` }}
+          />
+        )}
+        {downPct > 0 && (
+          <div
+            className={`bg-gray-900 dark:bg-gray-950 h-full transition-all ${!selected.includes('down') ? 'opacity-30' : ''}`}
+            style={{ width: `${downPct}%` }}
           />
         )}
         {drainedPct > 0 && (
@@ -1433,7 +1445,7 @@ function useBucketCount() {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusResponse; linkHistory: any; criticalLinks: CriticalLinksResponse | undefined }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'interface_errors', 'discards', 'carrier_transitions'])
+  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'down', 'interface_errors', 'discards', 'carrier_transitions'])
   const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy', 'disabled'])
 
   // Get search filters from URL
@@ -1475,6 +1487,9 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Returns the worst status seen in the time range
   // Excludes the latest bucket if it's no_data (likely still being collected)
   const getEffectiveHealth = (link: LinkHistory): string => {
+    // Down is highest priority — link is currently unreachable
+    if (link.is_down) return 'down'
+
     if (!link.hours || link.hours.length === 0) return 'healthy'
 
     // Priority from worst to best (lower index = worse)
@@ -1519,7 +1534,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       const status = getEffectiveHealth(link)
       if (status === 'healthy') counts.healthy++
       else if (status === 'degraded') counts.degraded++
-      else if (status === 'unhealthy' || status === 'no_data') counts.unhealthy++ // no_data maps to unhealthy
+      else if (status === 'down' || status === 'unhealthy' || status === 'no_data') counts.unhealthy++ // down, no_data map to unhealthy
       else if (status === 'disabled') counts.disabled++
     }
 
@@ -1538,6 +1553,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       interface_errors: 0,
       discards: 0,
       carrier_transitions: 0,
+      down: 0,
     })
 
     const result: IssuesByHealth = {
@@ -1551,8 +1567,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 
     for (const link of filteredLinkHistory.links) {
       const rawHealth = getEffectiveHealth(link)
-      // Map no_data to unhealthy for categorization
-      const health = rawHealth === 'no_data' ? 'unhealthy' : rawHealth
+      // Map no_data and down to unhealthy for categorization
+      const health = (rawHealth === 'no_data' || rawHealth === 'down') ? 'unhealthy' : rawHealth
       if (!(health in result)) continue
 
       const breakdown = result[health as keyof IssuesByHealth]
@@ -1567,6 +1583,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (issues.includes('interface_errors')) breakdown.interface_errors++
       if (issues.includes('discards')) breakdown.discards++
       if (issues.includes('carrier_transitions')) breakdown.carrier_transitions++
+      if (issues.includes('down')) breakdown.down++
     }
 
     return result
@@ -1591,6 +1608,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       interface_errors: emptyBreakdown(),
       discards: emptyBreakdown(),
       carrier_transitions: emptyBreakdown(),
+      down: emptyBreakdown(),
       no_issues: emptyBreakdown(),
     }
 
@@ -1598,8 +1616,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 
     for (const link of filteredLinkHistory.links) {
       const rawHealth = getEffectiveHealth(link)
-      // Map no_data to unhealthy for categorization
-      const health = (rawHealth === 'no_data' ? 'unhealthy' : rawHealth) as keyof IssueHealthBreakdown
+      // Map no_data and down to unhealthy for categorization
+      const health = ((rawHealth === 'no_data' || rawHealth === 'down') ? 'unhealthy' : rawHealth) as keyof IssueHealthBreakdown
       const issues = link.issue_reasons ?? []
 
       if (issues.length === 0) {
@@ -1614,6 +1632,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
         if (issues.includes('interface_errors')) result.interface_errors[health]++
         if (issues.includes('discards')) result.discards[health]++
         if (issues.includes('carrier_transitions')) result.carrier_transitions[health]++
+        if (issues.includes('down')) result.down[health]++
       }
     }
 
@@ -1623,10 +1642,10 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Issue counts from filter time range
   const issueCounts = useMemo((): IssueCounts => {
     if (!filteredLinkHistory?.links) {
-      return { packet_loss: 0, high_latency: 0, high_utilization: 0, extended_loss: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
+      return { packet_loss: 0, high_latency: 0, high_utilization: 0, extended_loss: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
     }
 
-    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, extended_loss: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
+    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, extended_loss: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
     const seenLinks = new Set<string>()
 
     for (const link of filteredLinkHistory.links) {
@@ -1639,6 +1658,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (link.issue_reasons?.includes('interface_errors')) counts.interface_errors++
       if (link.issue_reasons?.includes('discards')) counts.discards++
       if (link.issue_reasons?.includes('carrier_transitions')) counts.carrier_transitions++
+      if (link.issue_reasons?.includes('down')) counts.down++
       if (link.issue_reasons?.length > 0 && !seenLinks.has(link.code)) {
         counts.total++
         seenLinks.add(link.code)

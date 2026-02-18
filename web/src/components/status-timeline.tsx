@@ -32,18 +32,20 @@ function formatTimeRange(isoString: string, bucketMinutes: number = 60): string 
   return `${formatDate(isoString)} ${startTime} — ${endTime}`
 }
 
-const statusColors = {
+const statusColors: Record<string, string> = {
   healthy: 'bg-green-500',
   degraded: 'bg-amber-500',
   unhealthy: 'bg-red-500',
+  down: 'bg-gray-900 dark:bg-gray-950',
   no_data: 'bg-transparent border border-gray-200 dark:border-gray-700',
   disabled: 'bg-gray-500 dark:bg-gray-700',
 }
 
-const statusLabels = {
+const statusLabels: Record<string, string> = {
   healthy: 'Healthy',
   degraded: 'Degraded',
   unhealthy: 'Unhealthy',
+  down: 'Down',
   no_data: 'No Data',
   disabled: 'Disabled',
 }
@@ -71,7 +73,7 @@ function hasInterfaceIssues(hour: LinkHourStatus): boolean {
   )
 }
 
-function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'disabled' {
+function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): string {
   // Keep original status if not healthy
   if (hour.status !== 'healthy') {
     return hour.status
@@ -181,9 +183,10 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
                     effectiveStatus === 'healthy' ? 'text-green-600 dark:text-green-400' :
                     effectiveStatus === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
                     effectiveStatus === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
+                    effectiveStatus === 'down' ? 'text-gray-900 dark:text-gray-300' :
                     'text-muted-foreground'
                   }`}>
-                    {statusLabels[effectiveStatus]}
+                    {statusLabels[effectiveStatus] || effectiveStatus}
                   </div>
                   {/* Reasons */}
                   {(() => {

@@ -1080,8 +1080,9 @@ type LinkHistory struct {
 	SideZDevice    string           `json:"side_z_device"`
 	BandwidthBps   int64            `json:"bandwidth_bps"`
 	CommittedRttUs float64          `json:"committed_rtt_us"`
+	IsDown         bool             `json:"is_down"`
 	Hours          []LinkHourStatus `json:"hours"`
-	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "drained", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization"
+	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "drained", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization", "down"
 }
 
 type LinkHistoryResponse struct {
@@ -1522,6 +1523,27 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 	}
 
+	// Query is_down from dz_links_health_current
+	downLinkPKs := make(map[string]bool)
+	downQuery := `SELECT pk FROM dz_links_health_current WHERE is_down = true`
+	downRows, downErr := envDB(ctx).Query(ctx, downQuery)
+	if downErr != nil {
+		log.Printf("is_down query error (non-fatal): %v", downErr)
+	} else {
+		defer downRows.Close()
+		for downRows.Next() {
+			var pk string
+			if err := downRows.Scan(&pk); err != nil {
+				log.Printf("is_down scan error: %v", err)
+				break
+			}
+			downLinkPKs[pk] = true
+		}
+		if err := downRows.Err(); err != nil {
+			log.Printf("is_down rows iteration error: %v", err)
+		}
+	}
+
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1786,6 +1808,17 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 		sort.Strings(issueReasonsList)
 
+		isDown := downLinkPKs[pk]
+		if isDown {
+			issueReasons["down"] = true
+			// Rebuild issue reasons list
+			issueReasonsList = nil
+			for reason := range issueReasons {
+				issueReasonsList = append(issueReasonsList, reason)
+			}
+			sort.Strings(issueReasonsList)
+		}
+
 		links = append(links, LinkHistory{
 			PK:             pk,
 			Code:           meta.code,
@@ -1797,6 +1830,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			SideZDevice:    meta.sideZDevice,
 			BandwidthBps:   meta.bandwidthBps,
 			CommittedRttUs: meta.committedRttUs,
+			IsDown:         isDown,
 			Hours:          hourStatuses,
 			IssueReasons:   issueReasonsList,
 		})

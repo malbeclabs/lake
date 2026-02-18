@@ -1362,8 +1362,9 @@ export interface LinkHistory {
   side_z_device: string
   bandwidth_bps: number
   committed_rtt_us: number
+  is_down?: boolean
   hours: LinkHourStatus[]
-  issue_reasons: string[] // "packet_loss", "high_latency", "drained", "no_data", "interface_errors", "discards", "carrier_transitions"
+  issue_reasons: string[] // "packet_loss", "high_latency", "drained", "no_data", "interface_errors", "discards", "carrier_transitions", "down"
 }
 
 export interface LinkHistoryResponse {
