@@ -18,9 +18,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/malbeclabs/lake/controlcenter/internal/logs"
-	"github.com/malbeclabs/lake/controlcenter/internal/process"
-	"github.com/malbeclabs/lake/controlcenter/internal/scheduler"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/logs"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/process"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/scheduler"
 )
 
 //go:embed all:ui/dist

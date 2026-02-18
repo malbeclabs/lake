@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/malbeclabs/lake/controlcenter/internal/logs"
-	"github.com/malbeclabs/lake/controlcenter/internal/process"
-	"github.com/malbeclabs/lake/controlcenter/internal/scheduler"
-	"github.com/malbeclabs/lake/controlcenter/internal/server"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/logs"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/process"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/scheduler"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/server"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 

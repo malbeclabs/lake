@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/malbeclabs/lake/controlcenter/internal/logs"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/logs"
 )
 
 // ServiceStatus represents the current state of a service

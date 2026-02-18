@@ -45,7 +45,7 @@ See [indexer/README.md](indexer/README.md) for architecture details.
 
 Slack bot that provides a chat interface for data queries. Users can ask questions in Slack and receive answers powered by the agent workflow.
 
-### controlcenter/
+### dev/controlcenter/
 
 Web dashboard for managing all platform services locally. Provides start/stop controls, real-time log streaming with filtering, and a log activity histogram. Replaces running services manually in separate terminals.
 
@@ -132,15 +132,15 @@ Instead of managing services in separate terminals, you can use the control cent
 
 ```bash
 # Build (only needed once or after changes)
-cd controlcenter/ui && bun install && bun run build && cd ..
+cd dev/controlcenter/ui && bun install && bun run build && cd ..
 go build -o bin/controlcenter ./cmd/controlcenter/
-cd ..
+cd ../..
 
 # Run (always from the lake root)
-./controlcenter/bin/controlcenter
+./dev/controlcenter/bin/controlcenter
 
 # For network access (enables HTTPS on the web service automatically)
-./controlcenter/bin/controlcenter --bind 0.0.0.0
+./dev/controlcenter/bin/controlcenter --bind 0.0.0.0
 ```
 
 The control center will be at http://localhost:5174.

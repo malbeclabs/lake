@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/lake/controlcenter/internal/process"
+	"github.com/malbeclabs/lake/dev/controlcenter/internal/process"
 )
 
 // Config holds the scheduler configuration
