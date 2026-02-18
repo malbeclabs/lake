@@ -12,4 +12,7 @@
 
 dist/
 eval-runs/
-logs/
+/logs/
+
+controlcenter-data/
+bin/
