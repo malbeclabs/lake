@@ -445,7 +445,7 @@ func (s *Server) handleGetNextAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]interface{}{"message": message}
+	resp := map[string]any{"message": message}
 	if !nextTime.IsZero() {
 		resp["nextTime"] = nextTime.UTC().Format(time.RFC3339)
 	}
@@ -468,7 +468,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // writeJSON writes a JSON response
-func (s *Server) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
