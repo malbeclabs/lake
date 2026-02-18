@@ -14,6 +14,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+        working-directory: controlcenter/ui
+      - run: bun run build
+        working-directory: controlcenter/ui
       - run: go build ./...
   go-lint:
     runs-on: ubuntu-latest
@@ -24,6 +29,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+        working-directory: controlcenter/ui
+      - run: bun run build
+        working-directory: controlcenter/ui
       - uses: golangci/golangci-lint-action@v8
   go-test:
     runs-on: ubuntu-latest
@@ -34,6 +44,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+        working-directory: controlcenter/ui
+      - run: bun run build
+        working-directory: controlcenter/ui
       - run: go test ./...
   evals-short:
     runs-on: ubuntu-latest
