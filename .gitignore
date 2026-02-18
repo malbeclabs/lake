@@ -5,6 +5,7 @@
 .vscode
 .zed
 .tmp
+.playwright-mcp
 
 **/*.swp
 **/coverage.out
