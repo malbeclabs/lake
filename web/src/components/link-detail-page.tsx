@@ -8,6 +8,7 @@ import { SingleLinkStatusRow } from '@/components/single-link-status-row'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
+import { useDocumentTitle } from '@/components/page-header'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
@@ -18,6 +19,8 @@ export function LinkDetailPage() {
     queryFn: () => fetchLink(pk!),
     enabled: !!pk,
   })
+
+  useDocumentTitle(link?.code || 'Link')
 
   if (isLoading) {
     return (

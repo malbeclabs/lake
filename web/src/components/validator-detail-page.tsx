@@ -2,6 +2,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Landmark, AlertCircle, ArrowLeft, Check } from 'lucide-react'
 import { fetchValidator } from '@/lib/api'
+import { useDocumentTitle } from '@/components/page-header'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -28,6 +29,8 @@ export function ValidatorDetailPage() {
     queryFn: () => fetchValidator(vote_pubkey!),
     enabled: !!vote_pubkey,
   })
+
+  useDocumentTitle(validator?.vote_pubkey ? `${validator.vote_pubkey.slice(0, 8)}...${validator.vote_pubkey.slice(-4)}` : 'Validator')
 
   if (isLoading) {
     return (

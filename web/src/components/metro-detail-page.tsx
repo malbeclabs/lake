@@ -2,6 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, MapPin, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchMetro } from '@/lib/api'
+import { useDocumentTitle } from '@/components/page-header'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -28,6 +29,8 @@ export function MetroDetailPage() {
     queryFn: () => fetchMetro(pk!),
     enabled: !!pk,
   })
+
+  useDocumentTitle(metro?.code || metro?.name || 'Metro')
 
   if (isLoading) {
     return (

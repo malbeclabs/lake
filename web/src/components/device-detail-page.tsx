@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchDevice } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
+import { useDocumentTitle } from '@/components/page-header'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
 
@@ -31,6 +32,8 @@ export function DeviceDetailPage() {
     queryFn: () => fetchDevice(pk!),
     enabled: !!pk,
   })
+
+  useDocumentTitle(device?.code || 'Device')
 
   if (isLoading) {
     return (

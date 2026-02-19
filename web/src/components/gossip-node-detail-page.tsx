@@ -2,6 +2,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Radio, AlertCircle, ArrowLeft, Check } from 'lucide-react'
 import { fetchGossipNode } from '@/lib/api'
+import { useDocumentTitle } from '@/components/page-header'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -28,6 +29,8 @@ export function GossipNodeDetailPage() {
     queryFn: () => fetchGossipNode(pubkey!),
     enabled: !!pubkey,
   })
+
+  useDocumentTitle(node?.pubkey ? `${node.pubkey.slice(0, 8)}...${node.pubkey.slice(-4)}` : 'Gossip Node')
 
   if (isLoading) {
     return (

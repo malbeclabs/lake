@@ -2,6 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Building2, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchContributor } from '@/lib/api'
+import { useDocumentTitle } from '@/components/page-header'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -21,6 +22,8 @@ export function ContributorDetailPage() {
     queryFn: () => fetchContributor(pk!),
     enabled: !!pk,
   })
+
+  useDocumentTitle(contributor?.code || 'Contributor')
 
   if (isLoading) {
     return (

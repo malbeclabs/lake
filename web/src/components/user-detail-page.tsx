@@ -2,6 +2,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Users, AlertCircle, ArrowLeft, Check } from 'lucide-react'
 import { fetchUser } from '@/lib/api'
+import { useDocumentTitle } from '@/components/page-header'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -37,6 +38,8 @@ export function UserDetailPage() {
     queryFn: () => fetchUser(pk!),
     enabled: !!pk,
   })
+
+  useDocumentTitle(user?.owner_pubkey ? `${user.owner_pubkey.slice(0, 8)}...${user.owner_pubkey.slice(-4)}` : 'User')
 
   if (isLoading) {
     return (
