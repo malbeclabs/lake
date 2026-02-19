@@ -66,6 +66,7 @@ export function Sidebar() {
   const isTopologyRedundancy = location.pathname === '/topology/redundancy'
   const isTopologyMetroConnectivity = location.pathname === '/topology/metro-connectivity'
   const isTopologyMaintenance = location.pathname === '/topology/maintenance'
+  const isTopologyTool = isTopologyPathCalculator || isTopologyRedundancy || isTopologyMetroConnectivity || isTopologyMaintenance
 
   // Performance sub-routes
   const isPerformanceDzVsInternet = location.pathname === '/performance/dz-vs-internet'
@@ -143,9 +144,10 @@ export function Sidebar() {
     'border-transparent text-foreground font-medium hover:bg-[var(--sidebar-active)]'
   )
 
-  // Sub-nav item class (indented)
-  const subNavItemClass = (isActive: boolean) => cn(
-    'w-full flex items-center gap-2 pl-8 pr-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
+  // Sub-nav item class (indented, with optional deeper nesting)
+  const subNavItemClass = (isActive: boolean, nested?: boolean) => cn(
+    'w-full flex items-center gap-2 pr-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
+    nested ? 'pl-12' : 'pl-8',
     isActive
       ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
       : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -329,22 +331,30 @@ export function Sidebar() {
                       <Network className="h-4 w-4" />
                       Graph
                     </Link>
-                    <Link to="/topology/path-calculator" className={subNavItemClass(isTopologyPathCalculator)}>
-                      <Route className="h-4 w-4" />
-                      Path Calculator
-                    </Link>
-                    <Link to="/topology/redundancy" className={subNavItemClass(isTopologyRedundancy)}>
-                      <Shield className="h-4 w-4" />
-                      Redundancy
-                    </Link>
-                    <Link to="/topology/metro-connectivity" className={subNavItemClass(isTopologyMetroConnectivity)}>
-                      <Network className="h-4 w-4" />
-                      Metro Connectivity
-                    </Link>
-                    <Link to="/topology/maintenance" className={subNavItemClass(isTopologyMaintenance)}>
+                    <Link to="/topology/path-calculator" className={subNavItemClass(isTopologyTool)}>
                       <Wrench className="h-4 w-4" />
-                      Maintenance
+                      Tools
                     </Link>
+                    {isTopologyTool && (
+                      <>
+                        <Link to="/topology/path-calculator" className={subNavItemClass(isTopologyPathCalculator, true)}>
+                          <Route className="h-4 w-4" />
+                          Path Calculator
+                        </Link>
+                        <Link to="/topology/redundancy" className={subNavItemClass(isTopologyRedundancy, true)}>
+                          <Shield className="h-4 w-4" />
+                          Redundancy
+                        </Link>
+                        <Link to="/topology/metro-connectivity" className={subNavItemClass(isTopologyMetroConnectivity, true)}>
+                          <Network className="h-4 w-4" />
+                          Metro Connectivity
+                        </Link>
+                        <Link to="/topology/maintenance" className={subNavItemClass(isTopologyMaintenance, true)}>
+                          <Wrench className="h-4 w-4" />
+                          Maintenance
+                        </Link>
+                      </>
+                    )}
                   </>
                 )}
               </>
