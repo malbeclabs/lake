@@ -838,8 +838,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full text-left px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isNewSessionActive
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   New query
@@ -911,8 +911,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full text-left px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isNewSessionActive
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   New chat
@@ -1000,8 +1000,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyGraph
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   <Network className="h-4 w-4" />
@@ -1012,8 +1012,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyPathCalculator
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   <Route className="h-4 w-4" />
@@ -1024,8 +1024,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyRedundancy
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   <Shield className="h-4 w-4" />
@@ -1036,8 +1036,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyMetroConnectivity
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   <Network className="h-4 w-4" />
@@ -1048,8 +1048,8 @@ export function Sidebar() {
                   className={cn(
                     'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyMaintenance
-                      ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                   )}
                 >
                   <Wrench className="h-4 w-4" />
@@ -1089,8 +1089,8 @@ export function Sidebar() {
                 className={cn(
                   'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                   isPerformancePathLatency
-                    ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                    ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
                 )}
               >
                 <Route className="h-4 w-4" />

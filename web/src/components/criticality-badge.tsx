@@ -21,7 +21,7 @@ export function CriticalityBadge({ criticality }: CriticalityBadgeProps) {
   const { label, className } = config[criticality]
 
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${className}`}>
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${className}`}>
       {label}
     </span>
   )
