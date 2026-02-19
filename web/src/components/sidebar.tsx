@@ -1156,7 +1156,7 @@ export function Sidebar() {
           </button>
         )}
         <UserPopover />
-        <div className="flex rounded-md border border-border overflow-hidden bg-card">
+        <div className="flex rounded-lg border border-border overflow-hidden bg-card">
           <button
             onClick={() => setTheme('light')}
             className={cn(

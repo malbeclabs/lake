@@ -72,7 +72,7 @@ export function UserPopover({ collapsed = false }: UserPopoverProps) {
       <>
         <button
           onClick={() => setShowLoginModal(true)}
-          className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
         >
           <LogIn size={16} />
           Sign in
@@ -123,7 +123,7 @@ export function UserPopover({ collapsed = false }: UserPopoverProps) {
         {showPopover && (
           <div
             ref={popoverRef}
-            className="absolute left-full bottom-0 ml-2 z-50 w-64 rounded-md border border-border bg-card shadow-lg"
+            className="absolute left-full bottom-0 ml-2 z-50 w-64 rounded-lg border border-border bg-card shadow-lg"
           >
             <PopoverContent
               user={user}
@@ -147,7 +147,7 @@ export function UserPopover({ collapsed = false }: UserPopoverProps) {
       <button
         ref={triggerRef}
         onClick={() => setShowPopover(!showPopover)}
-        className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+        className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
       >
         {user?.account_type === 'wallet' ? (
           <Wallet size={16} className="shrink-0 text-muted-foreground" />
@@ -161,7 +161,7 @@ export function UserPopover({ collapsed = false }: UserPopoverProps) {
       {showPopover && (
         <div
           ref={popoverRef}
-          className="absolute bottom-full left-0 mb-1 z-50 w-full rounded-md border border-border bg-card shadow-lg"
+          className="absolute bottom-full left-0 mb-1 z-50 w-full rounded-lg border border-border bg-card shadow-lg"
         >
           <PopoverContent
             user={user}
