@@ -1,11 +1,12 @@
 import { useMemo, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, Route, Download, ArrowRight, ChevronDown } from 'lucide-react'
+import { Loader2, Route, Download, ArrowRight, ChevronDown, X } from 'lucide-react'
 import { fetchMetroConnectivity, fetchMetroPathLatency, fetchMetroPathDetail } from '@/lib/api'
 import type { MetroPathLatency, MetroPathDetailResponse, PathOptimizeMode } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
+import { PageHeader } from '@/components/page-header'
 
 // Color classes for improvement
 const STRENGTH_COLORS = {
@@ -98,8 +99,8 @@ function PathLatencyDetail({
   const hasInternet = pathLatency.internetLatencyMs > 0
 
   return (
-    <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
+    <div className="p-4">
+      <div className="flex items-center justify-between mb-4">
         <h3 className="font-medium flex items-center gap-2">
           <span>{fromCode}</span>
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
@@ -107,9 +108,9 @@ function PathLatencyDetail({
         </h3>
         <button
           onClick={onClose}
-          className="text-muted-foreground hover:text-foreground text-sm"
+          className="text-muted-foreground hover:text-foreground"
         >
-          Close
+          <X className="h-4 w-4" />
         </button>
       </div>
 
@@ -315,37 +316,37 @@ export function PathLatencyPage() {
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
-      <div className="border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Route className="h-5 w-5 text-muted-foreground" />
-            <h1 className="text-lg font-semibold">Path Latency</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <select
-                value={optimizeMode}
-                onChange={(e) => {
-                  const newMode = e.target.value as PathOptimizeMode
-                  setSearchParams({ optimize: newMode })
-                }}
-                className="appearance-none bg-muted hover:bg-muted/80 rounded-md px-3 py-1.5 pr-8 text-sm cursor-pointer transition-colors"
+      <div className="px-6 py-4">
+        <PageHeader
+          icon={Route}
+          title="Path Latency"
+          actions={
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <select
+                  value={optimizeMode}
+                  onChange={(e) => {
+                    const newMode = e.target.value as PathOptimizeMode
+                    setSearchParams({ optimize: newMode })
+                  }}
+                  className="appearance-none bg-muted hover:bg-muted/80 rounded-md px-3 py-1.5 pr-8 text-sm cursor-pointer transition-colors"
+                >
+                  <option value="latency">Optimize: Latency</option>
+                  <option value="hops">Optimize: Hops</option>
+                  <option value="bandwidth">Optimize: Bandwidth</option>
+                </select>
+                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
+              <button
+                onClick={handleExport}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
               >
-                <option value="latency">Optimize: Latency</option>
-                <option value="hops">Optimize: Hops</option>
-                <option value="bandwidth">Optimize: Bandwidth</option>
-              </select>
-              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Download className="h-4 w-4" />
+                Export CSV
+              </button>
             </div>
-            <button
-              onClick={handleExport}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
-            >
-              <Download className="h-4 w-4" />
-              Export CSV
-            </button>
-          </div>
-        </div>
+          }
+        />
 
         <p className="mt-3 text-sm text-muted-foreground">
           Compares end-to-end path latency across the DZ network against public internet latency.
@@ -457,7 +458,7 @@ export function PathLatencyPage() {
 
         {/* Detail panel */}
         {selectedPathLatency && selectedCell && (
-          <div className="w-80 flex-shrink-0">
+          <div className="w-96 flex-shrink-0 border-l border-border bg-card overflow-y-auto">
             <PathLatencyDetail
               fromCode={selectedPathLatency.fromMetroCode}
               toCode={selectedPathLatency.toMetroCode}
