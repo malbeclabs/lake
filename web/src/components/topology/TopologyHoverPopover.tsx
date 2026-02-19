@@ -93,7 +93,7 @@ function DeviceHoverContent({ device }: { device: DeviceInfo }) {
         </div>
         <div className="flex justify-between gap-4">
           <span>Status:</span>
-          <span className={device.status === 'active' || device.status === 'activated' ? 'text-green-500' : 'text-red-500'}>
+          <span className={device.status === 'active' || device.status === 'activated' ? 'text-muted-foreground' : 'text-red-500'}>
             {device.status}
           </span>
         </div>

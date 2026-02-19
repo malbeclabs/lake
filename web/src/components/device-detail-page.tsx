@@ -17,7 +17,7 @@ function formatBps(bps: number): string {
 }
 
 const statusColors: Record<string, string> = {
-  activated: 'text-green-600 dark:text-green-400',
+  activated: 'text-muted-foreground',
   provisioning: 'text-blue-600 dark:text-blue-400',
   maintenance: 'text-amber-600 dark:text-amber-400',
   offline: 'text-red-600 dark:text-red-400',

@@ -21,7 +21,7 @@ function formatStake(sol: number): string {
 }
 
 const statusColors: Record<string, string> = {
-  activated: 'text-green-600 dark:text-green-400',
+  activated: 'text-muted-foreground',
   provisioning: 'text-blue-600 dark:text-blue-400',
   'soft-drained': 'text-amber-600 dark:text-amber-400',
   drained: 'text-amber-600 dark:text-amber-400',
