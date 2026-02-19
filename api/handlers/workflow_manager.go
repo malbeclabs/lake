@@ -458,7 +458,7 @@ func (m *WorkflowManager) runWorkflow(
 	}
 
 	// Create workflow components
-	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaude3_5Haiku20241022, 4096)
+	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
 	querier := NewDBQuerier()
 	schemaFetcher := NewDBSchemaFetcher()
 
@@ -882,7 +882,7 @@ func (m *WorkflowManager) resumeWorkflow(
 	}
 
 	// Create workflow components
-	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaude3_5Haiku20241022, 4096)
+	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
 	querier := NewDBQuerier()
 	schemaFetcher := NewDBSchemaFetcher()
 

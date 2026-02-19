@@ -175,7 +175,7 @@ Respond with only "YES" or "NO" followed by a brief explanation.`, currentDate, 
 
 	// Use Anthropic Haiku for evaluation - fast and reliable
 	llmClient := workflow.NewAnthropicLLMClientWithName(
-		anthropic.ModelClaudeHaiku4_5_20251001,
+		anthropic.ModelClaudeHaiku4_5,
 		1024, // Short response needed for YES/NO + explanation
 		"eval",
 	)
@@ -329,7 +329,7 @@ func newAnthropicLLMClient(t *testing.T) workflow.LLMClient {
 	require.NotEmpty(t, apiKey, "ANTHROPIC_API_KEY must be set for Anthropic tests")
 
 	return workflow.NewAnthropicLLMClient(
-		anthropic.ModelClaudeHaiku4_5_20251001, // Use Haiku for faster/cheaper eval tests
+		anthropic.ModelClaudeHaiku4_5, // Use Haiku for faster/cheaper eval tests
 		4096,
 	)
 }

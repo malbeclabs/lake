@@ -60,7 +60,7 @@ func RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 	client := anthropic.NewClient()
 	start := time.Now()
 	message, err := client.Messages.New(r.Context(), anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaude3_5Haiku20241022,
+		Model:     anthropic.ModelClaudeHaiku4_5,
 		MaxTokens: 1024,
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),

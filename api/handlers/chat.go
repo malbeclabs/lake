@@ -143,7 +143,7 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create workflow components
-	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaude3_5Haiku20241022, 4096)
+	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
 	querier := NewDBQuerier()
 	schemaFetcher := NewDBSchemaFetcher()
 
@@ -533,7 +533,7 @@ func Complete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a simple LLM client
-	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaude3_5Haiku20241022, 256)
+	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 256)
 
 	// Simple completion with minimal system prompt
 	response, err := llm.Complete(r.Context(), "You are a helpful assistant. Respond concisely.", req.Message)

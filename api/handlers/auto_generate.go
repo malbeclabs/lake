@@ -112,7 +112,7 @@ Respond with ONLY one word: either "sql" or "cypher"`
 
 	start := time.Now()
 	msg, err := client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaude3_5Haiku20241022,
+		Model:     anthropic.ModelClaudeHaiku4_5,
 		MaxTokens: 10,
 		System: []anthropic.TextBlockParam{
 			{Type: "text", Text: systemPrompt},

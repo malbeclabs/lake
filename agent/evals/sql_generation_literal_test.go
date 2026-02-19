@@ -48,7 +48,7 @@ func runTest_SQLGenerationLiteral(t *testing.T) {
 
 	// Create LLM client - use Haiku like the real endpoint
 	llmClient := workflow.NewAnthropicLLMClientWithName(
-		anthropic.ModelClaude3_5Haiku20241022,
+		anthropic.ModelClaudeHaiku4_5,
 		1024,
 		"sql-gen-eval",
 	)
@@ -137,7 +137,7 @@ func runTest_SQLGenerationPreserveQuery(t *testing.T) {
 
 	// Create LLM client
 	llmClient := workflow.NewAnthropicLLMClientWithName(
-		anthropic.ModelClaude3_5Haiku20241022,
+		anthropic.ModelClaudeHaiku4_5,
 		1024,
 		"sql-gen-eval",
 	)

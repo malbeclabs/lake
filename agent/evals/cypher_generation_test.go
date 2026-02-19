@@ -48,7 +48,7 @@ func runTest_CypherGenerationLiteral(t *testing.T) {
 
 	// Create LLM client
 	llmClient := workflow.NewAnthropicLLMClientWithName(
-		anthropic.ModelClaude3_5Haiku20241022,
+		anthropic.ModelClaudeHaiku4_5,
 		1024,
 		"cypher-gen-eval",
 	)
@@ -191,7 +191,7 @@ func runTest_CypherGenerationPreserveQuery(t *testing.T) {
 
 	// Create LLM client
 	llmClient := workflow.NewAnthropicLLMClientWithName(
-		anthropic.ModelClaude3_5Haiku20241022,
+		anthropic.ModelClaudeHaiku4_5,
 		1024,
 		"cypher-gen-eval",
 	)
@@ -402,7 +402,7 @@ func TestLake_Agent_Evals_Anthropic_CypherExecutionIntegration(t *testing.T) {
 
 	// Create LLM client
 	llmClient := workflow.NewAnthropicLLMClientWithName(
-		anthropic.ModelClaude3_5Haiku20241022,
+		anthropic.ModelClaudeHaiku4_5,
 		1024,
 		"cypher-exec-eval",
 	)

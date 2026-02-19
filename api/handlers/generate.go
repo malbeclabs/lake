@@ -269,7 +269,7 @@ func streamWithAnthropic(ctx context.Context, schema, prompt string, history []H
 	systemPrompt := buildSystemPrompt(schema)
 
 	// Start Sentry span for AI monitoring
-	model := anthropic.ModelClaude3_5Haiku20241022
+	model := anthropic.ModelClaudeHaiku4_5
 	span := sentry.StartSpan(ctx, "gen_ai.chat", sentry.WithDescription(fmt.Sprintf("chat %s (stream)", model)))
 	span.SetData("gen_ai.operation.name", "chat")
 	span.SetData("gen_ai.request.model", string(model))
@@ -371,7 +371,7 @@ func generateWithAnthropic(ctx context.Context, schema, prompt string, history [
 	client := anthropic.NewClient()
 
 	// Start Sentry span for AI monitoring
-	model := anthropic.ModelClaude3_5Haiku20241022
+	model := anthropic.ModelClaudeHaiku4_5
 	span := sentry.StartSpan(ctx, "gen_ai.chat", sentry.WithDescription(fmt.Sprintf("chat %s", model)))
 	span.SetData("gen_ai.operation.name", "chat")
 	span.SetData("gen_ai.request.model", string(model))

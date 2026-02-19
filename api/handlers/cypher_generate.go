@@ -320,7 +320,7 @@ func generateCypherWithAnthropic(schema, prompt string, history []HistoryMessage
 
 	start := time.Now()
 	msg, err := client.Messages.New(context.Background(), anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaude3_5Haiku20241022,
+		Model:     anthropic.ModelClaudeHaiku4_5,
 		MaxTokens: 1024,
 		System: []anthropic.TextBlockParam{
 			{Type: "text", Text: systemPrompt},
@@ -355,7 +355,7 @@ func streamCypherWithAnthropic(schema, prompt string, history []HistoryMessage, 
 
 	start := time.Now()
 	stream := client.Messages.NewStreaming(context.Background(), anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaude3_5Haiku20241022,
+		Model:     anthropic.ModelClaudeHaiku4_5,
 		MaxTokens: 1024,
 		System: []anthropic.TextBlockParam{
 			{Type: "text", Text: systemPrompt},
