@@ -186,12 +186,6 @@ export function Sidebar() {
           <Link to="/status" className={collapsedIconClass(isStatusRoute)} title="Status">
             <Activity className="h-4 w-4" />
           </Link>
-          <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
-            <Clock className="h-4 w-4" />
-          </Link>
-          <Link to="/outages" className={collapsedIconClass(isOutagesRoute)} title="Outages">
-            <AlertTriangle className="h-4 w-4" />
-          </Link>
           <button
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) {
@@ -207,6 +201,15 @@ export function Sidebar() {
           >
             <MessageSquare className="h-4 w-4" />
           </button>
+          <Link to="/topology/map" className={collapsedIconClass(isTopologyRoute)} title="Topology">
+            <Globe className="h-4 w-4" />
+          </Link>
+          <Link to="/traffic/overview" className={collapsedIconClass(isTrafficRoute)} title="Traffic">
+            <Network className="h-4 w-4" />
+          </Link>
+          <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
+            <Gauge className="h-4 w-4" />
+          </Link>
           <button
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) {
@@ -220,14 +223,11 @@ export function Sidebar() {
           >
             <Database className="h-4 w-4" />
           </button>
-          <Link to="/topology/map" className={collapsedIconClass(isTopologyRoute)} title="Topology">
-            <Globe className="h-4 w-4" />
+          <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
+            <Clock className="h-4 w-4" />
           </Link>
-          <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
-            <Gauge className="h-4 w-4" />
-          </Link>
-          <Link to="/traffic/overview" className={collapsedIconClass(isTrafficRoute)} title="Traffic">
-            <Network className="h-4 w-4" />
+          <Link to="/outages" className={collapsedIconClass(isOutagesRoute)} title="Outages">
+            <AlertTriangle className="h-4 w-4" />
           </Link>
 
           {/* Divider */}
@@ -305,14 +305,6 @@ export function Sidebar() {
               <Activity className="h-4 w-4" />
               Status
             </Link>
-            <Link to="/timeline" className={navItemClass(isTimelineRoute)}>
-              <Clock className="h-4 w-4" />
-              Timeline
-            </Link>
-            <Link to="/outages" className={navItemClass(isOutagesRoute)}>
-              <AlertTriangle className="h-4 w-4" />
-              Outages
-            </Link>
             <button
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey) {
@@ -327,19 +319,6 @@ export function Sidebar() {
             >
               <MessageSquare className="h-4 w-4" />
               Chat
-            </button>
-            <button
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) {
-                  window.open('/query', '_blank')
-                } else {
-                  navigate('/query')
-                }
-              }}
-              className={navItemClass(isQueryRoute)}
-            >
-              <Database className="h-4 w-4" />
-              Query
             </button>
 
             {/* Topology with inline sub-items */}
@@ -384,6 +363,24 @@ export function Sidebar() {
               </>
             )}
 
+            {/* Traffic with inline sub-items */}
+            <Link to="/traffic/overview" className={isTrafficRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Network className="h-4 w-4" />
+              Traffic
+            </Link>
+            {isTrafficRoute && (
+              <>
+                <Link to="/traffic/overview" className={subNavItemClass(isTrafficDashboard)}>
+                  <BarChart3 className="h-4 w-4" />
+                  Overview
+                </Link>
+                <Link to="/traffic/interfaces" className={subNavItemClass(isTrafficInterfaces)}>
+                  <Network className="h-4 w-4" />
+                  Interfaces
+                </Link>
+              </>
+            )}
+
             {/* Performance with inline sub-items */}
             <Link to="/performance/dz-vs-internet" className={isPerformanceRoute ? navItemExpandedClass : navItemClass(false)}>
               <Gauge className="h-4 w-4" />
@@ -403,24 +400,27 @@ export function Sidebar() {
                 )}
               </>
             )}
-
-            {/* Traffic with inline sub-items */}
-            <Link to="/traffic/overview" className={isTrafficRoute ? navItemExpandedClass : navItemClass(false)}>
-              <Network className="h-4 w-4" />
-              Traffic
+            <button
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  window.open('/query', '_blank')
+                } else {
+                  navigate('/query')
+                }
+              }}
+              className={navItemClass(isQueryRoute)}
+            >
+              <Database className="h-4 w-4" />
+              Query
+            </button>
+            <Link to="/timeline" className={navItemClass(isTimelineRoute)}>
+              <Clock className="h-4 w-4" />
+              Timeline
             </Link>
-            {isTrafficRoute && (
-              <>
-                <Link to="/traffic/overview" className={subNavItemClass(isTrafficDashboard)}>
-                  <BarChart3 className="h-4 w-4" />
-                  Overview
-                </Link>
-                <Link to="/traffic/interfaces" className={subNavItemClass(isTrafficInterfaces)}>
-                  <Network className="h-4 w-4" />
-                  Interfaces
-                </Link>
-              </>
-            )}
+            <Link to="/outages" className={navItemClass(isOutagesRoute)}>
+              <AlertTriangle className="h-4 w-4" />
+              Outages
+            </Link>
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]"
