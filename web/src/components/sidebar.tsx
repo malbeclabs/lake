@@ -571,16 +571,16 @@ export function Sidebar() {
       {/* Tools section */}
       <div className="px-3 pt-4">
         <div className="px-3 mb-2">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tools</span>
+          <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Tools</span>
         </div>
         <div className="space-y-1">
           <Link
             to="/"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isLandingPage
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Home className="h-4 w-4" />
@@ -589,10 +589,10 @@ export function Sidebar() {
           <Link
             to="/status"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isStatusRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Activity className="h-4 w-4" />
@@ -601,10 +601,10 @@ export function Sidebar() {
           <Link
             to="/timeline"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isTimelineRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Clock className="h-4 w-4" />
@@ -621,10 +621,10 @@ export function Sidebar() {
               }
             }}
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isChatRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <MessageSquare className="h-4 w-4" />
@@ -639,10 +639,10 @@ export function Sidebar() {
               }
             }}
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isQueryRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Database className="h-4 w-4" />
@@ -651,10 +651,10 @@ export function Sidebar() {
           <Link
             to="/topology"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isTopologyRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Globe className="h-4 w-4" />
@@ -663,10 +663,10 @@ export function Sidebar() {
           <Link
             to="/outages"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isOutagesRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <AlertTriangle className="h-4 w-4" />
@@ -675,10 +675,10 @@ export function Sidebar() {
           <Link
             to="/performance"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isPerformanceRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Gauge className="h-4 w-4" />
@@ -687,10 +687,10 @@ export function Sidebar() {
           <Link
             to="/traffic/overview"
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
               isTrafficRoute
-                ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
             )}
           >
             <Network className="h-4 w-4" />
@@ -711,16 +711,16 @@ export function Sidebar() {
       {!isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && !isTrafficRoute && (
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">DoubleZero</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">DoubleZero</span>
           </div>
           <div className="space-y-1">
             <Link
               to="/dz/devices"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isDevicesRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Server className="h-4 w-4" />
@@ -729,10 +729,10 @@ export function Sidebar() {
             <Link
               to="/dz/links"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isLinksRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Link2 className="h-4 w-4" />
@@ -741,10 +741,10 @@ export function Sidebar() {
             <Link
               to="/dz/metros"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isMetrosRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <MapPin className="h-4 w-4" />
@@ -753,10 +753,10 @@ export function Sidebar() {
             <Link
               to="/dz/contributors"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isContributorsRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Building2 className="h-4 w-4" />
@@ -765,10 +765,10 @@ export function Sidebar() {
             <Link
               to="/dz/users"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isUsersRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Users className="h-4 w-4" />
@@ -782,16 +782,16 @@ export function Sidebar() {
       {hasSolana && !isChatRoute && !isQueryRoute && !isTopologyRoute && !isPerformanceRoute && !isTrafficRoute && (
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Solana</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Solana</span>
           </div>
           <div className="space-y-1">
             <Link
               to="/solana/validators"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isValidatorsRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Landmark className="h-4 w-4" />
@@ -800,10 +800,10 @@ export function Sidebar() {
             <Link
               to="/solana/gossip-nodes"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
                 isGossipNodesRoute
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Radio className="h-4 w-4" />
@@ -818,7 +818,7 @@ export function Sidebar() {
         <div className="flex-1 flex flex-col min-h-0 mt-6">
           {/* Section title */}
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Query</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Query</span>
           </div>
 
           {/* Sub-nav */}
@@ -836,7 +836,7 @@ export function Sidebar() {
                     }
                   }}
                   className={cn(
-                    'w-full text-left px-3 py-2 text-sm rounded transition-colors',
+                    'w-full text-left px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isNewSessionActive
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -849,10 +849,10 @@ export function Sidebar() {
             <Link
               to="/query/sessions"
               className={cn(
-                'w-full text-left block px-3 py-2 text-sm rounded transition-colors',
+                'w-full text-left block px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isQuerySessions
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               History
@@ -862,7 +862,7 @@ export function Sidebar() {
           {/* Sessions history */}
           <div className="flex-1 overflow-y-auto mt-4">
             <div className="px-3 mb-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Recent</span>
+              <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Recent</span>
             </div>
             <div className="px-2 space-y-1">
               {sortedQuerySessions.map(session => (
@@ -891,7 +891,7 @@ export function Sidebar() {
         <div className="flex-1 flex flex-col min-h-0 mt-6">
           {/* Section title */}
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chat</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Chat</span>
           </div>
 
           {/* Sub-nav */}
@@ -909,7 +909,7 @@ export function Sidebar() {
                     }
                   }}
                   className={cn(
-                    'w-full text-left px-3 py-2 text-sm rounded transition-colors',
+                    'w-full text-left px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isNewSessionActive
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -922,10 +922,10 @@ export function Sidebar() {
             <Link
               to="/chat/sessions"
               className={cn(
-                'w-full text-left block px-3 py-2 text-sm rounded transition-colors',
+                'w-full text-left block px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isChatSessions
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               History
@@ -935,7 +935,7 @@ export function Sidebar() {
           {/* Sessions history */}
           <div className="flex-1 overflow-y-auto mt-4">
             <div className="px-3 mb-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Recent</span>
+              <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Recent</span>
             </div>
             <div className="px-2 space-y-1">
               {sortedChatSessions.map(session => (
@@ -964,7 +964,7 @@ export function Sidebar() {
         <div className="flex-1 flex flex-col min-h-0 mt-6">
           {/* Section title */}
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Topology</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Topology</span>
           </div>
 
           {/* Sub-nav */}
@@ -972,10 +972,10 @@ export function Sidebar() {
             <Link
               to="/topology/map"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isTopologyMap
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Map className="h-4 w-4" />
@@ -984,10 +984,10 @@ export function Sidebar() {
             <Link
               to="/topology/globe"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isTopologyGlobe
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Globe className="h-4 w-4" />
@@ -998,7 +998,7 @@ export function Sidebar() {
                 <Link
                   to="/topology/graph"
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyGraph
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -1010,7 +1010,7 @@ export function Sidebar() {
                 <Link
                   to="/topology/path-calculator"
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyPathCalculator
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -1022,7 +1022,7 @@ export function Sidebar() {
                 <Link
                   to="/topology/redundancy"
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyRedundancy
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -1034,7 +1034,7 @@ export function Sidebar() {
                 <Link
                   to="/topology/metro-connectivity"
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyMetroConnectivity
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -1046,7 +1046,7 @@ export function Sidebar() {
                 <Link
                   to="/topology/maintenance"
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                     isTopologyMaintenance
                       ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                       : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -1066,7 +1066,7 @@ export function Sidebar() {
         <div className="flex-1 flex flex-col min-h-0 mt-6">
           {/* Section title */}
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Performance</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Performance</span>
           </div>
 
           {/* Sub-nav */}
@@ -1074,10 +1074,10 @@ export function Sidebar() {
             <Link
               to="/performance/dz-vs-internet"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isPerformanceDzVsInternet
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Zap className="h-4 w-4" />
@@ -1087,7 +1087,7 @@ export function Sidebar() {
               <Link
                 to="/performance/path-latency"
                 className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                  'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                   isPerformancePathLatency
                     ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
                     : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
@@ -1106,7 +1106,7 @@ export function Sidebar() {
         <div className="flex-1 flex flex-col min-h-0 mt-6">
           {/* Section title */}
           <div className="px-3 mb-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Traffic</span>
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Traffic</span>
           </div>
 
           {/* Sub-nav */}
@@ -1114,10 +1114,10 @@ export function Sidebar() {
             <Link
               to="/traffic/overview"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isTrafficDashboard
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <BarChart3 className="h-4 w-4" />
@@ -1126,10 +1126,10 @@ export function Sidebar() {
             <Link
               to="/traffic/interfaces"
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded transition-colors',
+                'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-r transition-colors border-l-2',
                 isTrafficInterfaces
-                  ? 'bg-[var(--sidebar-active)] text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+                  ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
               )}
             >
               <Network className="h-4 w-4" />
@@ -1272,10 +1272,10 @@ function SessionItem({ title, isActive, url, onClick, onDelete, onRename, onGene
   return (
     <div
       className={cn(
-        'group relative flex items-center gap-1 px-3 py-2 cursor-pointer transition-colors rounded',
+        'group relative flex items-center gap-1 px-3 py-2 cursor-pointer transition-colors rounded-r border-l-2',
         isActive
-          ? 'bg-[var(--sidebar-active)] text-foreground'
-          : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
+          ? 'border-accent bg-[var(--sidebar-active)] text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
       )}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey) {
