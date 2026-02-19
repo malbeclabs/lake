@@ -269,7 +269,7 @@ export function DzVsInternetPage() {
           actions={
             <button
               onClick={handleExport}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border bg-background hover:bg-muted/50 rounded-md transition-colors"
             >
               <Download className="h-4 w-4" />
               Export CSV
