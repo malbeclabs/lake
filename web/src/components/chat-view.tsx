@@ -3,15 +3,21 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { Chat, ChatSkeleton } from './chat'
 import {
   useChatSession,
+  useChatSessions,
   useChatStream,
+  useDeleteChatSession,
+  useRenameChatSession,
+  useGenerateChatTitle,
   useWorkflowReconnect,
   chatKeys,
   type ChatStreamState,
 } from '@/hooks/use-chat'
 import type { ChatSession } from '@/lib/sessions'
+import { getChatSessionPreview } from '@/lib/sessions'
 import { useQueryClient } from '@tanstack/react-query'
 import { createSession } from '@/lib/api'
 import { useDocumentTitle } from '@/components/page-header'
+import { SessionPanel } from './session-panel'
 
 export function SimplifiedChatView() {
   useDocumentTitle('Chat')
@@ -19,6 +25,22 @@ export function SimplifiedChatView() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
+
+  // Session panel state
+  const { data: chatSessions = [] } = useChatSessions()
+  const deleteChatSession = useDeleteChatSession()
+  const renameChatSession = useRenameChatSession()
+  const generateChatTitle = useGenerateChatTitle()
+
+  const sortedChatSessions = [...chatSessions]
+    .filter(s => s.messages.length > 0)
+    .sort((a, b) => {
+      const timeDiff = b.updatedAt.getTime() - a.updatedAt.getTime()
+      return timeDiff !== 0 ? timeDiff : a.id.localeCompare(b.id)
+    })
+    .slice(0, 20)
+
+  const isChatSessions = location.pathname === '/chat/sessions'
 
   // Track if we're creating a session (for new chat flow)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
@@ -203,37 +225,87 @@ export function SimplifiedChatView() {
     navigate(`/query/${newSessionId}?${type}=${encodeURIComponent(query)}${envParam}`)
   }, [navigate])
 
+  // Session panel items
+  const sessionItems = sortedChatSessions.map(s => ({
+    id: s.id,
+    title: s.name || getChatSessionPreview(s),
+    isActive: s.id === sessionId && !isChatSessions,
+    url: `/chat/${s.id}`,
+  }))
+
+  const isNewSession = !sortedChatSessions.some(s => s.id === sessionId)
+  const isNewSessionActive = isNewSession && !isChatSessions
+
+  const sessionPanel = (
+    <SessionPanel
+      items={sessionItems}
+      newLabel="New chat"
+      isNewActive={isNewSessionActive}
+      historyUrl="/chat/sessions"
+      onNew={(e) => {
+        if (e.metaKey || e.ctrlKey) {
+          window.open('/chat', '_blank')
+        } else if (location.pathname === '/chat') {
+          window.dispatchEvent(new CustomEvent('refresh-chat-suggestions'))
+        } else {
+          navigate('/chat')
+        }
+      }}
+      onSelect={(id) => navigate(`/chat/${id}`)}
+      onDelete={(id) => deleteChatSession.mutate(id)}
+      onRename={(id, name) => renameChatSession.mutate({ sessionId: id, name })}
+      onGenerateTitle={(id) => generateChatTitle.mutateAsync(id).then(() => {})}
+    />
+  )
+
   // New chat (no sessionId) or creating session - show Chat with pending state
   if (!sessionId || isCreatingSession) {
     return (
-      <Chat
-        messages={[]}
-        isPending={isCreatingSession || !!pendingUrlMessage || isSendingMessage}
-        processingSteps={[]}
-        onSendMessage={handleSendMessage}
-        onAbort={handleAbort}
-        onOpenInQueryEditor={handleOpenInQueryEditor}
-      />
+      <div className="flex-1 flex min-h-0">
+        {sessionPanel}
+        <div className="flex-1 flex flex-col min-w-0">
+          <Chat
+            messages={[]}
+            isPending={isCreatingSession || !!pendingUrlMessage || isSendingMessage}
+            processingSteps={[]}
+            onSendMessage={handleSendMessage}
+            onAbort={handleAbort}
+            onOpenInQueryEditor={handleOpenInQueryEditor}
+          />
+        </div>
+      </div>
     )
   }
 
   // Loading existing session - show skeleton
   if (sessionLoading && !session) {
-    return <ChatSkeleton />
+    return (
+      <div className="flex-1 flex min-h-0">
+        {sessionPanel}
+        <div className="flex-1 flex flex-col min-w-0">
+          <ChatSkeleton />
+        </div>
+      </div>
+    )
   }
 
   // Show Chat with session data
   return (
-    <Chat
-      messages={session?.messages ?? []}
-      isPending={isPending}
-      processingSteps={activeProcessingSteps}
-      streamError={error}
-      onSendMessage={handleSendMessage}
-      onAbort={handleAbort}
-      onRetry={handleRetry}
-      onOpenInQueryEditor={handleOpenInQueryEditor}
-      sessionEnv={session?.env}
-    />
+    <div className="flex-1 flex min-h-0">
+      {sessionPanel}
+      <div className="flex-1 flex flex-col min-w-0">
+        <Chat
+          messages={session?.messages ?? []}
+          isPending={isPending}
+          processingSteps={activeProcessingSteps}
+          streamError={error}
+          onSendMessage={handleSendMessage}
+          onAbort={handleAbort}
+          onRetry={handleRetry}
+          onOpenInQueryEditor={handleOpenInQueryEditor}
+          sessionEnv={session?.env}
+        />
+      </div>
+    </div>
   )
 }

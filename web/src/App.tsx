@@ -62,7 +62,8 @@ import { EnvBanner } from '@/components/env-banner'
 import { EnvProvider } from '@/contexts/EnvContext'
 import { generateSessionTitle, recommendVisualization, fetchCatalog, fetchConfig, type AppConfig } from '@/lib/api'
 import type { TableInfo, QueryResponse, HistoryMessage, QueryMode } from '@/lib/api'
-import { type QuerySession, type ChatSession } from '@/lib/sessions'
+import { type QuerySession, type ChatSession, getSessionPreview } from '@/lib/sessions'
+import { SessionPanel } from '@/components/session-panel'
 import { formatQueryByType, formatQuery } from '@/lib/format-query'
 
 const queryClient = new QueryClient({
@@ -131,6 +132,21 @@ function QueryEditorView() {
   const createSessionMutation = useCreateQuerySession()
   const addHistoryMutation = useAddQueryHistory()
   const updateTitleMutation = useUpdateQueryTitle()
+
+  // Session panel data
+  const { data: allQuerySessions = [] } = useQuerySessions()
+  const deleteQSession = useDeleteQuerySession()
+  const renameQSession = useRenameQuerySession()
+  const generateQTitle = useGenerateQueryTitle()
+  const isQuerySessions = location.pathname === '/query/sessions'
+
+  const sortedSessions = [...allQuerySessions]
+    .filter(s => s.history.length > 0)
+    .sort((a, b) => {
+      const timeDiff = b.updatedAt.getTime() - a.updatedAt.getTime()
+      return timeDiff !== 0 ? timeDiff : a.id.localeCompare(b.id)
+    })
+    .slice(0, 20)
 
   // Local editor state
   const [query, setQuery] = useState('')
@@ -414,48 +430,77 @@ function QueryEditorView() {
     navigate(`/chat?q=${encodeURIComponent(question)}`)
   }, [query, results, navigate])
 
+  const sessionItems = sortedSessions.map(s => ({
+    id: s.id,
+    title: s.name || getSessionPreview(s),
+    isActive: s.id === sessionId && !isQuerySessions,
+    url: `/query/${s.id}`,
+  }))
+
+  const isNewSession = !sortedSessions.some(s => s.id === sessionId)
+  const isNewSessionActive = isNewSession && !isQuerySessions
+
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-shrink-0 px-8 pt-6 pb-4">
-        <PromptInput
-          currentQuery={query}
-          conversationHistory={conversationHistory}
-          onGenerated={handleGenerated}
-          onGenerationComplete={handleGenerationComplete}
-          autoRun={autoRun}
-          onAutoRunChange={setAutoRun}
-          mode={mode}
-          onModeDetected={setActiveMode}
-        />
-      </div>
-      <div className="flex-1 overflow-auto px-8 pb-8">
-        <div className="flex flex-col gap-5">
-          <SessionHistory
-            history={generationHistory}
-            onRestoreQuery={handleRestoreQuery}
-          />
-          <Catalog onSelectTable={handleSelectTable} />
-          <QueryEditor
-            ref={queryEditorRef}
-            query={query}
-            onQueryChange={handleQueryChange}
-            onResults={handleResults}
-            onClear={handleClear}
-            onManualRun={handleManualRun}
-            schema={catalogData?.tables}
+    <div className="flex-1 flex min-h-0">
+      <SessionPanel
+        items={sessionItems}
+        newLabel="New query"
+        isNewActive={isNewSessionActive}
+        historyUrl="/query/sessions"
+        onNew={(e) => {
+          if (e.metaKey || e.ctrlKey) {
+            window.open('/query', '_blank')
+          } else {
+            navigate('/query')
+          }
+        }}
+        onSelect={(id) => navigate(`/query/${id}`)}
+        onDelete={(id) => deleteQSession.mutate(id)}
+        onRename={(id, name) => renameQSession.mutate({ sessionId: id, name })}
+        onGenerateTitle={(id) => generateQTitle.mutateAsync(id).then(() => {})}
+      />
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <div className="flex-shrink-0 px-8 pt-6 pb-4">
+          <PromptInput
+            currentQuery={query}
+            conversationHistory={conversationHistory}
+            onGenerated={handleGenerated}
+            onGenerationComplete={handleGenerationComplete}
+            autoRun={autoRun}
+            onAutoRunChange={setAutoRun}
             mode={mode}
-            onModeChange={setMode}
-            activeMode={activeMode}
-            onActiveModeChange={setActiveMode}
-            queryEnv={queryEnv}
+            onModeDetected={setActiveMode}
           />
-          <ResultsView
-            results={results}
-            isRecommending={isRecommending}
-            recommendedConfig={recommendedConfig}
-            onAskAboutResults={handleAskAboutResults}
-            onRequestVisualization={handleRequestVisualization}
-          />
+        </div>
+        <div className="flex-1 overflow-auto px-8 pb-8">
+          <div className="flex flex-col gap-5">
+            <SessionHistory
+              history={generationHistory}
+              onRestoreQuery={handleRestoreQuery}
+            />
+            <Catalog onSelectTable={handleSelectTable} />
+            <QueryEditor
+              ref={queryEditorRef}
+              query={query}
+              onQueryChange={handleQueryChange}
+              onResults={handleResults}
+              onClear={handleClear}
+              onManualRun={handleManualRun}
+              schema={catalogData?.tables}
+              mode={mode}
+              onModeChange={setMode}
+              activeMode={activeMode}
+              onActiveModeChange={setActiveMode}
+              queryEnv={queryEnv}
+            />
+            <ResultsView
+              results={results}
+              isRecommending={isRecommending}
+              recommendedConfig={recommendedConfig}
+              onAskAboutResults={handleAskAboutResults}
+              onRequestVisualization={handleRequestVisualization}
+            />
+          </div>
         </div>
       </div>
     </div>
