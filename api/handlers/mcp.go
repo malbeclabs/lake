@@ -28,9 +28,13 @@ func InitMCP() http.Handler {
 		return mcpHandler
 	}
 
-	mcpHandler = mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+	streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return createMCPServer(r)
-	}, nil)
+	}, &mcp.StreamableHTTPOptions{
+		Stateless: true,
+	})
+
+	mcpHandler = streamableHandler
 
 	return mcpHandler
 }

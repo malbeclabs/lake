@@ -89,6 +89,7 @@ func (c *AnthropicLLMClient) Complete(ctx context.Context, systemPrompt, userPro
 		slog.Error("Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
 		metrics.RecordAnthropicRequest(c.name, duration, err)
 		span.Status = sentry.SpanStatusInternalError
+		sentry.CaptureException(err)
 		return "", fmt.Errorf("anthropic API error: %w", err)
 	}
 
@@ -256,6 +257,7 @@ func (c *AnthropicLLMClient) CompleteWithTools(
 		slog.Error("Anthropic API call failed", "phase", c.name, "duration", duration, "error", err)
 		metrics.RecordAnthropicRequest(c.name, duration, err)
 		span.Status = sentry.SpanStatusInternalError
+		sentry.CaptureException(err)
 		return nil, fmt.Errorf("anthropic API error: %w", err)
 	}
 

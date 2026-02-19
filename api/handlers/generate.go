@@ -308,6 +308,7 @@ func streamWithAnthropic(ctx context.Context, schema, prompt string, history []H
 
 	if err != nil {
 		span.Status = sentry.SpanStatusInternalError
+		sentry.CaptureException(err)
 	} else {
 		span.Status = sentry.SpanStatusOK
 	}
@@ -399,6 +400,7 @@ func generateWithAnthropic(ctx context.Context, schema, prompt string, history [
 
 	if err != nil {
 		span.Status = sentry.SpanStatusInternalError
+		sentry.CaptureException(err)
 		return "", err
 	}
 

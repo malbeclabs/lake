@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
@@ -778,6 +779,11 @@ func (m *WorkflowManager) runWorkflow(
 }
 
 func (m *WorkflowManager) failWorkflow(ctx context.Context, rw *runningWorkflow, errMsg string) {
+	sentry.WithScope(func(scope *sentry.Scope) {
+		scope.SetTag("workflow_id", rw.ID.String())
+		scope.SetTag("session_id", rw.SessionID.String())
+		sentry.CaptureMessage(errMsg)
+	})
 	rw.broadcast(WorkflowEvent{
 		Type: "error",
 		Data: map[string]string{"error": errMsg},
