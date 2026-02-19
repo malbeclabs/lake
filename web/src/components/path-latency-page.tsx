@@ -329,7 +329,7 @@ export function PathLatencyPage() {
                     const newMode = e.target.value as PathOptimizeMode
                     setSearchParams({ optimize: newMode })
                   }}
-                  className="appearance-none bg-muted hover:bg-muted/80 rounded-md px-3 py-1.5 pr-8 text-sm cursor-pointer transition-colors"
+                  className="appearance-none border border-border bg-background hover:bg-muted/50 rounded-md px-3 py-1.5 pr-8 text-sm cursor-pointer transition-colors"
                 >
                   <option value="latency">Optimize: Latency</option>
                   <option value="hops">Optimize: Hops</option>
@@ -339,7 +339,7 @@ export function PathLatencyPage() {
               </div>
               <button
                 onClick={handleExport}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border bg-background hover:bg-muted/50 rounded-md transition-colors"
               >
                 <Download className="h-4 w-4" />
                 Export CSV
