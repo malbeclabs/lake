@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, Loader2 } from 'lucide-react'
+import { ChevronDown, Loader2, Network } from 'lucide-react'
 import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
 import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
 import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
+import { PageHeader } from '@/components/page-header'
 
 export interface LinkLookupInfo {
   pk: string
@@ -399,12 +400,12 @@ function TrafficPageContent() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-        {/* Header */}
-        <div className="flex flex-col gap-3 mb-6">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <h1 className="text-2xl font-bold">Interfaces</h1>
-            <DashboardFilters excludeMetrics={['utilization']} />
-          </div>
+        <PageHeader
+          icon={Network}
+          title="Interfaces"
+          actions={<DashboardFilters excludeMetrics={['utilization']} />}
+        />
+        <div className="-mt-3 mb-6 flex flex-col gap-3">
           <DashboardFilterBadges />
           <div className="flex items-center gap-3 flex-wrap justify-end">
             <button

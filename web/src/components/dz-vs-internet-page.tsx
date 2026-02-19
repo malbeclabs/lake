@@ -8,6 +8,7 @@ import type { LatencyComparison } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
+import { PageHeader } from '@/components/page-header'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
 // Parse metro filters from URL
@@ -262,19 +263,19 @@ export function DzVsInternetPage() {
     <div className="flex-1 flex flex-col bg-background overflow-auto">
       {/* Header */}
       <div className="px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Zap className="h-5 w-5 text-muted-foreground" />
-            <h1 className="text-lg font-semibold">DZ vs Internet</h1>
-          </div>
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
-          >
-            <Download className="h-4 w-4" />
-            Export CSV
-          </button>
-        </div>
+        <PageHeader
+          icon={Zap}
+          title="DZ vs Internet"
+          actions={
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </button>
+          }
+        />
 
         <p className="mt-3 text-sm text-muted-foreground">
           Compares measured latency on direct DZ links against public internet latency for the same metro pairs.
@@ -427,7 +428,7 @@ export function DzVsInternetPage() {
                   <tr
                     key={`${comp.origin_metro_pk}-${comp.target_metro_pk}`}
                     className={cn(
-                      'hover:bg-muted/50 cursor-pointer transition-colors',
+                      'hover:bg-muted cursor-pointer transition-colors',
                       isSelected && 'bg-muted/50'
                     )}
                     onClick={() => setSelectedComparison(isSelected ? null : comp)}

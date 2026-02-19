@@ -34,6 +34,7 @@ import {
 import { TimelineFilters } from './timeline-filters'
 import { TimelineEventCard, DateSeparator } from './timeline-event-card'
 import { EventHistogram } from './timeline-histogram'
+import { PageHeader } from './page-header'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -377,49 +378,50 @@ export function TimelinePage() {
   return (
     <div className="flex-1 overflow-auto scroll-smooth">
       <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8">
-        {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center gap-3">
-            <Clock className="h-6 w-6 text-muted-foreground" />
-            <h1 className="text-2xl font-semibold">Timeline</h1>
-            {totalCount > 0 && (
-              <span className="text-sm text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                {searchFilters.length > 0 ? `${filteredEvents.length} of ${totalCount.toLocaleString()}` : totalCount.toLocaleString()} events
-              </span>
-            )}
-            {searchFilters.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {searchFilters.map((filter, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => removeSearchFilter(filter)}
-                    className="inline-flex items-center gap-1 text-sm px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-                  >
-                    <Search className="h-3 w-3" />
-                    {filter}
-                    <X className="h-3 w-3" />
-                  </button>
-                ))}
-                {searchFilters.length > 1 && (
-                  <button
-                    onClick={clearSearchFilter}
-                    className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Clear all
-                  </button>
-                )}
-              </div>
-            )}
-            {newEventIds.size > 0 && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-primary text-primary-foreground animate-pulse">
-                +{newEventIds.size} new
-              </span>
-            )}
-            {isFetching && !isLoading && (
-              <span className="text-xs text-muted-foreground">Updating...</span>
-            )}
-          </div>
-        </div>
+        <PageHeader
+          icon={Clock}
+          title="Timeline"
+          subtitle={
+            <>
+              {totalCount > 0 && (
+                <span className="text-sm text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                  {searchFilters.length > 0 ? `${filteredEvents.length} of ${totalCount.toLocaleString()}` : totalCount.toLocaleString()} events
+                </span>
+              )}
+              {newEventIds.size > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-primary text-primary-foreground animate-pulse">
+                  +{newEventIds.size} new
+                </span>
+              )}
+              {isFetching && !isLoading && (
+                <span className="text-xs text-muted-foreground">Updating...</span>
+              )}
+            </>
+          }
+          actions={searchFilters.length > 0 ? (
+            <>
+              {searchFilters.map((filter, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => removeSearchFilter(filter)}
+                  className="inline-flex items-center gap-1 text-sm px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+                >
+                  <Search className="h-3 w-3" />
+                  {filter}
+                  <X className="h-3 w-3" />
+                </button>
+              ))}
+              {searchFilters.length > 1 && (
+                <button
+                  onClick={clearSearchFilter}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
+            </>
+          ) : undefined}
+        />
 
         {/* Filters */}
         <TimelineFilters

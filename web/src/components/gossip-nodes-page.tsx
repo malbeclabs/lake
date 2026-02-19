@@ -6,6 +6,7 @@ import { fetchGossipNodes } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
+import { PageHeader } from './page-header'
 
 const PAGE_SIZE = 100
 
@@ -238,56 +239,50 @@ export function GossipNodesPage() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-8 py-8">
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div className="flex items-center gap-3">
-            <Radio className="h-6 w-6 text-muted-foreground" />
-            <h1 className="text-2xl font-medium">Gossip Nodes</h1>
-            <span className="text-muted-foreground">
-              ({response?.total || 0})
+        <PageHeader
+          icon={Radio}
+          title="Gossip Nodes"
+          count={response?.total || 0}
+          subtitle={
+            <>
               {validatorCount > 0 && (
-                <span className="ml-2">{validatorCount} validators</span>
+                <span className="text-muted-foreground">{validatorCount} validators</span>
               )}
               {onDZCount > 0 && (
-                <span className="ml-2 text-green-600 dark:text-green-400">
-                  {onDZCount} on DZ
-                </span>
+                <span className="text-green-600 dark:text-green-400">{onDZCount} on DZ</span>
               )}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Filter tags */}
-            {searchFilters.map((filter, idx) => (
-              <button
-                key={`${filter}-${idx}`}
-                onClick={() => removeFilter(filter)}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-              >
-                {filter}
-                <X className="h-3 w-3" />
-              </button>
-            ))}
-
-            {/* Clear all */}
-            {searchFilters.length > 1 && (
-              <button
-                onClick={clearAllFilters}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Clear all
-              </button>
-            )}
-
-            {/* Inline filter */}
-            <InlineFilter
-              fieldPrefixes={gossipNodeFieldPrefixes}
-              entity="gossip"
-              autocompleteFields={gossipNodeAutocompleteFields}
-              placeholder="Filter gossip nodes..."
-              onLiveFilterChange={setLiveFilter}
-            />
-          </div>
-        </div>
+            </>
+          }
+          actions={
+            <>
+              {searchFilters.map((filter, idx) => (
+                <button
+                  key={`${filter}-${idx}`}
+                  onClick={() => removeFilter(filter)}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+                >
+                  {filter}
+                  <X className="h-3 w-3" />
+                </button>
+              ))}
+              {searchFilters.length > 1 && (
+                <button
+                  onClick={clearAllFilters}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
+              <InlineFilter
+                fieldPrefixes={gossipNodeFieldPrefixes}
+                entity="gossip"
+                autocompleteFields={gossipNodeAutocompleteFields}
+                placeholder="Filter gossip nodes..."
+                onLiveFilterChange={setLiveFilter}
+              />
+            </>
+          }
+        />
 
         {/* Table */}
         <div className={`border border-border rounded-lg overflow-hidden bg-card transition-opacity ${isFetching ? 'opacity-60' : ''}`}>
@@ -355,7 +350,7 @@ export function GossipNodesPage() {
                 {nodes.map((node) => (
                   <tr
                     key={node.pubkey}
-                    className="border-b border-border last:border-b-0 hover:bg-muted/50 cursor-pointer transition-colors"
+                    className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/solana/gossip-nodes/${node.pubkey}`, navigate)}
                   >
                     <td className="px-4 py-3">

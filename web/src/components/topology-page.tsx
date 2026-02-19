@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, lazy, Suspense, Component, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useDocumentTitle } from '@/components/page-header'
 import { useQuery } from '@tanstack/react-query'
 import { fetchTopology } from '@/lib/api'
 import { TopologyMap } from '@/components/topology-map'
@@ -87,6 +88,7 @@ function TopologyLoading() {
 }
 
 export function TopologyPage({ view }: TopologyPageProps) {
+  useDocumentTitle('Topology')
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Get selected device from URL (shared between views)

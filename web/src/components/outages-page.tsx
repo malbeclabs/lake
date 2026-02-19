@@ -5,6 +5,7 @@ import { AlertTriangle, Download, ExternalLink } from 'lucide-react'
 import { fetchLinkOutages, type LinkOutage, type OutageTimeRange, type OutageThreshold } from '@/lib/api'
 import { StatCard } from '@/components/stat-card'
 import { StatusFilters, useStatusFilters } from '@/components/status-search-bar'
+import { PageHeader } from '@/components/page-header'
 
 const timeRanges: { value: OutageTimeRange; label: string }[] = [
   { value: '3h', label: '3h' },
@@ -265,17 +266,19 @@ export function OutagesPage() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold">Link Outages</h1>
-          <a
-            href={exportUrl}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-muted transition-colors"
-          >
-            <Download className="h-4 w-4" />
-            Export CSV
-          </a>
-        </div>
+        <PageHeader
+          icon={AlertTriangle}
+          title="Link Outages"
+          actions={
+            <a
+              href={exportUrl}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-muted transition-colors"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </a>
+          }
+        />
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-4 mb-6">

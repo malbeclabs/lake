@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
+import { useDocumentTitle } from '@/components/page-header'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, XCircle, ArrowUpDown, Cpu, ChevronDown, ChevronUp, Info, WifiOff } from 'lucide-react'
@@ -2764,6 +2765,7 @@ function MetrosContent({
 }
 
 export function StatusPage() {
+  useDocumentTitle('Status')
   const location = useLocation()
   const navigate = useNavigate()
   const buckets = useBucketCount()
@@ -2867,12 +2869,12 @@ export function StatusPage() {
 
         {/* Network Stats Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-8 gap-y-6 mb-8">
-          <StatCard label="Contributors" value={status.network.contributors} format="number" />
-          <StatCard label="Metros" value={status.network.metros} format="number" />
-          <StatCard label="Devices" value={status.network.devices} format="number" />
-          <StatCard label="Links" value={status.network.links} format="number" />
-          <StatCard label="Users" value={status.network.users} format="number" />
-          <StatCard label="Validators on DZ" value={status.network.validators_on_dz} format="number" />
+          <StatCard label="Contributors" value={status.network.contributors} format="number" href="/dz/contributors" />
+          <StatCard label="Metros" value={status.network.metros} format="number" href="/dz/metros" />
+          <StatCard label="Devices" value={status.network.devices} format="number" href="/dz/devices" />
+          <StatCard label="Links" value={status.network.links} format="number" href="/dz/links" />
+          <StatCard label="Users" value={status.network.users} format="number" href="/dz/users" />
+          <StatCard label="Validators on DZ" value={status.network.validators_on_dz} format="number" href="/solana/validators" />
           <StatCard label="SOL Connected" value={status.network.total_stake_sol} format="stake" />
           <StatCard label="Stake Share" value={status.network.stake_share_pct} format="percent" delta={status.network.stake_share_delta} />
           <StatCard label="Capacity" value={status.network.bandwidth_bps} format="bandwidth" />

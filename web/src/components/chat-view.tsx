@@ -11,8 +11,10 @@ import {
 import type { ChatSession } from '@/lib/sessions'
 import { useQueryClient } from '@tanstack/react-query'
 import { createSession } from '@/lib/api'
+import { useDocumentTitle } from '@/components/page-header'
 
 export function SimplifiedChatView() {
+  useDocumentTitle('Chat')
   const { sessionId } = useParams()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()

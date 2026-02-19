@@ -7,8 +7,10 @@ import { StatCard } from '@/components/stat-card'
 import { useTheme } from '@/hooks/use-theme'
 import { useEnv } from '@/contexts/EnvContext'
 import { getExampleQuestions } from '@/lib/example-questions'
+import { useDocumentTitle } from '@/components/page-header'
 
 export function Landing() {
+  useDocumentTitle('Explore')
   const navigate = useNavigate()
   const { resolvedTheme } = useTheme()
   const { features } = useEnv()
