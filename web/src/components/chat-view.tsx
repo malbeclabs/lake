@@ -11,7 +11,7 @@ import {
 import type { ChatSession } from '@/lib/sessions'
 import { useQueryClient } from '@tanstack/react-query'
 import { createSession } from '@/lib/api'
-import { useDocumentTitle } from '@/components/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export function SimplifiedChatView() {
   useDocumentTitle('Chat')

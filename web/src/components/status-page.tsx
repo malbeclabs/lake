@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
-import { useDocumentTitle } from '@/components/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, XCircle, ArrowUpDown, Cpu, ChevronDown, ChevronUp, Info, WifiOff } from 'lucide-react'

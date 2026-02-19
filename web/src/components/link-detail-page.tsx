@@ -8,7 +8,7 @@ import { SingleLinkStatusRow } from '@/components/single-link-status-row'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
-import { useDocumentTitle } from '@/components/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()

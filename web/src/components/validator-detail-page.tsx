@@ -2,7 +2,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Landmark, AlertCircle, ArrowLeft, Check } from 'lucide-react'
 import { fetchValidator } from '@/lib/api'
-import { useDocumentTitle } from '@/components/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'

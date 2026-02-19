@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, lazy, Suspense, Component, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useDocumentTitle } from '@/components/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useQuery } from '@tanstack/react-query'
 import { fetchTopology } from '@/lib/api'
 import { TopologyMap } from '@/components/topology-map'

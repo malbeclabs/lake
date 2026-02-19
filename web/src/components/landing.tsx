@@ -7,7 +7,7 @@ import { StatCard } from '@/components/stat-card'
 import { useTheme } from '@/hooks/use-theme'
 import { useEnv } from '@/contexts/EnvContext'
 import { getExampleQuestions } from '@/lib/example-questions'
-import { useDocumentTitle } from '@/components/page-header'
+import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export function Landing() {
   useDocumentTitle('Explore')

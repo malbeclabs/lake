@@ -134,52 +134,50 @@ export function ValidatorsPage() {
     placeholderData: keepPreviousData,
   })
 
-  // Helper to check if a validator matches a single filter (for client-side filtering)
-  const matchesSingleFilter = (validator: NonNullable<typeof response>['items'][number], filterRaw: string): boolean => {
-    const filter = parseFilter(filterRaw)
-    const field = filter.field
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return true
-
-    // Text matching for various fields
-    switch (field) {
-      case 'vote':
-        return validator.vote_pubkey.toLowerCase().includes(needle)
-      case 'node':
-        return validator.node_pubkey.toLowerCase().includes(needle)
-      case 'city':
-        return (validator.city || '').toLowerCase().includes(needle)
-      case 'country':
-        return (validator.country || '').toLowerCase().includes(needle)
-      case 'device':
-        return (validator.device_code || '').toLowerCase().includes(needle)
-      case 'version':
-        return (validator.version || '').toLowerCase().includes(needle)
-      case 'dz': {
-        const isDZ = validator.on_dz
-        return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
-      }
-      case 'all': {
-        // Search across multiple text fields
-        const textFields = [
-          validator.vote_pubkey,
-          validator.node_pubkey,
-          validator.city || '',
-          validator.country || '',
-          validator.device_code || '',
-          validator.version || '',
-        ]
-        return textFields.some(v => v.toLowerCase().includes(needle))
-      }
-      default:
-        return true
-    }
-  }
-
   // Apply client-side filters: OR within same field, AND across different fields
   const validators = useMemo(() => {
     const items = response?.items ?? []
     if (clientFilters.length === 0) return items
+
+    const matchesSingleFilter = (validator: typeof items[number], filterRaw: string): boolean => {
+      const filter = parseFilter(filterRaw)
+      const field = filter.field
+      const needle = filter.value.trim().toLowerCase()
+      if (!needle) return true
+
+      switch (field) {
+        case 'vote':
+          return validator.vote_pubkey.toLowerCase().includes(needle)
+        case 'node':
+          return validator.node_pubkey.toLowerCase().includes(needle)
+        case 'city':
+          return (validator.city || '').toLowerCase().includes(needle)
+        case 'country':
+          return (validator.country || '').toLowerCase().includes(needle)
+        case 'device':
+          return (validator.device_code || '').toLowerCase().includes(needle)
+        case 'version':
+          return (validator.version || '').toLowerCase().includes(needle)
+        case 'dz': {
+          const isDZ = validator.on_dz
+          return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
+        }
+        case 'all': {
+          const textFields = [
+            validator.vote_pubkey,
+            validator.node_pubkey,
+            validator.city || '',
+            validator.country || '',
+            validator.device_code || '',
+            validator.version || '',
+          ]
+          return textFields.some(v => v.toLowerCase().includes(needle))
+        }
+        default:
+          return true
+      }
+    }
+
     const grouped = new Map<string, string[]>()
     for (const f of clientFilters) {
       const { field } = parseFilter(f)

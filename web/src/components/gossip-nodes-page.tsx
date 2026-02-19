@@ -114,56 +114,54 @@ export function GossipNodesPage() {
     placeholderData: keepPreviousData,
   })
 
-  // Helper to check if a node matches a single filter (for client-side filtering)
-  const matchesSingleFilter = (node: NonNullable<typeof response>['items'][number], filterRaw: string): boolean => {
-    const filter = parseFilter(filterRaw)
-    const field = filter.field
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return true
-
-    // Text matching for various fields
-    switch (field) {
-      case 'pubkey':
-        return node.pubkey.toLowerCase().includes(needle)
-      case 'ip':
-        return (node.gossip_ip || '').toLowerCase().includes(needle)
-      case 'city':
-        return (node.city || '').toLowerCase().includes(needle)
-      case 'country':
-        return (node.country || '').toLowerCase().includes(needle)
-      case 'device':
-        return (node.device_code || '').toLowerCase().includes(needle)
-      case 'version':
-        return (node.version || '').toLowerCase().includes(needle)
-      case 'dz': {
-        const isDZ = node.on_dz
-        return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
-      }
-      case 'validator': {
-        const isValidator = node.is_validator
-        return needle === 'yes' ? isValidator : needle === 'no' ? !isValidator : true
-      }
-      case 'all': {
-        // Search across multiple text fields
-        const textFields = [
-          node.pubkey,
-          node.gossip_ip || '',
-          node.city || '',
-          node.country || '',
-          node.device_code || '',
-          node.version || '',
-        ]
-        return textFields.some(v => v.toLowerCase().includes(needle))
-      }
-      default:
-        return true
-    }
-  }
-
   // Apply client-side filters: OR within same field, AND across different fields
   const nodes = useMemo(() => {
     const items = response?.items ?? []
     if (clientFilters.length === 0) return items
+
+    const matchesSingleFilter = (node: typeof items[number], filterRaw: string): boolean => {
+      const filter = parseFilter(filterRaw)
+      const field = filter.field
+      const needle = filter.value.trim().toLowerCase()
+      if (!needle) return true
+
+      switch (field) {
+        case 'pubkey':
+          return node.pubkey.toLowerCase().includes(needle)
+        case 'ip':
+          return (node.gossip_ip || '').toLowerCase().includes(needle)
+        case 'city':
+          return (node.city || '').toLowerCase().includes(needle)
+        case 'country':
+          return (node.country || '').toLowerCase().includes(needle)
+        case 'device':
+          return (node.device_code || '').toLowerCase().includes(needle)
+        case 'version':
+          return (node.version || '').toLowerCase().includes(needle)
+        case 'dz': {
+          const isDZ = node.on_dz
+          return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
+        }
+        case 'validator': {
+          const isValidator = node.is_validator
+          return needle === 'yes' ? isValidator : needle === 'no' ? !isValidator : true
+        }
+        case 'all': {
+          const textFields = [
+            node.pubkey,
+            node.gossip_ip || '',
+            node.city || '',
+            node.country || '',
+            node.device_code || '',
+            node.version || '',
+          ]
+          return textFields.some(v => v.toLowerCase().includes(needle))
+        }
+        default:
+          return true
+      }
+    }
+
     const grouped = new Map<string, string[]>()
     for (const f of clientFilters) {
       const { field } = parseFilter(f)
