@@ -49,7 +49,9 @@ export function Sidebar() {
   const isTimelineRoute = location.pathname === '/timeline'
   const isOutagesRoute = location.pathname === '/outages'
   const isChatRoute = location.pathname.startsWith('/chat')
+  const isChatSessions = location.pathname === '/chat/sessions'
   const isQueryRoute = location.pathname.startsWith('/query')
+  const isQuerySessions = location.pathname === '/query/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
   const isPerformanceRoute = location.pathname.startsWith('/performance')
   const isTrafficRoute = location.pathname.startsWith('/traffic')
@@ -186,6 +188,21 @@ export function Sidebar() {
           <Link to="/status" className={collapsedIconClass(isStatusRoute)} title="Status">
             <Activity className="h-4 w-4" />
           </Link>
+          <Link to="/topology/map" className={collapsedIconClass(isTopologyRoute)} title="Topology">
+            <Globe className="h-4 w-4" />
+          </Link>
+          <Link to="/traffic/overview" className={collapsedIconClass(isTrafficRoute)} title="Traffic">
+            <Network className="h-4 w-4" />
+          </Link>
+          <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
+            <Gauge className="h-4 w-4" />
+          </Link>
+          <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
+            <Clock className="h-4 w-4" />
+          </Link>
+          <Link to="/outages" className={collapsedIconClass(isOutagesRoute)} title="Outages">
+            <AlertTriangle className="h-4 w-4" />
+          </Link>
           <button
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) {
@@ -201,15 +218,6 @@ export function Sidebar() {
           >
             <MessageSquare className="h-4 w-4" />
           </button>
-          <Link to="/topology/map" className={collapsedIconClass(isTopologyRoute)} title="Topology">
-            <Globe className="h-4 w-4" />
-          </Link>
-          <Link to="/traffic/overview" className={collapsedIconClass(isTrafficRoute)} title="Traffic">
-            <Network className="h-4 w-4" />
-          </Link>
-          <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
-            <Gauge className="h-4 w-4" />
-          </Link>
           <button
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) {
@@ -223,12 +231,6 @@ export function Sidebar() {
           >
             <Database className="h-4 w-4" />
           </button>
-          <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
-            <Clock className="h-4 w-4" />
-          </Link>
-          <Link to="/outages" className={collapsedIconClass(isOutagesRoute)} title="Outages">
-            <AlertTriangle className="h-4 w-4" />
-          </Link>
 
           {/* Divider */}
           <div className="w-6 border-t border-border/50 my-2" />
@@ -305,21 +307,6 @@ export function Sidebar() {
               <Activity className="h-4 w-4" />
               Status
             </Link>
-            <button
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) {
-                  window.open('/chat', '_blank')
-                } else if (location.pathname === '/chat') {
-                  window.dispatchEvent(new CustomEvent('refresh-chat-suggestions'))
-                } else {
-                  navigate('/chat')
-                }
-              }}
-              className={navItemClass(isChatRoute)}
-            >
-              <MessageSquare className="h-4 w-4" />
-              Chat
-            </button>
 
             {/* Topology with inline sub-items */}
             <Link to="/topology/map" className={isTopologyRoute ? navItemExpandedClass : navItemClass(false)}>
@@ -400,19 +387,6 @@ export function Sidebar() {
                 )}
               </>
             )}
-            <button
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) {
-                  window.open('/query', '_blank')
-                } else {
-                  navigate('/query')
-                }
-              }}
-              className={navItemClass(isQueryRoute)}
-            >
-              <Database className="h-4 w-4" />
-              Query
-            </button>
             <Link to="/timeline" className={navItemClass(isTimelineRoute)}>
               <Clock className="h-4 w-4" />
               Timeline
@@ -421,6 +395,77 @@ export function Sidebar() {
               <AlertTriangle className="h-4 w-4" />
               Outages
             </Link>
+
+            {/* Chat with inline sub-items */}
+            <button
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  window.open('/chat', '_blank')
+                } else if (location.pathname === '/chat') {
+                  window.dispatchEvent(new CustomEvent('refresh-chat-suggestions'))
+                } else {
+                  navigate('/chat')
+                }
+              }}
+              className={isChatRoute ? navItemExpandedClass : navItemClass(false)}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Chat
+            </button>
+            {isChatRoute && (
+              <>
+                <button
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey) {
+                      window.open('/chat', '_blank')
+                    } else {
+                      navigate('/chat')
+                    }
+                  }}
+                  className={subNavItemClass(!isChatSessions && (location.pathname === '/chat' || !!location.pathname.match(/^\/chat\/[^/]+$/)))}
+                >
+                  New chat
+                </button>
+                <Link to="/chat/sessions" className={subNavItemClass(isChatSessions)}>
+                  History
+                </Link>
+              </>
+            )}
+
+            {/* Query with inline sub-items */}
+            <button
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  window.open('/query', '_blank')
+                } else {
+                  navigate('/query')
+                }
+              }}
+              className={isQueryRoute ? navItemExpandedClass : navItemClass(false)}
+            >
+              <Database className="h-4 w-4" />
+              Query
+            </button>
+            {isQueryRoute && (
+              <>
+                <button
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey) {
+                      window.open('/query', '_blank')
+                    } else {
+                      navigate('/query')
+                    }
+                  }}
+                  className={subNavItemClass(!isQuerySessions && (location.pathname === '/query' || !!location.pathname.match(/^\/query\/[^/]+$/)))}
+                >
+                  New query
+                </button>
+                <Link to="/query/sessions" className={subNavItemClass(isQuerySessions)}>
+                  History
+                </Link>
+              </>
+            )}
+
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]"
