@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Landmark, AlertCircle, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -176,10 +176,23 @@ export function ValidatorsPage() {
     }
   }
 
-  // Apply client-side filters to server results
-  const validators = (response?.items ?? []).filter(v =>
-    clientFilters.every(f => matchesSingleFilter(v, f))
-  )
+  // Apply client-side filters: OR within same field, AND across different fields
+  const validators = useMemo(() => {
+    const items = response?.items ?? []
+    if (clientFilters.length === 0) return items
+    const grouped = new Map<string, string[]>()
+    for (const f of clientFilters) {
+      const { field } = parseFilter(f)
+      const existing = grouped.get(field) ?? []
+      existing.push(f)
+      grouped.set(field, existing)
+    }
+    return items.filter(v =>
+      Array.from(grouped.values()).every(group =>
+        group.some(f => matchesSingleFilter(v, f))
+      )
+    )
+  }, [response?.items, clientFilters])
   const onDZCount = response?.on_dz_count ?? 0
 
   const removeFilter = useCallback((filterToRemove: string) => {

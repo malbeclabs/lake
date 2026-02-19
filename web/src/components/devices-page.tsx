@@ -252,8 +252,19 @@ export function DevicesPage() {
       return getSearchValue(device, searchField).toLowerCase().includes(needle)
     }
 
-    // Apply all filters (AND logic - device must match all filters)
-    return devices.filter(device => allFilters.every(f => matchesSingleFilter(device, f)))
+    // Group filters by field, then OR within same field, AND across different fields
+    const grouped = new Map<string, string[]>()
+    for (const f of allFilters) {
+      const { field } = parseFilter(f)
+      const existing = grouped.get(field) ?? []
+      existing.push(f)
+      grouped.set(field, existing)
+    }
+    return devices.filter(device =>
+      Array.from(grouped.values()).every(group =>
+        group.some(f => matchesSingleFilter(device, f))
+      )
+    )
   }, [devices, allFilters])
   const sortedDevices = useMemo(() => {
     if (!filteredDevices) return []

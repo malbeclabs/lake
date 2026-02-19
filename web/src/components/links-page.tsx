@@ -288,8 +288,19 @@ export function LinksPage() {
       return getSearchValue(link, searchField).toLowerCase().includes(needle)
     }
 
-    // Apply all filters (AND logic - link must match all filters)
-    return links.filter(link => allFilters.every(f => matchesSingleFilter(link, f)))
+    // Group filters by field, then OR within same field, AND across different fields
+    const grouped = new Map<string, string[]>()
+    for (const f of allFilters) {
+      const { field } = parseFilter(f)
+      const existing = grouped.get(field) ?? []
+      existing.push(f)
+      grouped.set(field, existing)
+    }
+    return links.filter(link =>
+      Array.from(grouped.values()).every(group =>
+        group.some(f => matchesSingleFilter(link, f))
+      )
+    )
   }, [links, allFilters])
   const sortedLinks = useMemo(() => {
     if (!filteredLinks) return []

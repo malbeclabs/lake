@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Radio, AlertCircle, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -160,10 +160,23 @@ export function GossipNodesPage() {
     }
   }
 
-  // Apply client-side filters to server results
-  const nodes = (response?.items ?? []).filter(n =>
-    clientFilters.every(f => matchesSingleFilter(n, f))
-  )
+  // Apply client-side filters: OR within same field, AND across different fields
+  const nodes = useMemo(() => {
+    const items = response?.items ?? []
+    if (clientFilters.length === 0) return items
+    const grouped = new Map<string, string[]>()
+    for (const f of clientFilters) {
+      const { field } = parseFilter(f)
+      const existing = grouped.get(field) ?? []
+      existing.push(f)
+      grouped.set(field, existing)
+    }
+    return items.filter(n =>
+      Array.from(grouped.values()).every(group =>
+        group.some(f => matchesSingleFilter(n, f))
+      )
+    )
+  }, [response?.items, clientFilters])
   const onDZCount = response?.on_dz_count ?? 0
   const validatorCount = response?.validator_count ?? 0
 
