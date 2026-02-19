@@ -1,0 +1,23 @@
+# Runtime data
+data/
+controlcenter-data/
+
+# Build artifacts
+bin/
+dist/
+
+# Node
+ui/node_modules/
+ui/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# Dev tools
+.claude/
+.playwright-mcp/
+*.png
+
+# TypeScript build info
+ui/tsconfig.app.tsbuildinfo

@@ -13,3 +13,6 @@
 dist/
 eval-runs/
 logs/
+
+controlcenter-data/
+bin/
