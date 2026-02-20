@@ -3811,7 +3811,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
-              treePaths={multicastTreePaths}
               validators={validators}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}

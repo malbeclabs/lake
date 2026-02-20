@@ -3812,7 +3812,6 @@ export function TopologyGraph({
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
-              treePaths={multicastTreePaths}
               validators={[]}
               showTreeValidators={false}
               onToggleShowTreeValidators={() => {}}

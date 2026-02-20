@@ -7,7 +7,6 @@ import {
   type MulticastGroupListItem,
   type MulticastGroupDetail,
   type MulticastMember,
-  type MulticastTreeResponse,
   type TopologyValidator,
 } from '@/lib/api'
 
@@ -44,8 +43,6 @@ interface MulticastTreesOverlayPanelProps {
   // Animate flow toggle
   animateFlow: boolean
   onToggleAnimateFlow: () => void
-  // Tree paths for metric display
-  treePaths: Map<string, MulticastTreeResponse>
   // Validators overlay
   validators: TopologyValidator[]
   showTreeValidators: boolean
@@ -86,10 +83,9 @@ interface MemberRowProps {
   isEnabled: boolean
   onToggle: () => void
   colorDot: React.ReactNode
-  metric?: number  // avg ISIS total metric
 }
 
-function MemberRow({ member, validator, isEnabled, onToggle, colorDot, metric }: MemberRowProps) {
+function MemberRow({ member, validator, isEnabled, onToggle, colorDot }: MemberRowProps) {
   return (
     <div
       className={`py-1.5 px-2 cursor-pointer rounded-md bg-[var(--muted)]/50 transition-opacity ${!isEnabled ? 'opacity-40' : ''}`}
@@ -131,18 +127,11 @@ function MemberRow({ member, validator, isEnabled, onToggle, colorDot, metric }:
             </EntityLink>
           )}
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
-          {metric != null && (
-            <span className="text-[10px] text-muted-foreground" title="Avg ISIS metric across paths">
-              {metric}m
-            </span>
-          )}
-          {validator && (
-            <span className="text-[10px] text-muted-foreground">
-              {formatStake(validator.stake_sol ?? 0)}
-            </span>
-          )}
-        </div>
+        {validator && (
+          <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-auto">
+            {formatStake(validator.stake_sol ?? 0)}
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
         {member.device_code && (
@@ -180,7 +169,6 @@ export function MulticastTreesOverlayPanel({
   onToggleDimOtherLinks,
   animateFlow,
   onToggleAnimateFlow,
-  treePaths,
   validators,
   showTreeValidators,
   onToggleShowTreeValidators,
@@ -252,53 +240,6 @@ export function MulticastTreesOverlayPanel({
 
   const publishersByMetro = useMemo(() => groupByMetro(publishers), [publishers])
   const subscribersByMetro = useMemo(() => groupByMetro(subscribers), [subscribers])
-
-  // Compute average total metric per subscriber device from tree paths
-  const subscriberMetrics = useMemo(() => {
-    if (!selectedGroup) return new Map<string, number>()
-    const treeData = treePaths.get(selectedGroup)
-    if (!treeData?.paths?.length) return new Map<string, number>()
-
-    // Aggregate: for each subscriber device, average totalMetric across all publisher paths
-    const acc = new Map<string, { sum: number; count: number }>()
-    for (const p of treeData.paths) {
-      const existing = acc.get(p.subscriberDevicePK)
-      if (existing) {
-        existing.sum += p.totalMetric
-        existing.count++
-      } else {
-        acc.set(p.subscriberDevicePK, { sum: p.totalMetric, count: 1 })
-      }
-    }
-    const result = new Map<string, number>()
-    for (const [pk, { sum, count }] of acc) {
-      result.set(pk, Math.round(sum / count))
-    }
-    return result
-  }, [selectedGroup, treePaths])
-
-  // Compute total metric per publisher device (avg across all subscriber paths)
-  const publisherMetrics = useMemo(() => {
-    if (!selectedGroup) return new Map<string, number>()
-    const treeData = treePaths.get(selectedGroup)
-    if (!treeData?.paths?.length) return new Map<string, number>()
-
-    const acc = new Map<string, { sum: number; count: number }>()
-    for (const p of treeData.paths) {
-      const existing = acc.get(p.publisherDevicePK)
-      if (existing) {
-        existing.sum += p.totalMetric
-        existing.count++
-      } else {
-        acc.set(p.publisherDevicePK, { sum: p.totalMetric, count: 1 })
-      }
-    }
-    const result = new Map<string, number>()
-    for (const [pk, { sum, count }] of acc) {
-      result.set(pk, Math.round(sum / count))
-    }
-    return result
-  }, [selectedGroup, treePaths])
 
   // Check if all are enabled for select/deselect all
   const allPublishersEnabled = publishers.length > 0 && publishers.every(m => enabledPublishers.has(m.device_pk))
@@ -429,7 +370,7 @@ export function MulticastTreesOverlayPanel({
                           validatorByDevice={validatorByDevice}
                           enabledMembers={enabledPublishers}
                           onToggleMember={onTogglePublisher}
-                          metrics={publisherMetrics}
+                        
                           keySuffix="-pub"
                           colorDotForMember={(m) => {
                             const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
@@ -469,7 +410,7 @@ export function MulticastTreesOverlayPanel({
                           validatorByDevice={validatorByDevice}
                           enabledMembers={enabledSubscribers}
                           onToggleMember={onToggleSubscriber}
-                          metrics={subscriberMetrics}
+                        
                           keySuffix="-sub"
                           colorDotForMember={() => (
                             <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
@@ -558,7 +499,6 @@ function MetroGroup({
   validatorByDevice,
   enabledMembers,
   onToggleMember,
-  metrics,
   keySuffix,
   colorDotForMember,
 }: {
@@ -567,7 +507,6 @@ function MetroGroup({
   validatorByDevice: Map<string, TopologyValidator>
   enabledMembers: Set<string>
   onToggleMember: (devicePK: string) => void
-  metrics: Map<string, number>
   keySuffix: string
   colorDotForMember: (m: MulticastMember) => React.ReactNode
 }) {
@@ -592,7 +531,6 @@ function MetroGroup({
               validator={validatorByDevice.get(m.device_pk)}
               isEnabled={enabledMembers.has(m.device_pk)}
               onToggle={() => onToggleMember(m.device_pk)}
-              metric={metrics.get(m.device_pk)}
               colorDot={colorDotForMember(m)}
             />
           ))}

@@ -2464,7 +2464,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
-              treePaths={multicastTreePaths}
               validators={validators}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
