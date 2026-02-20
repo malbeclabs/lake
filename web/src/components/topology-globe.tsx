@@ -406,6 +406,38 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     })
   }, [])
 
+  // Handler to select/deselect all publishers
+  const handleSetAllPublishers = useCallback((enabled: boolean) => {
+    if (!selectedMulticastGroup) return
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return
+    if (enabled) {
+      const pubs = new Set<string>()
+      detail.members.forEach(m => {
+        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.device_pk)
+      })
+      setEnabledPublishers(pubs)
+    } else {
+      setEnabledPublishers(new Set())
+    }
+  }, [selectedMulticastGroup, multicastGroupDetails])
+
+  // Handler to select/deselect all subscribers
+  const handleSetAllSubscribers = useCallback((enabled: boolean) => {
+    if (!selectedMulticastGroup) return
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return
+    if (enabled) {
+      const subs = new Set<string>()
+      detail.members.forEach(m => {
+        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.device_pk)
+      })
+      setEnabledSubscribers(subs)
+    } else {
+      setEnabledSubscribers(new Set())
+    }
+  }, [selectedMulticastGroup, multicastGroupDetails])
+
   // Fetch multicast tree paths when group is selected
   useEffect(() => {
     if (!multicastTreesMode || !selectedMulticastGroup) return
@@ -2425,11 +2457,14 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               enabledSubscribers={enabledSubscribers}
               onTogglePublisher={handleTogglePublisher}
               onToggleSubscriber={handleToggleSubscriber}
+              onSetAllPublishers={handleSetAllPublishers}
+              onSetAllSubscribers={handleSetAllSubscribers}
               publisherColorMap={multicastPublisherColorMap}
               dimOtherLinks={dimOtherLinks}
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
               animateFlow={animateFlow}
               onToggleAnimateFlow={() => setAnimateFlow(prev => !prev)}
+              treePaths={multicastTreePaths}
               validators={validators}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
