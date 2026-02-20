@@ -238,18 +238,20 @@ export function MulticastTreesOverlayPanel({
     [selectedDetail]
   )
 
-  // Group subscribers by metro
-  const subscribersByMetro = useMemo(() => {
+  // Group members by metro
+  const groupByMetro = (members: MulticastMember[]) => {
     const map = new Map<string, MulticastMember[]>()
-    for (const sub of subscribers) {
-      const key = sub.metro_code || 'Unknown'
+    for (const m of members) {
+      const key = m.metro_code || 'Unknown'
       const list = map.get(key) ?? []
-      list.push(sub)
+      list.push(m)
       map.set(key, list)
     }
-    // Sort metros by count descending
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
-  }, [subscribers])
+  }
+
+  const publishersByMetro = useMemo(() => groupByMetro(publishers), [publishers])
+  const subscribersByMetro = useMemo(() => groupByMetro(subscribers), [subscribers])
 
   // Compute average total metric per subscriber device from tree paths
   const subscriberMetrics = useMemo(() => {
@@ -407,11 +409,11 @@ export function MulticastTreesOverlayPanel({
 
                   {/* Publishers tab */}
                   {activeTab === 'publishers' && (
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       {publishers.length > 1 && (
                         <button
                           onClick={() => onSetAllPublishers(!allPublishersEnabled)}
-                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors mb-1"
+                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                         >
                           {allPublishersEnabled ? 'Deselect all' : 'Select all'}
                         </button>
@@ -419,27 +421,29 @@ export function MulticastTreesOverlayPanel({
                       {publishers.length === 0 && (
                         <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
                       )}
-                      {publishers.map(m => {
-                        const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
-                        const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
-                        const colorStyle = isDark ? pubColor.dark : pubColor.light
-                        return (
-                          <MemberRow
-                            key={m.user_pk}
-                            member={m}
-                            validator={validatorByDevice.get(m.device_pk)}
-                            isEnabled={enabledPublishers.has(m.device_pk)}
-                            onToggle={() => onTogglePublisher(m.device_pk)}
-                            metric={publisherMetrics.get(m.device_pk)}
-                            colorDot={
+                      {publishersByMetro.map(([metro, members]) => (
+                        <MetroGroup
+                          key={metro}
+                          metro={metro}
+                          members={members}
+                          validatorByDevice={validatorByDevice}
+                          enabledMembers={enabledPublishers}
+                          onToggleMember={onTogglePublisher}
+                          metrics={publisherMetrics}
+                          keySuffix="-pub"
+                          colorDotForMember={(m) => {
+                            const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
+                            const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+                            const colorStyle = isDark ? pubColor.dark : pubColor.light
+                            return (
                               <div
                                 className="w-3 h-3 rounded-full flex-shrink-0"
                                 style={{ backgroundColor: colorStyle }}
                               />
-                            }
-                          />
-                        )
-                      })}
+                            )
+                          }}
+                        />
+                      ))}
                     </div>
                   )}
 
@@ -463,9 +467,13 @@ export function MulticastTreesOverlayPanel({
                           metro={metro}
                           members={members}
                           validatorByDevice={validatorByDevice}
-                          enabledSubscribers={enabledSubscribers}
-                          onToggleSubscriber={onToggleSubscriber}
-                          subscriberMetrics={subscriberMetrics}
+                          enabledMembers={enabledSubscribers}
+                          onToggleMember={onToggleSubscriber}
+                          metrics={subscriberMetrics}
+                          keySuffix="-sub"
+                          colorDotForMember={() => (
+                            <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
+                          )}
                         />
                       ))}
                     </div>
@@ -543,21 +551,25 @@ export function MulticastTreesOverlayPanel({
   )
 }
 
-/** Collapsible metro group for subscriber members */
+/** Collapsible metro group for members */
 function MetroGroup({
   metro,
   members,
   validatorByDevice,
-  enabledSubscribers,
-  onToggleSubscriber,
-  subscriberMetrics,
+  enabledMembers,
+  onToggleMember,
+  metrics,
+  keySuffix,
+  colorDotForMember,
 }: {
   metro: string
   members: MulticastMember[]
   validatorByDevice: Map<string, TopologyValidator>
-  enabledSubscribers: Set<string>
-  onToggleSubscriber: (devicePK: string) => void
-  subscriberMetrics: Map<string, number>
+  enabledMembers: Set<string>
+  onToggleMember: (devicePK: string) => void
+  metrics: Map<string, number>
+  keySuffix: string
+  colorDotForMember: (m: MulticastMember) => React.ReactNode
 }) {
   const [open, setOpen] = useState(true)
 
@@ -575,13 +587,13 @@ function MetroGroup({
         <div className="space-y-1 mt-1 ml-1">
           {members.map(m => (
             <MemberRow
-              key={m.user_pk + '-sub'}
+              key={m.user_pk + keySuffix}
               member={m}
               validator={validatorByDevice.get(m.device_pk)}
-              isEnabled={enabledSubscribers.has(m.device_pk)}
-              onToggle={() => onToggleSubscriber(m.device_pk)}
-              metric={subscriberMetrics.get(m.device_pk)}
-              colorDot={<div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />}
+              isEnabled={enabledMembers.has(m.device_pk)}
+              onToggle={() => onToggleMember(m.device_pk)}
+              metric={metrics.get(m.device_pk)}
+              colorDot={colorDotForMember(m)}
             />
           ))}
         </div>
