@@ -295,12 +295,12 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		// Build a map of (device_pk, tunnel_id) -> member index for matching
 		type tunnelKey struct {
 			devicePK string
-			tunnelID int32
+			tunnelID int64
 		}
 		tunnelToMembers := make(map[tunnelKey][]int)
 		for i, m := range members {
 			if m.TunnelID > 0 {
-				key := tunnelKey{m.DevicePK, m.TunnelID}
+				key := tunnelKey{m.DevicePK, int64(m.TunnelID)}
 				tunnelToMembers[key] = append(tunnelToMembers[key], i)
 			}
 		}
@@ -326,7 +326,7 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 			defer trafficRows.Close()
 			for trafficRows.Next() {
 				var devicePK string
-				var tunnelID int32
+				var tunnelID int64
 				var bps float64
 				if err := trafficRows.Scan(&devicePK, &tunnelID, &bps); err != nil {
 					log.Printf("MulticastGroup traffic scan error: %v", err)
