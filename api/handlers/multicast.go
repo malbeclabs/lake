@@ -144,17 +144,19 @@ func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 type MulticastMember struct {
-	UserPK      string `json:"user_pk"`
-	Mode        string `json:"mode"` // "P", "S", or "P+S"
-	DevicePK    string `json:"device_pk"`
-	DeviceCode  string `json:"device_code"`
-	MetroPK     string `json:"metro_pk"`
-	MetroCode   string `json:"metro_code"`
-	MetroName   string `json:"metro_name"`
-	ClientIP    string `json:"client_ip"`
-	DZIP        string `json:"dz_ip"`
-	Status      string `json:"status"`
-	OwnerPubkey string `json:"owner_pubkey"`
+	UserPK      string  `json:"user_pk"`
+	Mode        string  `json:"mode"` // "P", "S", or "P+S"
+	DevicePK    string  `json:"device_pk"`
+	DeviceCode  string  `json:"device_code"`
+	MetroPK     string  `json:"metro_pk"`
+	MetroCode   string  `json:"metro_code"`
+	MetroName   string  `json:"metro_name"`
+	ClientIP    string  `json:"client_ip"`
+	DZIP        string  `json:"dz_ip"`
+	Status      string  `json:"status"`
+	OwnerPubkey string  `json:"owner_pubkey"`
+	TunnelID    int32   `json:"tunnel_id"`
+	TrafficBps  float64 `json:"traffic_bps"` // traffic rate in bits per second
 }
 
 type MulticastGroupDetail struct {
@@ -228,7 +230,8 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 			COALESCE(u.client_ip, '') as client_ip,
 			COALESCE(u.dz_ip, '') as dz_ip,
 			u.status,
-			COALESCE(u.owner_pubkey, '') as owner_pubkey
+			COALESCE(u.owner_pubkey, '') as owner_pubkey,
+			COALESCE(u.tunnel_id, 0) as tunnel_id
 		FROM dz_users_current u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -267,6 +270,7 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 			&m.DZIP,
 			&m.Status,
 			&m.OwnerPubkey,
+			&m.TunnelID,
 		); err != nil {
 			log.Printf("MulticastGroup members scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -285,6 +289,59 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	if members == nil {
 		members = []MulticastMember{}
 	}
+
+	// Enrich members with traffic rates from interface counters
+	if len(members) > 0 {
+		// Build a map of (device_pk, tunnel_id) -> member index for matching
+		type tunnelKey struct {
+			devicePK string
+			tunnelID int32
+		}
+		tunnelToMembers := make(map[tunnelKey][]int)
+		for i, m := range members {
+			if m.TunnelID > 0 {
+				key := tunnelKey{m.DevicePK, m.TunnelID}
+				tunnelToMembers[key] = append(tunnelToMembers[key], i)
+			}
+		}
+
+		// Get latest traffic rate per user tunnel from the last 5 minutes
+		trafficQuery := `
+			SELECT
+				device_pk,
+				user_tunnel_id,
+				(sum(coalesce(in_octets_delta, 0) + coalesce(out_octets_delta, 0)) * 8.0)
+					/ sum(delta_duration) as traffic_bps
+			FROM fact_dz_device_interface_counters
+			WHERE event_ts >= now() - INTERVAL 5 MINUTE
+				AND user_tunnel_id > 0
+				AND delta_duration > 0
+			GROUP BY device_pk, user_tunnel_id
+		`
+
+		trafficRows, err := envDB(ctx).Query(ctx, trafficQuery)
+		if err != nil {
+			log.Printf("MulticastGroup traffic query error (non-fatal): %v", err)
+		} else {
+			defer trafficRows.Close()
+			for trafficRows.Next() {
+				var devicePK string
+				var tunnelID int32
+				var bps float64
+				if err := trafficRows.Scan(&devicePK, &tunnelID, &bps); err != nil {
+					log.Printf("MulticastGroup traffic scan error: %v", err)
+					continue
+				}
+				key := tunnelKey{devicePK, tunnelID}
+				if indices, ok := tunnelToMembers[key]; ok {
+					for _, idx := range indices {
+						members[idx].TrafficBps = bps
+					}
+				}
+			}
+		}
+	}
+
 	group.Members = members
 
 	w.Header().Set("Content-Type", "application/json")

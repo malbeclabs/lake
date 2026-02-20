@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server } from 'lucide-react'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
+import { formatTrafficRate } from '../utils'
 import {
   fetchMulticastGroups,
   type MulticastGroupListItem,
@@ -127,11 +128,14 @@ function MemberRow({ member, validator, isEnabled, onToggle, colorDot }: MemberR
             </EntityLink>
           )}
         </div>
-        {validator && (
-          <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-auto">
-            {formatStake(validator.stake_sol ?? 0)}
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto text-[10px] text-muted-foreground">
+          {member.traffic_bps > 0 && (
+            <span>{formatTrafficRate(member.traffic_bps)}</span>
+          )}
+          {validator && (
+            <span>{formatStake(validator.stake_sol ?? 0)}</span>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
         {member.device_code && (

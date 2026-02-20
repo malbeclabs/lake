@@ -1797,6 +1797,8 @@ export interface MulticastMember {
   dz_ip: string
   status: string
   owner_pubkey: string
+  tunnel_id: number
+  traffic_bps: number
 }
 
 export interface MulticastGroupDetail extends MulticastGroupListItem {
