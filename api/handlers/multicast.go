@@ -84,6 +84,59 @@ func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 		groups = []MulticastGroupListItem{}
 	}
 
+	// Compute real pub/sub counts from dz_users_current since the table columns are often 0
+	if len(groups) > 0 {
+		groupPKs := make([]string, len(groups))
+		groupByPK := make(map[string]int, len(groups))
+		for i, g := range groups {
+			groupPKs[i] = g.PK
+			groupByPK[g.PK] = i
+		}
+
+		countsQuery := `
+			SELECT
+				group_pk,
+				countIf(mode = 'P' OR mode = 'P+S') as pub_count,
+				countIf(mode = 'S' OR mode = 'P+S') as sub_count
+			FROM (
+				SELECT
+					arrayJoin(JSONExtract(u.publishers, 'Array(String)')) as group_pk,
+					'P' as mode
+				FROM dz_users_current u
+				WHERE u.status = 'activated' AND u.kind = 'multicast'
+					AND JSONLength(u.publishers) > 0
+				UNION ALL
+				SELECT
+					arrayJoin(JSONExtract(u.subscribers, 'Array(String)')) as group_pk,
+					'S' as mode
+				FROM dz_users_current u
+				WHERE u.status = 'activated' AND u.kind = 'multicast'
+					AND JSONLength(u.subscribers) > 0
+			)
+			WHERE group_pk IN (?)
+			GROUP BY group_pk
+		`
+
+		countRows, err := envDB(ctx).Query(ctx, countsQuery, groupPKs)
+		if err != nil {
+			log.Printf("MulticastGroups counts query error (non-fatal): %v", err)
+		} else {
+			defer countRows.Close()
+			for countRows.Next() {
+				var gpk string
+				var pubCount, subCount uint32
+				if err := countRows.Scan(&gpk, &pubCount, &subCount); err != nil {
+					log.Printf("MulticastGroups counts scan error: %v", err)
+					continue
+				}
+				if idx, ok := groupByPK[gpk]; ok {
+					groups[idx].PublisherCount = pubCount
+					groups[idx].SubscriberCount = subCount
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(groups); err != nil {
 		log.Printf("JSON encoding error: %v", err)

@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Radio, X } from 'lucide-react'
+import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server } from 'lucide-react'
 import { useTopology } from '../TopologyContext'
+import { EntityLink } from '../EntityLink'
 import {
   fetchMulticastGroups,
   type MulticastGroupListItem,
   type MulticastGroupDetail,
+  type MulticastMember,
   type TopologyValidator,
 } from '@/lib/api'
 
@@ -45,6 +47,110 @@ interface MulticastTreesOverlayPanelProps {
   onToggleShowTreeValidators: () => void
 }
 
+function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
+        enabled ? 'bg-purple-500' : 'bg-[var(--muted)]'
+      }`}
+    >
+      <span
+        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+          enabled ? 'translate-x-3.5' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  )
+}
+
+function shortenPubkey(pk: string, chars = 6): string {
+  if (pk.length <= chars * 2 + 2) return pk
+  return `${pk.slice(0, chars)}..${pk.slice(-chars)}`
+}
+
+function formatStake(sol: number): string {
+  if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M SOL`
+  if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k SOL`
+  return `${sol.toFixed(0)} SOL`
+}
+
+interface MemberRowProps {
+  member: MulticastMember
+  validator: TopologyValidator | undefined
+  isEnabled: boolean
+  onToggle: () => void
+  colorDot: React.ReactNode
+}
+
+function MemberRow({ member, validator, isEnabled, onToggle, colorDot }: MemberRowProps) {
+  return (
+    <div
+      className={`py-1.5 px-2 cursor-pointer rounded-md bg-[var(--muted)]/50 transition-opacity ${!isEnabled ? 'opacity-40' : ''}`}
+      onClick={(e) => {
+        // Don't toggle when clicking a link
+        if ((e.target as HTMLElement).closest('a')) return
+        onToggle()
+      }}
+    >
+      <div className="flex items-center gap-1.5">
+        <input
+          type="checkbox"
+          checked={isEnabled}
+          onChange={() => {}}
+          className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
+        />
+        {colorDot}
+        {validator ? (
+          <Server className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <User className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          {validator ? (
+            <EntityLink
+              to={`/solana/validators/${validator.vote_pubkey}`}
+              className="font-mono text-xs"
+              title={validator.vote_pubkey}
+            >
+              {shortenPubkey(validator.vote_pubkey)}
+            </EntityLink>
+          ) : (
+            <EntityLink
+              to={`/dz/users/${member.user_pk}`}
+              className="font-mono text-xs"
+              title={member.owner_pubkey || member.user_pk}
+            >
+              {member.owner_pubkey ? shortenPubkey(member.owner_pubkey) : member.device_code || shortenPubkey(member.user_pk)}
+            </EntityLink>
+          )}
+        </div>
+        {validator && (
+          <span className="text-[10px] text-muted-foreground flex-shrink-0">
+            {formatStake(validator.stake_sol ?? 0)}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
+        {member.device_code && (
+          <EntityLink
+            to={`/dz/devices/${member.device_pk}`}
+            className="hover:underline"
+            title={member.device_code}
+          >
+            {member.device_code}
+          </EntityLink>
+        )}
+        {member.metro_code && (
+          <span className="px-1 py-0 rounded bg-[var(--muted)] text-[9px]">
+            {member.metro_code}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function MulticastTreesOverlayPanel({
   isDark,
   selectedGroup,
@@ -67,6 +173,8 @@ export function MulticastTreesOverlayPanel({
   const [groups, setGroups] = useState<MulticastGroupListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'publishers' | 'subscribers'>('publishers')
+  const [optionsOpen, setOptionsOpen] = useState(true)
 
   // Fetch groups on mount
   useEffect(() => {
@@ -95,23 +203,44 @@ export function MulticastTreesOverlayPanel({
   const validatorByDevice = useMemo(() => {
     const map = new Map<string, TopologyValidator>()
     for (const v of validators) {
-      // First validator per device wins (most have 1:1 mapping)
       if (!map.has(v.device_pk)) map.set(v.device_pk, v)
     }
     return map
   }, [validators])
 
-  const formatStake = (sol: number) => {
-    if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M SOL`
-    if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k SOL`
-    return `${sol.toFixed(0)} SOL`
-  }
+  // Get selected group detail and split members
+  const selectedDetail = selectedGroup ? groupDetails.get(selectedGroup) : null
+  const selectedGroupItem = selectedGroup ? groups.find(g => g.code === selectedGroup) : null
+
+  const publishers = useMemo(() =>
+    selectedDetail?.members.filter(m => m.mode === 'P' || m.mode === 'P+S') ?? [],
+    [selectedDetail]
+  )
+
+  const subscribers = useMemo(() =>
+    selectedDetail?.members.filter(m => m.mode === 'S' || m.mode === 'P+S') ?? [],
+    [selectedDetail]
+  )
+
+  // Group subscribers by metro
+  const subscribersByMetro = useMemo(() => {
+    const map = new Map<string, MulticastMember[]>()
+    for (const sub of subscribers) {
+      const key = sub.metro_code || 'Unknown'
+      const list = map.get(key) ?? []
+      list.push(sub)
+      map.set(key, list)
+    }
+    // Sort metros by count descending
+    return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
+  }, [subscribers])
 
   return (
     <div className="p-3 text-xs">
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-medium flex items-center gap-1.5">
-          <Radio className="h-3.5 w-3.5 text-purple-500" />
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="font-medium flex items-center gap-1.5 text-sm">
+          <Radio className="h-4 w-4 text-purple-500" />
           Multicast
         </span>
         <button
@@ -119,7 +248,7 @@ export function MulticastTreesOverlayPanel({
           className="p-1 hover:bg-[var(--muted)] rounded"
           title="Close"
         >
-          <X className="h-3 w-3" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -138,212 +267,157 @@ export function MulticastTreesOverlayPanel({
       {!loading && !error && groups.length > 0 && (
         <div className="space-y-3">
           {/* Groups list */}
-          <div className="space-y-1">
+          <div>
             <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">
               Groups
             </div>
             <div className="space-y-0.5">
               {groups.map((group) => {
                 const isSelected = selectedGroup === group.code
-                const detail = groupDetails.get(group.code)
                 const { pubs, subs } = getMemberCounts(group)
 
                 return (
-                  <div key={group.pk}>
-                    <button
-                      onClick={() => onSelectGroup(isSelected ? null : group.code)}
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                        isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
-                      }`}
-                    >
-                      <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                        isSelected ? 'border-purple-500' : 'border-[var(--border)]'
-                      }`}>
-                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
-                      </div>
-                      <span className="font-medium">{group.code}</span>
-                      <span className="text-muted-foreground text-[10px] ml-auto">
-                        {pubs} pub / {subs} sub
-                      </span>
-                    </button>
-
-                    {/* Show details when selected */}
-                    {isSelected && (
-                      <div className="ml-4 mt-1 mb-2 pl-2 border-l border-[var(--border)] text-[10px] space-y-1.5">
-                        <div className="text-muted-foreground">
-                          IP: {group.multicast_ip}
-                        </div>
-                        {detail ? (
-                          <>
-                            {detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').length > 0 && (
-                              <div>
-                                <div className="text-muted-foreground uppercase tracking-wider mb-0.5">Publishers</div>
-                                {detail.members
-                                  .filter(m => m.mode === 'P' || m.mode === 'P+S')
-                                  .map(m => {
-                                    const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
-                                    const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
-                                    const colorStyle = isDark ? pubColor.dark : pubColor.light
-                                    const isEnabled = enabledPublishers.has(m.device_pk)
-                                    const validator = validatorByDevice.get(m.device_pk)
-                                    return (
-                                      <div
-                                        key={m.user_pk}
-                                        className={`py-0.5 cursor-pointer hover:bg-[var(--muted)] rounded px-1 -mx-1 ${!isEnabled ? 'opacity-40' : ''}`}
-                                        onClick={() => onTogglePublisher(m.device_pk)}
-                                      >
-                                        <div className="flex items-center gap-1">
-                                          <input
-                                            type="checkbox"
-                                            checked={isEnabled}
-                                            onChange={() => {}}
-                                            className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
-                                          />
-                                          <div
-                                            className="w-3 h-3 rounded-full flex-shrink-0"
-                                            style={{ backgroundColor: colorStyle }}
-                                          />
-                                          {validator ? (
-                                            <>
-                                              <span className="font-mono" title={validator.vote_pubkey}>
-                                                {validator.vote_pubkey.slice(0, 4)}..
-                                              </span>
-                                              <span className="text-muted-foreground ml-auto flex-shrink-0">
-                                                {formatStake(validator.stake_sol ?? 0)}
-                                              </span>
-                                            </>
-                                          ) : (
-                                            <>
-                                              {m.owner_pubkey ? (
-                                                <span className="font-mono" title={m.owner_pubkey}>
-                                                  {m.owner_pubkey.slice(0, 4)}..
-                                                </span>
-                                              ) : (
-                                                <span>{m.device_code}</span>
-                                              )}
-                                            </>
-                                          )}
-                                        </div>
-                                        <div className="flex items-center gap-1 ml-6 text-muted-foreground">
-                                          <span>{m.device_code}</span>
-                                          <span>({m.metro_code})</span>
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-                              </div>
-                            )}
-                            {detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').length > 0 && (
-                              <div>
-                                <div className="text-muted-foreground uppercase tracking-wider mb-0.5">Subscribers</div>
-                                {detail.members
-                                  .filter(m => m.mode === 'S' || m.mode === 'P+S')
-                                  .map(m => {
-                                    const isEnabled = enabledSubscribers.has(m.device_pk)
-                                    const validator = validatorByDevice.get(m.device_pk)
-                                    return (
-                                      <div
-                                        key={m.user_pk + '-sub'}
-                                        className={`py-0.5 cursor-pointer hover:bg-[var(--muted)] rounded px-1 -mx-1 ${!isEnabled ? 'opacity-40' : ''}`}
-                                        onClick={() => onToggleSubscriber(m.device_pk)}
-                                      >
-                                        <div className="flex items-center gap-1">
-                                          <input
-                                            type="checkbox"
-                                            checked={isEnabled}
-                                            onChange={() => {}}
-                                            className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
-                                          />
-                                          <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
-                                          {validator ? (
-                                            <>
-                                              <span className="font-mono" title={validator.vote_pubkey}>
-                                                {validator.vote_pubkey.slice(0, 4)}..
-                                              </span>
-                                              <span className="text-muted-foreground ml-auto flex-shrink-0">
-                                                {formatStake(validator.stake_sol ?? 0)}
-                                              </span>
-                                            </>
-                                          ) : (
-                                            <>
-                                              {m.owner_pubkey ? (
-                                                <span className="font-mono" title={m.owner_pubkey}>
-                                                  {m.owner_pubkey.slice(0, 4)}..
-                                                </span>
-                                              ) : (
-                                                <span>{m.device_code}</span>
-                                              )}
-                                            </>
-                                          )}
-                                        </div>
-                                        <div className="flex items-center gap-1 ml-6 text-muted-foreground">
-                                          <span>{m.device_code}</span>
-                                          <span>({m.metro_code})</span>
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="text-muted-foreground">Loading members...</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    key={group.pk}
+                    onClick={() => onSelectGroup(isSelected ? null : group.code)}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                      isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
+                    }`}
+                  >
+                    <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                      isSelected ? 'border-purple-500' : 'border-[var(--border)]'
+                    }`}>
+                      {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
+                    </div>
+                    <span className="font-medium">{group.code}</span>
+                    <span className="text-muted-foreground text-[10px] ml-auto">
+                      {pubs} pub / {subs} sub
+                    </span>
+                  </button>
                 )
               })}
             </div>
           </div>
 
-          {/* Options */}
-          <div className="pt-2 border-t border-[var(--border)]">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-muted-foreground">Show validators</span>
-              <button
-                onClick={onToggleShowTreeValidators}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-                  showTreeValidators ? 'bg-purple-500' : 'bg-[var(--muted)]'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                    showTreeValidators ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
+          {/* Selected group detail */}
+          {selectedGroup && (
+            <div className="border-t border-[var(--border)] pt-3">
+              {/* Summary header */}
+              {selectedGroupItem && (
+                <div className="mb-3">
+                  <div className="font-medium text-sm">{selectedGroupItem.code}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {selectedGroupItem.multicast_ip}
+                  </div>
+                </div>
+              )}
+
+              {selectedDetail ? (
+                <>
+                  {/* Tabs */}
+                  <div className="flex border-b border-[var(--border)] mb-2">
+                    <button
+                      onClick={() => setActiveTab('publishers')}
+                      className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
+                        activeTab === 'publishers'
+                          ? 'border-purple-500 text-purple-500'
+                          : 'border-transparent text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Publishers ({publishers.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('subscribers')}
+                      className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
+                        activeTab === 'subscribers'
+                          ? 'border-purple-500 text-purple-500'
+                          : 'border-transparent text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Subscribers ({subscribers.length})
+                    </button>
+                  </div>
+
+                  {/* Publishers tab */}
+                  {activeTab === 'publishers' && (
+                    <div className="space-y-1">
+                      {publishers.length === 0 && (
+                        <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
+                      )}
+                      {publishers.map(m => {
+                        const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
+                        const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+                        const colorStyle = isDark ? pubColor.dark : pubColor.light
+                        return (
+                          <MemberRow
+                            key={m.user_pk}
+                            member={m}
+                            validator={validatorByDevice.get(m.device_pk)}
+                            isEnabled={enabledPublishers.has(m.device_pk)}
+                            onToggle={() => onTogglePublisher(m.device_pk)}
+                            colorDot={
+                              <div
+                                className="w-3 h-3 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: colorStyle }}
+                              />
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Subscribers tab */}
+                  {activeTab === 'subscribers' && (
+                    <div className="space-y-2">
+                      {subscribers.length === 0 && (
+                        <div className="text-muted-foreground text-[10px] py-2">No subscribers</div>
+                      )}
+                      {subscribersByMetro.map(([metro, members]) => (
+                        <MetroGroup
+                          key={metro}
+                          metro={metro}
+                          members={members}
+                          validatorByDevice={validatorByDevice}
+                          enabledSubscribers={enabledSubscribers}
+                          onToggleSubscriber={onToggleSubscriber}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-muted-foreground text-xs py-2">Loading members...</div>
+              )}
             </div>
-            <div className="flex items-center justify-between mt-1.5">
-              <span className="text-[10px] text-muted-foreground">Dim other links</span>
-              <button
-                onClick={onToggleDimOtherLinks}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-                  dimOtherLinks ? 'bg-purple-500' : 'bg-[var(--muted)]'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                    dimOtherLinks ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-            <div className="flex items-center justify-between mt-1.5">
-              <span className="text-[10px] text-muted-foreground">Animate flow</span>
-              <button
-                onClick={onToggleAnimateFlow}
-                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${
-                  animateFlow ? 'bg-purple-500' : 'bg-[var(--muted)]'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                    animateFlow ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`}
-                />
-              </button>
-            </div>
+          )}
+
+          {/* Options — collapsible */}
+          <div className="border-t border-[var(--border)] pt-2">
+            <button
+              onClick={() => setOptionsOpen(o => !o)}
+              className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
+            >
+              <Settings2 className="h-3 w-3" />
+              Options
+              {optionsOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+            </button>
+            {optionsOpen && (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Show validators</span>
+                  <Toggle enabled={showTreeValidators} onToggle={onToggleShowTreeValidators} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Dim other links</span>
+                  <Toggle enabled={dimOtherLinks} onToggle={onToggleDimOtherLinks} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Animate flow</span>
+                  <Toggle enabled={animateFlow} onToggle={onToggleAnimateFlow} />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Legend */}
@@ -378,6 +452,50 @@ export function MulticastTreesOverlayPanel({
               </div>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Collapsible metro group for subscriber members */
+function MetroGroup({
+  metro,
+  members,
+  validatorByDevice,
+  enabledSubscribers,
+  onToggleSubscriber,
+}: {
+  metro: string
+  members: MulticastMember[]
+  validatorByDevice: Map<string, TopologyValidator>
+  enabledSubscribers: Set<string>
+  onToggleSubscriber: (devicePK: string) => void
+}) {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 text-[10px] text-muted-foreground w-full hover:text-foreground transition-colors py-0.5"
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        <span className="px-1 py-0 rounded bg-[var(--muted)] text-[9px] font-medium">{metro}</span>
+        <span className="ml-auto">{members.length}</span>
+      </button>
+      {open && (
+        <div className="space-y-1 mt-1 ml-1">
+          {members.map(m => (
+            <MemberRow
+              key={m.user_pk + '-sub'}
+              member={m}
+              validator={validatorByDevice.get(m.device_pk)}
+              isEnabled={enabledSubscribers.has(m.device_pk)}
+              onToggle={() => onToggleSubscriber(m.device_pk)}
+              colorDot={<div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />}
+            />
+          ))}
         </div>
       )}
     </div>
