@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3 } from 'lucide-react'
+import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
-import { formatTrafficRate } from '../utils'
+import { formatTrafficRate, formatBandwidth } from '../utils'
 import {
   fetchMulticastGroups,
+  fetchMulticastGroupTraffic,
   type MulticastGroupListItem,
   type MulticastGroupDetail,
   type MulticastMember,
@@ -72,21 +75,47 @@ function shortenPubkey(pk: string, chars = 6): string {
   return `${pk.slice(0, chars)}..${pk.slice(-chars)}`
 }
 
+function formatPps(pps: number): string {
+  if (pps >= 1e6) return `${(pps / 1e6).toFixed(1)}M pps`
+  if (pps >= 1e3) return `${(pps / 1e3).toFixed(1)}k pps`
+  return `${Math.round(pps)} pps`
+}
+
 function formatStake(sol: number): string {
   if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M SOL`
   if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}k SOL`
   return `${sol.toFixed(0)} SOL`
 }
 
+function formatSlotDelta(slotDelta: number): string {
+  const seconds = Math.abs(slotDelta) * 0.4
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
+  return `${(seconds / 3600).toFixed(1)}h`
+}
+
+function leaderTimingText(member: MulticastMember): string | null {
+  if (!member.current_slot) return null
+  if (member.is_leader) return 'Leading now'
+  const parts: string[] = []
+  if (member.last_leader_slot != null) {
+    parts.push(`Leader ${formatSlotDelta(member.current_slot - member.last_leader_slot)} ago`)
+  }
+  if (member.next_leader_slot != null) {
+    parts.push(`Next in ${formatSlotDelta(member.next_leader_slot - member.current_slot)}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 interface MemberRowProps {
   member: MulticastMember
-  validator: TopologyValidator | undefined
   isEnabled: boolean
   onToggle: () => void
   colorDot: React.ReactNode
 }
 
-function MemberRow({ member, validator, isEnabled, onToggle, colorDot }: MemberRowProps) {
+function MemberRow({ member, isEnabled, onToggle, colorDot }: MemberRowProps) {
+  const isValidator = !!member.node_pubkey
   return (
     <div
       className={`py-1.5 px-2 cursor-pointer rounded-md bg-[var(--muted)]/50 transition-opacity ${!isEnabled ? 'opacity-40' : ''}`}
@@ -104,40 +133,48 @@ function MemberRow({ member, validator, isEnabled, onToggle, colorDot }: MemberR
           className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
         />
         {colorDot}
-        {validator ? (
+        {isValidator ? (
           <Server className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         ) : (
           <User className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         )}
         <div className="flex-1 min-w-0">
-          {validator ? (
-            <EntityLink
-              to={`/solana/validators/${validator.vote_pubkey}`}
-              className="font-mono text-xs"
-              title={validator.vote_pubkey}
-            >
-              {shortenPubkey(validator.vote_pubkey)}
-            </EntityLink>
-          ) : (
-            <EntityLink
-              to={`/dz/users/${member.user_pk}`}
-              className="font-mono text-xs"
-              title={member.owner_pubkey || member.user_pk}
-            >
-              {member.owner_pubkey ? shortenPubkey(member.owner_pubkey) : member.device_code || shortenPubkey(member.user_pk)}
-            </EntityLink>
-          )}
+          <EntityLink
+            to={`/dz/users/${member.user_pk}`}
+            className="font-mono text-xs"
+            title={member.user_pk}
+          >
+            {shortenPubkey(member.user_pk)}
+          </EntityLink>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto text-[10px] text-muted-foreground">
-          {member.traffic_bps > 0 && (
-            <span>{formatTrafficRate(member.traffic_bps)}</span>
+          {member.is_leader && (
+            <span className="px-1 py-0 rounded-full bg-amber-500/20 text-amber-500 font-medium text-[9px]">
+              LEADER
+            </span>
           )}
-          {validator && (
-            <span>{formatStake(validator.stake_sol ?? 0)}</span>
+          {member.traffic_bps > 0 && (
+            <span>{formatTrafficRate(member.traffic_bps)}{member.traffic_pps > 0 ? ` ${formatPps(member.traffic_pps)}` : ''}</span>
+          )}
+          {member.stake_sol > 0 && (
+            <span>{formatStake(member.stake_sol)}</span>
           )}
         </div>
       </div>
       <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
+        {(() => {
+          const timing = leaderTimingText(member)
+          return timing ? <span className={member.is_leader ? 'text-amber-500' : ''}>{timing}</span> : null
+        })()}
+        {member.vote_pubkey && (
+          <EntityLink
+            to={`/solana/validators/${member.vote_pubkey}`}
+            className="font-mono hover:underline"
+            title={member.vote_pubkey}
+          >
+            {shortenPubkey(member.vote_pubkey, 4)}
+          </EntityLink>
+        )}
         {member.device_code && (
           <EntityLink
             to={`/dz/devices/${member.device_pk}`}
@@ -147,10 +184,8 @@ function MemberRow({ member, validator, isEnabled, onToggle, colorDot }: MemberR
             {member.device_code}
           </EntityLink>
         )}
-        {member.metro_code && (
-          <span className="px-1 py-0 rounded bg-[var(--muted)] text-[9px]">
-            {member.metro_code}
-          </span>
+        {member.tunnel_id > 0 && (
+          <span className="text-muted-foreground/60">t{member.tunnel_id}</span>
         )}
       </div>
     </div>
@@ -173,7 +208,7 @@ export function MulticastTreesOverlayPanel({
   onToggleDimOtherLinks,
   animateFlow,
   onToggleAnimateFlow,
-  validators,
+  validators: _validators,
   showTreeValidators,
   onToggleShowTreeValidators,
 }: MulticastTreesOverlayPanelProps) {
@@ -207,14 +242,6 @@ export function MulticastTreesOverlayPanel({
     return { pubs: group.publisher_count, subs: group.subscriber_count }
   }
 
-  // Map device_pk -> validator for enriching member entries
-  const validatorByDevice = useMemo(() => {
-    const map = new Map<string, TopologyValidator>()
-    for (const v of validators) {
-      if (!map.has(v.device_pk)) map.set(v.device_pk, v)
-    }
-    return map
-  }, [validators])
 
   // Get selected group detail and split members
   const selectedDetail = selectedGroup ? groupDetails.get(selectedGroup) : null
@@ -363,6 +390,9 @@ export function MulticastTreesOverlayPanel({
                           {allPublishersEnabled ? 'Deselect all' : 'Select all'}
                         </button>
                       )}
+                      {publishers.length > 0 && !publishers.some(m => m.is_leader) && publishers.some(m => m.current_slot > 0) && (
+                        <div className="text-muted-foreground text-[10px] py-1 italic">No DZ validator is currently leader</div>
+                      )}
                       {publishers.length === 0 && (
                         <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
                       )}
@@ -371,7 +401,7 @@ export function MulticastTreesOverlayPanel({
                           key={metro}
                           metro={metro}
                           members={members}
-                          validatorByDevice={validatorByDevice}
+
                           enabledMembers={enabledPublishers}
                           onToggleMember={onTogglePublisher}
                         
@@ -411,7 +441,7 @@ export function MulticastTreesOverlayPanel({
                           key={metro}
                           metro={metro}
                           members={members}
-                          validatorByDevice={validatorByDevice}
+
                           enabledMembers={enabledSubscribers}
                           onToggleMember={onToggleSubscriber}
                         
@@ -428,6 +458,16 @@ export function MulticastTreesOverlayPanel({
                 <div className="text-muted-foreground text-xs py-2">Loading members...</div>
               )}
             </div>
+          )}
+
+          {/* Traffic chart — collapsible */}
+          {selectedGroup && selectedDetail && (
+            <MulticastTrafficChartSection
+              groupCode={selectedGroup}
+              members={selectedDetail.members}
+              isDark={isDark}
+              publisherColorMap={publisherColorMap}
+            />
           )}
 
           {/* Options — collapsible */}
@@ -496,11 +536,237 @@ export function MulticastTreesOverlayPanel({
   )
 }
 
+const TRAFFIC_TIME_RANGES = ['1h', '6h', '12h', '24h'] as const
+
+function formatTime(timeStr: string): string {
+  const d = new Date(timeStr)
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+}
+
+function formatAxisBps(bps: number): string {
+  if (bps >= 1e12) return `${(bps / 1e12).toFixed(1)}T`
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(1)}G`
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)}M`
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)}K`
+  return `${bps.toFixed(0)}`
+}
+
+/** Collapsible traffic chart for a selected multicast group */
+function MulticastTrafficChartSection({
+  groupCode,
+  members,
+  isDark,
+  publisherColorMap,
+}: {
+  groupCode: string
+  members: MulticastMember[]
+  isDark: boolean
+  publisherColorMap: Map<string, number>
+}) {
+  const [open, setOpen] = useState(false)
+  const [timeRange, setTimeRange] = useState<string>('1h')
+
+  const { data: trafficData, isLoading } = useQuery({
+    queryKey: ['multicast-traffic', groupCode, timeRange],
+    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange),
+    refetchInterval: 30000,
+    enabled: open,
+  })
+
+  // Build device code lookup and color map from members
+  const deviceInfo = useMemo(() => {
+    const map = new Map<string, { code: string; mode: string }>()
+    for (const m of members) {
+      if (!map.has(m.device_pk)) {
+        const effectiveMode = m.mode === 'P+S' ? 'P' : m.mode
+        map.set(m.device_pk, { code: m.device_code || m.device_pk.slice(0, 8), mode: effectiveMode })
+      }
+    }
+    return map
+  }, [members])
+
+  // Transform traffic data: publishers Rx (positive), subscribers Tx (negative)
+  const { chartData, pubKeys, subKeys } = useMemo(() => {
+    if (!trafficData || trafficData.length === 0) return { chartData: [], pubKeys: [] as string[], subKeys: [] as string[] }
+
+    const pubs = new Set<string>()
+    const subs = new Set<string>()
+    const timeMap = new Map<string, Record<string, string | number>>()
+
+    for (const p of trafficData) {
+      const info = deviceInfo.get(p.device_pk)
+      const isPub = info?.mode === 'P' || p.mode === 'P'
+      if (isPub) pubs.add(p.device_pk)
+      else subs.add(p.device_pk)
+
+      let row = timeMap.get(p.time)
+      if (!row) {
+        row = { time: p.time } as Record<string, string | number>
+        timeMap.set(p.time, row)
+      }
+      // Publishers: positive in_bps; Subscribers: negative out_bps
+      const bps = isPub ? p.in_bps : -p.out_bps
+      row[p.device_pk] = ((row[p.device_pk] as number) ?? 0) + bps
+    }
+
+    const data = [...timeMap.values()].sort((a, b) =>
+      String(a.time).localeCompare(String(b.time))
+    )
+    return { chartData: data, pubKeys: [...pubs], subKeys: [...subs] }
+  }, [trafficData, deviceInfo])
+
+  // Assign colors: publishers get their palette color, subscribers get a muted tone
+  const getColor = (devicePK: string) => {
+    const info = deviceInfo.get(devicePK)
+    if (info?.mode === 'P') {
+      const colorIdx = publisherColorMap.get(devicePK) ?? 0
+      const c = MULTICAST_PUBLISHER_COLORS[colorIdx % MULTICAST_PUBLISHER_COLORS.length]
+      return isDark ? c.dark : c.light
+    }
+    // Subscriber — use red tones
+    return isDark ? '#ef4444' : '#dc2626'
+  }
+
+  return (
+    <div className="border-t border-[var(--border)] pt-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
+      >
+        <BarChart3 className="h-3 w-3" />
+        Traffic
+        {open ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+      </button>
+      {open && (
+        <div className="mt-2">
+          {/* Time range pills */}
+          <div className="flex gap-1 mb-2">
+            {TRAFFIC_TIME_RANGES.map(r => (
+              <button
+                key={r}
+                onClick={() => setTimeRange(r)}
+                className={`px-1.5 py-0.5 text-[10px] rounded ${
+                  timeRange === r
+                    ? 'bg-purple-500/20 text-purple-500 font-medium'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-[var(--muted)]'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+
+          {isLoading && (
+            <div className="text-[10px] text-muted-foreground py-4 text-center">Loading...</div>
+          )}
+
+          {!isLoading && chartData.length === 0 && (
+            <div className="text-[10px] text-muted-foreground py-4 text-center">No traffic data</div>
+          )}
+
+          {!isLoading && chartData.length > 0 && (
+            <div className="relative">
+              <span className="absolute top-0 left-[38px] text-[9px] text-muted-foreground/60 pointer-events-none z-10">▲ Publishers</span>
+              <span className="absolute bottom-4 left-[38px] text-[9px] text-muted-foreground/60 pointer-events-none z-10">▼ Subscribers</span>
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 8 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={formatTime}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 8 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatAxisBps(Math.abs(v))}
+                      width={35}
+                    />
+                    <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
+                    <RechartsTooltip
+                      contentStyle={{
+                        backgroundColor: 'var(--card)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        fontSize: '10px',
+                      }}
+                      labelFormatter={formatTime}
+                      formatter={(value, name) => {
+                        const v = value as number
+                        const info = deviceInfo.get(String(name))
+                        const role = info?.mode === 'P' ? 'pub' : 'sub'
+                        return [formatBandwidth(Math.abs(v)), `${info?.code ?? String(name).slice(0, 8)} (${role})`]
+                      }}
+                    />
+                    {pubKeys.map(dk => (
+                      <Area
+                        key={dk}
+                        type="monotone"
+                        dataKey={dk}
+                        stroke={getColor(dk)}
+                        fill={getColor(dk)}
+                        fillOpacity={0.2}
+                        strokeWidth={1.5}
+                        dot={false}
+                        name={dk}
+                      />
+                    ))}
+                    {subKeys.map(dk => (
+                      <Area
+                        key={dk}
+                        type="monotone"
+                        dataKey={dk}
+                        stroke={getColor(dk)}
+                        fill={getColor(dk)}
+                        fillOpacity={0.1}
+                        strokeWidth={1.5}
+                        strokeDasharray="4 2"
+                        dot={false}
+                        name={dk}
+                      />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              {/* Legend */}
+              {(pubKeys.length > 0 || subKeys.length > 0) && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                  {pubKeys.map(dk => {
+                    const info = deviceInfo.get(dk)
+                    return (
+                      <div key={dk} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: getColor(dk) }} />
+                        <span>{info?.code ?? dk.slice(0, 8)} (pub)</span>
+                      </div>
+                    )
+                  })}
+                  {subKeys.map(dk => {
+                    const info = deviceInfo.get(dk)
+                    return (
+                      <div key={dk} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: getColor(dk) }} />
+                        <span>{info?.code ?? dk.slice(0, 8)} (sub)</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Collapsible metro group for members */
 function MetroGroup({
   metro,
   members,
-  validatorByDevice,
   enabledMembers,
   onToggleMember,
   keySuffix,
@@ -508,7 +774,6 @@ function MetroGroup({
 }: {
   metro: string
   members: MulticastMember[]
-  validatorByDevice: Map<string, TopologyValidator>
   enabledMembers: Set<string>
   onToggleMember: (devicePK: string) => void
   keySuffix: string
@@ -532,7 +797,6 @@ function MetroGroup({
             <MemberRow
               key={m.user_pk + keySuffix}
               member={m}
-              validator={validatorByDevice.get(m.device_pk)}
               isEnabled={enabledMembers.has(m.device_pk)}
               onToggle={() => onToggleMember(m.device_pk)}
               colorDot={colorDotForMember(m)}
