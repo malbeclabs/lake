@@ -124,14 +124,14 @@ func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 			defer countRows.Close()
 			for countRows.Next() {
 				var gpk string
-				var pubCount, subCount uint32
+				var pubCount, subCount uint64
 				if err := countRows.Scan(&gpk, &pubCount, &subCount); err != nil {
 					log.Printf("MulticastGroups counts scan error: %v", err)
 					continue
 				}
 				if idx, ok := groupByPK[gpk]; ok {
-					groups[idx].PublisherCount = pubCount
-					groups[idx].SubscriberCount = subCount
+					groups[idx].PublisherCount = uint32(pubCount)
+					groups[idx].SubscriberCount = uint32(subCount)
 				}
 			}
 		}
