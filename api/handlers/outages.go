@@ -1476,6 +1476,15 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 		outages = append(outages, lossOutages...)
 	}
 
+	if outageType == "all" || outageType == "no_data" {
+		noDataOutages, err := fetchNoDataOutages(ctx, envDB(ctx), duration, filters)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to fetch no-data outages: %v", err), http.StatusInternalServerError)
+			return
+		}
+		outages = append(outages, noDataOutages...)
+	}
+
 	// Sort by start time (most recent first)
 	sort.Slice(outages, func(i, j int) bool {
 		return outages[i].StartedAt > outages[j].StartedAt

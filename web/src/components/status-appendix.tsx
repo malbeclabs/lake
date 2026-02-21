@@ -101,10 +101,24 @@ export function StatusAppendix() {
                   Degraded
                 </span>
               </div>
-              <p className="text-sm text-muted-foreground">
-                Link measured RTT significantly exceeds the committed RTT (SLA).
+              <p className="text-sm text-muted-foreground mb-2">
+                Link measured RTT exceeds the committed RTT (SLA) by a significant margin.
                 Only applies to activated inter-metro WAN links with a committed RTT configured.
               </p>
+              <ul className="text-sm text-muted-foreground space-y-2 ml-5 list-disc">
+                <li className="flex items-center gap-2 flex-wrap">
+                  <span><strong>Moderate:</strong> 20% - 50% over committed RTT</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/5 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                    Degraded
+                  </span>
+                </li>
+                <li className="flex items-center gap-2 flex-wrap">
+                  <span><strong>Severe:</strong> &ge; 50% over committed RTT</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/5 dark:bg-red-500/20 text-red-700 dark:text-red-400">
+                    Unhealthy
+                  </span>
+                </li>
+              </ul>
             </div>
 
             <div className="border border-border rounded-lg p-4">
@@ -206,6 +220,9 @@ export function StatusAppendix() {
           <pre className="bg-muted/50 border border-border rounded-lg p-3 mt-2 text-xs font-mono overflow-x-auto">
             overage_pct = ((measured_latency - committed_rtt) / committed_rtt) * 100
           </pre>
+          <p className="text-sm text-muted-foreground mt-4">
+            Classification thresholds: &ge; 20% overage is <strong>degraded</strong>, &ge; 50% overage is <strong>unhealthy</strong>.
+          </p>
           </div>
 
           {/* Link Status Timeline */}
@@ -278,6 +295,7 @@ export function StatusAppendix() {
             <li><strong>Soft drained</strong> — Link status set to soft-drained</li>
             <li><strong>Hard drained</strong> — Link status set to hard-drained</li>
             <li><strong>ISIS delay override</strong> — Link has <code className="bg-muted px-1 py-0.5 rounded text-xs">isis_delay_override_ns</code> set to 1000ms, effectively soft-draining it without changing the status field</li>
+            <li><strong>Extended packet loss</strong> — 100% packet loss for 2+ consecutive hours</li>
             <li><strong>Link dark</strong> — No telemetry received for 2+ hours</li>
           </ul>
           <p className="text-sm text-muted-foreground mt-4">
@@ -578,7 +596,7 @@ export function StatusAppendix() {
               <h3 className="font-medium mb-2">Unhealthy</h3>
               <ul className="text-sm text-muted-foreground space-y-1 ml-5 list-disc">
                 <li>&gt; 10% of links are unhealthy</li>
-                <li>Average packet loss &ge; 1%</li>
+                <li>Average packet loss &ge; 10%</li>
               </ul>
             </div>
 
@@ -587,7 +605,7 @@ export function StatusAppendix() {
               <ul className="text-sm text-muted-foreground space-y-1 ml-5 list-disc">
                 <li>Any links are unhealthy (but &le; 10%)</li>
                 <li>&gt; 20% of links are degraded</li>
-                <li>Average packet loss &ge; 0.1%</li>
+                <li>Average packet loss &ge; 1%</li>
               </ul>
             </div>
 

@@ -254,6 +254,9 @@ export function OutagesAppendix() {
           <ul className="text-sm text-muted-foreground space-y-2 ml-5 list-disc">
             <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_links_current</code> — Current link status and metadata</li>
             <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_link_status_changes</code> — Historical status transitions for links</li>
+            <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_devices_current</code> — Device metadata for metro resolution and device filtering</li>
+            <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_metros_current</code> — Metro code lookups</li>
+            <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_contributors_current</code> — Contributor code lookups</li>
           </ul>
 
           <h3 className="font-medium mt-4 mb-2">Base Tables</h3>
