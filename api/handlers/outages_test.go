@@ -319,8 +319,8 @@ func TestPairStatusOutagesCompleted(t *testing.T) {
 
 	makeSC := func(linkPK, linkCode, prev, next string, offset time.Duration) statusChange {
 		return statusChange{
-			LinkPK:     linkPK,
-			LinkCode:   linkCode,
+			LinkPK:         linkPK,
+			LinkCode:       linkCode,
 			PreviousStatus: prev,
 			NewStatus:      next,
 			ChangedTS:      base.Add(offset),
