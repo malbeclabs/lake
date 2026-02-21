@@ -267,16 +267,23 @@ export function useChatStream(sessionId: string | undefined) {
           },
           onSqlDone: (data) => {
             setStreamState(prev => {
-              const existingIndex = prev.processingSteps.findIndex(
+              // Try to find by ID first, then fall back to matching a running step by question
+              // (SQL text may differ due to server-side cleanup like trimming semicolons)
+              let existingIndex = prev.processingSteps.findIndex(
                 step => step.type === 'sql_query' && step.id === data.id
               )
+              if (existingIndex < 0) {
+                existingIndex = prev.processingSteps.findIndex(
+                  step => step.type === 'sql_query' && step.status === 'running' && step.question === data.question
+                )
+              }
               if (existingIndex >= 0) {
                 // Update existing step
                 return {
                   ...prev,
                   processingSteps: prev.processingSteps.map((step, i) =>
                     i === existingIndex
-                      ? { ...step, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined, env: data.env }
+                      ? { ...step, id: data.id, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined, env: data.env }
                       : step
                   ),
                 }
@@ -313,16 +320,23 @@ export function useChatStream(sessionId: string | undefined) {
           },
           onCypherDone: (data) => {
             setStreamState(prev => {
-              const existingIndex = prev.processingSteps.findIndex(
+              // Try to find by ID first, then fall back to matching a running step by question
+              // (Cypher text may differ due to server-side cleanup like trimming whitespace)
+              let existingIndex = prev.processingSteps.findIndex(
                 step => step.type === 'cypher_query' && step.id === data.id
               )
+              if (existingIndex < 0) {
+                existingIndex = prev.processingSteps.findIndex(
+                  step => step.type === 'cypher_query' && step.status === 'running' && step.question === data.question
+                )
+              }
               if (existingIndex >= 0) {
                 // Update existing step
                 return {
                   ...prev,
                   processingSteps: prev.processingSteps.map((step, i) =>
                     i === existingIndex
-                      ? { ...step, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined, env: data.env }
+                      ? { ...step, id: data.id, status: data.error ? 'error' : 'completed', rows: data.rows, error: data.error || undefined, env: data.env }
                       : step
                   ),
                 }

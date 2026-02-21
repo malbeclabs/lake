@@ -452,6 +452,11 @@ func (p *Workflow) executeSQL(ctx context.Context, params map[string]any, state 
 	}
 
 	// Log each query question and SQL for debugging
+	// Clean up SQL before emitting events so started/completed events use the same string
+	for i := range queries {
+		queries[i].SQL = strings.TrimSuffix(strings.TrimSpace(queries[i].SQL), ";")
+	}
+
 	p.logInfo("workflow: executing SQL", "count", len(queries))
 	for i, q := range queries {
 		qNum := len(state.ExecutedQueries) + i + 1
@@ -482,9 +487,7 @@ func (p *Workflow) executeSQL(ctx context.Context, params map[string]any, state 
 		go func(idx int, query QueryInput) {
 			defer wg.Done()
 
-			// Clean up SQL
-			sql := strings.TrimSpace(query.SQL)
-			sql = strings.TrimSuffix(sql, ";")
+			sql := query.SQL
 
 			// Execute query
 			queryResult, err := p.cfg.Querier.Query(ctx, sql)
@@ -617,6 +620,11 @@ func (p *Workflow) executeCypher(ctx context.Context, params map[string]any, sta
 		return "", fmt.Errorf("no valid Cypher queries provided")
 	}
 
+	// Clean up Cypher before emitting events so started/completed events use the same string
+	for i := range queries {
+		queries[i].Cypher = strings.TrimSpace(queries[i].Cypher)
+	}
+
 	// Log each query question and Cypher for debugging
 	p.logInfo("workflow: executing Cypher", "count", len(queries))
 	for i, q := range queries {
@@ -648,8 +656,7 @@ func (p *Workflow) executeCypher(ctx context.Context, params map[string]any, sta
 		go func(idx int, query CypherQueryInput) {
 			defer wg.Done()
 
-			// Clean up Cypher
-			cypher := strings.TrimSpace(query.Cypher)
+			cypher := query.Cypher
 
 			// Execute query using GraphQuerier
 			queryResult, err := p.cfg.GraphQuerier.Query(ctx, cypher)
