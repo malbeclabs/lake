@@ -61,6 +61,9 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"city":    {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.city"},
 		"country": {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.country"},
 	},
+	"multicast_groups": {
+		"status": {table: "dz_multicast_groups_current", column: "status"},
+	},
 	"gossip": {
 		"dz":        {table: "(SELECT 'yes' AS val UNION ALL SELECT 'no' AS val)", column: "val"},
 		"validator": {table: "(SELECT 'yes' AS val UNION ALL SELECT 'no' AS val)", column: "val"},

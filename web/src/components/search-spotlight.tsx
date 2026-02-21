@@ -17,6 +17,7 @@ const entityIcons: Record<SearchEntityType, React.ElementType> = {
   user: Users,
   validator: Landmark,
   gossip: Radio,
+  multicast: Radio,
 }
 
 const entityLabels: Record<SearchEntityType, string> = {
@@ -27,6 +28,7 @@ const entityLabels: Record<SearchEntityType, string> = {
   user: 'User',
   validator: 'Validator',
   gossip: 'Gossip Node',
+  multicast: 'Multicast Group',
 }
 
 const fieldPrefixes = [
@@ -37,6 +39,7 @@ const fieldPrefixes = [
   { prefix: 'user:', description: 'Search users by pubkey or IP' },
   { prefix: 'validator:', description: 'Search validators by pubkey' },
   { prefix: 'gossip:', description: 'Search gossip nodes' },
+  { prefix: 'multicast:', description: 'Search multicast groups' },
   { prefix: 'ip:', description: 'Search by IP across entities' },
   { prefix: 'pubkey:', description: 'Search by pubkey across entities' },
 ]
@@ -111,6 +114,15 @@ const contributorFieldPrefixes = [
   { prefix: 'links:', description: 'Filter by link count (e.g., >10)' },
 ]
 
+// Field prefixes for multicast groups page filtering
+const multicastGroupFieldPrefixes = [
+  { prefix: 'code:', description: 'Filter by group code' },
+  { prefix: 'ip:', description: 'Filter by multicast IP' },
+  { prefix: 'status:', description: 'Filter by status' },
+  { prefix: 'publishers:', description: 'Filter by publisher count (e.g., >5)' },
+  { prefix: 'subscribers:', description: 'Filter by subscriber count (e.g., >10)' },
+]
+
 // Field prefixes for users page filtering
 const userFieldPrefixes = [
   { prefix: 'owner:', description: 'Filter by owner pubkey' },
@@ -130,6 +142,7 @@ const pageToEntity: Record<string, string> = {
   '/dz/metros': 'metros',
   '/dz/contributors': 'contributors',
   '/dz/users': 'users',
+  '/dz/multicast-groups': 'multicast_groups',
   '/solana/validators': 'validators',
   '/solana/gossip-nodes': 'gossip',
 }
@@ -145,6 +158,7 @@ const autocompleteFields: Record<string, (string | { field: string; minChars: nu
   users: ['status', 'kind', 'metro', { field: 'device', minChars: 2 }],
   validators: ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }],
   gossip: ['dz', 'validator', { field: 'version', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'device', minChars: 2 }],
+  multicast_groups: ['status'],
 }
 
 // Map search entity types to topology URL type param
@@ -156,6 +170,7 @@ const topologyTypeMap: Record<SearchEntityType, string | null> = {
   contributor: null, // Not on topology
   user: null, // Not on topology
   gossip: null, // Not on topology (validators are via vote accounts)
+  multicast: null, // Not on topology
 }
 
 interface SearchSpotlightProps {
@@ -186,7 +201,8 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
   const isMetrosPage = location.pathname === '/dz/metros'
   const isContributorsPage = location.pathname === '/dz/contributors'
   const isUsersPage = location.pathname === '/dz/users'
-  const isDZTablePage = isDevicesPage || isLinksPage || isMetrosPage || isContributorsPage || isUsersPage
+  const isMulticastGroupsPage = location.pathname === '/dz/multicast-groups'
+  const isDZTablePage = isDevicesPage || isLinksPage || isMetrosPage || isContributorsPage || isUsersPage || isMulticastGroupsPage
 
   // Check if we're on a page that supports table filtering
   const isTableFilterPage = isValidatorsPage || isGossipNodesPage || isDZTablePage
@@ -323,9 +339,10 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     if (isMetrosPage) return metroFieldPrefixes
     if (isContributorsPage) return contributorFieldPrefixes
     if (isUsersPage) return userFieldPrefixes
+    if (isMulticastGroupsPage) return multicastGroupFieldPrefixes
     if (isPerformancePage) return [] // Only metros on performance page
     return fieldPrefixes
-  }, [globalSearchMode, isValidatorsPage, isGossipNodesPage, isDevicesPage, isLinksPage, isMetrosPage, isContributorsPage, isUsersPage, isPerformancePage])
+  }, [globalSearchMode, isValidatorsPage, isGossipNodesPage, isDevicesPage, isLinksPage, isMetrosPage, isContributorsPage, isUsersPage, isMulticastGroupsPage, isPerformancePage])
 
   // Check if query matches any field prefix
   const matchingPrefixes = useMemo(() => query.length > 0 && !query.includes(':')
@@ -598,7 +615,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={globalSearchMode ? "Search entities..." : isTopologyPage ? "Search entities (opens in map)..." : isTimelinePage ? "Filter timeline events..." : isStatusPage ? "Filter status by entity..." : isOutagesPage ? "Filter outages by entity..." : isPerformancePage ? "Filter by metro..." : isValidatorsPage ? "Filter validators..." : isGossipNodesPage ? "Filter gossip nodes..." : isDevicesPage ? "Filter devices..." : isLinksPage ? "Filter links..." : isMetrosPage ? "Filter metros..." : isContributorsPage ? "Filter contributors..." : isUsersPage ? "Filter users..." : "Search entities..."}
+            placeholder={globalSearchMode ? "Search entities..." : isTopologyPage ? "Search entities (opens in map)..." : isTimelinePage ? "Filter timeline events..." : isStatusPage ? "Filter status by entity..." : isOutagesPage ? "Filter outages by entity..." : isPerformancePage ? "Filter by metro..." : isValidatorsPage ? "Filter validators..." : isGossipNodesPage ? "Filter gossip nodes..." : isDevicesPage ? "Filter devices..." : isLinksPage ? "Filter links..." : isMetrosPage ? "Filter metros..." : isContributorsPage ? "Filter contributors..." : isUsersPage ? "Filter users..." : isMulticastGroupsPage ? "Filter multicast groups..." : "Search entities..."}
             className="flex-1 h-14 px-3 text-lg bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground"
           />
           {(isLoading || fieldValuesLoading) && query.length >= 2 && (
@@ -897,6 +914,9 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
             )}
             {isUsersPage && !globalSearchMode && (
               <span className="text-blue-500">Filtering users</span>
+            )}
+            {isMulticastGroupsPage && !globalSearchMode && (
+              <span className="text-blue-500">Filtering multicast groups</span>
             )}
           </div>
         </div>

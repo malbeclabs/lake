@@ -51,6 +51,7 @@ const (
 	entityUser        entityType = "user"
 	entityValidator   entityType = "validator"
 	entityGossip      entityType = "gossip"
+	entityMulticast   entityType = "multicast"
 )
 
 var allEntityTypes = []entityType{
@@ -61,6 +62,7 @@ var allEntityTypes = []entityType{
 	entityUser,
 	entityValidator,
 	entityGossip,
+	entityMulticast,
 }
 
 // fieldPrefix maps search prefixes to entity types
@@ -72,6 +74,7 @@ var fieldPrefixes = map[string][]entityType{
 	"user:":        {entityUser},
 	"validator:":   {entityValidator},
 	"gossip:":      {entityGossip},
+	"multicast:":   {entityMulticast},
 	"ip:":          {entityDevice, entityUser, entityGossip},
 	"pubkey:":      {entityUser, entityValidator, entityGossip},
 }
@@ -499,6 +502,52 @@ func searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSug
 	return suggestions, int(total), nil
 }
 
+// searchMulticastGroups searches for multicast groups matching the query
+func searchMulticastGroups(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+	fields := []string{"code", "multicast_ip", "status"}
+	condition, args := buildSearchCondition(term, fields)
+
+	countQuery := `SELECT count(*) FROM dz_multicast_groups_current WHERE ` + condition
+	var total uint64
+	if err := envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `
+		SELECT pk, code, multicast_ip, status
+		FROM dz_multicast_groups_current
+		WHERE ` + condition + `
+		ORDER BY code
+		LIMIT ?
+	`
+
+	rows, err := envDB(ctx).Query(ctx, query, append(args, limit)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var suggestions []SearchSuggestion
+	for rows.Next() {
+		var pk, code, multicastIP, status string
+		if err := rows.Scan(&pk, &code, &multicastIP, &status); err != nil {
+			return nil, 0, err
+		}
+		sublabel := multicastIP
+		if status != "" {
+			sublabel = fmt.Sprintf("%s - %s", multicastIP, status)
+		}
+		suggestions = append(suggestions, SearchSuggestion{
+			Type:     string(entityMulticast),
+			ID:       pk,
+			Label:    code,
+			Sublabel: sublabel,
+			URL:      fmt.Sprintf("/dz/multicast-groups/%s", pk),
+		})
+	}
+	return suggestions, int(total), nil
+}
+
 // SearchAutocomplete handles the autocomplete endpoint
 func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -562,6 +611,8 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 				suggestions, _, err = searchValidators(gCtx, term, perTypeLimit)
 			case entityGossip:
 				suggestions, _, err = searchGossipNodes(gCtx, term, perTypeLimit)
+			case entityMulticast:
+				suggestions, _, err = searchMulticastGroups(gCtx, term, perTypeLimit)
 			}
 			if err != nil {
 				log.Printf("Search %s error: %v", et, err)
@@ -673,6 +724,8 @@ func Search(w http.ResponseWriter, r *http.Request) {
 				suggestions, total, err = searchValidators(gCtx, term, limit)
 			case entityGossip:
 				suggestions, total, err = searchGossipNodes(gCtx, term, limit)
+			case entityMulticast:
+				suggestions, total, err = searchMulticastGroups(gCtx, term, limit)
 			}
 			if err != nil {
 				log.Printf("Search %s error: %v", et, err)

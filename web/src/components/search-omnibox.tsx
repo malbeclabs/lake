@@ -15,6 +15,7 @@ const entityIcons: Record<SearchEntityType, React.ElementType> = {
   user: Users,
   validator: Landmark,
   gossip: Radio,
+  multicast: Radio,
 }
 
 const entityLabels: Record<SearchEntityType, string> = {
@@ -25,6 +26,7 @@ const entityLabels: Record<SearchEntityType, string> = {
   user: 'User',
   validator: 'Validator',
   gossip: 'Gossip Node',
+  multicast: 'Multicast Group',
 }
 
 const fieldPrefixes = [
