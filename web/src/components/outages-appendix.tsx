@@ -14,10 +14,11 @@ export function OutagesAppendix() {
             <ArrowLeft className="h-4 w-4" />
             Back to Outages
           </Link>
-          <h1 className="text-2xl font-semibold">Outages Page Methodology</h1>
+          <h1 className="text-2xl font-semibold">How Outages Work</h1>
           <p className="text-muted-foreground mt-2">
-            This document explains how outage events are detected, classified, and filtered
-            on the Link Outages page.
+            This page explains how outage events are identified, classified, and filtered
+            on the Link Outages page. This is one interpretation of the available network data
+            and does not represent the formal methodology used for rewards distribution or calculation.
           </p>
         </div>
 

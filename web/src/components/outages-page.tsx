@@ -487,7 +487,7 @@ export function OutagesPage() {
         {/* Methodology link */}
         <div className="text-center text-sm text-muted-foreground pb-4 mt-8">
           <Link to="/outages/methodology" className="hover:text-foreground hover:underline">
-            How are outages detected?
+            How outages work
           </Link>
         </div>
       </div>
