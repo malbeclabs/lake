@@ -1823,6 +1823,13 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			sort.Strings(issueReasonsList)
 		}
 
+		// Only expose committed RTT for inter-metro WAN links (not DZX)
+		// so the frontend doesn't apply latency classification to DZX links
+		responseCommittedRtt := meta.committedRttUs
+		if meta.linkType != "WAN" || meta.sideAMetro == meta.sideZMetro {
+			responseCommittedRtt = 0
+		}
+
 		links = append(links, LinkHistory{
 			PK:             pk,
 			Code:           meta.code,
@@ -1833,7 +1840,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			SideADevice:    meta.sideADevice,
 			SideZDevice:    meta.sideZDevice,
 			BandwidthBps:   meta.bandwidthBps,
-			CommittedRttUs: meta.committedRttUs,
+			CommittedRttUs: responseCommittedRtt,
 			IsDown:         isDown,
 			Hours:          hourStatuses,
 			IssueReasons:   issueReasonsList,
@@ -2753,7 +2760,8 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	// Get link metadata
 	linkQuery := `
 		SELECT l.code, l.bandwidth_bps, l.committed_rtt_ns / 1000.0 as committed_rtt_us,
-			   l.side_a_pk, l.side_z_pk, l.side_a_iface_name, l.side_z_iface_name
+			   l.side_a_pk, l.side_z_pk, l.side_a_iface_name, l.side_z_iface_name,
+			   l.link_type, l.side_a_metro, l.side_z_metro
 		FROM dz_links_current l
 		WHERE l.pk = ?
 	`
@@ -2761,9 +2769,15 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	var bandwidthBps int64
 	var committedRttUs float64
 	var sideAPK, sideZPK, sideAIface, sideZIface string
-	err := envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&code, &bandwidthBps, &committedRttUs, &sideAPK, &sideZPK, &sideAIface, &sideZIface)
+	var linkType, sideAMetro, sideZMetro string
+	err := envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&code, &bandwidthBps, &committedRttUs, &sideAPK, &sideZPK, &sideAIface, &sideZIface, &linkType, &sideAMetro, &sideZMetro)
 	if err != nil {
 		return nil, nil // Link not found
+	}
+
+	// Only use committed RTT for inter-metro WAN links (not DZX)
+	if linkType != "WAN" || sideAMetro == sideZMetro {
+		committedRttUs = 0
 	}
 
 	// Get latency/loss stats per direction.
