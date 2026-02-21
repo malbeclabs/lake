@@ -50,6 +50,8 @@ import { LinkDetailPage } from '@/components/link-detail-page'
 import { MetroDetailPage } from '@/components/metro-detail-page'
 import { ContributorDetailPage } from '@/components/contributor-detail-page'
 import { UserDetailPage } from '@/components/user-detail-page'
+import { MulticastGroupsPage } from '@/components/multicast-groups-page'
+import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 import { StakePage } from '@/components/stake-page'
@@ -679,6 +681,8 @@ function AppContent() {
             <Route path="/dz/contributors/:pk" element={<ContributorDetailPage />} />
             <Route path="/dz/users" element={<UsersPage />} />
             <Route path="/dz/users/:pk" element={<UserDetailPage />} />
+            <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />
+            <Route path="/dz/multicast-groups/:pk" element={<MulticastGroupDetailPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/validators" element={<ValidatorsPage />} />

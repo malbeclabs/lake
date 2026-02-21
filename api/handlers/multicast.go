@@ -182,15 +182,15 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	code := chi.URLParam(r, "code")
-	if code == "" {
-		http.Error(w, "missing multicast group code", http.StatusBadRequest)
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
 		return
 	}
 
 	start := time.Now()
 
-	// First get the group details
+	// First get the group details (accept pk or code)
 	groupQuery := `
 		SELECT
 			pk,
@@ -201,11 +201,11 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 			COALESCE(publisher_count, 0) as publisher_count,
 			COALESCE(subscriber_count, 0) as subscriber_count
 		FROM dz_multicast_groups_current
-		WHERE code = ?
+		WHERE pk = ? OR code = ?
 	`
 
 	var group MulticastGroupDetail
-	err := envDB(ctx).QueryRow(ctx, groupQuery, code).Scan(
+	err := envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(
 		&group.PK,
 		&group.Code,
 		&group.MulticastIP,
@@ -492,15 +492,17 @@ type MulticastTrafficPoint struct {
 	Mode     string  `json:"mode"` // "P" or "S"
 	InBps    float64 `json:"in_bps"`
 	OutBps   float64 `json:"out_bps"`
+	InPps    float64 `json:"in_pps"`
+	OutPps   float64 `json:"out_pps"`
 }
 
 func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	code := chi.URLParam(r, "code")
-	if code == "" {
-		http.Error(w, "missing multicast group code", http.StatusBadRequest)
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
 		return
 	}
 
@@ -534,10 +536,10 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Get group PK
+	// Resolve pk from pk or code
 	var groupPK string
 	err := envDB(ctx).QueryRow(ctx,
-		`SELECT pk FROM dz_multicast_groups_current WHERE code = ?`, code).Scan(&groupPK)
+		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
 		log.Printf("MulticastGroupTraffic group query error: %v", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
@@ -623,7 +625,15 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 			CASE WHEN SUM(delta_duration) > 0
 				THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
 				ELSE 0
-			END as out_bps
+			END as out_bps,
+			CASE WHEN SUM(delta_duration) > 0
+				THEN SUM(in_pkts_delta) / SUM(delta_duration)
+				ELSE 0
+			END as in_pps,
+			CASE WHEN SUM(delta_duration) > 0
+				THEN SUM(out_pkts_delta) / SUM(delta_duration)
+				ELSE 0
+			END as out_pps
 		FROM fact_dz_device_interface_counters
 		WHERE event_ts > now() - INTERVAL ` + lookback + `
 			AND user_tunnel_id IN (?)
@@ -648,7 +658,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	var points []MulticastTrafficPoint
 	for trafficRows.Next() {
 		var p MulticastTrafficPoint
-		if err := trafficRows.Scan(&p.Time, &p.DevicePK, &p.TunnelID, &p.InBps, &p.OutBps); err != nil {
+		if err := trafficRows.Scan(&p.Time, &p.DevicePK, &p.TunnelID, &p.InBps, &p.OutBps, &p.InPps, &p.OutPps); err != nil {
 			log.Printf("MulticastGroupTraffic traffic scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -711,23 +721,22 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	code := chi.URLParam(r, "code")
-	if code == "" {
-		writeJSON(w, MulticastTreeResponse{Error: "missing multicast group code"})
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		writeJSON(w, MulticastTreeResponse{Error: "missing multicast group pk"})
 		return
 	}
 
 	start := time.Now()
 	response := MulticastTreeResponse{
-		GroupCode: code,
-		Paths:     []MulticastTreePath{},
+		Paths: []MulticastTreePath{},
 	}
 
-	// First get group info and members from ClickHouse
+	// First get group info and members from ClickHouse (accept pk or code)
 	groupQuery := `
-		SELECT pk FROM dz_multicast_groups_current WHERE code = ?
+		SELECT pk, COALESCE(code, '') FROM dz_multicast_groups_current WHERE pk = ? OR code = ?
 	`
-	err := envDB(ctx).QueryRow(ctx, groupQuery, code).Scan(&response.GroupPK)
+	err := envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
 		log.Printf("MulticastTreePaths group query error: %v", err)
 		response.Error = "multicast group not found"

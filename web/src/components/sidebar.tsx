@@ -82,6 +82,7 @@ export function Sidebar() {
   const isMetrosRoute = location.pathname === '/dz/metros'
   const isContributorsRoute = location.pathname === '/dz/contributors'
   const isUsersRoute = location.pathname === '/dz/users'
+  const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
   const isValidatorsRoute = location.pathname === '/solana/validators'
   const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
 
@@ -512,6 +513,10 @@ export function Sidebar() {
             <Link to="/dz/users" className={navItemClass(isUsersRoute)}>
               <Users className="h-4 w-4" />
               Users
+            </Link>
+            <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
+              <Radio className="h-4 w-4" />
+              Multicast Groups
             </Link>
           </div>
         </div>

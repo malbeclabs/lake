@@ -460,7 +460,7 @@ export function UserDetailPage() {
                 {multicastGroups.map(g => (
                   <div key={g.group_pk} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      <Link to={`/dz/multicast-groups/${g.group_code}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                      <Link to={`/dz/multicast-groups/${g.group_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
                         {g.group_code}
                       </Link>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${

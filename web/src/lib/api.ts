@@ -1821,8 +1821,8 @@ export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> 
   return res.json()
 }
 
-export async function fetchMulticastGroup(code: string): Promise<MulticastGroupDetail> {
-  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}`)
+export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGroupDetail> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast group')
   }
@@ -1856,8 +1856,8 @@ export interface MulticastTreeResponse {
   error?: string
 }
 
-export async function fetchMulticastTreePaths(code: string): Promise<MulticastTreeResponse> {
-  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}/tree-paths`)
+export async function fetchMulticastTreePaths(pkOrCode: string): Promise<MulticastTreeResponse> {
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/tree-paths`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast tree paths')
   }
@@ -1872,14 +1872,16 @@ export interface MulticastTrafficPoint {
   mode: string
   in_bps: number
   out_bps: number
+  in_pps: number
+  out_pps: number
 }
 
-export async function fetchMulticastGroupTraffic(code: string, timeRange?: string, bucket?: string): Promise<MulticastTrafficPoint[]> {
+export async function fetchMulticastGroupTraffic(pkOrCode: string, timeRange?: string, bucket?: string): Promise<MulticastTrafficPoint[]> {
   const params = new URLSearchParams()
   if (timeRange) params.set('time_range', timeRange)
   if (bucket && bucket !== 'auto') params.set('bucket', bucket)
   const qs = params.toString()
-  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}/traffic${qs ? `?${qs}` : ''}`)
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/traffic${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast group traffic')
   }

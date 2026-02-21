@@ -442,9 +442,9 @@ func main() {
 		r.Get("/api/dz/users/{pk}/traffic", handlers.GetUserTraffic)
 		r.Get("/api/dz/users/{pk}/multicast-groups", handlers.GetUserMulticastGroups)
 		r.Get("/api/dz/multicast-groups", handlers.GetMulticastGroups)
-		r.Get("/api/dz/multicast-groups/{code}", handlers.GetMulticastGroup)
-		r.Get("/api/dz/multicast-groups/{code}/tree-paths", handlers.GetMulticastTreePaths)
-		r.Get("/api/dz/multicast-groups/{code}/traffic", handlers.GetMulticastGroupTraffic)
+		r.Get("/api/dz/multicast-groups/{pk}", handlers.GetMulticastGroup)
+		r.Get("/api/dz/multicast-groups/{pk}/tree-paths", handlers.GetMulticastTreePaths)
+		r.Get("/api/dz/multicast-groups/{pk}/traffic", handlers.GetMulticastGroupTraffic)
 		r.Get("/api/dz/field-values", handlers.GetFieldValues)
 
 		// Solana entity routes
