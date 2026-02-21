@@ -105,6 +105,24 @@ function formatTimestamp(isoString: string): string {
   })
 }
 
+function SeverityBadge({ severity }: { severity?: 'degraded' | 'outage' }) {
+  if (severity === 'degraded') {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
+        degraded
+      </span>
+    )
+  }
+  if (severity === 'outage') {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+        outage
+      </span>
+    )
+  }
+  return null
+}
+
 function OutageDetails({ outage }: { outage: LinkOutage }) {
   if (outage.outage_type === 'status') {
     return (
@@ -122,7 +140,7 @@ function OutageDetails({ outage }: { outage: LinkOutage }) {
   }
   return (
     <span className="text-muted-foreground">
-      peak {outage.peak_loss_pct?.toFixed(1)}%
+      peak {outage.peak_loss_pct?.toFixed(1)}%{outage.threshold_pct != null && outage.threshold_pct !== 10 && ` (threshold ${outage.threshold_pct}%)`}
     </span>
   )
 }
@@ -166,7 +184,7 @@ export function OutagesPage() {
 
   // Parse URL params with defaults
   const range = (searchParams.get('range') as OutageTimeRange) || '24h'
-  const threshold = (parseInt(searchParams.get('threshold') || '1') as OutageThreshold) || 1
+  const threshold = (parseInt(searchParams.get('threshold') || '10') as OutageThreshold) || 10
   const type = (searchParams.get('type') as 'all' | 'status' | 'loss' | 'no_data') || 'all'
   const filterParam = searchParams.get('filter') || ''
 
@@ -189,7 +207,7 @@ export function OutagesPage() {
   const getDefaultValue = (key: string): string => {
     switch (key) {
       case 'range': return '24h'
-      case 'threshold': return '1'
+      case 'threshold': return '10'
       case 'type': return 'all'
       default: return ''
     }
@@ -437,7 +455,10 @@ export function OutagesPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <OutageTypeLabel type={outage.outage_type} />
+                      <div className="flex items-center gap-1.5">
+                        <OutageTypeLabel type={outage.outage_type} />
+                        <SeverityBadge severity={outage.severity} />
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <OutageDetails outage={outage} />
@@ -462,6 +483,13 @@ export function OutagesPage() {
             </div>
           </>
         )}
+
+        {/* Methodology link */}
+        <div className="text-center text-sm text-muted-foreground pb-4 mt-8">
+          <Link to="/outages/methodology" className="hover:text-foreground hover:underline">
+            How outages work
+          </Link>
+        </div>
       </div>
     </div>
   )

@@ -4037,6 +4037,7 @@ export interface LinkOutage {
   ended_at?: string
   duration_seconds?: number
   is_ongoing: boolean
+  severity?: 'degraded' | 'outage'
 }
 
 export interface LinkOutagesSummary {

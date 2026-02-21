@@ -37,6 +37,7 @@ import { MaintenancePlannerPage } from '@/components/maintenance-planner-page'
 import { StatusPage } from '@/components/status-page'
 import { TimelinePage } from '@/components/timeline-page'
 import { OutagesPage } from '@/components/outages-page'
+import { OutagesAppendix } from '@/components/outages-appendix'
 import { StatusAppendix } from '@/components/status-appendix'
 import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
@@ -654,6 +655,7 @@ function AppContent() {
 
             {/* Outages route */}
             <Route path="/outages" element={<OutagesPage />} />
+            <Route path="/outages/methodology" element={<OutagesAppendix />} />
 
             {/* Stake analytics route */}
             <Route path="/stake" element={<StakePage />} />
