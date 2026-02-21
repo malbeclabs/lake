@@ -713,6 +713,7 @@ export function LinkStatusTimelines({
   // Check which issue filters are selected
   const issueTypesSelected = issueFilters.filter(f => f !== 'no_issues')
   const noIssuesSelected = issueFilters.includes('no_issues')
+  const noDataSelected = issueFilters.includes('no_data')
 
   // Filter and sort links by recency of issues
   const filteredLinks = useMemo(() => {
@@ -726,6 +727,11 @@ export function LinkStatusTimelines({
         ? (linksWithIssues.get(link.code) ?? [])
         : (link.issue_reasons ?? [])
       const hasIssues = issueReasons.length > 0
+
+      // When no_data filter is off, exclude links that have no_data as an issue
+      if (!noDataSelected && issueReasons.includes('no_data')) {
+        return false
+      }
 
       // Check if link matches issue filters
       let matchesIssue = false
