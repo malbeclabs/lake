@@ -140,7 +140,7 @@ function OutageDetails({ outage }: { outage: LinkOutage }) {
   }
   return (
     <span className="text-muted-foreground">
-      peak {outage.peak_loss_pct?.toFixed(1)}%{outage.threshold_pct != null && ` (threshold ${outage.threshold_pct}%)`}
+      peak {outage.peak_loss_pct?.toFixed(1)}%{outage.threshold_pct != null && outage.threshold_pct !== 10 && ` (threshold ${outage.threshold_pct}%)`}
     </span>
   )
 }
