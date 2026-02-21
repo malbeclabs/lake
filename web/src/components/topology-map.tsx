@@ -383,6 +383,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   // PKs to skip during auto-enable (restored from URL on initial load)
   const initialDisabledPubsRef = useRef<Set<string> | null>(null)
   const initialDisabledSubsRef = useRef<Set<string> | null>(null)
+  // Track which group we've already initialized publishers/subscribers for
+  const initializedGroupRef = useRef<string | null>(null)
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
   const [showTreeValidators, setShowTreeValidators] = useState(true)
@@ -409,7 +411,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   // Handler to select multicast group
   const handleSelectMulticastGroup = useCallback((code: string | null) => {
     setSelectedMulticastGroup(code)
-  }, [])
+    if (code !== selectedMulticastGroup) {
+      initializedGroupRef.current = null
+    }
+  }, [selectedMulticastGroup])
 
   // Handler to toggle individual publisher
   const handleTogglePublisher = useCallback((devicePK: string) => {
@@ -498,11 +503,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return () => clearInterval(interval)
   }, [multicastTreesMode, selectedMulticastGroup]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Set enabled publishers/subscribers when group details are loaded
+  // Set enabled publishers/subscribers when group details are first loaded.
+  // Only runs once per group selection — subsequent refreshes preserve user's selections.
   useEffect(() => {
     if (!multicastTreesMode || !selectedMulticastGroup) return
+    if (initializedGroupRef.current === selectedMulticastGroup) return
     const detail = multicastGroupDetails.get(selectedMulticastGroup)
     if (!detail?.members) return
+
+    initializedGroupRef.current = selectedMulticastGroup
 
     // On first load, skip PKs that were disabled in the URL
     const skipPubs = initialDisabledPubsRef.current
