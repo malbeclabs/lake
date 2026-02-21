@@ -1573,8 +1573,14 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			issueReasons["drained"] = true
 		}
 
-		// Check latency/loss issues
+		// Check latency/loss issues (skip buckets where link was drained)
 		for _, b := range buckets {
+			bucketKey := b.bucket.UTC().Format(time.RFC3339)
+			histKey := linkBucketKey{linkPK: pk, bucket: bucketKey}
+			if hs, ok := linkStatusHistory[histKey]; ok && (hs == "soft-drained" || hs == "hard-drained") {
+				continue
+			}
+
 			// Check for packet loss issues
 			if b.lossPct >= LossWarningPct {
 				issueReasons["packet_loss"] = true
