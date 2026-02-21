@@ -113,10 +113,10 @@ const fieldPrefixes = [
 
 type ContextKey = typeof fieldPrefixes[number]['contextKey']
 
-const autocompleteConfig: Record<string, { entity: string; field: string } | null> = {
+const autocompleteConfig: Record<string, { entity: string; field: string; minChars?: number } | null> = {
   'metro': { entity: 'devices', field: 'metro' },
   'device': null,
-  'intf': { entity: 'interfaces', field: 'intf' },
+  'intf': { entity: 'interfaces', field: 'intf', minChars: 2 },
   'link_type': { entity: 'links', field: 'type' },
   'contributor': { entity: 'devices', field: 'contributor' },
   'user_kind': { entity: 'users', field: 'kind' },
@@ -170,11 +170,12 @@ function DashboardSearch() {
 
   // Autocomplete query config
   const acConfig = fieldValueMatch ? autocompleteConfig[fieldValueMatch.field] : null
+  const meetsMinChars = acConfig != null && (fieldValueMatch?.value?.length ?? 0) >= (acConfig.minChars ?? 0)
 
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
     queryKey: ['field-values', acConfig?.entity, acConfig?.field, scopeFilters],
     queryFn: () => fetchFieldValues(acConfig!.entity, acConfig!.field, scopeFilters),
-    enabled: acConfig !== null && acConfig !== undefined,
+    enabled: acConfig != null && meetsMinChars,
     staleTime: 60000,
   })
 
@@ -233,11 +234,14 @@ function DashboardSearch() {
     | { type: 'prefix'; prefix: string; description: string }
     | { type: 'field-value'; field: string; value: string; contextKey: ContextKey }
     | { type: 'apply-filter' }
+    | { type: 'type-more'; minChars: number }
 
   const items: DropdownItem[] = useMemo(() => {
     const result: DropdownItem[] = []
 
-    if (fieldValueMatch && filteredFieldValues.length > 0) {
+    if (fieldValueMatch && !meetsMinChars && acConfig?.minChars) {
+      result.push({ type: 'type-more', minChars: acConfig.minChars })
+    } else if (fieldValueMatch && filteredFieldValues.length > 0) {
       result.push(...filteredFieldValues.map(v => ({
         type: 'field-value' as const,
         field: fieldValueMatch.field,
@@ -263,7 +267,7 @@ function DashboardSearch() {
     }
 
     return result
-  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes])
+  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes, meetsMinChars, acConfig])
 
   useEffect(() => {
     setSelectedIndex(-1)
@@ -360,6 +364,17 @@ function DashboardSearch() {
           )}
 
           {items.map((item, index) => {
+            if (item.type === 'type-more') {
+              return (
+                <div
+                  key="type-more"
+                  className="px-3 py-2 text-sm text-muted-foreground"
+                >
+                  Type at least {item.minChars} characters to see suggestions
+                </div>
+              )
+            }
+
             if (item.type === 'apply-filter') {
               return (
                 <button

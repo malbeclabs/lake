@@ -115,7 +115,7 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 			joins = append(joins, "JOIN dz_links_current l ON f.link_pk = l.pk")
 			wheres = append(wheres, fmt.Sprintf("l.link_type IN (%s)", quoteCSV(linkType)))
 		}
-		whereClause := "f.intf IS NOT NULL AND f.intf != '' AND f.intf NOT LIKE 'Tunnel%'"
+		whereClause := "f.intf IS NOT NULL AND f.intf != ''"
 		if len(wheres) > 0 {
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}
