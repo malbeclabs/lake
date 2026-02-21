@@ -479,12 +479,12 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
-	var userTunnelSelect, userTunnelGroupBy, userTunnelPassthrough, irUserJoinSQL string
+	// When filtering by user_kind, join users inside the CTE for filtering
+	// but don't group by user_tunnel_id to avoid duplicating rows.
+	var userJoinCTE, userKindFilter string
 	if needsUserJoin {
-		userTunnelSelect = ",\n\t\t\t\tf.user_tunnel_id"
-		userTunnelGroupBy = ", f.user_tunnel_id"
-		userTunnelPassthrough = " LEFT JOIN dz_users_current u ON ir.user_tunnel_id = u.tunnel_id"
-		irUserJoinSQL = userKindSQL
+		userJoinCTE = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userKindFilter = userKindSQL
 	}
 
 	return fmt.Sprintf(`
@@ -492,21 +492,22 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 			SELECT
 				f.device_pk,
 				f.intf,
-				f.link_pk%s,
+				f.link_pk,
 				max(f.in_octets_delta * 8 / f.delta_duration) AS max_in_bps,
 				max(f.out_octets_delta * 8 / f.delta_duration) AS max_out_bps,
 				avg(f.in_octets_delta * 8 / f.delta_duration) AS avg_in_bps,
 				avg(f.out_octets_delta * 8 / f.delta_duration) AS avg_out_bps,
 				quantile(0.95)(f.in_octets_delta * 8 / f.delta_duration) AS p95_in_bps,
 				quantile(0.95)(f.out_octets_delta * 8 / f.delta_duration) AS p95_out_bps
-			FROM fact_dz_device_interface_counters f
+			FROM fact_dz_device_interface_counters f%s
 			WHERE %s
 				AND f.delta_duration > 0
 				AND f.in_octets_delta >= 0
 				AND f.out_octets_delta >= 0
 				%s
 				%s
-			GROUP BY f.device_pk, f.intf, f.link_pk%s
+				%s
+			GROUP BY f.device_pk, f.intf, f.link_pk
 		)
 		SELECT
 			ir.device_pk,
@@ -531,13 +532,12 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 		INNER JOIN dz_devices_current d ON ir.device_pk = d.pk
 		LEFT JOIN dz_links_current l ON ir.link_pk = l.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk%s
-		WHERE 1=1 %s%s
+		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
+		WHERE 1=1 %s
 		ORDER BY %s %s
 		LIMIT %d`,
-		userTunnelSelect, timeFilter, intfTypeSQL, intfFilterSQL,
-		userTunnelGroupBy,
-		userTunnelPassthrough, filterSQL, irUserJoinSQL, orderCol, dir, limit)
+		userJoinCTE, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter,
+		filterSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
