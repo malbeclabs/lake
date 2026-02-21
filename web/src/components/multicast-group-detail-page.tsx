@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, Radio, AlertCircle, ArrowLeft } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { fetchMulticastGroup, fetchMulticastGroupTraffic, type MulticastMember } from '@/lib/api'
-import { formatBandwidth } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 function formatBps(bps: number): string {
@@ -391,15 +390,10 @@ export function MulticastGroupDetailPage() {
         </div>
 
         {/* Info grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
           <div className="border border-border rounded-lg p-4 bg-card">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Status</h3>
             <div className={`text-sm capitalize ${statusColors[group.status] || ''}`}>{group.status}</div>
-          </div>
-
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Max Bandwidth</h3>
-            <div className="text-sm">{group.max_bandwidth > 0 ? formatBandwidth(group.max_bandwidth) : '—'}</div>
           </div>
 
           <div className="border border-border rounded-lg p-4 bg-card">

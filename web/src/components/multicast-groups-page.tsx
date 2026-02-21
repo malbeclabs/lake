@@ -4,14 +4,13 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Radio, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchMulticastGroups } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
-import { formatBandwidth } from '@/components/topology/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'multicast_ip' | 'status' | 'publishers' | 'subscribers' | 'max_bandwidth'
+type SortField = 'code' | 'multicast_ip' | 'status' | 'publishers' | 'subscribers'
 type SortDirection = 'asc' | 'desc'
 
 type NumericFilter = {
@@ -19,7 +18,7 @@ type NumericFilter = {
   value: number
 }
 
-const numericSearchFields: SortField[] = ['publishers', 'subscribers', 'max_bandwidth']
+const numericSearchFields: SortField[] = ['publishers', 'subscribers']
 
 function parseNumericFilter(input: string): NumericFilter | null {
   const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$/)
@@ -140,8 +139,6 @@ export function MulticastGroupsPage() {
             return group.publisher_count
           case 'subscribers':
             return group.subscriber_count
-          case 'max_bandwidth':
-            return group.max_bandwidth
           default:
             return 0
         }
@@ -197,9 +194,6 @@ export function MulticastGroupsPage() {
           break
         case 'subscribers':
           cmp = a.subscriber_count - b.subscriber_count
-          break
-        case 'max_bandwidth':
-          cmp = a.max_bandwidth - b.max_bandwidth
           break
       }
       return sortDirection === 'asc' ? cmp : -cmp
@@ -341,12 +335,6 @@ export function MulticastGroupsPage() {
                       <SortIcon field="subscribers" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('max_bandwidth')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('max_bandwidth')}>
-                      Max Bandwidth
-                      <SortIcon field="max_bandwidth" />
-                    </button>
-                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -371,14 +359,11 @@ export function MulticastGroupsPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {group.subscriber_count > 0 ? group.subscriber_count : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {group.max_bandwidth > 0 ? formatBandwidth(group.max_bandwidth) : '—'}
-                    </td>
                   </tr>
                 ))}
                 {sortedGroups.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
                       No multicast groups found
                     </td>
                   </tr>
