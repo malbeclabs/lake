@@ -17,6 +17,7 @@ const entityIcons: Record<SearchEntityType, React.ElementType> = {
   user: Users,
   validator: Landmark,
   gossip: Radio,
+  multicast: Radio,
 }
 
 const entityLabels: Record<SearchEntityType, string> = {
@@ -27,6 +28,7 @@ const entityLabels: Record<SearchEntityType, string> = {
   user: 'User',
   validator: 'Validator',
   gossip: 'Gossip Node',
+  multicast: 'Multicast Group',
 }
 
 const fieldPrefixes = [
@@ -37,6 +39,7 @@ const fieldPrefixes = [
   { prefix: 'user:', description: 'Search users by pubkey or IP' },
   { prefix: 'validator:', description: 'Search validators by pubkey' },
   { prefix: 'gossip:', description: 'Search gossip nodes' },
+  { prefix: 'multicast:', description: 'Search multicast groups' },
   { prefix: 'ip:', description: 'Search by IP across entities' },
   { prefix: 'pubkey:', description: 'Search by pubkey across entities' },
 ]
@@ -111,6 +114,15 @@ const contributorFieldPrefixes = [
   { prefix: 'links:', description: 'Filter by link count (e.g., >10)' },
 ]
 
+// Field prefixes for multicast groups page filtering
+const multicastGroupFieldPrefixes = [
+  { prefix: 'code:', description: 'Filter by group code' },
+  { prefix: 'ip:', description: 'Filter by multicast IP' },
+  { prefix: 'status:', description: 'Filter by status' },
+  { prefix: 'publishers:', description: 'Filter by publisher count (e.g., >5)' },
+  { prefix: 'subscribers:', description: 'Filter by subscriber count (e.g., >10)' },
+]
+
 // Field prefixes for users page filtering
 const userFieldPrefixes = [
   { prefix: 'owner:', description: 'Filter by owner pubkey' },
@@ -130,20 +142,23 @@ const pageToEntity: Record<string, string> = {
   '/dz/metros': 'metros',
   '/dz/contributors': 'contributors',
   '/dz/users': 'users',
+  '/dz/multicast-groups': 'multicast_groups',
   '/solana/validators': 'validators',
   '/solana/gossip-nodes': 'gossip',
 }
 
 // Fields that support autocomplete for each entity
 // These should match the backend field_values.go configuration
-const autocompleteFields: Record<string, string[]> = {
+// Use { field, minChars } for high-cardinality fields to avoid noisy results
+const autocompleteFields: Record<string, (string | { field: string; minChars: number })[]> = {
   devices: ['status', 'type', 'metro', 'contributor'],
   links: ['status', 'type', 'contributor', 'sidea', 'sidez'],
   metros: [],
   contributors: [],
-  users: ['status', 'kind', 'metro', 'device'],
-  validators: ['dz', 'version', 'device', 'city', 'country'],
-  gossip: ['dz', 'validator', 'version', 'city', 'country', 'device'],
+  users: ['status', 'kind', 'metro', { field: 'device', minChars: 2 }],
+  validators: ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }],
+  gossip: ['dz', 'validator', { field: 'version', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'device', minChars: 2 }],
+  multicast_groups: ['status'],
 }
 
 // Map search entity types to topology URL type param
@@ -155,6 +170,7 @@ const topologyTypeMap: Record<SearchEntityType, string | null> = {
   contributor: null, // Not on topology
   user: null, // Not on topology
   gossip: null, // Not on topology (validators are via vote accounts)
+  multicast: null, // Not on topology
 }
 
 interface SearchSpotlightProps {
@@ -185,7 +201,8 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
   const isMetrosPage = location.pathname === '/dz/metros'
   const isContributorsPage = location.pathname === '/dz/contributors'
   const isUsersPage = location.pathname === '/dz/users'
-  const isDZTablePage = isDevicesPage || isLinksPage || isMetrosPage || isContributorsPage || isUsersPage
+  const isMulticastGroupsPage = location.pathname === '/dz/multicast-groups'
+  const isDZTablePage = isDevicesPage || isLinksPage || isMetrosPage || isContributorsPage || isUsersPage || isMulticastGroupsPage
 
   // Check if we're on a page that supports table filtering
   const isTableFilterPage = isValidatorsPage || isGossipNodesPage || isDZTablePage
@@ -276,15 +293,23 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     const entity = pageToEntity[location.pathname]
     if (!entity) return null
     const supportedFields = autocompleteFields[entity] || []
-    if (!supportedFields.includes(field)) return null
-    return { entity, field, value }
+    let minChars = 0
+    const matched = supportedFields.some(f => {
+      if (typeof f === 'string') return f === field
+      if (f.field === field) { minChars = f.minChars; return true }
+      return false
+    })
+    if (!matched) return null
+    return { entity, field, value, minChars }
   }, [query, useTableFilterMode, location.pathname])
+
+  const meetsMinChars = fieldValueMatch != null && (fieldValueMatch.value.length >= fieldValueMatch.minChars)
 
   // Fetch field values when a valid field prefix is detected
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
     queryKey: ['field-values', fieldValueMatch?.entity, fieldValueMatch?.field],
     queryFn: () => fetchFieldValues(fieldValueMatch!.entity, fieldValueMatch!.field),
-    enabled: isOpen && fieldValueMatch !== null,
+    enabled: isOpen && fieldValueMatch !== null && meetsMinChars,
     staleTime: 60000, // Cache for 1 minute
   })
 
@@ -314,9 +339,10 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     if (isMetrosPage) return metroFieldPrefixes
     if (isContributorsPage) return contributorFieldPrefixes
     if (isUsersPage) return userFieldPrefixes
+    if (isMulticastGroupsPage) return multicastGroupFieldPrefixes
     if (isPerformancePage) return [] // Only metros on performance page
     return fieldPrefixes
-  }, [globalSearchMode, isValidatorsPage, isGossipNodesPage, isDevicesPage, isLinksPage, isMetrosPage, isContributorsPage, isUsersPage, isPerformancePage])
+  }, [globalSearchMode, isValidatorsPage, isGossipNodesPage, isDevicesPage, isLinksPage, isMetrosPage, isContributorsPage, isUsersPage, isMulticastGroupsPage, isPerformancePage])
 
   // Check if query matches any field prefix
   const matchingPrefixes = useMemo(() => query.length > 0 && !query.includes(':')
@@ -333,16 +359,19 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
 
   // Build items list
   const items = useMemo(() => {
-    const result: (SearchSuggestion | { type: 'prefix'; prefix: string; description: string } | { type: 'recent'; item: SearchSuggestion } | { type: 'ask-ai' } | { type: 'filter-timeline' } | { type: 'filter-table' } | { type: 'field-value'; field: string; value: string })[] = []
+    const result: (SearchSuggestion | { type: 'prefix'; prefix: string; description: string } | { type: 'recent'; item: SearchSuggestion } | { type: 'ask-ai' } | { type: 'filter-timeline' } | { type: 'filter-table' } | { type: 'field-value'; field: string; value: string } | { type: 'type-more'; minChars: number })[] = []
 
     // Add "Filter timeline" option at the top when on timeline page with a query
     if (isTimelinePage && query.length >= 1) {
       result.push({ type: 'filter-timeline' as const })
     }
 
-    // Add "Filter table" option when on table pages with a query (only in filter mode)
-    // But not when we're showing field value autocomplete
-    if (useTableFilterMode && query.length >= 1 && filteredFieldValues.length === 0) {
+    // Show "type more" hint when field matched but not enough chars typed
+    if (fieldValueMatch && !meetsMinChars && fieldValueMatch.minChars > 0) {
+      result.push({ type: 'type-more' as const, minChars: fieldValueMatch.minChars })
+    } else if (useTableFilterMode && query.length >= 1 && filteredFieldValues.length === 0) {
+      // Add "Filter table" option when on table pages with a query (only in filter mode)
+      // But not when we're showing field value autocomplete
       result.push({ type: 'filter-table' as const })
     }
 
@@ -378,7 +407,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     }
 
     return result
-  }, [isTimelinePage, query, useTableFilterMode, filteredFieldValues, fieldValueMatch, showFieldHints, getFieldPrefixes, matchingPrefixes, showRecentSearches, filteredRecentSearches, suggestions, isPerformancePage])
+  }, [isTimelinePage, query, useTableFilterMode, filteredFieldValues, fieldValueMatch, showFieldHints, getFieldPrefixes, matchingPrefixes, showRecentSearches, filteredRecentSearches, suggestions, isPerformancePage, meetsMinChars])
 
   // Reset selection when items change
   useEffect(() => {
@@ -586,7 +615,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={globalSearchMode ? "Search entities..." : isTopologyPage ? "Search entities (opens in map)..." : isTimelinePage ? "Filter timeline events..." : isStatusPage ? "Filter status by entity..." : isOutagesPage ? "Filter outages by entity..." : isPerformancePage ? "Filter by metro..." : isValidatorsPage ? "Filter validators..." : isGossipNodesPage ? "Filter gossip nodes..." : isDevicesPage ? "Filter devices..." : isLinksPage ? "Filter links..." : isMetrosPage ? "Filter metros..." : isContributorsPage ? "Filter contributors..." : isUsersPage ? "Filter users..." : "Search entities..."}
+            placeholder={globalSearchMode ? "Search entities..." : isTopologyPage ? "Search entities (opens in map)..." : isTimelinePage ? "Filter timeline events..." : isStatusPage ? "Filter status by entity..." : isOutagesPage ? "Filter outages by entity..." : isPerformancePage ? "Filter by metro..." : isValidatorsPage ? "Filter validators..." : isGossipNodesPage ? "Filter gossip nodes..." : isDevicesPage ? "Filter devices..." : isLinksPage ? "Filter links..." : isMetrosPage ? "Filter metros..." : isContributorsPage ? "Filter contributors..." : isUsersPage ? "Filter users..." : isMulticastGroupsPage ? "Filter multicast groups..." : "Search entities..."}
             className="flex-1 h-14 px-3 text-lg bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground"
           />
           {(isLoading || fieldValuesLoading) && query.length >= 2 && (
@@ -665,6 +694,17 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
                     <div className="text-sm text-muted-foreground">Show events matching this search</div>
                   </div>
                 </button>
+              )
+            }
+
+            if (item.type === 'type-more') {
+              return (
+                <div
+                  key="type-more"
+                  className="px-4 py-3 text-sm text-muted-foreground"
+                >
+                  Type at least {item.minChars} characters to see suggestions
+                </div>
               )
             }
 
@@ -874,6 +914,9 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
             )}
             {isUsersPage && !globalSearchMode && (
               <span className="text-blue-500">Filtering users</span>
+            )}
+            {isMulticastGroupsPage && !globalSearchMode && (
+              <span className="text-blue-500">Filtering multicast groups</span>
             )}
           </div>
         </div>

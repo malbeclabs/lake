@@ -16,7 +16,7 @@ interface FieldPrefix {
 interface InlineFilterProps {
   fieldPrefixes: FieldPrefix[]
   entity: string
-  autocompleteFields: string[]
+  autocompleteFields: (string | { field: string; minChars: number })[]
   placeholder?: string
   onLiveFilterChange?: (filter: string) => void
 }
@@ -60,21 +60,36 @@ export function InlineFilter({
     return () => clearTimeout(timer)
   }, [query, onLiveFilterChange])
 
+  // Resolve autocomplete field config (supports both string and { field, minChars } forms)
+  const resolveFieldConfig = useCallback((field: string): { matched: boolean; minChars: number } => {
+    for (const ac of autocompleteFields) {
+      if (typeof ac === 'string') {
+        if (ac === field) return { matched: true, minChars: 0 }
+      } else {
+        if (ac.field === field) return { matched: true, minChars: ac.minChars }
+      }
+    }
+    return { matched: false, minChars: 0 }
+  }, [autocompleteFields])
+
   // Parse field:value from query for autocomplete
   const fieldValueMatch = useMemo(() => {
     const colonIndex = query.indexOf(':')
     if (colonIndex <= 0) return null
     const field = query.slice(0, colonIndex).toLowerCase()
     const value = query.slice(colonIndex + 1).toLowerCase()
-    if (!autocompleteFields.includes(field)) return null
-    return { field, value }
-  }, [query, autocompleteFields])
+    const config = resolveFieldConfig(field)
+    if (!config.matched) return null
+    return { field, value, minChars: config.minChars }
+  }, [query, resolveFieldConfig])
+
+  const meetsMinChars = fieldValueMatch != null && (fieldValueMatch.value.length >= fieldValueMatch.minChars)
 
   // Fetch field values when a valid field prefix is detected
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
     queryKey: ['field-values', entity, fieldValueMatch?.field],
     queryFn: () => fetchFieldValues(entity, fieldValueMatch!.field),
-    enabled: fieldValueMatch !== null,
+    enabled: fieldValueMatch !== null && meetsMinChars,
     staleTime: 60000,
   })
 
@@ -129,12 +144,16 @@ export function InlineFilter({
     | { type: 'prefix'; prefix: string; description: string }
     | { type: 'field-value'; field: string; value: string }
     | { type: 'apply-filter' }
+    | { type: 'type-more'; minChars: number }
 
   const items: DropdownItem[] = useMemo(() => {
     const result: DropdownItem[] = []
 
-    // Show "Apply filter" option when there's a query and we're not showing field values
-    if (query.length >= 1 && filteredFieldValues.length === 0) {
+    // Show "type more" hint when field matched but not enough chars
+    if (fieldValueMatch && !meetsMinChars && fieldValueMatch.minChars > 0) {
+      result.push({ type: 'type-more', minChars: fieldValueMatch.minChars })
+    } else if (query.length >= 1 && filteredFieldValues.length === 0) {
+      // Show "Apply filter" option when there's a query and we're not showing field values
       result.push({ type: 'apply-filter' })
     }
 
@@ -163,7 +182,7 @@ export function InlineFilter({
     }
 
     return result
-  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes, fieldPrefixes])
+  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes, fieldPrefixes, meetsMinChars])
 
   // Reset selection when items change
   useEffect(() => {
@@ -264,6 +283,17 @@ export function InlineFilter({
           )}
 
           {items.map((item, index) => {
+            if (item.type === 'type-more') {
+              return (
+                <div
+                  key="type-more"
+                  className="px-3 py-2 text-sm text-muted-foreground"
+                >
+                  Type at least {item.minChars} characters to see suggestions
+                </div>
+              )
+            }
+
             if (item.type === 'apply-filter') {
               return (
                 <button

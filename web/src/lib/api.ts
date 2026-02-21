@@ -3963,7 +3963,7 @@ export async function fetchDashboardHealth(
 }
 
 // Search types and functions
-export type SearchEntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip'
+export type SearchEntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip' | 'multicast'
 
 export interface SearchSuggestion {
   type: SearchEntityType

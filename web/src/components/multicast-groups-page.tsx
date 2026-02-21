@@ -57,7 +57,7 @@ const fieldPrefixes = [
   { prefix: 'subscribers:', description: 'Filter by subscriber count (e.g., >10)' },
 ]
 
-const autocompleteFields: string[] = []
+const autocompleteFields = ['status']
 
 function parseFilter(filter: string): { field: string; value: string } {
   const colonIndex = filter.indexOf(':')
@@ -291,7 +291,7 @@ export function MulticastGroupsPage() {
               )}
               <InlineFilter
                 fieldPrefixes={fieldPrefixes}
-                entity="multicast groups"
+                entity="multicast_groups"
                 autocompleteFields={autocompleteFields}
                 placeholder="Filter multicast groups..."
                 onLiveFilterChange={setLiveFilter}

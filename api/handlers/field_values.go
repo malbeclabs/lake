@@ -28,6 +28,7 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 	"devices": {
 		"status":      {table: "dz_devices_current", column: "status"},
 		"type":        {table: "dz_devices_current", column: "device_type"},
+		"code":        {table: "dz_devices_current", column: "code"},
 		"metro":       {table: "dz_devices_current d JOIN dz_metros_current m ON d.metro_pk = m.pk", column: "m.code"},
 		"contributor": {table: "dz_devices_current d JOIN dz_contributors_current c ON d.contributor_pk = c.pk", column: "c.code"},
 	},
@@ -59,6 +60,9 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"device":  {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN dz_users_current u ON g.gossip_ip = u.dz_ip JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
 		"city":    {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.city"},
 		"country": {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.country"},
+	},
+	"multicast_groups": {
+		"status": {table: "dz_multicast_groups_current", column: "status"},
 	},
 	"gossip": {
 		"dz":        {table: "(SELECT 'yes' AS val UNION ALL SELECT 'no' AS val)", column: "val"},
@@ -115,7 +119,7 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 			joins = append(joins, "JOIN dz_links_current l ON f.link_pk = l.pk")
 			wheres = append(wheres, fmt.Sprintf("l.link_type IN (%s)", quoteCSV(linkType)))
 		}
-		whereClause := "f.intf IS NOT NULL AND f.intf != '' AND f.intf NOT LIKE 'Tunnel%'"
+		whereClause := "f.intf IS NOT NULL AND f.intf != ''"
 		if len(wheres) > 0 {
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}

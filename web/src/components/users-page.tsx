@@ -115,7 +115,7 @@ const userFieldPrefixes = [
 ]
 
 // Fields that support autocomplete
-const userAutocompleteFields = ['status', 'kind', 'metro', 'device']
+const userAutocompleteFields: (string | { field: string; minChars: number })[] = ['status', 'kind', 'metro', { field: 'device', minChars: 2 }]
 
 // Parse a filter string into field and value
 function parseFilter(filter: string): { field: string; value: string } {
