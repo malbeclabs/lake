@@ -146,6 +146,7 @@ function formatRelativeTime(timestamp: string): string {
 type IssueSeverity = 'down' | 'critical' | 'degraded' | 'no_data'
 
 function classifyIssueSeverity(issue: LinkIssue): IssueSeverity {
+  if (issue.is_down) return 'down'
   if (issue.issue === 'packet_loss') {
     if (issue.value >= 95) return 'down'
     if (issue.value >= 10) return 'critical'

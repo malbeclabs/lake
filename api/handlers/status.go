@@ -91,7 +91,8 @@ type LinkIssue struct {
 	Threshold   float64 `json:"threshold"` // The threshold exceeded
 	SideAMetro  string  `json:"side_a_metro"`
 	SideZMetro  string  `json:"side_z_metro"`
-	Since       string  `json:"since"` // ISO timestamp when issue started
+	Since       string  `json:"since"`   // ISO timestamp when issue started
+	IsDown      bool    `json:"is_down"` // 100% loss in last 5 minutes
 }
 
 type LinkMetric struct {
@@ -485,13 +486,15 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				COALESCE(lat.loss_percent, 0) as loss_percent,
 				-- Use direct link traffic if available, otherwise use parent interface traffic
 				COALESCE(traffic_direct.in_bps, traffic_parent.in_bps, 0) as in_bps,
-				COALESCE(traffic_direct.out_bps, traffic_parent.out_bps, 0) as out_bps
+				COALESCE(traffic_direct.out_bps, traffic_parent.out_bps, 0) as out_bps,
+				COALESCE(h.is_down, false) as is_down
 			FROM dz_links_current l
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+			LEFT JOIN dz_links_health_current h ON l.pk = h.pk
 			LEFT JOIN (
 				SELECT link_pk,
 					avg(rtt_us) as avg_rtt_us,
@@ -540,16 +543,16 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		var highUtil []LinkMetric
 		var allUtilLinks []LinkMetric
 
-		// Threshold for "disabled" classification - near 100% loss over 3h window
-		// indicates the link has been down for an extended period
+		// Threshold for "disabled" classification - high loss over 1h window
 		const DisabledLossPct = 95.0
 
 		for rows.Next() {
 			var pk, code, linkType, contributor, sideAMetro, sideZMetro string
 			var bandwidthBps int64
 			var committedRttUs, latencyUs, lossPct, inBps, outBps float64
+			var isDown bool
 
-			if err := rows.Scan(&pk, &code, &linkType, &contributor, &bandwidthBps, &committedRttUs, &sideAMetro, &sideZMetro, &latencyUs, &lossPct, &inBps, &outBps); err != nil {
+			if err := rows.Scan(&pk, &code, &linkType, &contributor, &bandwidthBps, &committedRttUs, &sideAMetro, &sideZMetro, &latencyUs, &lossPct, &inBps, &outBps, &isDown); err != nil {
 				return err
 			}
 
@@ -562,8 +565,8 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			}
 
 			// Classify link health
-			// First check for "disabled" - extended packet loss (near 100% over 3h)
-			isDisabled := lossPct >= DisabledLossPct
+			// "disabled" if: is_down (100% loss in last 5min) OR high loss over 1h
+			isDisabled := isDown || lossPct >= DisabledLossPct
 			isUnhealthy := !isDisabled && (lossPct >= LossCriticalPct || latencyOveragePct >= LatencyCriticalPct)
 			isDegraded := !isDisabled && !isUnhealthy && (lossPct >= LossWarningPct || latencyOveragePct >= LatencyWarningPct)
 
@@ -588,6 +591,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 					Threshold:   LossWarningPct,
 					SideAMetro:  sideAMetro,
 					SideZMetro:  sideZMetro,
+					IsDown:      isDown,
 				})
 			}
 			if isInterMetroWAN && latencyOveragePct >= LatencyWarningPct && len(issues) < 10 {

@@ -1198,6 +1198,7 @@ export interface LinkIssue {
   side_a_metro: string
   side_z_metro: string
   since: string
+  is_down: boolean
 }
 
 export interface LinkMetric {
