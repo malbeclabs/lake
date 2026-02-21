@@ -136,14 +136,15 @@ const pageToEntity: Record<string, string> = {
 
 // Fields that support autocomplete for each entity
 // These should match the backend field_values.go configuration
-const autocompleteFields: Record<string, string[]> = {
+// Use { field, minChars } for high-cardinality fields to avoid noisy results
+const autocompleteFields: Record<string, (string | { field: string; minChars: number })[]> = {
   devices: ['status', 'type', 'metro', 'contributor'],
   links: ['status', 'type', 'contributor', 'sidea', 'sidez'],
   metros: [],
   contributors: [],
-  users: ['status', 'kind', 'metro', 'device'],
-  validators: ['dz', 'version', 'device', 'city', 'country'],
-  gossip: ['dz', 'validator', 'version', 'city', 'country', 'device'],
+  users: ['status', 'kind', 'metro', { field: 'device', minChars: 2 }],
+  validators: ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }],
+  gossip: ['dz', 'validator', { field: 'version', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'device', minChars: 2 }],
 }
 
 // Map search entity types to topology URL type param
@@ -276,15 +277,23 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     const entity = pageToEntity[location.pathname]
     if (!entity) return null
     const supportedFields = autocompleteFields[entity] || []
-    if (!supportedFields.includes(field)) return null
-    return { entity, field, value }
+    let minChars = 0
+    const matched = supportedFields.some(f => {
+      if (typeof f === 'string') return f === field
+      if (f.field === field) { minChars = f.minChars; return true }
+      return false
+    })
+    if (!matched) return null
+    return { entity, field, value, minChars }
   }, [query, useTableFilterMode, location.pathname])
+
+  const meetsMinChars = fieldValueMatch != null && (fieldValueMatch.value.length >= fieldValueMatch.minChars)
 
   // Fetch field values when a valid field prefix is detected
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
     queryKey: ['field-values', fieldValueMatch?.entity, fieldValueMatch?.field],
     queryFn: () => fetchFieldValues(fieldValueMatch!.entity, fieldValueMatch!.field),
-    enabled: isOpen && fieldValueMatch !== null,
+    enabled: isOpen && fieldValueMatch !== null && meetsMinChars,
     staleTime: 60000, // Cache for 1 minute
   })
 
@@ -333,16 +342,19 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
 
   // Build items list
   const items = useMemo(() => {
-    const result: (SearchSuggestion | { type: 'prefix'; prefix: string; description: string } | { type: 'recent'; item: SearchSuggestion } | { type: 'ask-ai' } | { type: 'filter-timeline' } | { type: 'filter-table' } | { type: 'field-value'; field: string; value: string })[] = []
+    const result: (SearchSuggestion | { type: 'prefix'; prefix: string; description: string } | { type: 'recent'; item: SearchSuggestion } | { type: 'ask-ai' } | { type: 'filter-timeline' } | { type: 'filter-table' } | { type: 'field-value'; field: string; value: string } | { type: 'type-more'; minChars: number })[] = []
 
     // Add "Filter timeline" option at the top when on timeline page with a query
     if (isTimelinePage && query.length >= 1) {
       result.push({ type: 'filter-timeline' as const })
     }
 
-    // Add "Filter table" option when on table pages with a query (only in filter mode)
-    // But not when we're showing field value autocomplete
-    if (useTableFilterMode && query.length >= 1 && filteredFieldValues.length === 0) {
+    // Show "type more" hint when field matched but not enough chars typed
+    if (fieldValueMatch && !meetsMinChars && fieldValueMatch.minChars > 0) {
+      result.push({ type: 'type-more' as const, minChars: fieldValueMatch.minChars })
+    } else if (useTableFilterMode && query.length >= 1 && filteredFieldValues.length === 0) {
+      // Add "Filter table" option when on table pages with a query (only in filter mode)
+      // But not when we're showing field value autocomplete
       result.push({ type: 'filter-table' as const })
     }
 
@@ -378,7 +390,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     }
 
     return result
-  }, [isTimelinePage, query, useTableFilterMode, filteredFieldValues, fieldValueMatch, showFieldHints, getFieldPrefixes, matchingPrefixes, showRecentSearches, filteredRecentSearches, suggestions, isPerformancePage])
+  }, [isTimelinePage, query, useTableFilterMode, filteredFieldValues, fieldValueMatch, showFieldHints, getFieldPrefixes, matchingPrefixes, showRecentSearches, filteredRecentSearches, suggestions, isPerformancePage, meetsMinChars])
 
   // Reset selection when items change
   useEffect(() => {
@@ -665,6 +677,17 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
                     <div className="text-sm text-muted-foreground">Show events matching this search</div>
                   </div>
                 </button>
+              )
+            }
+
+            if (item.type === 'type-more') {
+              return (
+                <div
+                  key="type-more"
+                  className="px-4 py-3 text-sm text-muted-foreground"
+                >
+                  Type at least {item.minChars} characters to see suggestions
+                </div>
               )
             }
 

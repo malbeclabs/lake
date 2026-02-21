@@ -28,6 +28,7 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 	"devices": {
 		"status":      {table: "dz_devices_current", column: "status"},
 		"type":        {table: "dz_devices_current", column: "device_type"},
+		"code":        {table: "dz_devices_current", column: "code"},
 		"metro":       {table: "dz_devices_current d JOIN dz_metros_current m ON d.metro_pk = m.pk", column: "m.code"},
 		"contributor": {table: "dz_devices_current d JOIN dz_contributors_current c ON d.contributor_pk = c.pk", column: "c.code"},
 	},

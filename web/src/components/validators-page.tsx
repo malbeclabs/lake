@@ -78,7 +78,7 @@ const validatorFieldPrefixes = [
 ]
 
 // Fields that support autocomplete
-const validatorAutocompleteFields = ['dz', 'version', 'device', 'city', 'country']
+const validatorAutocompleteFields: (string | { field: string; minChars: number })[] = ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }]
 
 // Parse a filter string into field and value
 // Supports "field:value" syntax or plain "value" for keyword search

@@ -58,7 +58,7 @@ const gossipNodeFieldPrefixes = [
 ]
 
 // Fields that support autocomplete
-const gossipNodeAutocompleteFields = ['dz', 'validator', 'version', 'city', 'country', 'device']
+const gossipNodeAutocompleteFields: (string | { field: string; minChars: number })[] = ['dz', 'validator', { field: 'version', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'device', minChars: 2 }]
 
 // Parse a filter string into field and value
 // Supports "field:value" syntax or plain "value" for keyword search

@@ -115,7 +115,7 @@ type ContextKey = typeof fieldPrefixes[number]['contextKey']
 
 const autocompleteConfig: Record<string, { entity: string; field: string; minChars?: number } | null> = {
   'metro': { entity: 'devices', field: 'metro' },
-  'device': null,
+  'device': { entity: 'devices', field: 'code', minChars: 2 },
   'intf': { entity: 'interfaces', field: 'intf', minChars: 2 },
   'link_type': { entity: 'links', field: 'type' },
   'contributor': { entity: 'devices', field: 'contributor' },
