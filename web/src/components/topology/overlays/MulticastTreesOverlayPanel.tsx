@@ -136,7 +136,7 @@ function MemberRow({ member, isEnabled, onToggle, colorDot }: MemberRowProps) {
         <div className="flex-1 min-w-0">
           <EntityLink
             to={`/dz/users/${member.user_pk}`}
-            className="font-mono text-xs"
+            className="font-mono text-[10px]"
             title={member.user_pk}
           >
             {shortenPubkey(member.user_pk)}
@@ -310,7 +310,11 @@ export function MulticastTreesOverlayPanel({
                   return (
                     <button
                       key={group.pk}
-                      onClick={() => onSelectGroup(isSelected ? null : group.code)}
+                      onClick={() => {
+                        const nextSelected = isSelected ? null : group.code
+                        onSelectGroup(nextSelected)
+                        setGroupsOpen(!nextSelected)
+                      }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
                         isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
                       }`}
