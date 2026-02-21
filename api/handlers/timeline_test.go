@@ -1239,6 +1239,13 @@ func insertDZUserHistory(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK
 		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, devicePK)))
 }
 
+func insertDZUserHistoryDeleted(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
+	attrsHash := uint64(ts.UnixMilli())
+	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 1, %d, '%s', '%s', '%s', '', '', '%s', '%s', 0)`,
+		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, devicePK)))
+}
+
 // insertDZUserCurrent inserts a DZ user into the history table with a
 // far-future timestamp so it appears as the "current" row via the view.
 func insertDZUserCurrent(t *testing.T, pk, dzIP, status, ownerPubkey, devicePK string) {
@@ -1734,6 +1741,46 @@ func TestValidatorEvents_LeftDZ(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "expected a left_dz event with action=left_dz and kind=validator")
+}
+
+func TestValidatorEvents_LeftDZ_DeletedWhileActivated(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
+
+	// DZ user: activated at t1, then deleted (is_deleted=1) at t2 while still "activated"
+	insertDZUserHistory(t, "user-DEL", "entity-DEL", "ownerDEL", "1.2.3.50", "device-DEL", "activated", t1)
+	insertDZUserHistoryDeleted(t, "user-DEL", "entity-DEL", "ownerDEL", "1.2.3.50", "device-DEL", "activated", t2)
+
+	// Gossip node with vote account
+	insertGossipNodeHistory(t, "node-DEL", "1.2.3.50", t1)
+	insertGossipNodeHistory(t, "node-DEL", "1.2.3.50", t2)
+	insertCurrentGossipNode(t, "node-DEL", "1.2.3.50")
+	insertVoteAccountHistory(t, "vote-DEL", "node-DEL", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, "vote-DEL", "node-DEL", 100_000_000_000_000, t2)
+	insertCurrentVoteAccount(t, "vote-DEL", "node-DEL", 100_000_000_000_000)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
+		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	leftEvents := findEventsByType(resp.Events, "validator_left_dz")
+	found := false
+	for _, e := range leftEvents {
+		details := getDetails(t, e)
+		if details["action"] == "validator_left_dz" && details["kind"] == "validator" {
+			found = true
+			assert.Equal(t, "warning", e.Severity)
+			break
+		}
+	}
+	assert.True(t, found, "expected a left_dz event when user is deleted while still activated")
 }
 
 func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {

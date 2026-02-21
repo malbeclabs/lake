@@ -2492,11 +2492,13 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 				u.owner_pubkey,
 				u.kind,
 				u.status,
+				u.is_deleted,
 				u.dz_ip,
 				u.device_pk,
 				u.attrs_hash,
 				row_number() OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as row_num,
 				lag(u.status) OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as prev_status,
+				lag(u.is_deleted) OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as prev_is_deleted,
 				lag(u.attrs_hash) OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as prev_attrs_hash
 			FROM dim_dz_users_history u
 			-- Include users whose dz_ip was in the gossip nodes during the time range
@@ -2523,6 +2525,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			uc.owner_pubkey,
 			uc.kind,
 			uc.status,
+			uc.is_deleted,
 			uc.prev_status,
 			COALESCE(uc.dz_ip, '') as dz_ip,
 			COALESCE(uc.device_pk, '') as device_pk,
@@ -2546,7 +2549,8 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		LEFT JOIN latest_vote va_hist ON gn_hist.pubkey = va_hist.node_pubkey
 		WHERE (uc.attrs_hash != uc.prev_attrs_hash OR uc.prev_attrs_hash = 0)
 		  AND ((uc.status = 'activated' AND uc.prev_status != 'activated')
-		       OR (uc.status != 'activated' AND uc.prev_status = 'activated'))
+		       OR (uc.status != 'activated' AND uc.prev_status = 'activated')
+		       OR (uc.is_deleted = 1 AND (uc.prev_is_deleted = 0 OR uc.prev_is_deleted IS NULL) AND uc.prev_status = 'activated'))
 		  AND uc.snapshot_ts >= ? AND uc.snapshot_ts <= ?
 		ORDER BY uc.snapshot_ts DESC, uc.entity_id
 		LIMIT 200
@@ -2575,6 +2579,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			ownerPubkey   string
 			kind          string
 			status        string
+			isDeleted     uint8
 			prevStatus    *string
 			dzIP          string
 			devicePK      string
@@ -2587,7 +2592,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			validatorKind string // "validator" or "gossip_only" based on vote account presence
 		)
 
-		if err := rows.Scan(&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &prevStatus, &dzIP, &devicePK, &deviceCode, &metroCode, &nodePubkey, &votePubkey, &stakeLamports, &stakeSharePct, &validatorKind); err != nil {
+		if err := rows.Scan(&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &isDeleted, &prevStatus, &dzIP, &devicePK, &deviceCode, &metroCode, &nodePubkey, &votePubkey, &stakeLamports, &stakeSharePct, &validatorKind); err != nil {
 			return nil, fmt.Errorf("validator event scan error: %w", err)
 		}
 		var title string
@@ -2601,7 +2606,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			entityTypeStr = "gossip_node"
 		}
 
-		isJoining := status == "activated" && (prevStatus == nil || *prevStatus != "activated")
+		isJoining := isDeleted == 0 && status == "activated" && (prevStatus == nil || *prevStatus != "activated")
 
 		if isJoining {
 			if validatorKind == "validator" {
