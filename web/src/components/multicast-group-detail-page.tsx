@@ -444,6 +444,7 @@ export function MulticastGroupDetailPage() {
                   <th className="px-4 py-3 font-medium">User</th>
                   <th className="px-4 py-3 font-medium">Device</th>
                   <th className="px-4 py-3 font-medium">Metro</th>
+                  <th className="px-4 py-3 font-medium">DZ IP</th>
                   <th className="px-4 py-3 font-medium text-right">Tunnel</th>
                   <th className="px-4 py-3 font-medium text-right">Stake</th>
                   <th className="px-4 py-3 font-medium">Leader Schedule</th>
@@ -483,6 +484,9 @@ export function MulticastGroupDetailPage() {
                         </Link>
                       ) : '—'}
                     </td>
+                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
+                      {member.dz_ip || '—'}
+                    </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground font-mono">
                       {member.tunnel_id > 0 ? member.tunnel_id : '—'}
                     </td>
@@ -509,7 +513,7 @@ export function MulticastGroupDetailPage() {
                 ))}
                 {activeMembers.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                       No {activeTab} found
                     </td>
                   </tr>
