@@ -440,6 +440,7 @@ func main() {
 		r.Get("/api/dz/users", handlers.GetUsers)
 		r.Get("/api/dz/users/{pk}", handlers.GetUser)
 		r.Get("/api/dz/users/{pk}/traffic", handlers.GetUserTraffic)
+		r.Get("/api/dz/users/{pk}/multicast-groups", handlers.GetUserMulticastGroups)
 		r.Get("/api/dz/multicast-groups", handlers.GetMulticastGroups)
 		r.Get("/api/dz/multicast-groups/{code}", handlers.GetMulticastGroup)
 		r.Get("/api/dz/multicast-groups/{code}/tree-paths", handlers.GetMulticastTreePaths)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Link2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -164,8 +164,19 @@ function parseFilter(filter: string): { field: string; value: string } {
 export function LinksPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [offset, setOffset] = useState(0)
   const [liveFilter, setLiveFilter] = useState('')
+
+  // Derive pagination from URL
+  const page = parseInt(searchParams.get('page') || '1')
+  const offset = (page - 1) * PAGE_SIZE
+  const setOffset = useCallback((newOffset: number) => {
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+      if (newPage <= 1) { newParams.delete('page') } else { newParams.set('page', String(newPage)) }
+      return newParams
+    })
+  }, [setSearchParams])
 
   // Get sort config from URL (default: code asc)
   const sortField = (searchParams.get('sort') || 'code') as SortField
@@ -184,19 +195,21 @@ export function LinksPage() {
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
     setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
       if (newFilters.length === 0) {
-        prev.delete('search')
+        newParams.delete('search')
       } else {
-        prev.set('search', newFilters.join(','))
+        newParams.set('search', newFilters.join(','))
       }
-      return prev
+      return newParams
     })
   }, [searchFilters, setSearchParams])
 
   const clearAllFilters = useCallback(() => {
     setSearchParams(prev => {
-      prev.delete('search')
-      return prev
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('search')
+      return newParams
     })
   }, [setSearchParams])
 
@@ -369,13 +382,14 @@ export function LinksPage() {
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
       if (sortField === field) {
-        prev.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
+        newParams.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
       } else {
-        prev.set('sort', field)
-        prev.set('dir', 'asc')
+        newParams.set('sort', field)
+        newParams.set('dir', 'asc')
       }
-      return prev
+      return newParams
     })
   }
 
@@ -391,9 +405,17 @@ export function LinksPage() {
     return sortDirection === 'asc' ? 'ascending' : 'descending'
   }
 
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
   useEffect(() => {
-    setOffset(0)
-  }, [allFilters])
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('page')
+      return newParams
+    })
+  }, [allFilters, setSearchParams])
 
   if (isLoading) {
     return (

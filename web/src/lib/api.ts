@@ -1874,9 +1874,10 @@ export interface MulticastTrafficPoint {
   out_bps: number
 }
 
-export async function fetchMulticastGroupTraffic(code: string, timeRange?: string): Promise<MulticastTrafficPoint[]> {
+export async function fetchMulticastGroupTraffic(code: string, timeRange?: string, bucket?: string): Promise<MulticastTrafficPoint[]> {
   const params = new URLSearchParams()
   if (timeRange) params.set('time_range', timeRange)
+  if (bucket && bucket !== 'auto') params.set('bucket', bucket)
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(code)}/traffic${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
@@ -2747,6 +2748,7 @@ export interface User {
   status: string
   kind: string
   dz_ip: string
+  client_ip: string
   device_pk: string
   device_code: string
   metro_code: string
@@ -2764,19 +2766,40 @@ export async function fetchUsers(limit = 100, offset = 0): Promise<PaginatedResp
 }
 
 export interface UserDetail extends User {
+  client_ip: string
   tunnel_id: number
   metro_pk: string
   contributor_pk: string
   contributor_code: string
   is_validator: boolean
+  node_pubkey: string
   vote_pubkey: string
   stake_sol: number
+  stake_weight_pct: number
 }
 
 export async function fetchUser(pk: string): Promise<UserDetail> {
   const res = await fetchWithRetry(`/api/dz/users/${encodeURIComponent(pk)}`)
   if (!res.ok) {
     throw new Error('Failed to fetch user')
+  }
+  return res.json()
+}
+
+export interface UserMulticastGroup {
+  group_pk: string
+  group_code: string
+  multicast_ip: string
+  mode: 'P' | 'S' | 'P+S'
+  status: string
+  publisher_count: number
+  subscriber_count: number
+}
+
+export async function fetchUserMulticastGroups(pk: string): Promise<UserMulticastGroup[]> {
+  const res = await fetchWithRetry(`/api/dz/users/${encodeURIComponent(pk)}/multicast-groups`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch user multicast groups')
   }
   return res.json()
 }
@@ -2851,9 +2874,10 @@ export interface UserTrafficPoint {
   out_pps: number
 }
 
-export async function fetchUserTraffic(pk: string, timeRange?: string): Promise<UserTrafficPoint[]> {
+export async function fetchUserTraffic(pk: string, timeRange?: string, bucket?: string): Promise<UserTrafficPoint[]> {
   const params = new URLSearchParams()
   if (timeRange) params.set('time_range', timeRange)
+  if (bucket && bucket !== 'auto') params.set('bucket', bucket)
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/users/${encodeURIComponent(pk)}/traffic${qs ? `?${qs}` : ''}`)
   if (!res.ok) {

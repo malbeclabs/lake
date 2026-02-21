@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3 } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
-import { formatTrafficRate, formatBandwidth } from '../utils'
+import { formatBandwidth } from '../utils'
 import {
   fetchMulticastGroups,
   fetchMulticastGroupTraffic,
@@ -75,11 +75,6 @@ function shortenPubkey(pk: string, chars = 6): string {
   return `${pk.slice(0, chars)}..${pk.slice(-chars)}`
 }
 
-function formatPps(pps: number): string {
-  if (pps >= 1e6) return `${(pps / 1e6).toFixed(1)}M pps`
-  if (pps >= 1e3) return `${(pps / 1e3).toFixed(1)}k pps`
-  return `${Math.round(pps)} pps`
-}
 
 function formatStake(sol: number): string {
   if (sol >= 1e6) return `${(sol / 1e6).toFixed(1)}M SOL`
@@ -153,41 +148,28 @@ function MemberRow({ member, isEnabled, onToggle, colorDot }: MemberRowProps) {
               LEADER
             </span>
           )}
-          {member.traffic_bps > 0 && (
-            <span>{formatTrafficRate(member.traffic_bps)}{member.traffic_pps > 0 ? ` ${formatPps(member.traffic_pps)}` : ''}</span>
-          )}
           {member.stake_sol > 0 && (
             <span>{formatStake(member.stake_sol)}</span>
           )}
         </div>
       </div>
-      <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
-        {(() => {
-          const timing = leaderTimingText(member)
-          return timing ? <span className={member.is_leader ? 'text-amber-500' : ''}>{timing}</span> : null
-        })()}
-        {member.vote_pubkey && (
-          <EntityLink
-            to={`/solana/validators/${member.vote_pubkey}`}
-            className="font-mono hover:underline"
-            title={member.vote_pubkey}
-          >
-            {shortenPubkey(member.vote_pubkey, 4)}
-          </EntityLink>
-        )}
-        {member.device_code && (
-          <EntityLink
-            to={`/dz/devices/${member.device_pk}`}
-            className="hover:underline"
-            title={member.device_code}
-          >
-            {member.device_code}
-          </EntityLink>
-        )}
-        {member.tunnel_id > 0 && (
-          <span className="text-muted-foreground/60">t{member.tunnel_id}</span>
-        )}
-      </div>
+      {(member.device_code || member.is_leader || leaderTimingText(member)) && (
+        <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
+          {(() => {
+            const timing = leaderTimingText(member)
+            return timing ? <span className={member.is_leader ? 'text-amber-500' : ''}>{timing}</span> : null
+          })()}
+          {member.device_code && (
+            <EntityLink
+              to={`/dz/devices/${member.device_pk}`}
+              className="hover:underline"
+              title={member.device_code}
+            >
+              {member.device_code}
+            </EntityLink>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -217,6 +199,8 @@ export function MulticastTreesOverlayPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'publishers' | 'subscribers'>('publishers')
+  const [groupsOpen, setGroupsOpen] = useState(true)
+  const [membersOpen, setMembersOpen] = useState(true)
   const [optionsOpen, setOptionsOpen] = useState(true)
 
   // Fetch groups on mount
@@ -307,37 +291,44 @@ export function MulticastTreesOverlayPanel({
 
       {!loading && !error && groups.length > 0 && (
         <div className="space-y-3">
-          {/* Groups list */}
+          {/* Groups list — collapsible */}
           <div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">
+            <button
+              onClick={() => setGroupsOpen(o => !o)}
+              className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors mb-1.5"
+            >
+              <Radio className="h-3 w-3" />
               Groups
-            </div>
-            <div className="space-y-0.5">
-              {groups.map((group) => {
-                const isSelected = selectedGroup === group.code
-                const { pubs, subs } = getMemberCounts(group)
+              {groupsOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+            </button>
+            {groupsOpen && (
+              <div className="space-y-0.5">
+                {groups.map((group) => {
+                  const isSelected = selectedGroup === group.code
+                  const { pubs, subs } = getMemberCounts(group)
 
-                return (
-                  <button
-                    key={group.pk}
-                    onClick={() => onSelectGroup(isSelected ? null : group.code)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
-                      isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
-                    }`}
-                  >
-                    <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                      isSelected ? 'border-purple-500' : 'border-[var(--border)]'
-                    }`}>
-                      {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
-                    </div>
-                    <span className="font-medium">{group.code}</span>
-                    <span className="text-muted-foreground text-[10px] ml-auto">
-                      {pubs} pub / {subs} sub
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+                  return (
+                    <button
+                      key={group.pk}
+                      onClick={() => onSelectGroup(isSelected ? null : group.code)}
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
+                        isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
+                      }`}
+                    >
+                      <div className={`w-3 h-3 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                        isSelected ? 'border-purple-500' : 'border-[var(--border)]'
+                      }`}>
+                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />}
+                      </div>
+                      <span className="font-medium">{group.code}</span>
+                      <span className="text-muted-foreground text-[10px] ml-auto">
+                        {pubs} pub / {subs} sub
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* Selected group detail */}
@@ -355,104 +346,116 @@ export function MulticastTreesOverlayPanel({
 
               {selectedDetail ? (
                 <>
-                  {/* Tabs */}
-                  <div className="flex border-b border-[var(--border)] mb-2">
+                  {/* Collapsible members section */}
+                  <div className="border-t border-[var(--border)] pt-2">
                     <button
-                      onClick={() => setActiveTab('publishers')}
-                      className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
-                        activeTab === 'publishers'
-                          ? 'border-purple-500 text-purple-500'
-                          : 'border-transparent text-muted-foreground hover:text-foreground'
-                      }`}
+                      onClick={() => setMembersOpen(o => !o)}
+                      className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
                     >
-                      Publishers ({publishers.length})
+                      <User className="h-3 w-3" />
+                      Members
+                      {membersOpen ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
                     </button>
-                    <button
-                      onClick={() => setActiveTab('subscribers')}
-                      className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
-                        activeTab === 'subscribers'
-                          ? 'border-purple-500 text-purple-500'
-                          : 'border-transparent text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      Subscribers ({subscribers.length})
-                    </button>
-                  </div>
+                    {membersOpen && (
+                      <div className="mt-2">
+                        {/* Tabs */}
+                        <div className="flex border-b border-[var(--border)] mb-2">
+                          <button
+                            onClick={() => setActiveTab('publishers')}
+                            className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
+                              activeTab === 'publishers'
+                                ? 'border-purple-500 text-purple-500'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Publishers ({publishers.length})
+                          </button>
+                          <button
+                            onClick={() => setActiveTab('subscribers')}
+                            className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
+                              activeTab === 'subscribers'
+                                ? 'border-purple-500 text-purple-500'
+                                : 'border-transparent text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Subscribers ({subscribers.length})
+                          </button>
+                        </div>
 
-                  {/* Publishers tab */}
-                  {activeTab === 'publishers' && (
-                    <div className="space-y-2">
-                      {publishers.length > 1 && (
-                        <button
-                          onClick={() => onSetAllPublishers(!allPublishersEnabled)}
-                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          {allPublishersEnabled ? 'Deselect all' : 'Select all'}
-                        </button>
-                      )}
-                      {publishers.length > 0 && !publishers.some(m => m.is_leader) && publishers.some(m => m.current_slot > 0) && (
-                        <div className="text-muted-foreground text-[10px] py-1 italic">No DZ validator is currently leader</div>
-                      )}
-                      {publishers.length === 0 && (
-                        <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
-                      )}
-                      {publishersByMetro.map(([metro, members]) => (
-                        <MetroGroup
-                          key={metro}
-                          metro={metro}
-                          members={members}
+                        {/* Publishers tab */}
+                        {activeTab === 'publishers' && (
+                          <div className="space-y-2">
+                            {publishers.length > 1 && (
+                              <button
+                                onClick={() => onSetAllPublishers(!allPublishersEnabled)}
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                {allPublishersEnabled ? 'Deselect all' : 'Select all'}
+                              </button>
+                            )}
+                            {publishers.length === 0 && (
+                              <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
+                            )}
+                            {publishersByMetro.map(([metro, members]) => (
+                              <MetroGroup
+                                key={metro}
+                                metro={metro}
+                                members={members}
 
-                          enabledMembers={enabledPublishers}
-                          onToggleMember={onTogglePublisher}
-                        
-                          keySuffix="-pub"
-                          colorDotForMember={(m) => {
-                            const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
-                            const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
-                            const colorStyle = isDark ? pubColor.dark : pubColor.light
-                            return (
-                              <div
-                                className="w-3 h-3 rounded-full flex-shrink-0"
-                                style={{ backgroundColor: colorStyle }}
+                                enabledMembers={enabledPublishers}
+                                onToggleMember={onTogglePublisher}
+
+                                keySuffix="-pub"
+                                colorDotForMember={(m) => {
+                                  const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
+                                  const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+                                  const colorStyle = isDark ? pubColor.dark : pubColor.light
+                                  return (
+                                    <div
+                                      className="w-3 h-3 rounded-full flex-shrink-0"
+                                      style={{ backgroundColor: colorStyle }}
+                                    />
+                                  )
+                                }}
                               />
-                            )
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
+                            ))}
+                          </div>
+                        )}
 
-                  {/* Subscribers tab */}
-                  {activeTab === 'subscribers' && (
-                    <div className="space-y-2">
-                      {subscribers.length > 1 && (
-                        <button
-                          onClick={() => onSetAllSubscribers(!allSubscribersEnabled)}
-                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          {allSubscribersEnabled ? 'Deselect all' : 'Select all'}
-                        </button>
-                      )}
-                      {subscribers.length === 0 && (
-                        <div className="text-muted-foreground text-[10px] py-2">No subscribers</div>
-                      )}
-                      {subscribersByMetro.map(([metro, members]) => (
-                        <MetroGroup
-                          key={metro}
-                          metro={metro}
-                          members={members}
+                        {/* Subscribers tab */}
+                        {activeTab === 'subscribers' && (
+                          <div className="space-y-2">
+                            {subscribers.length > 1 && (
+                              <button
+                                onClick={() => onSetAllSubscribers(!allSubscribersEnabled)}
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                {allSubscribersEnabled ? 'Deselect all' : 'Select all'}
+                              </button>
+                            )}
+                            {subscribers.length === 0 && (
+                              <div className="text-muted-foreground text-[10px] py-2">No subscribers</div>
+                            )}
+                            {subscribersByMetro.map(([metro, members]) => (
+                              <MetroGroup
+                                key={metro}
+                                metro={metro}
+                                members={members}
 
-                          enabledMembers={enabledSubscribers}
-                          onToggleMember={onToggleSubscriber}
-                        
-                          keySuffix="-sub"
-                          colorDotForMember={() => (
-                            <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
-                          )}
-                        />
-                      ))}
-                    </div>
-                  )}
+                                enabledMembers={enabledSubscribers}
+                                onToggleMember={onToggleSubscriber}
+
+                                keySuffix="-sub"
+                                colorDotForMember={() => (
+                                  <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
+                                )}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div className="text-muted-foreground text-xs py-2">Loading members...</div>
@@ -467,6 +470,7 @@ export function MulticastTreesOverlayPanel({
               members={selectedDetail.members}
               isDark={isDark}
               publisherColorMap={publisherColorMap}
+              activeTab={activeTab}
             />
           )}
 
@@ -551,19 +555,31 @@ function formatAxisBps(bps: number): string {
   return `${bps.toFixed(0)}`
 }
 
+/** Color palette for traffic chart lines — same set used by the main traffic page */
+const TRAFFIC_COLORS = [
+  '#9333ea', // purple
+  '#2563eb', // blue
+  '#16a34a', // green
+  '#ea580c', // orange
+  '#0891b2', // cyan
+  '#ca8a04', // yellow
+  '#db2777', // pink
+  '#5bc0de', // light blue
+]
+
 /** Collapsible traffic chart for a selected multicast group */
 function MulticastTrafficChartSection({
   groupCode,
   members,
-  isDark,
-  publisherColorMap,
+  activeTab,
 }: {
   groupCode: string
   members: MulticastMember[]
   isDark: boolean
   publisherColorMap: Map<string, number>
+  activeTab: 'publishers' | 'subscribers'
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const [timeRange, setTimeRange] = useState<string>('1h')
 
   const { data: trafficData, isLoading } = useQuery({
@@ -573,59 +589,85 @@ function MulticastTrafficChartSection({
     enabled: open,
   })
 
-  // Build device code lookup and color map from members
-  const deviceInfo = useMemo(() => {
-    const map = new Map<string, { code: string; mode: string }>()
+  // Build tunnel info lookup from members: tunnel_id -> { code, mode }
+  const tunnelInfo = useMemo(() => {
+    const map = new Map<number, { code: string; mode: string }>()
     for (const m of members) {
-      if (!map.has(m.device_pk)) {
+      if (m.tunnel_id > 0 && !map.has(m.tunnel_id)) {
         const effectiveMode = m.mode === 'P+S' ? 'P' : m.mode
-        map.set(m.device_pk, { code: m.device_code || m.device_pk.slice(0, 8), mode: effectiveMode })
+        map.set(m.tunnel_id, {
+          code: m.device_code || m.device_pk.slice(0, 8),
+          mode: effectiveMode,
+        })
       }
     }
     return map
   }, [members])
 
-  // Transform traffic data: publishers Rx (positive), subscribers Tx (negative)
-  const { chartData, pubKeys, subKeys } = useMemo(() => {
-    if (!trafficData || trafficData.length === 0) return { chartData: [], pubKeys: [] as string[], subKeys: [] as string[] }
+  // Transform traffic data: two lines per tunnel (inbound + outbound from user perspective).
+  // Device out_bps = user inbound (positive), device in_bps = user outbound (negative).
+  // Filtered by active tab (publishers or subscribers).
+  const { chartData, tunnelIds } = useMemo(() => {
+    if (!trafficData || trafficData.length === 0) return { chartData: [], tunnelIds: [] as number[] }
 
-    const pubs = new Set<string>()
-    const subs = new Set<string>()
+    const showPubs = activeTab === 'publishers'
+    const tunnels = new Set<number>()
     const timeMap = new Map<string, Record<string, string | number>>()
 
     for (const p of trafficData) {
-      const info = deviceInfo.get(p.device_pk)
-      const isPub = info?.mode === 'P' || p.mode === 'P'
-      if (isPub) pubs.add(p.device_pk)
-      else subs.add(p.device_pk)
+      const isPub = p.mode === 'P'
+      if (isPub !== showPubs) continue
+
+      tunnels.add(p.tunnel_id)
 
       let row = timeMap.get(p.time)
       if (!row) {
         row = { time: p.time } as Record<string, string | number>
         timeMap.set(p.time, row)
       }
-      // Publishers: positive in_bps; Subscribers: negative out_bps
-      const bps = isPub ? p.in_bps : -p.out_bps
-      row[p.device_pk] = ((row[p.device_pk] as number) ?? 0) + bps
+      // From user perspective: device out = user inbound, device in = user outbound
+      row[`t${p.tunnel_id}_in`] = p.out_bps
+      row[`t${p.tunnel_id}_out`] = -p.in_bps
+    }
+
+    // Fill missing tunnels with 0 so Recharts renders continuous lines
+    for (const row of timeMap.values()) {
+      for (const tid of tunnels) {
+        if (!(`t${tid}_in` in row)) row[`t${tid}_in`] = 0
+        if (!(`t${tid}_out` in row)) row[`t${tid}_out`] = 0
+      }
     }
 
     const data = [...timeMap.values()].sort((a, b) =>
       String(a.time).localeCompare(String(b.time))
     )
-    return { chartData: data, pubKeys: [...pubs], subKeys: [...subs] }
-  }, [trafficData, deviceInfo])
+    return { chartData: data, tunnelIds: [...tunnels].sort((a, b) => a - b) }
+  }, [trafficData, activeTab])
 
-  // Assign colors: publishers get their palette color, subscribers get a muted tone
-  const getColor = (devicePK: string) => {
-    const info = deviceInfo.get(devicePK)
-    if (info?.mode === 'P') {
-      const colorIdx = publisherColorMap.get(devicePK) ?? 0
-      const c = MULTICAST_PUBLISHER_COLORS[colorIdx % MULTICAST_PUBLISHER_COLORS.length]
-      return isDark ? c.dark : c.light
-    }
-    // Subscriber — use red tones
-    return isDark ? '#ef4444' : '#dc2626'
+  // Assign a unique color per tunnel from the palette
+  const getTunnelColor = (tunnelId: number) => {
+    const idx = tunnelIds.indexOf(tunnelId)
+    return TRAFFIC_COLORS[idx % TRAFFIC_COLORS.length]
   }
+
+  // Track hovered chart index for legend table values
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  // Values to display in the legend: hovered point or latest
+  const displayValues = useMemo(() => {
+    if (chartData.length === 0) return new Map<number, { inBps: number; outBps: number }>()
+    const row = hoveredIdx !== null && hoveredIdx < chartData.length
+      ? chartData[hoveredIdx]
+      : chartData[chartData.length - 1]
+    const map = new Map<number, { inBps: number; outBps: number }>()
+    for (const tid of tunnelIds) {
+      map.set(tid, {
+        inBps: (row[`t${tid}_in`] as number) ?? 0,
+        outBps: Math.abs((row[`t${tid}_out`] as number) ?? 0),
+      })
+    }
+    return map
+  }, [chartData, tunnelIds, hoveredIdx])
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
@@ -634,7 +676,7 @@ function MulticastTrafficChartSection({
         className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
       >
         <BarChart3 className="h-3 w-3" />
-        Traffic
+        Traffic ({activeTab})
         {open ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
       </button>
       {open && (
@@ -665,96 +707,101 @@ function MulticastTrafficChartSection({
           )}
 
           {!isLoading && chartData.length > 0 && (
-            <div className="relative">
-              <span className="absolute top-0 left-[38px] text-[9px] text-muted-foreground/60 pointer-events-none z-10">▲ Publishers</span>
-              <span className="absolute bottom-4 left-[38px] text-[9px] text-muted-foreground/60 pointer-events-none z-10">▼ Subscribers</span>
-              <div className="h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                    <XAxis
-                      dataKey="time"
-                      tick={{ fontSize: 8 }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={formatTime}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 8 }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(v) => formatAxisBps(Math.abs(v))}
-                      width={35}
-                    />
-                    <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
-                    <RechartsTooltip
-                      contentStyle={{
-                        backgroundColor: 'var(--card)',
-                        border: '1px solid var(--border)',
-                        borderRadius: '6px',
-                        fontSize: '10px',
+            <div>
+              {/* Chart */}
+              <div className="relative">
+                <span className="absolute top-0.5 left-[46px] text-[8px] text-muted-foreground/50 pointer-events-none z-10">▲ In</span>
+                <span className="absolute bottom-4 left-[46px] text-[8px] text-muted-foreground/50 pointer-events-none z-10">▼ Out</span>
+                <div className="h-44">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={chartData}
+                      onMouseMove={(state) => {
+                        if (state?.activeTooltipIndex !== undefined) {
+                          setHoveredIdx(Number(state.activeTooltipIndex))
+                        }
                       }}
-                      labelFormatter={formatTime}
-                      formatter={(value, name) => {
-                        const v = value as number
-                        const info = deviceInfo.get(String(name))
-                        const role = info?.mode === 'P' ? 'pub' : 'sub'
-                        return [formatBandwidth(Math.abs(v)), `${info?.code ?? String(name).slice(0, 8)} (${role})`]
-                      }}
-                    />
-                    {pubKeys.map(dk => (
-                      <Area
-                        key={dk}
-                        type="monotone"
-                        dataKey={dk}
-                        stroke={getColor(dk)}
-                        fill={getColor(dk)}
-                        fillOpacity={0.2}
-                        strokeWidth={1.5}
-                        dot={false}
-                        name={dk}
+                      onMouseLeave={() => setHoveredIdx(null)}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fontSize: 9 }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={formatTime}
                       />
-                    ))}
-                    {subKeys.map(dk => (
-                      <Area
-                        key={dk}
-                        type="monotone"
-                        dataKey={dk}
-                        stroke={getColor(dk)}
-                        fill={getColor(dk)}
-                        fillOpacity={0.1}
-                        strokeWidth={1.5}
-                        strokeDasharray="4 2"
-                        dot={false}
-                        name={dk}
+                      <YAxis
+                        tick={{ fontSize: 9 }}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(v) => formatAxisBps(Math.abs(v))}
+                        width={45}
                       />
-                    ))}
-                  </AreaChart>
-                </ResponsiveContainer>
+                      <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
+                      <RechartsTooltip
+                        content={() => null}
+                        cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
+                      />
+                      {tunnelIds.map(tid => (
+                        <Line
+                          key={`${tid}_in`}
+                          type="monotone"
+                          dataKey={`t${tid}_in`}
+                          stroke={getTunnelColor(tid)}
+                          strokeWidth={1.5}
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                      {tunnelIds.map(tid => (
+                        <Line
+                          key={`${tid}_out`}
+                          type="monotone"
+                          dataKey={`t${tid}_out`}
+                          stroke={getTunnelColor(tid)}
+                          strokeWidth={1.5}
+                          strokeDasharray="4 2"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-              {/* Legend */}
-              {(pubKeys.length > 0 || subKeys.length > 0) && (
-                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                  {pubKeys.map(dk => {
-                    const info = deviceInfo.get(dk)
+
+              {/* Legend table */}
+              <div className="mt-2">
+                <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-2 gap-y-0.5 text-[10px]">
+                  {/* Header */}
+                  <div />
+                  <div className="text-muted-foreground/60 font-medium">Device</div>
+                  <div className="text-muted-foreground/60 font-medium text-right">↓ In</div>
+                  <div className="text-muted-foreground/60 font-medium text-right">↑ Out</div>
+                  {/* Rows */}
+                  {tunnelIds.map(tid => {
+                    const info = tunnelInfo.get(tid)
+                    const vals = displayValues.get(tid)
                     return (
-                      <div key={dk} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: getColor(dk) }} />
-                        <span>{info?.code ?? dk.slice(0, 8)} (pub)</span>
-                      </div>
-                    )
-                  })}
-                  {subKeys.map(dk => {
-                    const info = deviceInfo.get(dk)
-                    return (
-                      <div key={dk} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: getColor(dk) }} />
-                        <span>{info?.code ?? dk.slice(0, 8)} (sub)</span>
+                      <div key={tid} className="contents">
+                        <div className="flex items-center">
+                          <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: getTunnelColor(tid) }} />
+                        </div>
+                        <div className="text-foreground truncate font-mono">
+                          {info?.code ?? `t${tid}`} <span className="text-muted-foreground">t{tid}</span>
+                        </div>
+                        <div className="text-right font-mono tabular-nums text-foreground">
+                          {vals ? formatBandwidth(vals.inBps) : '—'}
+                        </div>
+                        <div className="text-right font-mono tabular-nums text-muted-foreground">
+                          {vals ? formatBandwidth(vals.outBps) : '—'}
+                        </div>
                       </div>
                     )
                   })}
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>

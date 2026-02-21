@@ -448,15 +448,19 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
   }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths])
 
-  // Auto-load group details when group is selected
+  // Auto-load group details when group is selected, and refresh periodically
   useEffect(() => {
     if (!multicastTreesMode || !selectedMulticastGroup) return
-    if (multicastGroupDetails.has(selectedMulticastGroup)) return
     const code = selectedMulticastGroup
-    fetchMulticastGroup(code)
-      .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
-      .catch(err => console.error('Failed to fetch multicast group:', err))
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
+    const load = () => {
+      fetchMulticastGroup(code)
+        .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
+        .catch(err => console.error('Failed to fetch multicast group:', err))
+    }
+    if (!multicastGroupDetails.has(code)) load()
+    const interval = setInterval(load, 30000)
+    return () => clearInterval(interval)
+  }, [multicastTreesMode, selectedMulticastGroup]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Set enabled publishers/subscribers when group details load
   useEffect(() => {

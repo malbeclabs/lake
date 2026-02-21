@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Landmark, AlertCircle, Check, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -98,8 +98,19 @@ function parseFilter(filter: string): { field: string; value: string } {
 export function ValidatorsPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [offset, setOffset] = useState(0)
   const [liveFilter, setLiveFilter] = useState('')
+
+  // Derive pagination from URL
+  const page = parseInt(searchParams.get('page') || '1')
+  const offset = (page - 1) * PAGE_SIZE
+  const setOffset = useCallback((newOffset: number) => {
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+      if (newPage <= 1) { newParams.delete('page') } else { newParams.set('page', String(newPage)) }
+      return newParams
+    })
+  }, [setSearchParams])
 
   // Get sort config from URL (default: stake desc)
   const sortField = (searchParams.get('sort') || 'stake') as SortField
@@ -196,33 +207,36 @@ export function ValidatorsPage() {
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
     setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
       if (newFilters.length === 0) {
-        prev.delete('search')
+        newParams.delete('search')
       } else {
-        prev.set('search', newFilters.join(','))
+        newParams.set('search', newFilters.join(','))
       }
-      return prev
+      return newParams
     })
   }, [searchFilters, setSearchParams])
 
   const clearAllFilters = useCallback(() => {
     setSearchParams(prev => {
-      prev.delete('search')
-      return prev
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('search')
+      return newParams
     })
   }, [setSearchParams])
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
       if (sortField === field) {
-        prev.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
+        newParams.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
       } else {
-        prev.set('sort', field)
-        prev.set('dir', 'desc')
+        newParams.set('sort', field)
+        newParams.set('dir', 'desc')
       }
-      return prev
+      newParams.delete('page')
+      return newParams
     })
-    setOffset(0)
   }
 
   const SortIcon = ({ field }: { field: SortField }) => {
@@ -238,9 +252,17 @@ export function ValidatorsPage() {
   }
 
   // Reset to first page when filter changes
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
   useEffect(() => {
-    setOffset(0)
-  }, [allFilters])
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('page')
+      return newParams
+    })
+  }, [allFilters, setSearchParams])
 
   if (isLoading) {
     return (

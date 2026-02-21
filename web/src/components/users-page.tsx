@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Users, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
@@ -37,6 +37,7 @@ type SortField =
   | 'owner'
   | 'kind'
   | 'dzIp'
+  | 'clientIp'
   | 'device'
   | 'metro'
   | 'status'
@@ -98,13 +99,14 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for users
-const validFilterFields = ['owner', 'kind', 'ip', 'dzIp', 'device', 'metro', 'status', 'in', 'out']
+const validFilterFields = ['owner', 'kind', 'ip', 'dzIp', 'clientIp', 'device', 'metro', 'status', 'in', 'out']
 
 // Field prefixes for inline filter
 const userFieldPrefixes = [
   { prefix: 'owner:', description: 'Filter by owner pubkey' },
   { prefix: 'kind:', description: 'Filter by user kind' },
-  { prefix: 'ip:', description: 'Filter by DZ IP address' },
+  { prefix: 'clientip:', description: 'Filter by client IP' },
+  { prefix: 'dzip:', description: 'Filter by DZ IP' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro' },
   { prefix: 'status:', description: 'Filter by status' },
@@ -122,7 +124,7 @@ function parseFilter(filter: string): { field: string; value: string } {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     // Handle camelCase and alias fields
-    const normalizedField = field === 'dzip' ? 'dzIp' : field === 'ip' ? 'dzIp' : field
+    const normalizedField = field === 'dzip' ? 'dzIp' : field === 'clientip' ? 'clientIp' : field
     if (validFilterFields.includes(normalizedField) && value) {
       return { field: normalizedField, value }
     }
@@ -133,8 +135,19 @@ function parseFilter(filter: string): { field: string; value: string } {
 export function UsersPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [offset, setOffset] = useState(0)
   const [liveFilter, setLiveFilter] = useState('')
+
+  // Derive pagination from URL
+  const page = parseInt(searchParams.get('page') || '1')
+  const offset = (page - 1) * PAGE_SIZE
+  const setOffset = useCallback((newOffset: number) => {
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+      if (newPage <= 1) { newParams.delete('page') } else { newParams.set('page', String(newPage)) }
+      return newParams
+    })
+  }, [setSearchParams])
 
   // Get sort config from URL (default: owner asc)
   const sortField = (searchParams.get('sort') || 'owner') as SortField
@@ -150,19 +163,21 @@ export function UsersPage() {
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
     setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
       if (newFilters.length === 0) {
-        prev.delete('search')
+        newParams.delete('search')
       } else {
-        prev.set('search', newFilters.join(','))
+        newParams.set('search', newFilters.join(','))
       }
-      return prev
+      return newParams
     })
   }, [searchFilters, setSearchParams])
 
   const clearAllFilters = useCallback(() => {
     setSearchParams(prev => {
-      prev.delete('search')
-      return prev
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('search')
+      return newParams
     })
   }, [setSearchParams])
 
@@ -213,8 +228,12 @@ export function UsersPage() {
           return user.owner_pubkey || ''
         case 'kind':
           return user.kind || ''
+        case 'ip':
+          return `${user.dz_ip || ''} ${user.client_ip || ''}`.trim()
         case 'dzIp':
           return user.dz_ip || ''
+        case 'clientIp':
+          return user.client_ip || ''
         case 'device':
           return user.device_code || ''
         case 'metro':
@@ -229,7 +248,7 @@ export function UsersPage() {
     if (searchField === 'all') {
       // Search across all text fields
       return users.filter(user => {
-        const textFields = ['owner', 'kind', 'dzIp', 'device', 'metro', 'status']
+        const textFields = ['owner', 'kind', 'ip', 'device', 'metro', 'status']
         return textFields.some(field => getSearchValue(user, field).toLowerCase().includes(needle))
       })
     }
@@ -256,6 +275,9 @@ export function UsersPage() {
           break
         case 'dzIp':
           cmp = (a.dz_ip || '').localeCompare(b.dz_ip || '')
+          break
+        case 'clientIp':
+          cmp = (a.client_ip || '').localeCompare(b.client_ip || '')
           break
         case 'device':
           cmp = (a.device_code || '').localeCompare(b.device_code || '')
@@ -287,13 +309,14 @@ export function UsersPage() {
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
       if (sortField === field) {
-        prev.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
+        newParams.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
       } else {
-        prev.set('sort', field)
-        prev.set('dir', 'asc')
+        newParams.set('sort', field)
+        newParams.set('dir', 'asc')
       }
-      return prev
+      return newParams
     })
   }
 
@@ -309,9 +332,16 @@ export function UsersPage() {
     return sortDirection === 'asc' ? 'ascending' : 'descending'
   }
 
+  const prevFilterRef = useRef(activeFilterRaw)
   useEffect(() => {
-    setOffset(0)
-  }, [activeFilterRaw])
+    if (prevFilterRef.current === activeFilterRaw) return
+    prevFilterRef.current = activeFilterRaw
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('page')
+      return newParams
+    })
+  }, [activeFilterRaw, setSearchParams])
 
   if (isLoading) {
     return (
@@ -389,6 +419,12 @@ export function UsersPage() {
                       <SortIcon field="kind" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('clientIp')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('clientIp')}>
+                      Client IP
+                      <SortIcon field="clientIp" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('dzIp')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('dzIp')}>
                       DZ IP
@@ -443,6 +479,9 @@ export function UsersPage() {
                       {user.kind || '—'}
                     </td>
                     <td className="px-4 py-3 text-sm">
+                      <span className="font-mono">{user.client_ip || '—'}</span>
+                    </td>
+                    <td className="px-4 py-3 text-sm">
                       <span className="font-mono">{user.dz_ip || '—'}</span>
                     </td>
                     <td className="px-4 py-3 text-sm">
@@ -464,7 +503,7 @@ export function UsersPage() {
                 ))}
                 {sortedUsers.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No users found
                     </td>
                   </tr>

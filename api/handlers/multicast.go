@@ -509,6 +509,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		timeRange = "1h"
 	}
 
+	// Default bucket sizes per time range
 	var interval, lookback string
 	switch timeRange {
 	case "1h":
@@ -521,6 +522,14 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		interval, lookback = "600", "24 HOUR"
 	default:
 		interval, lookback = "30", "1 HOUR"
+	}
+
+	// Allow explicit bucket override (in seconds)
+	if bucket := r.URL.Query().Get("bucket"); bucket != "" && bucket != "auto" {
+		switch bucket {
+		case "2", "10", "30", "60", "120", "300", "600":
+			interval = bucket
+		}
 	}
 
 	start := time.Now()
@@ -594,11 +603,14 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		tunnelID int64
 	}
 	tunnelMode := make(map[tunnelKey]string)
+	devicePKs := make([]string, 0, len(members))
 	for _, m := range members {
 		tunnelMode[tunnelKey{m.devicePK, int64(m.tunnelID)}] = m.mode
+		devicePKs = append(devicePKs, m.devicePK)
 	}
 
-	// Query traffic time series
+	// Query traffic time series — filter to member edge devices only
+	// to avoid including transit device traffic for the same tunnel IDs
 	trafficQuery := `
 		SELECT
 			formatDateTime(toStartOfInterval(event_ts, INTERVAL ` + interval + ` SECOND), '%Y-%m-%dT%H:%i:%s') as time,
@@ -615,14 +627,14 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		FROM fact_dz_device_interface_counters
 		WHERE event_ts > now() - INTERVAL ` + lookback + `
 			AND user_tunnel_id IN (?)
+			AND device_pk IN (?)
 			AND delta_duration > 0
-			AND in_octets_delta >= 0
-			AND out_octets_delta >= 0
+			AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
 		GROUP BY time, device_pk, tunnel_id
 		ORDER BY time, device_pk, tunnel_id
 	`
 
-	trafficRows, err := envDB(ctx).Query(ctx, trafficQuery, tunnelIDs)
+	trafficRows, err := envDB(ctx).Query(ctx, trafficQuery, tunnelIDs, devicePKs)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
