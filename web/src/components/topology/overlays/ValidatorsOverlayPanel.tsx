@@ -1,4 +1,5 @@
-import { Users } from 'lucide-react'
+import { Users, X } from 'lucide-react'
+import { useTopology } from '../TopologyContext'
 import type { TopologyValidator } from '@/lib/api'
 
 interface ValidatorsOverlayPanelProps {
@@ -10,6 +11,8 @@ export function ValidatorsOverlayPanel({
   validators,
   isLoading,
 }: ValidatorsOverlayPanelProps) {
+  const { toggleOverlay } = useTopology()
+
   // Calculate totals
   const totalValidators = validators.length
   const totalStakeSol = validators.reduce((sum, v) => sum + (v.stake_sol ?? 0), 0)
@@ -36,9 +39,18 @@ export function ValidatorsOverlayPanel({
 
   return (
     <div className="p-3 text-xs">
-      <div className="flex items-center gap-1.5 mb-2">
-        <Users className="h-3.5 w-3.5 text-purple-500" />
-        <span className="font-medium">Validators</span>
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-medium flex items-center gap-1.5">
+          <Users className="h-3.5 w-3.5 text-purple-500" />
+          Validators
+        </span>
+        <button
+          onClick={() => toggleOverlay('validators')}
+          className="p-1 hover:bg-[var(--muted)] rounded"
+          title="Close"
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
 
       {isLoading && (

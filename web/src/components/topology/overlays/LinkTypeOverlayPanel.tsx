@@ -1,3 +1,6 @@
+import { Cable, X } from 'lucide-react'
+import { useTopology } from '../TopologyContext'
+
 // Link type colors (distinct from device type colors: yellow, orange, cyan)
 // Avoid green/red as those indicate status
 // eslint-disable-next-line react-refresh/only-export-components
@@ -14,21 +17,30 @@ interface LinkTypeOverlayPanelProps {
 }
 
 export function LinkTypeOverlayPanel({ isDark, linkCounts }: LinkTypeOverlayPanelProps) {
+  const { toggleOverlay } = useTopology()
+
   // Get all link types from counts, or use defaults
   const linkTypes = linkCounts
     ? Object.keys(linkCounts).filter(type => type !== 'Inter-Metro').sort()
     : ['WAN', 'DZX']
 
   return (
-    <div className="p-4 space-y-4">
-      <div>
-        <h3 className="text-sm font-medium mb-2">Link Types</h3>
-        <p className="text-xs text-muted-foreground mb-3">
-          Links are colored by their connection type.
-        </p>
+    <div className="p-3 text-xs">
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-medium flex items-center gap-1.5">
+          <Cable className="h-3.5 w-3.5 text-blue-500" />
+          Link Types
+        </span>
+        <button
+          onClick={() => toggleOverlay('linkType')}
+          className="p-1 hover:bg-[var(--muted)] rounded"
+          title="Close"
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {linkTypes.map((type) => {
           const colors = LINK_TYPE_COLORS[type] || LINK_TYPE_COLORS.default
           const count = linkCounts?.[type] ?? 0
@@ -41,16 +53,15 @@ export function LinkTypeOverlayPanel({ isDark, linkCounts }: LinkTypeOverlayPane
                     backgroundColor: isDark ? colors.dark : colors.light,
                   }}
                 />
-                <span className="text-sm">{type}</span>
+                <span>{type}</span>
               </div>
               {linkCounts && (
-                <span className="text-xs text-muted-foreground">{count}</span>
+                <span className="text-muted-foreground">{count}</span>
               )}
             </div>
           )
         })}
       </div>
-
     </div>
   )
 }

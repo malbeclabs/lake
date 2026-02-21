@@ -263,9 +263,9 @@ export function MulticastTreesOverlayPanel({
   return (
     <div className="p-3 text-xs">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-medium flex items-center gap-1.5 text-sm">
-          <Radio className="h-4 w-4 text-purple-500" />
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-medium flex items-center gap-1.5">
+          <Radio className="h-3.5 w-3.5 text-purple-500" />
           Multicast
         </span>
         <button
@@ -273,7 +273,7 @@ export function MulticastTreesOverlayPanel({
           className="p-1 hover:bg-[var(--muted)] rounded"
           title="Close"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-3 w-3" />
         </button>
       </div>
 
