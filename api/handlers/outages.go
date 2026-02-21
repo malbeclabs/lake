@@ -32,6 +32,7 @@ type LinkOutage struct {
 	EndedAt         *string  `json:"ended_at,omitempty"`
 	DurationSeconds *int64   `json:"duration_seconds,omitempty"`
 	IsOngoing       bool     `json:"is_ongoing"`
+	Severity        string   `json:"severity"` // "degraded" or "outage"
 }
 
 // LinkOutagesSummary contains aggregate counts for outages
@@ -45,6 +46,14 @@ type LinkOutagesSummary struct {
 type LinkOutagesResponse struct {
 	Outages []LinkOutage       `json:"outages"`
 	Summary LinkOutagesSummary `json:"summary"`
+}
+
+// packetLossSeverity returns "degraded" for peak loss < 10%, "outage" for >= 10%
+func packetLossSeverity(peakLossPct float64) string {
+	if peakLossPct >= 10.0 {
+		return "outage"
+	}
+	return "degraded"
 }
 
 // parseTimeRange converts a time range string to a duration
@@ -77,7 +86,7 @@ func parseThreshold(thresholdStr string) float64 {
 	case "10":
 		return 10.0
 	default:
-		return 1.0
+		return 10.0
 	}
 }
 
@@ -116,9 +125,9 @@ func isDefaultOutagesRequest(r *http.Request) bool {
 		return false
 	}
 
-	// Must be threshold=1 (default) or no threshold specified
+	// Must be threshold=10 (default) or no threshold specified
 	threshold := q.Get("threshold")
-	if threshold != "" && threshold != "1" {
+	if threshold != "" && threshold != "10" {
 		return false
 	}
 
@@ -464,6 +473,7 @@ func fetchCurrentlyDrainedLinks(ctx context.Context, conn driver.Conn, filters [
 			NewStatus:       &newStatus,
 			StartedAt:       startedAtStr,
 			IsOngoing:       true,
+			Severity:        "outage",
 		})
 	}
 
@@ -519,6 +529,7 @@ func pairStatusOutagesCompleted(changes []statusChange, excludeLinks map[string]
 					NewStatus:       &newStatus,
 					StartedAt:       c.ChangedTS.UTC().Format(time.RFC3339),
 					IsOngoing:       true,
+					Severity:        "outage",
 				}
 			} else if isRecovery && activeOutage != nil {
 				// End of an outage
@@ -625,9 +636,86 @@ func fetchPacketLossOutages(ctx context.Context, conn driver.Conn, duration time
 	// Detect completed outages within the time range (exclude ongoing ones)
 	completedOutages := pairPacketLossOutagesCompleted(buckets, linkMeta, threshold, ongoingLossLinks)
 
-	// Combine ongoing and completed
+	// Combine ongoing and completed, then coalesce nearby outages
 	allOutages := append(currentLossOutages, completedOutages...)
+	allOutages = coalescePacketLossOutages(allOutages)
 	return allOutages, nil
+}
+
+// coalescePacketLossOutages merges packet loss outages on the same link that are separated
+// by less than 15 minutes. This prevents intermittent blips from creating many separate events.
+func coalescePacketLossOutages(outages []LinkOutage) []LinkOutage {
+	if len(outages) <= 1 {
+		return outages
+	}
+
+	const coalesceGap = 15 * time.Minute
+
+	// Group by link
+	byLink := make(map[string][]LinkOutage)
+	for _, o := range outages {
+		byLink[o.LinkCode] = append(byLink[o.LinkCode], o)
+	}
+
+	var result []LinkOutage
+	for _, linkOutages := range byLink {
+		if len(linkOutages) <= 1 {
+			result = append(result, linkOutages...)
+			continue
+		}
+
+		// Sort by start time
+		sort.Slice(linkOutages, func(i, j int) bool {
+			return linkOutages[i].StartedAt < linkOutages[j].StartedAt
+		})
+
+		merged := linkOutages[0]
+		for i := 1; i < len(linkOutages); i++ {
+			curr := linkOutages[i]
+
+			// If the merged outage is ongoing, absorb everything after it
+			if merged.IsOngoing {
+				if floatVal(curr.PeakLossPct) > floatVal(merged.PeakLossPct) {
+					peak := floatVal(curr.PeakLossPct)
+					merged.PeakLossPct = &peak
+				}
+				continue
+			}
+
+			// Calculate gap between end of merged and start of current
+			mergedEnd, _ := time.Parse(time.RFC3339, strVal(merged.EndedAt))
+			currStart, _ := time.Parse(time.RFC3339, curr.StartedAt)
+			gap := currStart.Sub(mergedEnd)
+
+			if gap < coalesceGap {
+				// Merge: extend end time, take max peak loss
+				if curr.IsOngoing {
+					merged.EndedAt = nil
+					merged.DurationSeconds = nil
+					merged.IsOngoing = true
+				} else {
+					merged.EndedAt = curr.EndedAt
+					merged.DurationSeconds = curr.DurationSeconds
+					// Recalculate duration from merged start to new end
+					startTime, _ := time.Parse(time.RFC3339, merged.StartedAt)
+					endTime, _ := time.Parse(time.RFC3339, strVal(curr.EndedAt))
+					durationSecs := int64(endTime.Sub(startTime).Seconds())
+					merged.DurationSeconds = &durationSecs
+				}
+				if floatVal(curr.PeakLossPct) > floatVal(merged.PeakLossPct) {
+					peak := floatVal(curr.PeakLossPct)
+					merged.PeakLossPct = &peak
+				}
+			} else {
+				// Gap is large enough — emit merged and start fresh
+				result = append(result, merged)
+				merged = curr
+			}
+		}
+		result = append(result, merged)
+	}
+
+	return result
 }
 
 // fetchCurrentHighLossLinks finds all links currently experiencing packet loss above threshold
@@ -641,23 +729,32 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 		return nil, nil
 	}
 
-	// Get the most recent 10 minutes of data to determine current state
+	// Get the most recent two 5-min buckets individually to require 2+ consecutive above-threshold
 	query := `
-		WITH recent_loss AS (
+		WITH recent_buckets AS (
 			SELECT
 				lat.link_pk,
+				toStartOfInterval(lat.event_ts, INTERVAL 5 MINUTE) as bucket,
 				countIf(lat.loss = true OR lat.rtt_us = 0) * 100.0 / count(*) as loss_pct,
-				count(*) as sample_count,
-				max(lat.event_ts) as last_seen
+				count(*) as sample_count
 			FROM fact_dz_device_link_latency lat
-			WHERE lat.event_ts >= now() - INTERVAL 10 MINUTE
+			WHERE lat.event_ts >= now() - INTERVAL 15 MINUTE
 			  AND lat.link_pk IN ($2)
-			GROUP BY lat.link_pk
+			GROUP BY lat.link_pk, bucket
 			HAVING count(*) >= 3
+		),
+		ranked AS (
+			SELECT
+				link_pk,
+				bucket,
+				loss_pct,
+				ROW_NUMBER() OVER (PARTITION BY link_pk ORDER BY bucket DESC) AS rn
+			FROM recent_buckets
 		)
-		SELECT link_pk, loss_pct, last_seen
-		FROM recent_loss
-		WHERE loss_pct >= $1
+		SELECT link_pk, bucket, loss_pct, rn
+		FROM ranked
+		WHERE rn <= 3
+		ORDER BY link_pk, rn
 	`
 
 	rows, err := conn.Query(ctx, query, threshold, linkPKs)
@@ -666,30 +763,57 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 	}
 	defer rows.Close()
 
-	var outages []LinkOutage
-	outageIDCounter := 0
+	// Collect recent buckets per link
+	type recentBucket struct {
+		Bucket  time.Time
+		LossPct float64
+		Rank    uint64
+	}
+	linkRecentBuckets := make(map[string][]recentBucket)
 
 	for rows.Next() {
 		var linkPK string
+		var bucket time.Time
 		var lossPct float64
-		var lastSeen time.Time
+		var rn uint64
 
-		if err := rows.Scan(&linkPK, &lossPct, &lastSeen); err != nil {
+		if err := rows.Scan(&linkPK, &bucket, &lossPct, &rn); err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 
+		linkRecentBuckets[linkPK] = append(linkRecentBuckets[linkPK], recentBucket{
+			Bucket: bucket, LossPct: lossPct, Rank: rn,
+		})
+	}
+
+	var outages []LinkOutage
+	outageIDCounter := 0
+
+	for linkPK, buckets := range linkRecentBuckets {
 		meta, hasMeta := linkMeta[linkPK]
 		if !hasMeta {
-			// Link filtered out
+			continue
+		}
+
+		// Require at least 2 consecutive recent buckets above threshold
+		consecutiveAbove := 0
+		for _, b := range buckets {
+			if b.LossPct >= threshold {
+				consecutiveAbove++
+			} else {
+				break // buckets are ordered most recent first (rn=1,2,3)
+			}
+		}
+		if consecutiveAbove < 2 {
 			continue
 		}
 
 		// Find when this outage started by looking back in history
+		lastSeen := buckets[0].Bucket
 		startedAt, peakLoss, err := findPacketLossOutageStart(ctx, conn, linkPK, threshold)
 		if err != nil {
-			// If we can't find the start, use a reasonable default
 			startedAt = lastSeen.Add(-10 * time.Minute)
-			peakLoss = lossPct
+			peakLoss = buckets[0].LossPct
 		}
 
 		outageIDCounter++
@@ -708,6 +832,7 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 			PeakLossPct:     &peakLoss,
 			StartedAt:       startedAt.UTC().Format(time.RFC3339),
 			IsOngoing:       true,
+			Severity:        packetLossSeverity(peakLoss),
 		})
 	}
 
@@ -875,6 +1000,7 @@ func pairPacketLossOutagesCompleted(buckets []lossBucket, linkMeta map[string]li
 
 		var activeOutage *LinkOutage
 		var peakLoss float64
+		var consecutiveBuckets int
 
 		for i, b := range linkBuckets {
 			aboveThreshold := b.LossPct >= threshold
@@ -899,6 +1025,7 @@ func pairPacketLossOutagesCompleted(buckets []lossBucket, linkMeta map[string]li
 						IsOngoing:       false, // Will be set properly when it ends
 					}
 					peakLoss = b.LossPct
+					consecutiveBuckets = 1
 				}
 				continue
 			}
@@ -928,27 +1055,31 @@ func pairPacketLossOutagesCompleted(buckets []lossBucket, linkMeta map[string]li
 					IsOngoing:       false,
 				}
 				peakLoss = b.LossPct
+				consecutiveBuckets = 1
 			} else if !aboveThreshold && wasAbove && activeOutage != nil {
-				// End of outage (use previous bucket as end time since this one is below threshold)
-				prevBucket := linkBuckets[i-1]
-				endedAt := prevBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
-				activeOutage.EndedAt = &endedAt
-				activeOutage.IsOngoing = false
-				// Copy peakLoss to avoid pointer aliasing when we reset it
-				peak := peakLoss
-				activeOutage.PeakLossPct = &peak
+				// End of outage — only record if it spanned 2+ consecutive buckets
+				if consecutiveBuckets >= 2 {
+					prevBucket := linkBuckets[i-1]
+					endedAt := prevBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+					activeOutage.EndedAt = &endedAt
+					activeOutage.IsOngoing = false
+					peak := peakLoss
+					activeOutage.PeakLossPct = &peak
+					activeOutage.Severity = packetLossSeverity(peakLoss)
 
-				// Calculate duration
-				startTime, _ := time.Parse(time.RFC3339, activeOutage.StartedAt)
-				endTime := prevBucket.Bucket.Add(5 * time.Minute)
-				durationSecs := int64(endTime.Sub(startTime).Seconds())
-				activeOutage.DurationSeconds = &durationSecs
+					startTime, _ := time.Parse(time.RFC3339, activeOutage.StartedAt)
+					endTime := prevBucket.Bucket.Add(5 * time.Minute)
+					durationSecs := int64(endTime.Sub(startTime).Seconds())
+					activeOutage.DurationSeconds = &durationSecs
 
-				outages = append(outages, *activeOutage)
+					outages = append(outages, *activeOutage)
+				}
 				activeOutage = nil
 				peakLoss = 0
+				consecutiveBuckets = 0
 			} else if aboveThreshold && activeOutage != nil {
-				// Continuing outage - track peak
+				// Continuing outage - track peak and consecutive count
+				consecutiveBuckets++
 				if b.LossPct > peakLoss {
 					peakLoss = b.LossPct
 				}
@@ -956,19 +1087,16 @@ func pairPacketLossOutagesCompleted(buckets []lossBucket, linkMeta map[string]li
 		}
 
 		// Handle outage that was active at end of time window
-		// Since this function only handles completed outages (ongoing links are excluded),
-		// if we have an activeOutage here, the link must have recovered but we don't have
-		// the exact bucket showing recovery. Use the last bucket's time as the end time.
-		if activeOutage != nil && len(linkBuckets) > 0 {
+		// Only record if it spanned 2+ consecutive buckets
+		if activeOutage != nil && len(linkBuckets) > 0 && consecutiveBuckets >= 2 {
 			lastBucket := linkBuckets[len(linkBuckets)-1]
 			endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
 			activeOutage.EndedAt = &endedAt
 			activeOutage.IsOngoing = false
-			// Copy peakLoss to avoid pointer aliasing
 			peak := peakLoss
 			activeOutage.PeakLossPct = &peak
+			activeOutage.Severity = packetLossSeverity(peakLoss)
 
-			// Calculate duration
 			startTime, _ := time.Parse(time.RFC3339, activeOutage.StartedAt)
 			endTime := lastBucket.Bucket.Add(5 * time.Minute)
 			durationSecs := int64(endTime.Sub(startTime).Seconds())
@@ -1083,6 +1211,7 @@ func fetchCurrentNoDataLinks(ctx context.Context, conn driver.Conn, linkMeta map
 			OutageType:      "no_data",
 			StartedAt:       startedAt.UTC().Format(time.RFC3339),
 			IsOngoing:       true,
+			Severity:        "outage",
 		})
 	}
 
@@ -1294,6 +1423,7 @@ func findCompletedNoDataOutages(ctx context.Context, conn driver.Conn, duration 
 					EndedAt:         &endedAt,
 					DurationSeconds: &gapDuration,
 					IsOngoing:       false,
+					Severity:        "outage",
 				})
 			}
 		}
@@ -1356,7 +1486,7 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=link-outages.csv")
 
 	// Write header
-	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,outage_type,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
+	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,outage_type,severity,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
 
 	for _, o := range outages {
 		var details string
@@ -1376,9 +1506,9 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 			durationSecs = strconv.FormatInt(*o.DurationSeconds, 10)
 		}
 
-		line := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,\"%s\",%s,%s,%s,%t\n",
+		line := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,\"%s\",%s,%s,%s,%t\n",
 			o.ID, o.LinkCode, o.LinkType, o.SideAMetro, o.SideZMetro,
-			o.ContributorCode, o.OutageType, details, o.StartedAt, endedAt,
+			o.ContributorCode, o.OutageType, o.Severity, details, o.StartedAt, endedAt,
 			durationSecs, o.IsOngoing)
 		_, _ = w.Write([]byte(line))
 	}
@@ -1400,10 +1530,10 @@ func floatVal(f *float64) float64 {
 
 // fetchDefaultOutagesData fetches outages data with default parameters for caching.
 // This returns the same data as GetLinkOutages with default params:
-// range=24h, threshold=1, type=all, no filters.
+// range=24h, threshold=10, type=all, no filters.
 func fetchDefaultOutagesData(ctx context.Context) *LinkOutagesResponse {
 	duration := 24 * time.Hour
-	threshold := 1.0
+	threshold := 10.0
 	var filters []OutageFilter // empty = no filters
 
 	var outages []LinkOutage
