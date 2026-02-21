@@ -190,7 +190,7 @@ export function MulticastTreesOverlayPanel({
   onToggleDimOtherLinks,
   animateFlow,
   onToggleAnimateFlow,
-  validators: _validators,
+  validators: _validators, // eslint-disable-line @typescript-eslint/no-unused-vars
   showTreeValidators,
   onToggleShowTreeValidators,
 }: MulticastTreesOverlayPanelProps) {

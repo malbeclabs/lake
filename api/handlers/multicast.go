@@ -158,13 +158,13 @@ type MulticastMember struct {
 	TunnelID       int32   `json:"tunnel_id"`
 	TrafficBps     float64 `json:"traffic_bps"`      // traffic rate in bits per second
 	TrafficPps     float64 `json:"traffic_pps"`      // traffic rate in packets per second
-	IsLeader       bool    `json:"is_leader"`         // true if currently the Solana leader
-	NodePubkey     string  `json:"node_pubkey"`       // validator's node identity pubkey
-	VotePubkey     string  `json:"vote_pubkey"`       // validator's vote account pubkey
-	StakeSol       float64 `json:"stake_sol"`         // activated stake in SOL
-	LastLeaderSlot *int64  `json:"last_leader_slot"`  // most recent past leader slot
-	NextLeaderSlot *int64  `json:"next_leader_slot"`  // next upcoming leader slot
-	CurrentSlot    int64   `json:"current_slot"`      // current cluster slot
+	IsLeader       bool    `json:"is_leader"`        // true if currently the Solana leader
+	NodePubkey     string  `json:"node_pubkey"`      // validator's node identity pubkey
+	VotePubkey     string  `json:"vote_pubkey"`      // validator's vote account pubkey
+	StakeSol       float64 `json:"stake_sol"`        // activated stake in SOL
+	LastLeaderSlot *int64  `json:"last_leader_slot"` // most recent past leader slot
+	NextLeaderSlot *int64  `json:"next_leader_slot"` // next upcoming leader slot
+	CurrentSlot    int64   `json:"current_slot"`     // current cluster slot
 }
 
 type MulticastGroupDetail struct {

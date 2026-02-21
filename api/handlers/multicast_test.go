@@ -103,7 +103,7 @@ func TestGetMulticastGroup_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/nonexistent", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "nonexistent")
+	rctx.URLParams.Add("pk", "nonexistent")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -118,7 +118,7 @@ func TestGetMulticastGroup_ReturnsMembers(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -177,7 +177,7 @@ func TestGetMulticastGroup_TrafficBps(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -216,7 +216,7 @@ func TestGetMulticastGroup_TrafficBps_NoCounters(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -281,7 +281,7 @@ func TestGetMulticastGroup_LeaderEnrichment(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -338,7 +338,7 @@ func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/traffic?time_range=1h", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -367,7 +367,7 @@ func TestGetMulticastGroupTraffic_NotFound(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/nonexistent/traffic", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "nonexistent")
+	rctx.URLParams.Add("pk", "nonexistent")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -382,7 +382,7 @@ func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/traffic?time_range=1h", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -429,7 +429,7 @@ func TestGetMulticastGroup_NoLeader(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
@@ -487,7 +487,7 @@ func TestGetMulticastGroup_ValidatorEnrichment(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("code", "test-group")
+	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
