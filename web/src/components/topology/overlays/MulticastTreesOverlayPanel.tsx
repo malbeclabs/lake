@@ -583,15 +583,16 @@ function MulticastTrafficChartSection({
     enabled: open,
   })
 
-  // Build tunnel info lookup from members: tunnel_id -> { code, mode }
+  // Build tunnel info lookup from members: tunnel_id -> { code, mode, userPk }
   const tunnelInfo = useMemo(() => {
-    const map = new Map<number, { code: string; mode: string }>()
+    const map = new Map<number, { code: string; mode: string; userPk: string }>()
     for (const m of members) {
       if (m.tunnel_id > 0 && !map.has(m.tunnel_id)) {
         const effectiveMode = m.mode === 'P+S' ? 'P' : m.mode
         map.set(m.tunnel_id, {
           code: m.device_code || m.device_pk.slice(0, 8),
           mode: effectiveMode,
+          userPk: m.user_pk,
         })
       }
     }
@@ -857,6 +858,7 @@ function MulticastTrafficChartSection({
                       <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : getTunnelColor(tid) }} />
                       <div className="flex-1 min-w-0 text-foreground truncate font-mono">
                         {info?.code ?? `t${tid}`} <span className="text-muted-foreground">t{tid}</span>
+                        {info?.userPk && <span className="text-muted-foreground"> · {shortenPubkey(info.userPk, 4)}</span>}
                       </div>
                       <div className="text-right font-mono tabular-nums text-foreground">
                         {vals && isVisible ? (metric === 'throughput' ? formatBandwidth(vals.inBps) : formatPps(vals.inBps)) : '—'}
