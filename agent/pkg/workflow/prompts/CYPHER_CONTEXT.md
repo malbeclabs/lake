@@ -103,6 +103,23 @@ RETURN neighbor.code
 - NEVER assume a device exists - always verify with a lookup query first
 - If a lookup returns no devices, report "no devices found in that metro"
 
+## CRITICAL: Hop Count Definition
+
+A "hop" is one link traversal between two devices. In the graph model, a single hop is the pattern `(Device)-[:CONNECTS]-(Link)-[:CONNECTS]-(Device)`, which contains **2 CONNECTS edges** but represents **1 hop**.
+
+- `length(path)` returns the number of CONNECTS edges, NOT hops
+- **1 hop** (direct link) = `length(path)` of 2
+- **2 hops** (one intermediate device) = `length(path)` of 4
+- **N hops** = `length(path)` of 2*N
+
+**Always convert:** `length(path) / 2` to get the actual hop count.
+
+When reporting to the user:
+- A direct link between two devices is **1 hop**, not 2
+- Use "direct link" or "1 hop" for directly connected devices
+- If `length(path)` = 2, say "1 hop (direct link)"
+- If `length(path)` = 4, say "2 hops (1 intermediate device)"
+
 ## Common Cypher Patterns
 
 ### Find Shortest Path Between Devices
@@ -132,7 +149,7 @@ RETURN [n IN nodes(path) |
        WHEN n:Link THEN {type: 'link', code: n.code, status: n.status}
   END
 ] AS segments,
-pathLength AS hops
+pathLength / 2 AS hops
 ```
 
 ### Find Lowest-Latency Path Between Metros
@@ -155,7 +172,7 @@ RETURN [n IN nodes(path) |
        WHEN n:Link THEN {type: 'link', code: n.code, committed_rtt_ms: n.committed_rtt_ns / 1000000.0}
   END
 ] AS segments,
-pathLength AS hops,
+pathLength / 2 AS hops,
 totalRttNs / 1000000.0 AS total_rtt_ms
 ```
 
@@ -179,7 +196,7 @@ RETURN DISTINCT [n IN nodes(path) |
        WHEN n:Link THEN {type: 'link', code: n.code}
   END
 ] AS segments,
-length(path) AS hops
+length(path) / 2 AS hops
 ORDER BY hops
 ```
 
@@ -200,7 +217,7 @@ MATCH (ma:Metro)<-[:LOCATED_IN]-(da:Device)
 MATCH (mz:Metro)<-[:LOCATED_IN]-(dz:Device)
 WHERE ma <> mz
 MATCH path = shortestPath((da)-[:CONNECTS*]-(dz))
-WITH ma.code AS from_metro, mz.code AS to_metro, min(length(path)) AS min_hops
+WITH ma.code AS from_metro, mz.code AS to_metro, min(length(path)) / 2 AS min_hops
 RETURN from_metro, to_metro, min_hops
 ORDER BY min_hops DESC
 LIMIT 10
@@ -230,7 +247,11 @@ RETURN device.code AS device_code, device.status
 ```
 
 ### Find Network Around a Device (N hops)
+
+**Remember:** N hops = 2*N CONNECTS edges. Use `[:CONNECTS*1..2]` for 1 hop, `[:CONNECTS*1..4]` for 2 hops, etc.
+
 ```cypher
+// 1-hop neighborhood (directly connected devices)
 MATCH (center:Device {code: 'nyc-dzd1'})
 OPTIONAL MATCH path = (center)-[:CONNECTS*1..2]-(neighbor)
 WITH collect(path) AS paths, center

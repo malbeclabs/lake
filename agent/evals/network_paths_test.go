@@ -397,6 +397,11 @@ func runTest_MetroToMetroShortestPath(t *testing.T, llmFactory LLMClientFactory)
 			ExpectedValue: "Describes one clear path, not a mix of segments from different paths",
 			Rationale:     "Query asked for 'shortest path' (singular), should return the one shortest",
 		},
+		{
+			Description:   "Response correctly reports the hop count as 1 hop for the direct link",
+			ExpectedValue: "Says '1 hop' or 'direct link' or 'single hop'. Must NOT say '2 hops' for the direct NYC-LON path.",
+			Rationale:     "A direct link between two devices is 1 hop (1 link traversal), not 2. length(path) returns 2 edges but that equals 1 hop.",
+		},
 	}
 	isCorrect, err := evaluateResponse(t, ctx, question, response, expectations...)
 	require.NoError(t, err)

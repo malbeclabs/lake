@@ -126,6 +126,11 @@ func runTest_MultiHopLatency(t *testing.T, llmFactory LLMClientFactory) {
 			ExpectedValue: "Does NOT mention NYC-LON, SIN-HKG, or other distractor link latencies as the answer",
 			Rationale:     "Distractor links have telemetry but are not on the TYO-AMS path",
 		},
+		{
+			Description:   "Response correctly reports the hop count as 2 hops",
+			ExpectedValue: "Says '2 hops' or '2 links' for the TYO-FRA-AMS path. Must NOT say '4 hops'.",
+			Rationale:     "The path traverses 2 links (TYO-FRA and FRA-AMS) which is 2 hops, not 4. length(path) returns 4 edges but that equals 2 hops.",
+		},
 	}
 	isCorrect, err := evaluateResponse(t, ctx, question, response, expectations...)
 	require.NoError(t, err)
