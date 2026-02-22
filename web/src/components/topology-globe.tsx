@@ -378,6 +378,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
   const [showTreeValidators, setShowTreeValidators] = useState(true)
+  const [hoveredMemberDevicePK, setHoveredMemberDevicePK] = useState<string | null>(null)
   // PKs to skip during auto-enable (restored from URL on initial load)
   const initialDisabledPubsRef = useRef<Set<string> | null>(null)
   const initialDisabledSubsRef = useRef<Set<string> | null>(null)
@@ -388,55 +389,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setSelectedMulticastGroup(code)
   }, [])
 
-  const handleTogglePublisher = useCallback((userPK: string) => {
-    setEnabledPublishers(prev => {
-      const next = new Set(prev)
-      if (next.has(userPK)) next.delete(userPK)
-      else next.add(userPK)
-      return next
-    })
+  const handleSetEnabledPublishers = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (typeof updater === 'function') setEnabledPublishers(updater)
+    else setEnabledPublishers(updater)
   }, [])
 
-  const handleToggleSubscriber = useCallback((userPK: string) => {
-    setEnabledSubscribers(prev => {
-      const next = new Set(prev)
-      if (next.has(userPK)) next.delete(userPK)
-      else next.add(userPK)
-      return next
-    })
+  const handleSetEnabledSubscribers = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (typeof updater === 'function') setEnabledSubscribers(updater)
+    else setEnabledSubscribers(updater)
   }, [])
-
-  // Handler to select/deselect all publishers
-  const handleSetAllPublishers = useCallback((enabled: boolean) => {
-    if (!selectedMulticastGroup) return
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return
-    if (enabled) {
-      const pubs = new Set<string>()
-      detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.user_pk)
-      })
-      setEnabledPublishers(pubs)
-    } else {
-      setEnabledPublishers(new Set())
-    }
-  }, [selectedMulticastGroup, multicastGroupDetails])
-
-  // Handler to select/deselect all subscribers
-  const handleSetAllSubscribers = useCallback((enabled: boolean) => {
-    if (!selectedMulticastGroup) return
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return
-    if (enabled) {
-      const subs = new Set<string>()
-      detail.members.forEach(m => {
-        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.user_pk)
-      })
-      setEnabledSubscribers(subs)
-    } else {
-      setEnabledSubscribers(new Set())
-    }
-  }, [selectedMulticastGroup, multicastGroupDetails])
 
   // Fetch multicast tree paths when group is selected
   useEffect(() => {
@@ -514,6 +475,28 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     return set
   }, [selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
+
+  // When a member is hovered, determine which publisher device PKs should be highlighted
+  const hoveredHighlightPublisherPKs = useMemo(() => {
+    if (!hoveredMemberDevicePK || !multicastTreesMode || !selectedMulticastGroup) return null
+    if (enabledPublisherDevicePKs.has(hoveredMemberDevicePK)) {
+      return new Set([hoveredMemberDevicePK])
+    }
+    if (enabledSubscriberDevicePKs.has(hoveredMemberDevicePK)) {
+      const pubs = new Set<string>()
+      const treeData = multicastTreePaths.get(selectedMulticastGroup)
+      if (treeData?.paths) {
+        for (const treePath of treeData.paths) {
+          if (treePath.subscriberDevicePK === hoveredMemberDevicePK &&
+              enabledPublisherDevicePKs.has(treePath.publisherDevicePK)) {
+            pubs.add(treePath.publisherDevicePK)
+          }
+        }
+      }
+      return pubs.size > 0 ? pubs : null
+    }
+    return null
+  }, [hoveredMemberDevicePK, multicastTreesMode, selectedMulticastGroup, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, multicastTreePaths])
 
   // Path finding operational state (local)
   const [pathSource, setPathSource] = useState<string | null>(null)
@@ -1926,7 +1909,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (a.entityType === 'multicast-tree') {
       const mt = a as GlobeArcMulticastTree
       const mc = MULTICAST_PUBLISHER_COLORS[mt.colorIndex % MULTICAST_PUBLISHER_COLORS.length]
-      return isDark ? mc.dark : mc.light
+      const color = isDark ? mc.dark : mc.light
+      if (hoveredHighlightPublisherPKs && !hoveredHighlightPublisherPKs.has(mt.publisherPK)) {
+        return color + '4d' // ~0.3 opacity via hex alpha
+      }
+      return color
     }
     if (a.entityType === 'validator-link') {
       const vl = a as GlobeArcValidatorLink
@@ -1995,7 +1982,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     // Vibrant default gradient for the "living demo" aesthetic
     return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
-  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap])
+  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap, hoveredHighlightPublisherPKs])
 
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity
@@ -2486,10 +2473,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               groupDetails={multicastGroupDetails}
               enabledPublishers={enabledPublishers}
               enabledSubscribers={enabledSubscribers}
-              onTogglePublisher={handleTogglePublisher}
-              onToggleSubscriber={handleToggleSubscriber}
-              onSetAllPublishers={handleSetAllPublishers}
-              onSetAllSubscribers={handleSetAllSubscribers}
+              onSetEnabledPublishers={handleSetEnabledPublishers}
+              onSetEnabledSubscribers={handleSetEnabledSubscribers}
               publisherColorMap={multicastPublisherColorMap}
               dimOtherLinks={dimOtherLinks}
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
@@ -2498,6 +2483,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               validators={validators}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
+              onHoverMember={setHoveredMemberDevicePK}
             />
           )}
         </TopologyPanel>

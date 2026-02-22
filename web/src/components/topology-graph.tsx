@@ -124,6 +124,7 @@ export function TopologyGraph({
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
   const [animateFlow, setAnimateFlow] = useState(true)
+  const [hoveredMemberDevicePK, setHoveredMemberDevicePK] = useState<string | null>(null)
   // PKs to skip during auto-enable (restored from URL on initial load)
   const initialDisabledPubsRef = useRef<Set<string> | null>(null)
   const initialDisabledSubsRef = useRef<Set<string> | null>(null)
@@ -134,63 +135,15 @@ export function TopologyGraph({
     setSelectedMulticastGroup(code)
   }, [])
 
-  // Handler to toggle individual publisher (by user_pk)
-  const handleTogglePublisher = useCallback((userPK: string) => {
-    setEnabledPublishers(prev => {
-      const next = new Set(prev)
-      if (next.has(userPK)) {
-        next.delete(userPK)
-      } else {
-        next.add(userPK)
-      }
-      return next
-    })
+  const handleSetEnabledPublishers = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (typeof updater === 'function') setEnabledPublishers(updater)
+    else setEnabledPublishers(updater)
   }, [])
 
-  // Handler to toggle individual subscriber (by user_pk)
-  const handleToggleSubscriber = useCallback((userPK: string) => {
-    setEnabledSubscribers(prev => {
-      const next = new Set(prev)
-      if (next.has(userPK)) {
-        next.delete(userPK)
-      } else {
-        next.add(userPK)
-      }
-      return next
-    })
+  const handleSetEnabledSubscribers = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (typeof updater === 'function') setEnabledSubscribers(updater)
+    else setEnabledSubscribers(updater)
   }, [])
-
-  // Handler to select/deselect all publishers
-  const handleSetAllPublishers = useCallback((enabled: boolean) => {
-    if (!selectedMulticastGroup) return
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return
-    if (enabled) {
-      const pubs = new Set<string>()
-      detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.user_pk)
-      })
-      setEnabledPublishers(pubs)
-    } else {
-      setEnabledPublishers(new Set())
-    }
-  }, [selectedMulticastGroup, multicastGroupDetails])
-
-  // Handler to select/deselect all subscribers
-  const handleSetAllSubscribers = useCallback((enabled: boolean) => {
-    if (!selectedMulticastGroup) return
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return
-    if (enabled) {
-      const subs = new Set<string>()
-      detail.members.forEach(m => {
-        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.user_pk)
-      })
-      setEnabledSubscribers(subs)
-    } else {
-      setEnabledSubscribers(new Set())
-    }
-  }, [selectedMulticastGroup, multicastGroupDetails])
 
   // Fetch multicast tree paths when group is selected
   useEffect(() => {
@@ -271,6 +224,28 @@ export function TopologyGraph({
     }
     return set
   }, [selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
+
+  // When a member is hovered, determine which publisher device PKs should be highlighted
+  const hoveredHighlightPublisherPKs = useMemo(() => {
+    if (!hoveredMemberDevicePK || !multicastTreesEnabled || !selectedMulticastGroup) return null
+    if (enabledPublisherDevicePKs.has(hoveredMemberDevicePK)) {
+      return new Set([hoveredMemberDevicePK])
+    }
+    if (enabledSubscriberDevicePKs.has(hoveredMemberDevicePK)) {
+      const pubs = new Set<string>()
+      const treeData = multicastTreePaths.get(selectedMulticastGroup)
+      if (treeData?.paths) {
+        for (const treePath of treeData.paths) {
+          if (treePath.subscriberDevicePK === hoveredMemberDevicePK &&
+              enabledPublisherDevicePKs.has(treePath.publisherDevicePK)) {
+            pubs.add(treePath.publisherDevicePK)
+          }
+        }
+      }
+      return pubs.size > 0 ? pubs : null
+    }
+    return null
+  }, [hoveredMemberDevicePK, multicastTreesEnabled, selectedMulticastGroup, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, multicastTreePaths])
 
   // Build publisher color map for consistent colors (shared with panel)
   const multicastPublisherColorMap = useMemo(() => {
@@ -1392,6 +1367,23 @@ export function TopologyGraph({
 
     previousPathEdgeIdsRef.current = newPathEdgeIds
   }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, dimOtherLinks])
+
+  // Lightweight hover effect: modulate virtual multicast edge opacity without re-running the full styling effect
+  useEffect(() => {
+    if (!cyRef.current || !multicastTreesEnabled || !selectedMulticastGroup) return
+    const cy = cyRef.current
+    multicastVirtualEdgeIdsRef.current.forEach(edgeId => {
+      const edge = cy.getElementById(edgeId)
+      if (!edge.length) return
+      const publisherPK = edge.data('mcPublisher')
+      if (!publisherPK) return
+      if (hoveredHighlightPublisherPKs) {
+        edge.style('opacity', hoveredHighlightPublisherPKs.has(publisherPK) ? 0.9 : 0.3)
+      } else {
+        edge.style('opacity', 0.9)
+      }
+    })
+  }, [hoveredHighlightPublisherPKs, multicastTreesEnabled, selectedMulticastGroup])
 
   // Clear classes when mode changes
   useEffect(() => {
@@ -3834,10 +3826,8 @@ export function TopologyGraph({
               groupDetails={multicastGroupDetails}
               enabledPublishers={enabledPublishers}
               enabledSubscribers={enabledSubscribers}
-              onTogglePublisher={handleTogglePublisher}
-              onToggleSubscriber={handleToggleSubscriber}
-              onSetAllPublishers={handleSetAllPublishers}
-              onSetAllSubscribers={handleSetAllSubscribers}
+              onSetEnabledPublishers={handleSetEnabledPublishers}
+              onSetEnabledSubscribers={handleSetEnabledSubscribers}
               publisherColorMap={multicastPublisherColorMap}
               dimOtherLinks={dimOtherLinks}
               onToggleDimOtherLinks={() => setDimOtherLinks(prev => !prev)}
@@ -3846,6 +3836,7 @@ export function TopologyGraph({
               validators={[]}
               showTreeValidators={false}
               onToggleShowTreeValidators={() => {}}
+              onHoverMember={setHoveredMemberDevicePK}
             />
           )}
         </TopologyPanel>

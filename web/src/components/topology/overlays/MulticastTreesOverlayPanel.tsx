@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3 } from 'lucide-react'
+import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3, Info } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
@@ -35,10 +35,8 @@ interface MulticastTreesOverlayPanelProps {
   // Publisher/subscriber filtering
   enabledPublishers: Set<string>  // user PKs of enabled publishers
   enabledSubscribers: Set<string>  // user PKs of enabled subscribers
-  onTogglePublisher: (userPK: string) => void
-  onToggleSubscriber: (userPK: string) => void
-  onSetAllPublishers: (enabled: boolean) => void
-  onSetAllSubscribers: (enabled: boolean) => void
+  onSetEnabledPublishers: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void
+  onSetEnabledSubscribers: (updater: Set<string> | ((prev: Set<string>) => Set<string>)) => void
   // Publisher color map for consistent colors
   publisherColorMap: Map<string, number>
   // Dim other links toggle
@@ -51,6 +49,8 @@ interface MulticastTreesOverlayPanelProps {
   validators: TopologyValidator[]
   showTreeValidators: boolean
   onToggleShowTreeValidators: () => void
+  // Hover coordination with map/globe/graph
+  onHoverMember: (devicePK: string | null) => void
 }
 
 function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
@@ -67,6 +67,21 @@ function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void 
         }`}
       />
     </button>
+  )
+}
+
+function SelectionHint() {
+  return (
+    <div className="relative group flex-shrink-0">
+      <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
+      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
+        <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[10px] leading-relaxed whitespace-nowrap shadow-md">
+          <div><strong>Click</strong> — solo select</div>
+          <div><strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle</div>
+          <div><strong>Shift+click</strong> — range select</div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -105,29 +120,30 @@ function leaderTimingText(member: MulticastMember): string | null {
 interface MemberRowProps {
   member: MulticastMember
   isEnabled: boolean
-  onToggle: () => void
-  colorDot: React.ReactNode
+  isHovered: boolean
+  onClick: (e: React.MouseEvent) => void
+  onMouseEnter: () => void
+  onMouseLeave: () => void
+  accentColor: string
 }
 
-function MemberRow({ member, isEnabled, onToggle, colorDot }: MemberRowProps) {
+function MemberRow({ member, isEnabled, isHovered, onClick, onMouseEnter, onMouseLeave, accentColor }: MemberRowProps) {
   const isValidator = !!member.node_pubkey
   return (
     <div
-      className={`py-1.5 px-2 cursor-pointer rounded-md bg-[var(--muted)]/50 transition-opacity ${!isEnabled ? 'opacity-40' : ''}`}
+      className={`py-1.5 pr-2 pl-1.5 cursor-pointer rounded-md transition-all select-none border-l-2 ${
+        isHovered ? 'bg-[var(--muted)]' : 'bg-[var(--muted)]/50'
+      } ${!isEnabled ? 'opacity-55' : ''}`}
+      style={{ borderLeftColor: isEnabled ? accentColor : 'transparent' }}
       onClick={(e) => {
         // Don't toggle when clicking a link
         if ((e.target as HTMLElement).closest('a')) return
-        onToggle()
+        onClick(e)
       }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <div className="flex items-center gap-1.5">
-        <input
-          type="checkbox"
-          checked={isEnabled}
-          onChange={() => {}}
-          className="h-2.5 w-2.5 rounded border-[var(--border)] flex-shrink-0"
-        />
-        {colorDot}
         {isValidator ? (
           <Server className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         ) : (
@@ -154,7 +170,7 @@ function MemberRow({ member, isEnabled, onToggle, colorDot }: MemberRowProps) {
         </div>
       </div>
       {(member.device_code || member.is_leader || leaderTimingText(member)) && (
-        <div className="flex items-center gap-1.5 ml-6 mt-0.5 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-1.5 ml-4.5 mt-0.5 text-[10px] text-muted-foreground">
           {(() => {
             const timing = leaderTimingText(member)
             return timing ? <span className={member.is_leader ? 'text-amber-500' : ''}>{timing}</span> : null
@@ -181,10 +197,8 @@ export function MulticastTreesOverlayPanel({
   groupDetails,
   enabledPublishers,
   enabledSubscribers,
-  onTogglePublisher,
-  onToggleSubscriber,
-  onSetAllPublishers,
-  onSetAllSubscribers,
+  onSetEnabledPublishers,
+  onSetEnabledSubscribers,
   publisherColorMap,
   dimOtherLinks,
   onToggleDimOtherLinks,
@@ -193,6 +207,7 @@ export function MulticastTreesOverlayPanel({
   validators: _validators, // eslint-disable-line @typescript-eslint/no-unused-vars
   showTreeValidators,
   onToggleShowTreeValidators,
+  onHoverMember,
 }: MulticastTreesOverlayPanelProps) {
   const { toggleOverlay } = useTopology()
   const [groups, setGroups] = useState<MulticastGroupListItem[]>([])
@@ -202,6 +217,13 @@ export function MulticastTreesOverlayPanel({
   const [groupsOpen, setGroupsOpen] = useState(true)
   const [membersOpen, setMembersOpen] = useState(true)
   const [optionsOpen, setOptionsOpen] = useState(true)
+
+  // Hover state: which user_pk is hovered in the member list (or from traffic chart)
+  const [hoveredUserPK, setHoveredUserPK] = useState<string | null>(null)
+
+  // Click state for solo/cmd/shift selection
+  const [lastClickedPubIndex, setLastClickedPubIndex] = useState<number | null>(null)
+  const [lastClickedSubIndex, setLastClickedSubIndex] = useState<number | null>(null)
 
   // Fetch groups on mount
   useEffect(() => {
@@ -256,9 +278,109 @@ export function MulticastTreesOverlayPanel({
   const publishersByMetro = useMemo(() => groupByMetro(publishers), [publishers])
   const subscribersByMetro = useMemo(() => groupByMetro(subscribers), [subscribers])
 
-  // Check if all are enabled for select/deselect all
-  const allPublishersEnabled = publishers.length > 0 && publishers.every(m => enabledPublishers.has(m.user_pk))
-  const allSubscribersEnabled = subscribers.length > 0 && subscribers.every(m => enabledSubscribers.has(m.user_pk))
+  // Build ordered user_pk arrays from metro-grouped render order (for shift-click range selection)
+  const orderedPublisherUserPKs = useMemo(() =>
+    publishersByMetro.flatMap(([, members]) => members.map(m => m.user_pk)),
+    [publishersByMetro]
+  )
+  const orderedSubscriberUserPKs = useMemo(() =>
+    subscribersByMetro.flatMap(([, members]) => members.map(m => m.user_pk)),
+    [subscribersByMetro]
+  )
+
+  // Build userPK -> devicePK lookup
+  const userPKToDevicePK = useMemo(() => {
+    const map = new Map<string, string>()
+    if (selectedDetail?.members) {
+      for (const m of selectedDetail.members) {
+        if (!map.has(m.user_pk)) map.set(m.user_pk, m.device_pk)
+      }
+    }
+    return map
+  }, [selectedDetail])
+
+  // When hoveredUserPK changes, derive devicePK and call onHoverMember
+  useEffect(() => {
+    if (!hoveredUserPK) {
+      onHoverMember(null)
+      return
+    }
+    const devicePK = userPKToDevicePK.get(hoveredUserPK) ?? null
+    onHoverMember(devicePK)
+  }, [hoveredUserPK, userPKToDevicePK, onHoverMember])
+
+  // Derive tunnelId from hoveredUserPK for traffic chart coordination
+  const hoveredTunnelId = useMemo(() => {
+    if (!hoveredUserPK || !selectedDetail?.members) return null
+    const member = selectedDetail.members.find(m => m.user_pk === hoveredUserPK && m.tunnel_id > 0)
+    return member?.tunnel_id ?? null
+  }, [hoveredUserPK, selectedDetail])
+
+  // Solo/cmd/shift click handler for publishers
+  const handlePublisherClick = useCallback((userPK: string, index: number, event: React.MouseEvent) => {
+    if (event.shiftKey && lastClickedPubIndex !== null) {
+      const start = Math.min(lastClickedPubIndex, index)
+      const end = Math.max(lastClickedPubIndex, index)
+      onSetEnabledPublishers(prev => {
+        const next = new Set(prev)
+        for (let i = start; i <= end; i++) {
+          next.add(orderedPublisherUserPKs[i])
+        }
+        return next
+      })
+    } else if (event.ctrlKey || event.metaKey) {
+      onSetEnabledPublishers(prev => {
+        const next = new Set(prev)
+        if (next.has(userPK)) next.delete(userPK)
+        else next.add(userPK)
+        return next
+      })
+    } else {
+      // Solo click: if already solo-selected, show all; otherwise solo-select
+      const isSolo = enabledPublishers.size === 1 && enabledPublishers.has(userPK)
+      if (isSolo) {
+        onSetEnabledPublishers(new Set(publishers.map(m => m.user_pk)))
+      } else {
+        onSetEnabledPublishers(new Set([userPK]))
+      }
+    }
+    setLastClickedPubIndex(index)
+  }, [lastClickedPubIndex, orderedPublisherUserPKs, enabledPublishers, publishers, onSetEnabledPublishers])
+
+  // Solo/cmd/shift click handler for subscribers
+  const handleSubscriberClick = useCallback((userPK: string, index: number, event: React.MouseEvent) => {
+    if (event.shiftKey && lastClickedSubIndex !== null) {
+      const start = Math.min(lastClickedSubIndex, index)
+      const end = Math.max(lastClickedSubIndex, index)
+      onSetEnabledSubscribers(prev => {
+        const next = new Set(prev)
+        for (let i = start; i <= end; i++) {
+          next.add(orderedSubscriberUserPKs[i])
+        }
+        return next
+      })
+    } else if (event.ctrlKey || event.metaKey) {
+      onSetEnabledSubscribers(prev => {
+        const next = new Set(prev)
+        if (next.has(userPK)) next.delete(userPK)
+        else next.add(userPK)
+        return next
+      })
+    } else {
+      const isSolo = enabledSubscribers.size === 1 && enabledSubscribers.has(userPK)
+      if (isSolo) {
+        onSetEnabledSubscribers(new Set(subscribers.map(m => m.user_pk)))
+      } else {
+        onSetEnabledSubscribers(new Set([userPK]))
+      }
+    }
+    setLastClickedSubIndex(index)
+  }, [lastClickedSubIndex, orderedSubscriberUserPKs, enabledSubscribers, subscribers, onSetEnabledSubscribers])
+
+  // Callback for traffic chart legend hover -> set hoveredUserPK
+  const handleTrafficChartHoverUserPK = useCallback((userPK: string | null) => {
+    setHoveredUserPK(userPK)
+  }, [])
 
   return (
     <div className="p-3 text-xs">
@@ -390,12 +512,22 @@ export function MulticastTreesOverlayPanel({
                         {activeTab === 'publishers' && (
                           <div className="space-y-2">
                             {publishers.length > 1 && (
-                              <button
-                                onClick={() => onSetAllPublishers(!allPublishersEnabled)}
-                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                              >
-                                {allPublishersEnabled ? 'Deselect all' : 'Select all'}
-                              </button>
+                              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                <button
+                                  onClick={() => onSetEnabledPublishers(new Set(publishers.map(m => m.user_pk)))}
+                                  className="hover:text-foreground transition-colors"
+                                >
+                                  all
+                                </button>
+                                {' / '}
+                                <button
+                                  onClick={() => onSetEnabledPublishers(new Set())}
+                                  className="hover:text-foreground transition-colors"
+                                >
+                                  none
+                                </button>
+                                <SelectionHint />
+                              </div>
                             )}
                             {publishers.length === 0 && (
                               <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
@@ -407,19 +539,17 @@ export function MulticastTreesOverlayPanel({
                                 members={members}
 
                                 enabledMembers={enabledPublishers}
-                                onToggleMember={onTogglePublisher}
+                                onMemberClick={handlePublisherClick}
+                                orderedUserPKs={orderedPublisherUserPKs}
+
+                                hoveredUserPK={hoveredUserPK}
+                                onHoverUserPK={setHoveredUserPK}
 
                                 keySuffix="-pub"
-                                colorDotForMember={(m) => {
+                                accentColorForMember={(m) => {
                                   const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
                                   const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
-                                  const colorStyle = isDark ? pubColor.dark : pubColor.light
-                                  return (
-                                    <div
-                                      className="w-3 h-3 rounded-full flex-shrink-0"
-                                      style={{ backgroundColor: colorStyle }}
-                                    />
-                                  )
+                                  return isDark ? pubColor.dark : pubColor.light
                                 }}
                               />
                             ))}
@@ -430,12 +560,22 @@ export function MulticastTreesOverlayPanel({
                         {activeTab === 'subscribers' && (
                           <div className="space-y-2">
                             {subscribers.length > 1 && (
-                              <button
-                                onClick={() => onSetAllSubscribers(!allSubscribersEnabled)}
-                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                              >
-                                {allSubscribersEnabled ? 'Deselect all' : 'Select all'}
-                              </button>
+                              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                <button
+                                  onClick={() => onSetEnabledSubscribers(new Set(subscribers.map(m => m.user_pk)))}
+                                  className="hover:text-foreground transition-colors"
+                                >
+                                  all
+                                </button>
+                                {' / '}
+                                <button
+                                  onClick={() => onSetEnabledSubscribers(new Set())}
+                                  className="hover:text-foreground transition-colors"
+                                >
+                                  none
+                                </button>
+                                <SelectionHint />
+                              </div>
                             )}
                             {subscribers.length === 0 && (
                               <div className="text-muted-foreground text-[10px] py-2">No subscribers</div>
@@ -447,12 +587,14 @@ export function MulticastTreesOverlayPanel({
                                 members={members}
 
                                 enabledMembers={enabledSubscribers}
-                                onToggleMember={onToggleSubscriber}
+                                onMemberClick={handleSubscriberClick}
+                                orderedUserPKs={orderedSubscriberUserPKs}
+
+                                hoveredUserPK={hoveredUserPK}
+                                onHoverUserPK={setHoveredUserPK}
 
                                 keySuffix="-sub"
-                                colorDotForMember={() => (
-                                  <div className="w-3 h-3 rounded-full bg-teal-500 flex-shrink-0" />
-                                )}
+                                accentColorForMember={() => '#14b8a6'}
                               />
                             ))}
                           </div>
@@ -475,6 +617,8 @@ export function MulticastTreesOverlayPanel({
               isDark={isDark}
               publisherColorMap={publisherColorMap}
               activeTab={activeTab}
+              hoveredTunnelId={hoveredTunnelId}
+              onHoverUserPK={handleTrafficChartHoverUserPK}
             />
           )}
 
@@ -560,12 +704,16 @@ function MulticastTrafficChartSection({
   groupCode,
   members,
   activeTab,
+  hoveredTunnelId,
+  onHoverUserPK,
 }: {
   groupCode: string
   members: MulticastMember[]
   isDark: boolean
   publisherColorMap: Map<string, number>
   activeTab: 'publishers' | 'subscribers'
+  hoveredTunnelId: number | null
+  onHoverUserPK: (userPK: string | null) => void
 }) {
   const [open, setOpen] = useState(true)
   const [timeRange, setTimeRange] = useState<string>('1h')
@@ -652,9 +800,12 @@ function MulticastTrafficChartSection({
 
   // Track hovered chart index for legend table values
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const [hoveredSeries, setHoveredSeries] = useState<number | null>(null)
+  const [localHoveredSeries, setLocalHoveredSeries] = useState<number | null>(null)
   const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
+
+  // Merge local legend hover with member list hover (hoveredTunnelId from parent)
+  const effectiveHoveredSeries = localHoveredSeries ?? hoveredTunnelId
 
   // Empty selection = all visible
   const visibleSeries = useMemo(() => {
@@ -805,7 +956,7 @@ function MulticastTrafficChartSection({
                           dataKey={`t${tid}_in`}
                           stroke={getTunnelColor(tid)}
                           strokeWidth={1.5}
-                          strokeOpacity={hoveredSeries !== null && hoveredSeries !== tid ? 0 : 1}
+                          strokeOpacity={effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? 0 : 1}
                           dot={false}
                           isAnimationActive={false}
                         />
@@ -817,7 +968,7 @@ function MulticastTrafficChartSection({
                           dataKey={`t${tid}_out`}
                           stroke={getTunnelColor(tid)}
                           strokeWidth={1.5}
-                          strokeOpacity={hoveredSeries !== null && hoveredSeries !== tid ? 0 : 1}
+                          strokeOpacity={effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? 0 : 1}
                           strokeDasharray="4 2"
                           dot={false}
                           isAnimationActive={false}
@@ -847,13 +998,25 @@ function MulticastTrafficChartSection({
                   const info = tunnelInfo.get(tid)
                   const vals = displayValues.get(tid)
                   const isVisible = visibleSeries.has(tid)
+                  const isHighlighted = hoveredTunnelId === tid
                   return (
                     <div
                       key={tid}
-                      className={`flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer select-none transition-colors hover:bg-muted/60 ${!isVisible ? 'opacity-40' : ''}`}
+                      className={`flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer select-none transition-colors ${
+                        isHighlighted ? 'bg-muted/80' : 'hover:bg-muted/60'
+                      } ${!isVisible ? 'opacity-40' : ''}`}
                       onClick={(e) => handleSeriesClick(tid, i, e)}
-                      onMouseEnter={() => isVisible && setHoveredSeries(tid)}
-                      onMouseLeave={() => setHoveredSeries(null)}
+                      onMouseEnter={() => {
+                        if (isVisible) {
+                          setLocalHoveredSeries(tid)
+                          // Coordinate back to member list
+                          if (info?.userPk) onHoverUserPK(info.userPk)
+                        }
+                      }}
+                      onMouseLeave={() => {
+                        setLocalHoveredSeries(null)
+                        onHoverUserPK(null)
+                      }}
                     >
                       <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : getTunnelColor(tid) }} />
                       <div className="flex-1 min-w-0 text-foreground truncate font-mono">
@@ -883,16 +1046,22 @@ function MetroGroup({
   metro,
   members,
   enabledMembers,
-  onToggleMember,
+  onMemberClick,
+  orderedUserPKs,
+  hoveredUserPK,
+  onHoverUserPK,
   keySuffix,
-  colorDotForMember,
+  accentColorForMember,
 }: {
   metro: string
   members: MulticastMember[]
   enabledMembers: Set<string>
-  onToggleMember: (userPK: string) => void
+  onMemberClick: (userPK: string, index: number, event: React.MouseEvent) => void
+  orderedUserPKs: string[]
+  hoveredUserPK: string | null
+  onHoverUserPK: (userPK: string | null) => void
   keySuffix: string
-  colorDotForMember: (m: MulticastMember) => React.ReactNode
+  accentColorForMember: (m: MulticastMember) => string
 }) {
   const [open, setOpen] = useState(true)
 
@@ -908,15 +1077,21 @@ function MetroGroup({
       </button>
       {open && (
         <div className="space-y-1 mt-1 ml-1">
-          {members.map(m => (
-            <MemberRow
-              key={m.user_pk + keySuffix}
-              member={m}
-              isEnabled={enabledMembers.has(m.user_pk)}
-              onToggle={() => onToggleMember(m.user_pk)}
-              colorDot={colorDotForMember(m)}
-            />
-          ))}
+          {members.map(m => {
+            const orderedIndex = orderedUserPKs.indexOf(m.user_pk)
+            return (
+              <MemberRow
+                key={m.user_pk + keySuffix}
+                member={m}
+                isEnabled={enabledMembers.has(m.user_pk)}
+                isHovered={hoveredUserPK === m.user_pk}
+                onClick={(e) => onMemberClick(m.user_pk, orderedIndex, e)}
+                onMouseEnter={() => onHoverUserPK(m.user_pk)}
+                onMouseLeave={() => onHoverUserPK(null)}
+                accentColor={accentColorForMember(m)}
+              />
+            )
+          })}
         </div>
       )}
     </div>
