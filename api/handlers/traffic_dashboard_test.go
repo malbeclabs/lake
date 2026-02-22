@@ -843,6 +843,59 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 	}
 }
 
+func TestFieldValues_WithTimeRange(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantVals  []string
+		wantEmpty bool
+	}{
+		{
+			name:     "intf_default_1day",
+			query:    "?entity=interfaces&field=intf",
+			wantVals: []string{"Ethernet1/1", "Port-Channel1000"},
+		},
+		{
+			name:     "intf_with_time_range_1h",
+			query:    "?entity=interfaces&field=intf&time_range=1h",
+			wantVals: []string{"Ethernet1/1", "Port-Channel1000"},
+		},
+		{
+			name:     "intf_with_time_range_7d",
+			query:    "?entity=interfaces&field=intf&time_range=7d",
+			wantVals: []string{"Ethernet1/1", "Port-Channel1000"},
+		},
+		{
+			name:     "intf_scoped_with_time_range",
+			query:    "?entity=interfaces&field=intf&metro=FRA&time_range=7d",
+			wantVals: []string{"Port-Channel1000"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetFieldValues(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.FieldValuesResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			if tt.wantEmpty {
+				assert.Empty(t, resp.Values)
+			} else {
+				assert.Equal(t, tt.wantVals, resp.Values)
+			}
+		})
+	}
+}
+
 func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 

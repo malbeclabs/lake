@@ -74,6 +74,15 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 	},
 }
 
+// factTableInterval returns the ClickHouse interval to use for fact table time bounds.
+// It reads the time_range query param and falls back to "1 DAY".
+func factTableInterval(r *http.Request) string {
+	if tr := r.URL.Query().Get("time_range"); tr != "" {
+		return dashboardTimeRange(tr)
+	}
+	return "1 DAY"
+}
+
 // quoteCSV splits a comma-separated string and returns SQL-safe quoted values.
 func quoteCSV(csv string) string {
 	vals := strings.Split(csv, ",")
@@ -119,7 +128,8 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 			joins = append(joins, "JOIN dz_links_current l ON f.link_pk = l.pk")
 			wheres = append(wheres, fmt.Sprintf("l.link_type IN (%s)", quoteCSV(linkType)))
 		}
-		whereClause := "f.intf IS NOT NULL AND f.intf != ''"
+		interval := factTableInterval(r)
+		whereClause := fmt.Sprintf("f.event_ts >= now() - INTERVAL %s AND f.intf IS NOT NULL AND f.intf != ''", interval)
 		if len(wheres) > 0 {
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}
@@ -222,7 +232,11 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	// Try scoped query first (dashboard filter-aware), fall back to generic
 	query := BuildScopedFieldValuesQuery(entity, field, fieldCfg, r)
 	if query == "" {
-		query = "SELECT DISTINCT " + fieldCfg.column + " AS val FROM " + fieldCfg.table + " WHERE " + fieldCfg.column + " IS NOT NULL AND " + fieldCfg.column + " != '' ORDER BY val LIMIT 100"
+		timeFilter := ""
+		if strings.HasPrefix(fieldCfg.table, "fact_") {
+			timeFilter = fmt.Sprintf("event_ts >= now() - INTERVAL %s AND ", factTableInterval(r))
+		}
+		query = "SELECT DISTINCT " + fieldCfg.column + " AS val FROM " + fieldCfg.table + " WHERE " + timeFilter + fieldCfg.column + " IS NOT NULL AND " + fieldCfg.column + " != '' ORDER BY val LIMIT 100"
 	}
 
 	start := time.Now()

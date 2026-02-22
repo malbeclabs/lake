@@ -131,9 +131,11 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 					ELSE 0
 				END as skip_rate
 			FROM fact_solana_block_production
-			WHERE (leader_identity_pubkey, event_ts) IN (
+			WHERE event_ts >= now() - INTERVAL 1 DAY
+				AND (leader_identity_pubkey, event_ts) IN (
 				SELECT leader_identity_pubkey, max(event_ts)
 				FROM fact_solana_block_production
+				WHERE event_ts >= now() - INTERVAL 1 DAY
 				GROUP BY leader_identity_pubkey
 			)
 		),
@@ -367,9 +369,11 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 					ELSE 0
 				END as skip_rate
 			FROM fact_solana_block_production
-			WHERE (leader_identity_pubkey, event_ts) IN (
+			WHERE event_ts >= now() - INTERVAL 1 DAY
+				AND (leader_identity_pubkey, event_ts) IN (
 				SELECT leader_identity_pubkey, max(event_ts)
 				FROM fact_solana_block_production
+				WHERE event_ts >= now() - INTERVAL 1 DAY
 				GROUP BY leader_identity_pubkey
 			)
 		)

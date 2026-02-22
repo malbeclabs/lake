@@ -124,6 +124,7 @@ const autocompleteConfig: Record<string, { entity: string; field: string; minCha
 
 function DashboardSearch() {
   const {
+    timeRange,
     metroFilter, setMetroFilter,
     deviceFilter, setDeviceFilter,
     linkTypeFilter, setLinkTypeFilter,
@@ -136,6 +137,7 @@ function DashboardSearch() {
   // results are scoped to the active dashboard filters.
   const scopeFilters = useMemo(() => {
     const f: Record<string, string> = {}
+    if (timeRange && timeRange !== 'custom') f.time_range = timeRange
     if (metroFilter.length > 0) f.metro = metroFilter.join(',')
     if (deviceFilter.length > 0) f.device = deviceFilter.join(',')
     if (linkTypeFilter.length > 0) f.link_type = linkTypeFilter.join(',')
@@ -143,7 +145,7 @@ function DashboardSearch() {
     if (intfFilter.length > 0) f.intf = intfFilter.join(',')
     if (userKindFilter.length > 0) f.user_kind = userKindFilter.join(',')
     return Object.keys(f).length > 0 ? f : undefined
-  }, [metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter])
+  }, [timeRange, metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter])
 
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
