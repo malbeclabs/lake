@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { DeviceInterface } from '@/lib/api'
-import { TrafficCharts } from '@/components/topology/TrafficCharts'
-import { InterfaceHealthCharts } from '@/components/topology/InterfaceHealthCharts'
+import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
 import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
@@ -50,8 +49,14 @@ function formatStakeShare(share: number): string {
  * Shared component for displaying device information.
  * Used by both the topology panel and the device detail page.
  */
-export function DeviceInfoContent({ device, compact = false, timeRange: controlledTimeRange, onTimeRangeChange }: DeviceInfoContentProps) {
+export function DeviceInfoContent({
+  device,
+  compact = false,
+  timeRange: controlledTimeRange,
+  onTimeRangeChange,
+}: DeviceInfoContentProps) {
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
+
   const timeRange = controlledTimeRange ?? internalTimeRange
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
   const stats = [
@@ -109,7 +114,7 @@ export function DeviceInfoContent({ device, compact = false, timeRange: controll
         {sortedInterfaces.length > 0 && (
           <div>
             <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Interfaces ({sortedInterfaces.length})
+              Physical Interfaces ({sortedInterfaces.length})
             </div>
             <div className="space-y-1 max-h-48 overflow-y-auto">
               {sortedInterfaces.map((iface, i) => (
@@ -137,11 +142,8 @@ export function DeviceInfoContent({ device, compact = false, timeRange: controll
         {/* Device Status History Timeline */}
         <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
 
-        {/* Traffic charts */}
-        <TrafficCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
-
-        {/* Interface health charts */}
-        <InterfaceHealthCharts devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
+        {/* Interface charts (traffic + health) */}
+        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
       </div>
     )
   }
@@ -149,44 +151,40 @@ export function DeviceInfoContent({ device, compact = false, timeRange: controll
   // Wide mode: optimized for full-page view on desktop
   return (
     <div className="space-y-6">
-      {/* Stats and Interfaces row - side by side on large screens */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr,auto] gap-6">
-        {/* Stats grid - responsive columns */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-          {stats.map((stat, i) => (
-            <div key={i} className="text-center p-3 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums tracking-tight">
-                {stat.value}
-              </div>
-              <div className="text-xs text-muted-foreground">{stat.label}</div>
+      {/* Stats grid - responsive columns */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {stats.map((stat, i) => (
+          <div key={i} className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium tabular-nums tracking-tight">
+              {stat.value}
             </div>
-          ))}
-        </div>
-
-        {/* Interfaces - fixed width on large screens */}
-        {sortedInterfaces.length > 0 && (
-          <div className="lg:w-72">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Interfaces ({sortedInterfaces.length})
-            </div>
-            <div className="space-y-1 max-h-48 overflow-y-auto">
-              {sortedInterfaces.map((iface, i) => (
-                <div
-                  key={i}
-                  className="flex items-center justify-between p-2 bg-muted/30 rounded text-xs font-mono"
-                >
-                  <span className="truncate flex-1 mr-2" title={iface.name}>
-                    {iface.name}
-                  </span>
-                  <span className="text-muted-foreground whitespace-nowrap">
-                    {iface.ip || '—'}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <div className="text-xs text-muted-foreground">{stat.label}</div>
           </div>
-        )}
+        ))}
       </div>
+
+      {/* Interfaces - horizontal row below stats */}
+      {sortedInterfaces.length > 0 && (
+        <div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+            Physical Interfaces ({sortedInterfaces.length})
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {sortedInterfaces.map((iface, i) => (
+              <div
+                key={i}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/30 rounded text-xs font-mono"
+                title={`${iface.name} — ${iface.ip || 'no IP'}`}
+              >
+                <span>{iface.name}</span>
+                {iface.ip && (
+                  <span className="text-muted-foreground">{iface.ip}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Time range selector (only shown when not controlled by parent) */}
       {!controlledTimeRange && (
@@ -195,15 +193,7 @@ export function DeviceInfoContent({ device, compact = false, timeRange: controll
         </div>
       )}
 
-      {/* Charts row - side by side on large screens */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
-          <TrafficCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
-        </div>
-        <div>
-          <InterfaceHealthCharts devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
-        </div>
-      </div>
+      <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
     </div>
   )
 }

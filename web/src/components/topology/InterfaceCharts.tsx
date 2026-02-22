@@ -1,0 +1,583 @@
+import { useMemo, useCallback, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import uPlot from 'uplot'
+import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-legend'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
+import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
+import { InterfaceLegendTable, type InterfaceValues } from './InterfaceLegendTable'
+import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, resolveAutoBucket, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric } from './utils'
+import { fetchDeviceInterfaceHistory } from '@/lib/api'
+import { getTimeRangeLabel, TrafficFilters } from './TimeRangeSelector'
+
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
+
+function formatCount(value: number): string {
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`
+  return value.toString()
+}
+
+function formatPpsAxis(pps: number): string {
+  if (pps >= 1e9) return `${(pps / 1e9).toFixed(1)}G`
+  if (pps >= 1e6) return `${(pps / 1e6).toFixed(1)}M`
+  if (pps >= 1e3) return `${(pps / 1e3).toFixed(1)}K`
+  return `${pps.toFixed(0)}`
+}
+
+function formatPpsTooltip(pps: number): string {
+  if (pps >= 1e9) return `${(pps / 1e9).toFixed(2)} Gpps`
+  if (pps >= 1e6) return `${(pps / 1e6).toFixed(2)} Mpps`
+  if (pps >= 1e3) return `${(pps / 1e3).toFixed(2)} Kpps`
+  return `${pps.toFixed(0)} pps`
+}
+
+/** Compact legend for health charts — shows interface name + single value, connected to shared legend */
+function HealthLegendTable({
+  interfaces,
+  colors,
+  data,
+  hoveredIdx,
+  legend,
+  visibleSeries,
+  interfaceLabels,
+}: {
+  interfaces: string[]
+  colors: string[]
+  data: uPlot.AlignedData
+  hoveredIdx: number | null
+  legend: UseChartLegendReturn
+  visibleSeries: Set<string>
+  interfaceLabels?: Map<string, string>
+}) {
+  // Show hovered or latest values
+  const values = useMemo(() => {
+    const map = new Map<string, number>()
+    if (data[0].length === 0) return map
+    const idx = hoveredIdx != null && hoveredIdx < data[0].length ? hoveredIdx : data[0].length - 1
+    for (let i = 0; i < interfaces.length; i++) {
+      const val = (data[i + 1] as (number | null)[])?.[idx]
+      map.set(interfaces[i], val ?? 0)
+    }
+    return map
+  }, [data, interfaces, hoveredIdx])
+
+  // Only show interfaces that have any non-zero value across the entire dataset
+  const activeInterfaces = useMemo(
+    () => interfaces.filter((_, i) => {
+      const series = data[i + 1] as (number | null)[]
+      if (!series) return false
+      return series.some((v) => v != null && v > 0)
+    }),
+    [interfaces, data]
+  )
+
+  if (activeInterfaces.length === 0) return null
+
+  return (
+    <div className="flex flex-col text-xs px-2 pt-1 pb-2">
+      <div className="flex items-center px-1 mb-1">
+        <span className="text-xs text-muted-foreground flex-1 min-w-0">Name</span>
+        <span className="text-xs text-muted-foreground w-24 text-right">Value</span>
+      </div>
+      <div className="max-h-32 overflow-y-auto space-y-0.5">
+        {activeInterfaces.map((intf) => {
+          const colorIndex = interfaces.indexOf(intf)
+          const color = colors[colorIndex % colors.length]
+          const val = values.get(intf) ?? 0
+          const isVisible = visibleSeries.has(intf)
+          return (
+            <div
+              key={intf}
+              className={`flex items-center px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
+                isVisible ? '' : 'opacity-40'
+              }`}
+              onClick={(e) => legend.handleClick(intf, e)}
+              onMouseEnter={() => legend.handleMouseEnter(intf)}
+              onMouseLeave={legend.handleMouseLeave}
+            >
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <span
+                  className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                  style={{ backgroundColor: color }}
+                />
+                <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf}</span>
+              </div>
+              <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
+                {formatCount(val)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+interface InterfaceChartsProps {
+  entityType: 'link' | 'device'
+  entityPk: string
+  timeRange?: TimeRange
+  interfaceLabels?: Map<string, string>
+  /** Controlled traffic filter state (when managed by parent) */
+  bucket?: BucketSize
+  onBucketChange?: (bucket: BucketSize) => void
+  metric?: TrafficMetric
+  onMetricChange?: (metric: TrafficMetric) => void
+  trafficView?: 'avg' | 'peak'
+  onTrafficViewChange?: (view: 'avg' | 'peak') => void
+}
+
+/** Convert flat per-interface points into columnar uPlot AlignedData with Unix timestamp x-axis */
+function toUPlotData(
+  points: InterfaceTrafficPoint[],
+  interfaces: string[],
+  metric: 'avg' | 'peak'
+): uPlot.AlignedData {
+  const inKey = metric === 'avg' ? 'avgIn' : 'peakIn'
+  const outKey = metric === 'avg' ? 'avgOut' : 'peakOut'
+
+  // Collect sorted unique timestamps
+  const timeSet = new Set<string>()
+  for (const p of points) timeSet.add(p.time)
+  const sortedTimes = Array.from(timeSet).sort()
+
+  // Build time → intf → point lookup
+  const lookup = new Map<string, Map<string, InterfaceTrafficPoint>>()
+  for (const p of points) {
+    let byIntf = lookup.get(p.time)
+    if (!byIntf) {
+      byIntf = new Map()
+      lookup.set(p.time, byIntf)
+    }
+    byIntf.set(p.intf, p)
+  }
+
+  // Use real Unix timestamps (seconds) for x-axis — matches traffic page charts
+  const timestamps = sortedTimes.map((t) => new Date(t).getTime() / 1000)
+  const arrays: (number | null)[][] = [timestamps]
+
+  for (const intf of interfaces) {
+    const inVals: (number | null)[] = []
+    const outVals: (number | null)[] = []
+    for (const t of sortedTimes) {
+      const p = lookup.get(t)?.get(intf)
+      inVals.push(p ? (p[inKey] as number) : null)
+      outVals.push(p ? -(p[outKey] as number) : null)
+    }
+    arrays.push(inVals)
+    arrays.push(outVals)
+  }
+
+  return arrays as uPlot.AlignedData
+}
+
+interface HealthColumnar {
+  data: uPlot.AlignedData
+  hasData: boolean
+}
+
+function buildHealthColumnar(
+  historyData: Awaited<ReturnType<typeof fetchDeviceInterfaceHistory>>,
+  interfaces: string[],
+  field: 'errors' | 'discards' | 'transitions'
+): HealthColumnar {
+  const allTimes = new Set<string>()
+  for (const iface of historyData.interfaces) {
+    for (const h of iface.hours) allTimes.add(h.hour)
+  }
+  const sortedTimes = Array.from(allTimes).sort()
+  // Use real Unix timestamps (seconds) for x-axis
+  const timestamps = sortedTimes.map((t) => new Date(t).getTime() / 1000)
+
+  const lookup = new Map<string, Map<string, number>>()
+  let hasData = false
+
+  for (const iface of historyData.interfaces) {
+    const name = iface.interface_name
+    if (!interfaces.includes(name)) continue
+    for (const h of iface.hours) {
+      let value: number
+      if (field === 'errors') {
+        value = (h.in_errors || 0) + (h.out_errors || 0)
+      } else if (field === 'discards') {
+        value = (h.in_discards || 0) + (h.out_discards || 0)
+      } else {
+        value = h.carrier_transitions || 0
+      }
+      if (value > 0) {
+        hasData = true
+        let byIntf = lookup.get(h.hour)
+        if (!byIntf) {
+          byIntf = new Map()
+          lookup.set(h.hour, byIntf)
+        }
+        byIntf.set(name, value)
+      }
+    }
+  }
+
+  // Determine which interfaces have any non-zero data for this field
+  const activeInterfaces = new Set<string>()
+  for (const [, byIntf] of lookup) {
+    for (const [name] of byIntf) activeInterfaces.add(name)
+  }
+
+  const arrays: (number | null)[][] = [timestamps]
+  for (const intf of interfaces) {
+    const isActive = activeInterfaces.has(intf)
+    const vals: (number | null)[] = []
+    for (const t of sortedTimes) {
+      const v = lookup.get(t)?.get(intf)
+      // Fill gaps with 0 for active series so the line stays connected at baseline
+      vals.push(v ?? (isActive ? 0 : null))
+    }
+    arrays.push(vals)
+  }
+
+  return { data: arrays as uPlot.AlignedData, hasData }
+}
+
+export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabels, bucket: controlledBucket, onBucketChange, metric: controlledMetric, onMetricChange, trafficView: controlledTrafficView, onTrafficViewChange }: InterfaceChartsProps) {
+  const effectiveRange = timeRange ?? { preset: '24h' as const }
+  const rangeLabel = getTimeRangeLabel(effectiveRange)
+  const timeRangeStr = effectiveRange.preset === 'custom' ? 'custom' : effectiveRange.preset
+
+  const [internalBucket, setInternalBucket] = useState<BucketSize>('auto')
+  const [internalMetric, setInternalMetric] = useState<TrafficMetric>('throughput')
+  const [internalTrafficView, setInternalTrafficView] = useState<'avg' | 'peak'>('avg')
+
+  const bucket = controlledBucket ?? internalBucket
+  const setBucket = onBucketChange ?? setInternalBucket
+  const metric = controlledMetric ?? internalMetric
+  const setMetric = onMetricChange ?? setInternalMetric
+  const trafficView = controlledTrafficView ?? internalTrafficView
+  const setTrafficView = onTrafficViewChange ?? setInternalTrafficView
+
+  const effectiveBucketLabel = bucket === 'auto'
+    ? bucketLabels[resolveAutoBucket(effectiveRange.preset as TimeRangePreset)]
+    : undefined
+
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const [errorHoveredIdx, setErrorHoveredIdx] = useState<number | null>(null)
+  const [discardHoveredIdx, setDiscardHoveredIdx] = useState<number | null>(null)
+  const [transitionHoveredIdx, setTransitionHoveredIdx] = useState<number | null>(null)
+
+  const trafficChartRef = useRef<HTMLDivElement>(null)
+  const errorChartRef = useRef<HTMLDivElement>(null)
+  const discardChartRef = useRef<HTMLDivElement>(null)
+  const transitionChartRef = useRef<HTMLDivElement>(null)
+
+  // Traffic data
+  const { data: rawPoints, isLoading: trafficLoading } = useQuery({
+    queryKey: ['topology-traffic-interface', entityType, entityPk, effectiveRange, bucket, metric],
+    queryFn: () => fetchTrafficHistoryByInterface(entityType, entityPk, effectiveRange, bucket, metric),
+    refetchInterval: 60000,
+  })
+
+  // Health data (only for devices)
+  const { data: historyData, isLoading: healthLoading } = useQuery({
+    queryKey: ['device-interface-health', entityPk, timeRangeStr],
+    queryFn: () => fetchDeviceInterfaceHistory(entityPk, timeRangeStr),
+    refetchInterval: 60000,
+    retry: false,
+    enabled: entityType === 'device',
+  })
+
+  const interfaces = useMemo(() => {
+    if (!rawPoints || rawPoints.length === 0) return []
+    const intfSet = new Set<string>()
+    for (const p of rawPoints) intfSet.add(p.intf)
+    return Array.from(intfSet).sort()
+  }, [rawPoints])
+
+  const avgData = useMemo(() => {
+    if (!rawPoints || rawPoints.length === 0 || interfaces.length === 0)
+      return [[]] as uPlot.AlignedData
+    return toUPlotData(rawPoints, interfaces, 'avg')
+  }, [rawPoints, interfaces])
+
+  const peakData = useMemo(() => {
+    if (!rawPoints || rawPoints.length === 0 || interfaces.length === 0)
+      return [[]] as uPlot.AlignedData
+    return toUPlotData(rawPoints, interfaces, 'peak')
+  }, [rawPoints, interfaces])
+
+  // Build uPlot series configs for traffic charts: per interface, in (solid) + out (dashed)
+  const trafficSeries = useMemo((): uPlot.Series[] => {
+    const s: uPlot.Series[] = [{}] // x-axis
+    for (let i = 0; i < interfaces.length; i++) {
+      const color = COLORS[i % COLORS.length]
+      s.push({
+        label: `${interfaces[i]}:in`,
+        stroke: color,
+        width: 1.5,
+        points: { show: false },
+      })
+      s.push({
+        label: `${interfaces[i]}:out`,
+        stroke: color,
+        width: 1.5,
+        dash: [4, 2],
+        points: { show: false },
+      })
+    }
+    return s
+  }, [interfaces])
+
+  // Series keys for traffic legend sync: alternating in/out per interface
+  const trafficSeriesKeys = useMemo(() => {
+    const keys: string[] = []
+    for (const intf of interfaces) {
+      keys.push(intf) // in
+      keys.push(intf) // out (same legend key)
+    }
+    return keys
+  }, [interfaces])
+
+  const trafficAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    {
+      values: metric === 'packets'
+        ? (_u: uPlot, vals: number[]) => vals.map((v) => formatPpsAxis(Math.abs(v)))
+        : (_u: uPlot, vals: number[]) => vals.map((v) => formatChartAxisRate(Math.abs(v))),
+    },
+  ], [metric])
+
+  // Health data
+  const errorHealth = useMemo(() => {
+    if (!historyData?.interfaces || interfaces.length === 0) return null
+    return buildHealthColumnar(historyData, interfaces, 'errors')
+  }, [historyData, interfaces])
+
+  const discardHealth = useMemo(() => {
+    if (!historyData?.interfaces || interfaces.length === 0) return null
+    return buildHealthColumnar(historyData, interfaces, 'discards')
+  }, [historyData, interfaces])
+
+  const transitionHealth = useMemo(() => {
+    if (!historyData?.interfaces || interfaces.length === 0) return null
+    return buildHealthColumnar(historyData, interfaces, 'transitions')
+  }, [historyData, interfaces])
+
+  // Health series: one per interface (not bidirectional)
+  const healthSeries = useMemo((): uPlot.Series[] => {
+    const s: uPlot.Series[] = [{}]
+    for (let i = 0; i < interfaces.length; i++) {
+      s.push({
+        label: interfaces[i],
+        stroke: COLORS[i % COLORS.length],
+        width: 1.5,
+        points: { show: false },
+      })
+    }
+    return s
+  }, [interfaces])
+
+  const healthAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(v)) },
+  ], [])
+
+  const legendKeys = useMemo(() => interfaces, [interfaces])
+  const legend = useChartLegend(legendKeys)
+
+  const visibleSeries = useMemo(() => {
+    if (legend.selectedSeries.has('__none__')) return new Set<string>()
+    if (legend.selectedSeries.size > 0) return legend.selectedSeries
+    return new Set(interfaces)
+  }, [legend.selectedSeries, interfaces])
+
+  const colors = useMemo(
+    () => interfaces.map((_, i) => COLORS[i % COLORS.length]),
+    [interfaces]
+  )
+
+  // Cursor handlers
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIndex(idx)
+  }, [])
+  const handleErrorCursorIdx = useCallback((idx: number | null) => {
+    setErrorHoveredIdx(idx)
+  }, [])
+  const handleDiscardCursorIdx = useCallback((idx: number | null) => {
+    setDiscardHoveredIdx(idx)
+  }, [])
+  const handleTransitionCursorIdx = useCallback((idx: number | null) => {
+    setTransitionHoveredIdx(idx)
+  }, [])
+
+  const trafficData = trafficView === 'avg' ? avgData : peakData
+
+  // Charts
+  const { plotRef: trafficPlotRef} = useUPlotChart({
+    containerRef: trafficChartRef,
+    data: trafficData,
+    series: trafficSeries,
+    height: 144,
+    axes: trafficAxes,
+    onCursorIdx: handleCursorIdx,
+  })
+
+  const { plotRef: errorPlotRef} = useUPlotChart({
+    containerRef: errorChartRef,
+    data: errorHealth?.data ?? ([[]] as uPlot.AlignedData),
+    series: healthSeries,
+    height: 144,
+    axes: healthAxes,
+    onCursorIdx: handleErrorCursorIdx,
+  })
+
+  const { plotRef: discardPlotRef} = useUPlotChart({
+    containerRef: discardChartRef,
+    data: discardHealth?.data ?? ([[]] as uPlot.AlignedData),
+    series: healthSeries,
+    height: 144,
+    axes: healthAxes,
+    onCursorIdx: handleDiscardCursorIdx,
+  })
+
+  const { plotRef: transitionPlotRef} = useUPlotChart({
+    containerRef: transitionChartRef,
+    data: transitionHealth?.data ?? ([[]] as uPlot.AlignedData),
+    series: healthSeries,
+    height: 144,
+    axes: healthAxes,
+    onCursorIdx: handleTransitionCursorIdx,
+  })
+
+  // Sync legend visibility to traffic chart
+  useUPlotLegendSync(trafficPlotRef, legend, trafficSeriesKeys)
+
+  // Sync legend visibility to health charts (1 series per interface)
+  const healthSeriesKeys = useMemo(() => [...interfaces], [interfaces])
+  useUPlotLegendSync(errorPlotRef, legend, healthSeriesKeys)
+  useUPlotLegendSync(discardPlotRef, legend, healthSeriesKeys)
+  useUPlotLegendSync(transitionPlotRef, legend, healthSeriesKeys)
+
+  // Values shown in legend: hovered time point or latest
+  const displayValues = useMemo(() => {
+    const map = new Map<string, InterfaceValues>()
+    if (avgData[0].length === 0 || peakData[0].length === 0) return map
+
+    const idx = hoveredIndex != null && hoveredIndex < avgData[0].length ? hoveredIndex : avgData[0].length - 1
+
+    for (let i = 0; i < interfaces.length; i++) {
+      const avgInIdx = i * 2 + 1
+      const avgOutIdx = i * 2 + 2
+      const peakInIdx = i * 2 + 1
+      const peakOutIdx = i * 2 + 2
+
+      map.set(interfaces[i], {
+        avgIn: (avgData[avgInIdx] as number[])?.[idx] ?? 0,
+        avgOut: Math.abs((avgData[avgOutIdx] as number[])?.[idx] ?? 0),
+        peakIn: (peakData[peakInIdx] as number[])?.[idx] ?? 0,
+        peakOut: Math.abs((peakData[peakOutIdx] as number[])?.[idx] ?? 0),
+      })
+    }
+    return map
+  }, [avgData, peakData, interfaces, hoveredIndex])
+
+  if (trafficLoading || (entityType === 'device' && healthLoading)) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        Loading interface data...
+      </div>
+    )
+  }
+
+  if (interfaces.length === 0) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        No traffic data available
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {errorHealth?.hasData && (
+        <div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+            Errors by Interface ({rangeLabel})
+          </div>
+          <div ref={errorChartRef} className="h-36" />
+          <HealthLegendTable
+            interfaces={interfaces}
+            colors={colors}
+            data={errorHealth.data}
+            hoveredIdx={errorHoveredIdx}
+            legend={legend}
+            visibleSeries={visibleSeries}
+            interfaceLabels={interfaceLabels}
+          />
+        </div>
+      )}
+
+      {discardHealth?.hasData && (
+        <div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+            Discards by Interface ({rangeLabel})
+          </div>
+          <div ref={discardChartRef} className="h-36" />
+          <HealthLegendTable
+            interfaces={interfaces}
+            colors={colors}
+            data={discardHealth.data}
+            hoveredIdx={discardHoveredIdx}
+            legend={legend}
+            visibleSeries={visibleSeries}
+            interfaceLabels={interfaceLabels}
+          />
+        </div>
+      )}
+
+      {transitionHealth?.hasData && (
+        <div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+            Carrier Transitions by Interface ({rangeLabel})
+          </div>
+          <div ref={transitionChartRef} className="h-36" />
+          <HealthLegendTable
+            interfaces={interfaces}
+            colors={colors}
+            data={transitionHealth.data}
+            hoveredIdx={transitionHoveredIdx}
+            legend={legend}
+            visibleSeries={visibleSeries}
+            interfaceLabels={interfaceLabels}
+          />
+        </div>
+      )}
+
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">
+            {trafficView === 'avg' ? 'Avg' : 'Peak'} Traffic by Interface ({rangeLabel})
+          </div>
+          {!controlledBucket && (
+            <TrafficFilters
+              bucket={bucket}
+              onBucketChange={setBucket}
+              metric={metric}
+              onMetricChange={setMetric}
+              effectiveBucketLabel={effectiveBucketLabel}
+              trafficView={trafficView}
+              onTrafficViewChange={setTrafficView}
+            />
+          )}
+        </div>
+        <div ref={trafficChartRef} className="h-36" />
+      </div>
+
+      <InterfaceLegendTable
+        interfaces={interfaces}
+        colors={colors}
+        legend={legend}
+        visibleSeries={visibleSeries}
+        latestValues={displayValues}
+        formatValue={metric === 'packets' ? formatPpsTooltip : formatChartTooltipRate}
+        interfaceLabels={interfaceLabels}
+      />
+    </div>
+  )
+}

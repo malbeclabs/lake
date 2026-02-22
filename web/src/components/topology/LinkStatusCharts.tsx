@@ -1,38 +1,35 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
+import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
 import { fetchSingleLinkHistory } from '@/lib/api'
 import type { LinkHourStatus } from '@/lib/api'
+import type { BucketSize } from './utils'
+import { bucketSizeToSeconds, presetToSeconds, resolveAutoBucket, type TimeRangePreset } from './utils'
 
 interface LinkStatusChartsProps {
   linkPk: string
   timeRange?: string
+  bucket?: BucketSize
 }
 
-function formatTime(hourStr: string): string {
-  const date = new Date(hourStr)
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-// Check if there's any packet loss data
 function hasPacketLossData(hours: LinkHourStatus[]): boolean {
   return hours.some(h => h.avg_loss_pct > 0)
 }
 
-// Check if there's any latency issues (latency over committed RTT)
 function hasLatencyIssues(hours: LinkHourStatus[], committedRttUs?: number): boolean {
   if (!committedRttUs || committedRttUs <= 0) return false
   return hours.some(h => {
     if (h.avg_latency_us <= 0) return false
     const latencyOveragePct = ((h.avg_latency_us - committedRttUs) / committedRttUs) * 100
-    return latencyOveragePct >= 20 // LATENCY_WARNING_PCT from backend
+    return latencyOveragePct >= 20
   })
 }
 
-// Check if there's any interface issue data
 function hasInterfaceIssueData(hours: LinkHourStatus[]): boolean {
   return hours.some(h =>
     (h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
@@ -43,66 +40,152 @@ function hasInterfaceIssueData(hours: LinkHourStatus[]): boolean {
   )
 }
 
-export function LinkStatusCharts({ linkPk, timeRange = '24h' }: LinkStatusChartsProps) {
+function formatCount(value: number): string {
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`
+  return value.toString()
+}
+
+export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket }: LinkStatusChartsProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
+  const packetLossChartRef = useRef<HTMLDivElement>(null)
+  const interfaceIssuesChartRef = useRef<HTMLDivElement>(null)
+
+  // Convert bucket size to bucket count for the API
+  const bucketCount = useMemo(() => {
+    const effectiveBucket = (!bucket || bucket === 'auto')
+      ? resolveAutoBucket(timeRange as TimeRangePreset)
+      : bucket
+    const rangeS = presetToSeconds(timeRange as TimeRangePreset)
+    const bucketS = bucketSizeToSeconds(effectiveBucket)
+    return Math.ceil(rangeS / bucketS)
+  }, [bucket, timeRange])
+
   const { data: historyData, isLoading, error } = useQuery({
-    queryKey: ['single-link-history', linkPk, timeRange],
-    queryFn: () => fetchSingleLinkHistory(linkPk, timeRange),
+    queryKey: ['single-link-history', linkPk, timeRange, bucketCount],
+    queryFn: () => fetchSingleLinkHistory(linkPk, timeRange, bucketCount),
     refetchInterval: 60000,
     retry: false,
   })
 
-  // Prepare packet loss chart data
-  const packetLossData = useMemo(() => {
-    if (!historyData?.hours) return []
-    return historyData.hours.map(h => ({
-      time: formatTime(h.hour),
-      fullTime: h.hour,
-      total: h.avg_loss_pct,
-      sideA: h.side_a_loss_pct ?? 0,
-      sideZ: h.side_z_loss_pct ?? 0,
-    }))
-  }, [historyData])
+  // Colors
+  const lossColor = isDark ? '#a855f7' : '#9333ea'
+  const sideAColor = isDark ? '#10b981' : '#059669'
+  const sideZColor = isDark ? '#3b82f6' : '#2563eb'
+  const errorColor = isDark ? '#ef4444' : '#dc2626'
+  const discardColor = isDark ? '#f59e0b' : '#d97706'
+  const carrierColor = isDark ? '#8b5cf6' : '#7c3aed'
 
-  // Prepare interface issues chart data
-  const interfaceIssuesData = useMemo(() => {
-    if (!historyData?.hours) return []
-    return historyData.hours.map(h => ({
-      time: formatTime(h.hour),
-      fullTime: h.hour,
-      errors: (h.side_a_in_errors ?? 0) + (h.side_a_out_errors ?? 0) +
-              (h.side_z_in_errors ?? 0) + (h.side_z_out_errors ?? 0),
-      discards: (h.side_a_in_discards ?? 0) + (h.side_a_out_discards ?? 0) +
-                (h.side_z_in_discards ?? 0) + (h.side_z_out_discards ?? 0),
-      carrier: (h.side_a_carrier_transitions ?? 0) + (h.side_z_carrier_transitions ?? 0),
-    }))
-  }, [historyData])
+  // Packet loss data
+  const { packetLossUPlotData, packetLossSeries } = useMemo(() => {
+    if (!historyData?.hours || historyData.hours.length === 0) {
+      return { packetLossUPlotData: [[]] as uPlot.AlignedData, packetLossSeries: [] as uPlot.Series[] }
+    }
+
+    const timestamps = historyData.hours.map((h) => new Date(h.hour).getTime() / 1000)
+    const total = historyData.hours.map((h) => h.avg_loss_pct)
+    const sideA = historyData.hours.map((h) => h.side_a_loss_pct ?? 0)
+    const sideZ = historyData.hours.map((h) => h.side_z_loss_pct ?? 0)
+
+    const series: uPlot.Series[] = [
+      {},
+      { label: 'total', stroke: lossColor, width: 1.5, dash: [4, 2], points: { show: false } },
+      { label: 'sideA', stroke: sideAColor, width: 1.5, points: { show: false } },
+      { label: 'sideZ', stroke: sideZColor, width: 1.5, points: { show: false } },
+    ]
+
+    return {
+      packetLossUPlotData: [timestamps, total, sideA, sideZ] as uPlot.AlignedData,
+      packetLossSeries: series,
+    }
+  }, [historyData, lossColor, sideAColor, sideZColor])
+
+  // Interface issues data
+  const { issuesUPlotData, issuesSeries } = useMemo(() => {
+    if (!historyData?.hours || historyData.hours.length === 0) {
+      return { issuesUPlotData: [[]] as uPlot.AlignedData, issuesSeries: [] as uPlot.Series[] }
+    }
+
+    const timestamps = historyData.hours.map((h) => new Date(h.hour).getTime() / 1000)
+    const errors = historyData.hours.map((h) =>
+      (h.side_a_in_errors ?? 0) + (h.side_a_out_errors ?? 0) +
+      (h.side_z_in_errors ?? 0) + (h.side_z_out_errors ?? 0)
+    )
+    const discards = historyData.hours.map((h) =>
+      (h.side_a_in_discards ?? 0) + (h.side_a_out_discards ?? 0) +
+      (h.side_z_in_discards ?? 0) + (h.side_z_out_discards ?? 0)
+    )
+    const carrier = historyData.hours.map((h) =>
+      (h.side_a_carrier_transitions ?? 0) + (h.side_z_carrier_transitions ?? 0)
+    )
+
+    const series: uPlot.Series[] = [
+      {},
+      { label: 'errors', stroke: errorColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'discards', stroke: discardColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'carrier', stroke: carrierColor, width: 1.5, points: { show: true, size: 4 } },
+    ]
+
+    return {
+      issuesUPlotData: [timestamps, errors, discards, carrier] as uPlot.AlignedData,
+      issuesSeries: series,
+    }
+  }, [historyData, errorColor, discardColor, carrierColor])
 
   const showPacketLoss = historyData?.hours && hasPacketLossData(historyData.hours)
   const showLatencyIssues = historyData?.hours && hasLatencyIssues(historyData.hours, historyData.committed_rtt_us)
   const showInterfaceIssues = historyData?.hours && hasInterfaceIssueData(historyData.hours)
 
-  // Colors
-  const lossColor = isDark ? '#a855f7' : '#9333ea' // purple
-  const errorColor = isDark ? '#ef4444' : '#dc2626' // red
-  const discardColor = isDark ? '#f59e0b' : '#d97706' // amber
-  const carrierColor = isDark ? '#8b5cf6' : '#7c3aed' // violet
-
-  const packetLossKeys = useMemo(() => ['total'], [])
+  // Legends
+  const packetLossKeys = useMemo(() => ['total', 'sideA', 'sideZ'], [])
   const packetLossLegend = useChartLegend(packetLossKeys)
-  const packetLossSeries: ChartLegendSeries[] = useMemo(() => [
-    { key: 'total', color: lossColor, label: 'Packet Loss' },
-  ], [lossColor])
+  const packetLossLegendSeries: ChartLegendSeries[] = useMemo(() => [
+    { key: 'total', color: lossColor, label: 'Average', dashed: true },
+    { key: 'sideA', color: sideAColor, label: 'Side A' },
+    { key: 'sideZ', color: sideZColor, label: 'Side Z' },
+  ], [lossColor, sideAColor, sideZColor])
 
   const interfaceIssueKeys = useMemo(() => ['errors', 'discards', 'carrier'], [])
   const interfaceIssueLegend = useChartLegend(interfaceIssueKeys)
-  const interfaceIssueSeries: ChartLegendSeries[] = useMemo(() => [
+  const interfaceIssueLegendSeries: ChartLegendSeries[] = useMemo(() => [
     { key: 'errors', color: errorColor, label: 'Errors' },
     { key: 'discards', color: discardColor, label: 'Discards' },
     { key: 'carrier', color: carrierColor, label: 'Carrier' },
   ], [errorColor, discardColor, carrierColor])
+
+  // Axes
+  const pctAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map((v) => `${v.toFixed(1)}%`) },
+  ], [])
+
+  const countAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(v)) },
+  ], [])
+
+  // Charts
+  const { plotRef: packetLossPlotRef} = useUPlotChart({
+    containerRef: packetLossChartRef,
+    data: packetLossUPlotData,
+    series: packetLossSeries,
+    height: 144,
+    axes: pctAxes,
+  })
+
+  const { plotRef: issuesPlotRef} = useUPlotChart({
+    containerRef: interfaceIssuesChartRef,
+    data: issuesUPlotData,
+    series: issuesSeries,
+    height: 144,
+    axes: countAxes,
+  })
+
+  // Legend sync
+  useUPlotLegendSync(packetLossPlotRef, packetLossLegend, packetLossKeys)
+  useUPlotLegendSync(issuesPlotRef, interfaceIssueLegend, interfaceIssueKeys)
 
   if (isLoading) {
     return (
@@ -128,7 +211,6 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h' }: LinkStatusCharts
     )
   }
 
-  // Show appropriate message if no charts to display
   if (!showPacketLoss && !showInterfaceIssues) {
     if (showLatencyIssues) {
       return (
@@ -146,137 +228,23 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h' }: LinkStatusCharts
 
   return (
     <div className="space-y-4">
-      {/* Packet Loss Chart */}
       {showPacketLoss && (
         <div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Packet Loss ({timeRange})
           </div>
-          <div className="h-36">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={packetLossData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis
-                  tick={{ fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(v) => `${v.toFixed(1)}%`}
-                  width={40}
-                  domain={[0, 'auto']}
-                />
-                <RechartsTooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                  }}
-                  formatter={(value: number | string | undefined, name?: string) => {
-                    const labels: Record<string, string> = {
-                      total: 'Average',
-                      sideA: 'Side A',
-                      sideZ: 'Side Z',
-                    }
-                    const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
-                    const label = name ? (labels[name] || name) : ''
-                    return [`${numericValue.toFixed(2)}%`, label]
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="total"
-                  stroke={lossColor}
-                  strokeWidth={2}
-                  strokeOpacity={packetLossLegend.getOpacity('total')}
-                  dot={false}
-                  name="total"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <ChartLegend series={packetLossSeries} legend={packetLossLegend} />
+          <div ref={packetLossChartRef} className="h-36" />
+          <ChartLegend series={packetLossLegendSeries} legend={packetLossLegend} />
         </div>
       )}
 
-      {/* Interface Issues Chart */}
       {showInterfaceIssues && (
         <div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Interface Issues ({timeRange})
           </div>
-          <div className="h-36">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={interfaceIssuesData} barCategoryGap="10%">
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis
-                  tick={{ fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(v) => {
-                    if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
-                    if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`
-                    return v.toString()
-                  }}
-                  width={35}
-                />
-                <ReferenceLine y={0} stroke="var(--border)" />
-                <RechartsTooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                  }}
-                  formatter={(value: number | string | undefined, name?: string) => {
-                    const labels: Record<string, string> = {
-                      errors: 'Errors',
-                      discards: 'Discards',
-                      carrier: 'Carrier Transitions',
-                    }
-                    const numericValue = typeof value === 'number' ? value : Number(value ?? 0)
-                    const label = name ? (labels[name] || name) : ''
-                    return [numericValue.toLocaleString(), label]
-                  }}
-                />
-                <Bar
-                  dataKey="errors"
-                  fill={errorColor}
-                  fillOpacity={interfaceIssueLegend.getOpacity('errors')}
-                  radius={[2, 2, 0, 0]}
-                  name="errors"
-                />
-                <Bar
-                  dataKey="discards"
-                  fill={discardColor}
-                  fillOpacity={interfaceIssueLegend.getOpacity('discards')}
-                  radius={[2, 2, 0, 0]}
-                  name="discards"
-                />
-                <Bar
-                  dataKey="carrier"
-                  fill={carrierColor}
-                  fillOpacity={interfaceIssueLegend.getOpacity('carrier')}
-                  radius={[2, 2, 0, 0]}
-                  name="carrier"
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <ChartLegend series={interfaceIssueSeries} legend={interfaceIssueLegend} />
+          <div ref={interfaceIssuesChartRef} className="h-36" />
+          <ChartLegend series={interfaceIssueLegendSeries} legend={interfaceIssueLegend} />
         </div>
       )}
     </div>

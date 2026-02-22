@@ -75,6 +75,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const [sortBy, setSortBy] = useState<'value' | 'name'>('value')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
+  const highlightLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const highlightSeries = useCallback((key: string | null) => {
     const u = plotRef.current
     if (!u || stacked) return
@@ -86,6 +87,19 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     }
     u.redraw()
   }, [stacked])
+  const highlightSeriesEnter = useCallback((key: string) => {
+    if (highlightLeaveTimer.current) {
+      clearTimeout(highlightLeaveTimer.current)
+      highlightLeaveTimer.current = null
+    }
+    highlightSeries(key)
+  }, [highlightSeries])
+  const highlightSeriesLeave = useCallback(() => {
+    highlightLeaveTimer.current = setTimeout(() => {
+      highlightSeries(null)
+      highlightLeaveTimer.current = null
+    }, 30)
+  }, [highlightSeries])
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const hoveredIdxRef = useRef<number | null>(null)
   const [tooltip, setTooltip] = useState<{
@@ -499,7 +513,6 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
           values: (_u, vals) => vals.map(v => fmtValueRef.current(bidirectional ? Math.abs(v) : v)),
-          size: 90,
         },
       ],
       cursor: {
@@ -1160,8 +1173,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                         isVisible ? '' : 'opacity-40'
                       }`}
                       onClick={(e) => handleBidirectionalClick(g.intfKey, filteredIndex, e)}
-                      onMouseEnter={() => isVisible && highlightSeries(g.intfKey)}
-                      onMouseLeave={() => highlightSeries(null)}
+                      onMouseEnter={() => isVisible && highlightSeriesEnter(g.intfKey)}
+                      onMouseLeave={highlightSeriesLeave}
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         <div
@@ -1189,8 +1202,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                         isSelected ? '' : 'opacity-40'
                       }`}
                       onClick={(e) => handleSeriesClick(s.key, filteredIndex, e)}
-                      onMouseEnter={() => isSelected && highlightSeries(s.key)}
-                      onMouseLeave={() => highlightSeries(null)}
+                      onMouseEnter={() => isSelected && highlightSeriesEnter(s.key)}
+                      onMouseLeave={highlightSeriesLeave}
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         <div

@@ -50,6 +50,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const [sortBy, setSortBy] = useState<'value' | 'name'>('value')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [listHeight, setListHeight] = useState(160)
+  const highlightLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const highlightSeries = useCallback((intf: string | null) => {
     const u = plotRef.current
     if (!u) return
@@ -60,6 +61,19 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
     }
     u.redraw()
   }, [])
+  const highlightSeriesEnter = useCallback((intf: string) => {
+    if (highlightLeaveTimer.current) {
+      clearTimeout(highlightLeaveTimer.current)
+      highlightLeaveTimer.current = null
+    }
+    highlightSeries(intf)
+  }, [highlightSeries])
+  const highlightSeriesLeave = useCallback(() => {
+    highlightLeaveTimer.current = setTimeout(() => {
+      highlightSeries(null)
+      highlightLeaveTimer.current = null
+    }, 30)
+  }, [highlightSeries])
   const listContainerRef = useRef<HTMLDivElement>(null)
 
   const isPinned = state.pinnedEntities.some(
@@ -492,8 +506,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
                             isVisible ? '' : 'opacity-40'
                           }`}
                           onClick={(e) => handleIntfClick(intf, filteredIndex, e)}
-                          onMouseEnter={() => isVisible && highlightSeries(intf)}
-                          onMouseLeave={() => highlightSeries(null)}
+                          onMouseEnter={() => isVisible && highlightSeriesEnter(intf)}
+                          onMouseLeave={highlightSeriesLeave}
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />

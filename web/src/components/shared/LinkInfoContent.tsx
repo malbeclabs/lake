@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { TrafficCharts } from '@/components/topology/TrafficCharts'
+import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
 import { SingleLinkStatusRow } from '@/components/single-link-status-row'
@@ -102,6 +102,17 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
 
   // Check if we have directional latency data
   const hasDirectionalData = link.latencyAtoZUs > 0 || link.latencyZtoAUs > 0
+
+  const interfaceLabels = useMemo(() => {
+    const map = new Map<string, string>()
+    if (link.sideAIfaceName) {
+      map.set(link.sideAIfaceName, `A: ${link.sideACode} · ${link.sideAIfaceName}`)
+    }
+    if (link.sideZIfaceName) {
+      map.set(link.sideZIfaceName, `Z: ${link.sideZCode} · ${link.sideZIfaceName}`)
+    }
+    return map
+  }, [link.sideAIfaceName, link.sideACode, link.sideZIfaceName, link.sideZCode])
 
   // Compact mode: optimized for sidebar panels
   if (compact) {
@@ -228,8 +239,8 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         {/* Link Status History Timeline */}
         <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
 
-        {/* Traffic charts */}
-        <TrafficCharts entityType="link" entityPk={link.pk} timeRange={timeRange} />
+        {/* Interface traffic charts */}
+        <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} />
 
         {/* Latency charts */}
         <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
@@ -408,15 +419,11 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             </div>
           )}
 
-          {/* Charts row - side by side on large screens */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <TrafficCharts entityType="link" entityPk={link.pk} timeRange={timeRange} />
-            </div>
-            <div>
-              <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
-            </div>
-          </div>
+          {/* Interface traffic charts */}
+          <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} />
+
+          {/* Latency charts */}
+          <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
 
           {/* Link status charts (packet loss, interface issues) */}
           <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />

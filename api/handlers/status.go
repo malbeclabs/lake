@@ -1107,7 +1107,7 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	// Parse optional bucket count (for responsive display)
 	requestedBuckets := 72 // default
 	if b := r.URL.Query().Get("buckets"); b != "" {
-		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 168 {
+		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 10000 {
 			requestedBuckets = n
 		}
 	}
@@ -1960,7 +1960,7 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	// Parse optional bucket count (for responsive display)
 	requestedBuckets := 72 // default
 	if b := r.URL.Query().Get("buckets"); b != "" {
-		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 168 {
+		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 10000 {
 			requestedBuckets = n
 		}
 	}
@@ -2490,7 +2490,7 @@ func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 	bucketsStr := r.URL.Query().Get("buckets")
 	requestedBuckets := 72 // default
 	if bucketsStr != "" {
-		if b, err := strconv.Atoi(bucketsStr); err == nil && b > 0 && b <= 168 {
+		if b, err := strconv.Atoi(bucketsStr); err == nil && b > 0 && b <= 10000 {
 			requestedBuckets = b
 		}
 	}
@@ -2699,7 +2699,7 @@ func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 	// Parse optional bucket count
 	requestedBuckets := 24 // default
 	if b := r.URL.Query().Get("buckets"); b != "" {
-		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 168 {
+		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 10000 {
 			requestedBuckets = n
 		}
 	}
@@ -3041,7 +3041,7 @@ func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	// Parse optional bucket count
 	requestedBuckets := 24 // default
 	if b := r.URL.Query().Get("buckets"); b != "" {
-		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 168 {
+		if n, err := strconv.Atoi(b); err == nil && n >= 12 && n <= 10000 {
 			requestedBuckets = n
 		}
 	}

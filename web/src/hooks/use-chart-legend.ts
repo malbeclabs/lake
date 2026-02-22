@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 
 export interface UseChartLegendReturn {
   hoveredSeries: string | null
   selectedSeries: Set<string>
+  setSelectedSeries: React.Dispatch<React.SetStateAction<Set<string>>>
   handleClick: (key: string, event: React.MouseEvent) => void
   handleMouseEnter: (key: string) => void
   handleMouseLeave: () => void
@@ -12,6 +13,7 @@ export interface UseChartLegendReturn {
 export function useChartLegend(_allKeys: string[]): UseChartLegendReturn {
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleClick = useCallback((key: string, event: React.MouseEvent) => {
     if (event.ctrlKey || event.metaKey) {
@@ -37,11 +39,18 @@ export function useChartLegend(_allKeys: string[]): UseChartLegendReturn {
   }, [])
 
   const handleMouseEnter = useCallback((key: string) => {
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current)
+      leaveTimer.current = null
+    }
     setHoveredSeries(key)
   }, [])
 
   const handleMouseLeave = useCallback(() => {
-    setHoveredSeries(null)
+    leaveTimer.current = setTimeout(() => {
+      setHoveredSeries(null)
+      leaveTimer.current = null
+    }, 30)
   }, [])
 
   const getOpacity = useCallback((key: string): number => {
@@ -52,12 +61,12 @@ export function useChartLegend(_allKeys: string[]): UseChartLegendReturn {
     if (hoveredSeries) {
       if (key === hoveredSeries) return 1
       if (selectedSeries.size > 0 && selectedSeries.has(key)) return 1
-      return 0.2
+      return selectedSeries.size > 0 ? 0 : 0.2
     }
 
-    // If selected but not hovering, show selected, dim others
+    // If selected but not hovering, show selected, hide others
     if (selectedSeries.size > 0) {
-      return selectedSeries.has(key) ? 1 : 0.2
+      return selectedSeries.has(key) ? 1 : 0
     }
 
     return 1
@@ -66,6 +75,7 @@ export function useChartLegend(_allKeys: string[]): UseChartLegendReturn {
   return {
     hoveredSeries,
     selectedSeries,
+    setSelectedSeries,
     handleClick,
     handleMouseEnter,
     handleMouseLeave,

@@ -398,9 +398,20 @@ type TrafficDataPoint struct {
 	PeakOut float64 `json:"peakOut"`
 }
 
+// InterfaceTrafficDataPoint is a per-interface traffic data point
+type InterfaceTrafficDataPoint struct {
+	Time    string  `json:"time"`
+	Intf    string  `json:"intf"`
+	AvgIn   float64 `json:"avgIn"`
+	AvgOut  float64 `json:"avgOut"`
+	PeakIn  float64 `json:"peakIn"`
+	PeakOut float64 `json:"peakOut"`
+}
+
 type TrafficResponse struct {
-	Points []TrafficDataPoint `json:"points"`
-	Error  string             `json:"error,omitempty"`
+	Points     []TrafficDataPoint          `json:"points"`
+	Interfaces []InterfaceTrafficDataPoint `json:"interfaces,omitempty"`
+	Error      string                      `json:"error,omitempty"`
 }
 
 func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
@@ -420,6 +431,8 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 	rangeParam := r.URL.Query().Get("range")
 	fromParam := r.URL.Query().Get("from")
 	toParam := r.URL.Query().Get("to")
+	bucketParam := r.URL.Query().Get("bucket")
+	metricParam := r.URL.Query().Get("metric") // "packets" for pps, default is bps
 
 	var timeFilter string
 	var bucketSeconds int
@@ -471,6 +484,15 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		timeFilter = fmt.Sprintf("event_ts > now() - INTERVAL %d MINUTE", intervalMinutes)
 	}
 
+	// Allow client to override auto bucket size
+	if bucketParam != "" && bucketParam != "auto" {
+		override := parseBucketParam(bucketParam)
+		if override > 0 {
+			bucketSeconds = override
+			timeFormat = timeFormatForBucket(bucketSeconds)
+		}
+	}
+
 	bucketExpr := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d SECOND)", bucketSeconds)
 
 	start := time.Now()
@@ -487,13 +509,27 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		whereColumn = "device_pk"
 	}
 
+	// Select metric expressions based on metric param
+	var avgInExpr, avgOutExpr, peakInExpr, peakOutExpr string
+	if metricParam == "packets" {
+		avgInExpr = "avg(in_pkts_delta / nullIf(delta_duration, 0))"
+		avgOutExpr = "avg(out_pkts_delta / nullIf(delta_duration, 0))"
+		peakInExpr = "max(in_pkts_delta / nullIf(delta_duration, 0))"
+		peakOutExpr = "max(out_pkts_delta / nullIf(delta_duration, 0))"
+	} else {
+		avgInExpr = "avg(in_octets_delta * 8 / nullIf(delta_duration, 0))"
+		avgOutExpr = "avg(out_octets_delta * 8 / nullIf(delta_duration, 0))"
+		peakInExpr = "max(in_octets_delta * 8 / nullIf(delta_duration, 0))"
+		peakOutExpr = "max(out_octets_delta * 8 / nullIf(delta_duration, 0))"
+	}
+
 	query := fmt.Sprintf(`
 		SELECT
 			formatDateTime(%s, '%s') as time_bucket,
-			avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
-			avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
-			max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-			max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
+			%s as avg_in,
+			%s as avg_out,
+			%s as peak_in,
+			%s as peak_out
 		FROM fact_dz_device_interface_counters
 		WHERE %s
 			AND %s = $1
@@ -502,7 +538,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 			AND out_octets_delta >= 0
 		GROUP BY time_bucket
 		ORDER BY min(event_ts)
-	`, bucketExpr, timeFormat, timeFilter, whereColumn)
+	`, bucketExpr, timeFormat, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
 
 	rows, err := envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
@@ -544,8 +580,62 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		points = []TrafficDataPoint{}
 	}
 
+	response := TrafficResponse{Points: points}
+
+	// If breakdown=interface requested and type is device or link, run per-interface query
+	breakdown := r.URL.Query().Get("breakdown")
+	if breakdown == "interface" && (itemType == "device" || itemType == "link") {
+		intfQuery := fmt.Sprintf(`
+			SELECT
+				formatDateTime(%s, '%s') as time_bucket,
+				intf,
+				%s as avg_in,
+				%s as avg_out,
+				%s as peak_in,
+				%s as peak_out
+			FROM fact_dz_device_interface_counters
+			WHERE %s
+				AND %s = $1
+				AND delta_duration > 0
+				AND in_octets_delta >= 0
+				AND out_octets_delta >= 0
+			GROUP BY time_bucket, intf
+			ORDER BY min(event_ts), intf
+		`, bucketExpr, timeFormat, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
+
+		intfRows, intfErr := envDB(ctx).Query(ctx, intfQuery, pk)
+		if intfErr != nil {
+			log.Printf("Interface traffic query error: %v", intfErr)
+		} else {
+			defer intfRows.Close()
+			var intfPoints []InterfaceTrafficDataPoint
+			for intfRows.Next() {
+				var p InterfaceTrafficDataPoint
+				var avgIn, avgOut, peakIn, peakOut *float64
+				if err := intfRows.Scan(&p.Time, &p.Intf, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
+					log.Printf("Interface traffic scan error: %v", err)
+					break
+				}
+				if avgIn != nil {
+					p.AvgIn = *avgIn
+				}
+				if avgOut != nil {
+					p.AvgOut = *avgOut
+				}
+				if peakIn != nil {
+					p.PeakIn = *peakIn
+				}
+				if peakOut != nil {
+					p.PeakOut = *peakOut
+				}
+				intfPoints = append(intfPoints, p)
+			}
+			response.Interfaces = intfPoints
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(TrafficResponse{Points: points})
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // Link latency data point for charts
@@ -568,45 +658,53 @@ type LinkLatencyResponse struct {
 	Error  string                 `json:"error,omitempty"`
 }
 
-// calculateBucketSize returns an appropriate bucket size in seconds for the given duration
-// to produce approximately 15-30 data points
-func calculateBucketSize(d time.Duration) int {
-	minutes := int(d.Minutes())
-	switch {
-	case minutes <= 15:
-		return 60 // 1 minute buckets (15 points for 15min)
-	case minutes <= 30:
-		return 120 // 2 minute buckets (15 points for 30min)
-	case minutes <= 60:
-		return 300 // 5 minute buckets (12 points for 1h)
-	case minutes <= 180:
-		return 600 // 10 minute buckets (18 points for 3h)
-	case minutes <= 360:
-		return 900 // 15 minute buckets (24 points for 6h)
-	case minutes <= 720:
-		return 1800 // 30 minute buckets (24 points for 12h)
-	case minutes <= 1440:
-		return 3600 // 1 hour buckets (24 points for 24h)
-	case minutes <= 2880:
-		return 7200 // 2 hour buckets (24 points for 2d)
+// parseBucketParam converts a bucket size string like "10 SECOND", "1 MINUTE", "1 HOUR" to seconds.
+func parseBucketParam(bucket string) int {
+	switch bucket {
+	case "10 SECOND":
+		return 10
+	case "30 SECOND":
+		return 30
+	case "1 MINUTE":
+		return 60
+	case "5 MINUTE":
+		return 300
+	case "10 MINUTE":
+		return 600
+	case "30 MINUTE":
+		return 1800
+	case "1 HOUR":
+		return 3600
 	default:
-		return 14400 // 4 hour buckets (42 points for 7d)
+		return 0
 	}
 }
 
-// timeFormatForBucket returns the appropriate ClickHouse time format string for the bucket size
-// Note: ClickHouse uses %i for minutes (not %M which is month name)
-func timeFormatForBucket(bucketSeconds int) string {
+// calculateBucketSize returns an appropriate bucket size in seconds for the given duration,
+// matching the traffic dashboard's granularity.
+func calculateBucketSize(d time.Duration) int {
 	switch {
-	case bucketSeconds >= 86400:
-		return "%b %d" // "Jan 23" for daily+ buckets
-	case bucketSeconds >= 3600:
-		return "%d %H:%i" // "23 14:30" for hourly+ buckets
-	case bucketSeconds >= 60:
-		return "%H:%i" // "14:30" for minute+ buckets
+	case d <= 1*time.Hour:
+		return 10 // 10 second buckets
+	case d <= 3*time.Hour:
+		return 30 // 30 second buckets
+	case d <= 12*time.Hour:
+		return 60 // 1 minute buckets
+	case d <= 24*time.Hour:
+		return 300 // 5 minute buckets
+	case d <= 3*24*time.Hour:
+		return 600 // 10 minute buckets
+	case d <= 7*24*time.Hour:
+		return 1800 // 30 minute buckets
 	default:
-		return "%H:%i:%S" // "14:30:45" for sub-minute buckets
+		return 3600 // 1 hour buckets
 	}
+}
+
+// timeFormatForBucket returns the ClickHouse time format string for API responses.
+// Always returns ISO 8601 format so the frontend can parse timestamps and format them locally.
+func timeFormatForBucket(_ int) string {
+	return "%Y-%m-%dT%H:%i:%S"
 }
 
 func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {

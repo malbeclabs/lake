@@ -118,7 +118,7 @@ export function DeviceDetailPage() {
         </div>
       </div>
 
-      {/* Time range selector + status row + charts */}
+      {/* Filters + status row + charts */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8 space-y-6">
         <div className="flex justify-end">
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />

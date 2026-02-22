@@ -1,38 +1,48 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
+import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
+import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
-import { fetchLatencyHistory, type TimeRange } from './utils'
+import { fetchLatencyHistory, type TimeRange, type BucketSize } from './utils'
 import { getTimeRangeLabel } from './TimeRangeSelector'
 
 interface LatencyChartsProps {
   linkPk: string
   timeRange?: TimeRange
+  bucket?: BucketSize
 }
 
-export function LatencyCharts({ linkPk, timeRange }: LatencyChartsProps) {
+export function LatencyCharts({ linkPk, timeRange, bucket }: LatencyChartsProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const effectiveRange = timeRange ?? { preset: '24h' as const }
 
   const { data: latencyData, isLoading } = useQuery({
-    queryKey: ['topology-latency', linkPk, effectiveRange],
-    queryFn: () => fetchLatencyHistory(linkPk, effectiveRange),
+    queryKey: ['topology-latency', linkPk, effectiveRange, bucket],
+    queryFn: () => fetchLatencyHistory(linkPk, effectiveRange, bucket),
     refetchInterval: 60000,
   })
 
-  // Colors for per-direction data
-  const rttAAvgColor = isDark ? '#22c55e' : '#16a34a' // green for A avg
-  const rttAP95Color = isDark ? '#86efac' : '#4ade80' // light green for A p95
-  const rttZAvgColor = isDark ? '#3b82f6' : '#2563eb' // blue for Z avg
-  const rttZP95Color = isDark ? '#93c5fd' : '#60a5fa' // light blue for Z p95
-  const jitterAColor = isDark ? '#a855f7' : '#9333ea' // purple for A
-  const jitterZColor = isDark ? '#f97316' : '#ea580c' // orange for Z
+  const rttChartRef = useRef<HTMLDivElement>(null)
+  const jitterChartRef = useRef<HTMLDivElement>(null)
+  const [_hoveredIdx, setHoveredIdx] = useState<number | null>(null)
 
-  // Check if we have per-direction data
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIdx(idx)
+  }, [])
+
+  // Colors
+  const rttAAvgColor = isDark ? '#22c55e' : '#16a34a'
+  const rttAP95Color = isDark ? '#86efac' : '#4ade80'
+  const rttZAvgColor = isDark ? '#3b82f6' : '#2563eb'
+  const rttZP95Color = isDark ? '#93c5fd' : '#60a5fa'
+  const jitterAColor = isDark ? '#a855f7' : '#9333ea'
+  const jitterZColor = isDark ? '#f97316' : '#ea580c'
+
   const hasDirectionalData = latencyData?.some(
     (d) => (d.avgRttAtoZMs && d.avgRttAtoZMs > 0) || (d.avgRttZtoAMs && d.avgRttZtoAMs > 0)
   ) ?? false
@@ -45,7 +55,7 @@ export function LatencyCharts({ linkPk, timeRange }: LatencyChartsProps) {
     [hasDirectionalData]
   )
   const rttLegend = useChartLegend(rttKeys)
-  const rttSeries: ChartLegendSeries[] = useMemo(() =>
+  const rttLegendSeries: ChartLegendSeries[] = useMemo(() =>
     hasDirectionalData
       ? [
           { key: 'avgRttAtoZMs', color: rttAAvgColor, label: 'Avg A' },
@@ -68,7 +78,7 @@ export function LatencyCharts({ linkPk, timeRange }: LatencyChartsProps) {
     [hasDirectionalData]
   )
   const jitterLegend = useChartLegend(jitterKeys)
-  const jitterSeries: ChartLegendSeries[] = useMemo(() =>
+  const jitterLegendSeries: ChartLegendSeries[] = useMemo(() =>
     hasDirectionalData
       ? [
           { key: 'jitterAtoZMs', color: jitterAColor, label: 'From A' },
@@ -79,6 +89,112 @@ export function LatencyCharts({ linkPk, timeRange }: LatencyChartsProps) {
         ],
     [hasDirectionalData, jitterAColor, jitterZColor]
   )
+
+  // RTT columnar data with Unix timestamp x-axis
+  const { rttUPlotData, rttUPlotSeries } = useMemo(() => {
+    if (!latencyData || latencyData.length === 0) {
+      return { rttUPlotData: [[]] as uPlot.AlignedData, rttUPlotSeries: [] as uPlot.Series[] }
+    }
+
+    const timestamps = latencyData.map((d) => new Date(d.time).getTime() / 1000)
+    const series: uPlot.Series[] = [{}]
+
+    if (hasDirectionalData) {
+      const avgAtoZ = latencyData.map((d) => d.avgRttAtoZMs ?? null)
+      const p95AtoZ = latencyData.map((d) => d.p95RttAtoZMs ?? null)
+      const avgZtoA = latencyData.map((d) => d.avgRttZtoAMs ?? null)
+      const p95ZtoA = latencyData.map((d) => d.p95RttZtoAMs ?? null)
+
+      series.push(
+        { label: 'avgRttAtoZMs', stroke: rttAAvgColor, width: 1.5, points: { show: false } },
+        { label: 'p95RttAtoZMs', stroke: rttAP95Color, width: 1.5, dash: [4, 2], points: { show: false } },
+        { label: 'avgRttZtoAMs', stroke: rttZAvgColor, width: 1.5, points: { show: false } },
+        { label: 'p95RttZtoAMs', stroke: rttZP95Color, width: 1.5, dash: [4, 2], points: { show: false } },
+      )
+
+      return {
+        rttUPlotData: [timestamps, avgAtoZ, p95AtoZ, avgZtoA, p95ZtoA] as uPlot.AlignedData,
+        rttUPlotSeries: series,
+      }
+    }
+
+    const avgRtt = latencyData.map((d) => d.avgRttMs ?? null)
+    const p95Rtt = latencyData.map((d) => d.p95RttMs ?? null)
+
+    series.push(
+      { label: 'avgRttMs', stroke: rttAAvgColor, width: 1.5, points: { show: false } },
+      { label: 'p95RttMs', stroke: rttAP95Color, width: 1.5, dash: [4, 2], points: { show: false } },
+    )
+
+    return {
+      rttUPlotData: [timestamps, avgRtt, p95Rtt] as uPlot.AlignedData,
+      rttUPlotSeries: series,
+    }
+  }, [latencyData, hasDirectionalData, rttAAvgColor, rttAP95Color, rttZAvgColor, rttZP95Color])
+
+  // Jitter columnar data with Unix timestamp x-axis
+  const { jitterUPlotData, jitterUPlotSeries } = useMemo(() => {
+    if (!latencyData || latencyData.length === 0) {
+      return { jitterUPlotData: [[]] as uPlot.AlignedData, jitterUPlotSeries: [] as uPlot.Series[] }
+    }
+
+    const timestamps = latencyData.map((d) => new Date(d.time).getTime() / 1000)
+    const series: uPlot.Series[] = [{}]
+
+    if (hasDirectionalData) {
+      const jitterAtoZ = latencyData.map((d) => d.jitterAtoZMs ?? null)
+      const jitterZtoA = latencyData.map((d) => d.jitterZtoAMs ?? null)
+
+      series.push(
+        { label: 'jitterAtoZMs', stroke: jitterAColor, width: 1.5, points: { show: false } },
+        { label: 'jitterZtoAMs', stroke: jitterZColor, width: 1.5, points: { show: false } },
+      )
+
+      return {
+        jitterUPlotData: [timestamps, jitterAtoZ, jitterZtoA] as uPlot.AlignedData,
+        jitterUPlotSeries: series,
+      }
+    }
+
+    const avgJitter = latencyData.map((d) => d.avgJitter ?? null)
+
+    series.push(
+      { label: 'avgJitter', stroke: jitterAColor, width: 1.5, points: { show: false } },
+    )
+
+    return {
+      jitterUPlotData: [timestamps, avgJitter] as uPlot.AlignedData,
+      jitterUPlotSeries: series,
+    }
+  }, [latencyData, hasDirectionalData, jitterAColor, jitterZColor])
+
+  const msAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map((v) => `${v.toFixed(1)} ms`) },
+  ], [])
+
+  // Charts
+  const { plotRef: rttPlotRef} = useUPlotChart({
+    containerRef: rttChartRef,
+    data: rttUPlotData,
+    series: rttUPlotSeries,
+    height: 144,
+    axes: msAxes,
+    onCursorIdx: handleCursorIdx,
+  })
+
+  const { plotRef: jitterPlotRef} = useUPlotChart({
+    containerRef: jitterChartRef,
+    data: jitterUPlotData,
+    series: jitterUPlotSeries,
+    height: 144,
+    axes: msAxes,
+    onCursorIdx: handleCursorIdx,
+  })
+
+  // Legend sync
+  useUPlotLegendSync(rttPlotRef, rttLegend, rttKeys)
+  useUPlotLegendSync(jitterPlotRef, jitterLegend, jitterKeys)
 
   const rangeLabel = getTimeRangeLabel(effectiveRange)
 
@@ -94,190 +210,21 @@ export function LatencyCharts({ linkPk, timeRange }: LatencyChartsProps) {
         </div>
       ) : (
         <>
-      {/* RTT Chart - Per Direction */}
-      <div>
-        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Round-Trip Time by Direction ({rangeLabel})
-        </div>
-        <div className="h-36">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={latencyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                tick={{ fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => `${v.toFixed(1)}`}
-                width={35}
-                unit="ms"
-              />
-              <RechartsTooltip
-                contentStyle={{
-                  backgroundColor: 'var(--card)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  fontSize: '11px',
-                }}
-                formatter={(value, name) => {
-                  const labels: Record<string, string> = {
-                    avgRttAtoZMs: 'Avg from A',
-                    p95RttAtoZMs: 'P95 from A',
-                    avgRttZtoAMs: 'Avg from Z',
-                    p95RttZtoAMs: 'P95 from Z',
-                    avgRttMs: 'Avg',
-                    p95RttMs: 'P95',
-                  }
-                  return [`${Number(value ?? 0).toFixed(2)} ms`, labels[name ?? ''] || name || '']
-                }}
-              />
-              {hasDirectionalData ? (
-                <>
-                  <Line
-                    type="monotone"
-                    dataKey="avgRttAtoZMs"
-                    stroke={rttAAvgColor}
-                    strokeWidth={1.5}
-                    strokeOpacity={rttLegend.getOpacity('avgRttAtoZMs')}
-                    dot={false}
-                    name="avgRttAtoZMs"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="p95RttAtoZMs"
-                    stroke={rttAP95Color}
-                    strokeWidth={1.5}
-                    strokeOpacity={rttLegend.getOpacity('p95RttAtoZMs')}
-                    strokeDasharray="4 2"
-                    dot={false}
-                    name="p95RttAtoZMs"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="avgRttZtoAMs"
-                    stroke={rttZAvgColor}
-                    strokeWidth={1.5}
-                    strokeOpacity={rttLegend.getOpacity('avgRttZtoAMs')}
-                    dot={false}
-                    name="avgRttZtoAMs"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="p95RttZtoAMs"
-                    stroke={rttZP95Color}
-                    strokeWidth={1.5}
-                    strokeOpacity={rttLegend.getOpacity('p95RttZtoAMs')}
-                    strokeDasharray="4 2"
-                    dot={false}
-                    name="p95RttZtoAMs"
-                  />
-                </>
-              ) : (
-                <>
-                  <Line
-                    type="monotone"
-                    dataKey="avgRttMs"
-                    stroke={rttAAvgColor}
-                    strokeWidth={1.5}
-                    strokeOpacity={rttLegend.getOpacity('avgRttMs')}
-                    dot={false}
-                    name="avgRttMs"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="p95RttMs"
-                    stroke={rttAP95Color}
-                    strokeWidth={1.5}
-                    strokeOpacity={rttLegend.getOpacity('p95RttMs')}
-                    strokeDasharray="4 2"
-                    dot={false}
-                    name="p95RttMs"
-                  />
-                </>
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-        <ChartLegend series={rttSeries} legend={rttLegend} />
-      </div>
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              Round-Trip Time by Direction ({rangeLabel})
+            </div>
+            <div ref={rttChartRef} className="h-36" />
+            <ChartLegend series={rttLegendSeries} legend={rttLegend} />
+          </div>
 
-      {/* Jitter Chart - Per Direction */}
-      <div>
-        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Jitter by Direction ({rangeLabel})
-        </div>
-        <div className="h-36">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={latencyData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                tick={{ fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => `${v.toFixed(1)}`}
-                width={35}
-                unit="ms"
-              />
-              <RechartsTooltip
-                contentStyle={{
-                  backgroundColor: 'var(--card)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  fontSize: '11px',
-                }}
-                formatter={(value, name) => {
-                  const label = name === 'jitterAtoZMs' ? 'From A' : name === 'jitterZtoAMs' ? 'From Z' : 'Jitter'
-                  return [`${Number(value ?? 0).toFixed(2)} ms`, label]
-                }}
-              />
-              {hasDirectionalData ? (
-                <>
-                  <Line
-                    type="monotone"
-                    dataKey="jitterAtoZMs"
-                    stroke={jitterAColor}
-                    strokeWidth={1.5}
-                    strokeOpacity={jitterLegend.getOpacity('jitterAtoZMs')}
-                    dot={false}
-                    name="jitterAtoZMs"
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="jitterZtoAMs"
-                    stroke={jitterZColor}
-                    strokeWidth={1.5}
-                    strokeOpacity={jitterLegend.getOpacity('jitterZtoAMs')}
-                    dot={false}
-                    name="jitterZtoAMs"
-                  />
-                </>
-              ) : (
-                <Line
-                  type="monotone"
-                  dataKey="avgJitter"
-                  stroke={jitterAColor}
-                  strokeWidth={1.5}
-                  strokeOpacity={jitterLegend.getOpacity('avgJitter')}
-                  dot={false}
-                  name="Jitter"
-                />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-        <ChartLegend series={jitterSeries} legend={jitterLegend} />
-      </div>
+          <div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+              Jitter by Direction ({rangeLabel})
+            </div>
+            <div ref={jitterChartRef} className="h-36" />
+            <ChartLegend series={jitterLegendSeries} legend={jitterLegend} />
+          </div>
         </>
       )}
     </div>

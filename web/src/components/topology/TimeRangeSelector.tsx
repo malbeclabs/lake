@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import type { TimeRange, TimeRangePreset } from './utils'
+import { ChevronDown } from 'lucide-react'
+import type { TimeRange, TimeRangePreset, BucketSize, TrafficMetric } from './utils'
+import { bucketLabels } from './utils'
 
 export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
   { value: '15m', label: '15 min' },
@@ -13,6 +15,74 @@ export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
   { value: '7d', label: '7 days' },
   { value: 'custom', label: 'Custom' },
 ]
+
+const BUCKET_OPTIONS: { value: BucketSize; label: string }[] = Object.entries(bucketLabels).map(
+  ([value, label]) => ({ value: value as BucketSize, label })
+)
+
+const METRIC_OPTIONS: { value: TrafficMetric; label: string }[] = [
+  { value: 'throughput', label: 'bps' },
+  { value: 'packets', label: 'pps' },
+]
+
+export type TrafficView = 'avg' | 'peak'
+
+const TRAFFIC_VIEW_OPTIONS: { value: TrafficView; label: string }[] = [
+  { value: 'avg', label: 'Avg' },
+  { value: 'peak', label: 'Peak' },
+]
+
+function cn(...classes: (string | false | undefined)[]) {
+  return classes.filter(Boolean).join(' ')
+}
+
+function SmallDropdown<T extends string>({
+  value,
+  displayLabel,
+  options,
+  onChange,
+}: {
+  value: T
+  displayLabel?: string
+  options: { value: T; label: string }[]
+  onChange: (v: T) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const selectedLabel = displayLabel ?? options.find(o => o.value === value)?.label ?? value
+
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded-md bg-background hover:bg-muted transition-colors"
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDown className="h-3 w-3 text-muted-foreground" />
+      </button>
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[120px]">
+            {options.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => { onChange(opt.value); setIsOpen(false) }}
+                className={cn(
+                  'w-full text-left px-3 py-1.5 text-xs transition-colors',
+                  opt.value === value
+                    ? 'bg-accent text-accent-foreground'
+                    : 'hover:bg-muted'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 export function TimeRangeSelector({
   value,
@@ -83,6 +153,52 @@ export function TimeRangeSelector({
             Apply
           </button>
         </div>
+      )}
+    </div>
+  )
+}
+
+/** Bucket size + metric + traffic view selectors for traffic charts */
+export function TrafficFilters({
+  bucket,
+  onBucketChange,
+  metric,
+  onMetricChange,
+  effectiveBucketLabel,
+  trafficView,
+  onTrafficViewChange,
+}: {
+  bucket: BucketSize
+  onBucketChange: (bucket: BucketSize) => void
+  metric: TrafficMetric
+  onMetricChange: (metric: TrafficMetric) => void
+  effectiveBucketLabel?: string
+  trafficView?: TrafficView
+  onTrafficViewChange?: (view: TrafficView) => void
+}) {
+  const bucketDisplayLabel = bucket === 'auto' && effectiveBucketLabel
+    ? `Auto (${effectiveBucketLabel})`
+    : undefined
+
+  return (
+    <div className="flex items-center gap-2">
+      <SmallDropdown
+        value={bucket}
+        displayLabel={bucketDisplayLabel}
+        options={BUCKET_OPTIONS}
+        onChange={onBucketChange}
+      />
+      <SmallDropdown
+        value={metric}
+        options={METRIC_OPTIONS}
+        onChange={onMetricChange}
+      />
+      {trafficView && onTrafficViewChange && (
+        <SmallDropdown
+          value={trafficView}
+          options={TRAFFIC_VIEW_OPTIONS}
+          onChange={onTrafficViewChange}
+        />
       )}
     </div>
   )
