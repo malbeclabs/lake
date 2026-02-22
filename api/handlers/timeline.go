@@ -127,6 +127,7 @@ type PacketLossEventDetails struct {
 	LinkType        string  `json:"link_type"`
 	SideAMetro      string  `json:"side_a_metro"`
 	SideZMetro      string  `json:"side_z_metro"`
+	ContributorCode string  `json:"contributor_code,omitempty"`
 	PreviousLossPct float64 `json:"previous_loss_pct"`
 	CurrentLossPct  float64 `json:"current_loss_pct"`
 	Direction       string  `json:"direction"` // "increased" or "decreased"
@@ -136,6 +137,8 @@ type PacketLossEventDetails struct {
 type InterfaceEventDetails struct {
 	DevicePK           string `json:"device_pk"`
 	DeviceCode         string `json:"device_code"`
+	ContributorCode    string `json:"contributor_code,omitempty"`
+	MetroCode          string `json:"metro_code,omitempty"`
 	InterfaceName      string `json:"interface_name"`
 	LinkPK             string `json:"link_pk,omitempty"`
 	LinkCode           string `json:"link_code,omitempty"`
@@ -149,10 +152,12 @@ type InterfaceEventDetails struct {
 
 // GroupedInterfaceDetails contains details for grouped interface events (multiple interfaces on same device)
 type GroupedInterfaceDetails struct {
-	DevicePK   string                  `json:"device_pk"`
-	DeviceCode string                  `json:"device_code"`
-	IssueType  string                  `json:"issue_type"` // "errors", "discards", "carrier"
-	Interfaces []InterfaceEventDetails `json:"interfaces"`
+	DevicePK        string                  `json:"device_pk"`
+	DeviceCode      string                  `json:"device_code"`
+	ContributorCode string                  `json:"contributor_code,omitempty"`
+	MetroCode       string                  `json:"metro_code,omitempty"`
+	IssueType       string                  `json:"issue_type"` // "errors", "discards", "carrier"
+	Interfaces      []InterfaceEventDetails `json:"interfaces"`
 }
 
 // ValidatorEventDetails contains details for validator join/leave events
@@ -170,6 +175,7 @@ type ValidatorEventDetails struct {
 	DevicePK                   string  `json:"device_pk,omitempty"`
 	DeviceCode                 string  `json:"device_code,omitempty"`
 	MetroCode                  string  `json:"metro_code,omitempty"`
+	ContributorCode            string  `json:"contributor_code,omitempty"`
 	Kind                       string  `json:"kind"`   // "validator" or "gossip_only"
 	Action                     string  `json:"action"` // "joined" or "left"
 	ContributionChangeLamports int64   `json:"contribution_change_lamports,omitempty"`
@@ -393,93 +399,158 @@ func generateEventID(entityID string, timestamp time.Time, eventType string) str
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// eventMatchesSearch checks if an event matches any of the search terms (OR logic)
-// Search terms are already lowercased
-func eventMatchesSearch(event TimelineEvent, searchTerms []string) bool {
-	// Helper to check if a string contains any search term
-	containsAny := func(s string) bool {
-		if s == "" {
-			return false
+// eventMatchesFieldSearch checks if an event matches a single field:value filter.
+// The value is already lowercased.
+func eventMatchesFieldSearch(event TimelineEvent, field, value string) bool {
+	contains := func(s string) bool {
+		return s != "" && strings.Contains(strings.ToLower(s), value)
+	}
+
+	switch field {
+	case "device":
+		if contains(event.EntityCode) && event.EntityType == "device" {
+			return true
 		}
-		lower := strings.ToLower(s)
-		for _, term := range searchTerms {
-			if strings.Contains(lower, term) {
-				return true
-			}
-		}
-		return false
-	}
-
-	// Check entity_code (always present)
-	if containsAny(event.EntityCode) {
-		return true
-	}
-
-	// Check title
-	if containsAny(event.Title) {
-		return true
-	}
-
-	// Check details based on type
-	switch details := event.Details.(type) {
-	case EntityChangeDetails:
-		if details.Entity != nil {
-			// Use reflection-free approach: check known fields
-			if entity, ok := details.Entity.(LinkEntity); ok {
-				if containsAny(entity.Code) || containsAny(entity.SideACode) || containsAny(entity.SideZCode) ||
-					containsAny(entity.SideAMetroCode) || containsAny(entity.SideZMetroCode) ||
-					containsAny(entity.ContributorCode) {
-					return true
-				}
-			}
+		switch details := event.Details.(type) {
+		case EntityChangeDetails:
 			if entity, ok := details.Entity.(DeviceEntity); ok {
-				if containsAny(entity.Code) || containsAny(entity.MetroCode) || containsAny(entity.ContributorCode) ||
-					containsAny(entity.PublicIP) {
+				return contains(entity.Code)
+			}
+		case InterfaceEventDetails:
+			return contains(details.DeviceCode)
+		case GroupedInterfaceDetails:
+			return contains(details.DeviceCode)
+		case ValidatorEventDetails:
+			return contains(details.DeviceCode)
+		}
+	case "link":
+		if contains(event.EntityCode) && event.EntityType == "link" {
+			return true
+		}
+		switch details := event.Details.(type) {
+		case EntityChangeDetails:
+			if entity, ok := details.Entity.(LinkEntity); ok {
+				return contains(entity.Code) || contains(entity.SideACode) || contains(entity.SideZCode)
+			}
+		case PacketLossEventDetails:
+			return contains(details.LinkCode)
+		case InterfaceEventDetails:
+			return contains(details.LinkCode)
+		case GroupedInterfaceDetails:
+			for _, intf := range details.Interfaces {
+				if contains(intf.LinkCode) {
 					return true
 				}
+			}
+		}
+	case "metro":
+		if contains(event.EntityCode) && event.EntityType == "metro" {
+			return true
+		}
+		switch details := event.Details.(type) {
+		case EntityChangeDetails:
+			if entity, ok := details.Entity.(DeviceEntity); ok {
+				return contains(entity.MetroCode)
+			}
+			if entity, ok := details.Entity.(LinkEntity); ok {
+				return contains(entity.SideAMetroCode) || contains(entity.SideZMetroCode)
 			}
 			if entity, ok := details.Entity.(MetroEntity); ok {
-				if containsAny(entity.Code) || containsAny(entity.Name) {
-					return true
-				}
-			}
-			if entity, ok := details.Entity.(ContributorEntity); ok {
-				if containsAny(entity.Code) || containsAny(entity.Name) {
-					return true
-				}
+				return contains(entity.Code)
 			}
 			if entity, ok := details.Entity.(UserEntity); ok {
-				if containsAny(entity.OwnerPubkey) || containsAny(entity.DeviceCode) ||
-					containsAny(entity.MetroCode) || containsAny(entity.ClientIP) || containsAny(entity.DZIP) {
-					return true
-				}
+				return contains(entity.MetroCode)
 			}
+		case PacketLossEventDetails:
+			return contains(details.SideAMetro) || contains(details.SideZMetro)
+		case InterfaceEventDetails:
+			return contains(details.MetroCode)
+		case GroupedInterfaceDetails:
+			return contains(details.MetroCode)
+		case ValidatorEventDetails:
+			return contains(details.MetroCode)
 		}
-	case PacketLossEventDetails:
-		if containsAny(details.LinkCode) || containsAny(details.SideAMetro) || containsAny(details.SideZMetro) {
+	case "contributor":
+		if contains(event.EntityCode) && event.EntityType == "contributor" {
 			return true
 		}
-	case InterfaceEventDetails:
-		if containsAny(details.DeviceCode) || containsAny(details.LinkCode) || containsAny(details.InterfaceName) {
-			return true
-		}
-	case GroupedInterfaceDetails:
-		if containsAny(details.DeviceCode) {
-			return true
-		}
-		for _, intf := range details.Interfaces {
-			if containsAny(intf.LinkCode) || containsAny(intf.InterfaceName) {
-				return true
+		switch details := event.Details.(type) {
+		case EntityChangeDetails:
+			if entity, ok := details.Entity.(DeviceEntity); ok {
+				return contains(entity.ContributorCode)
 			}
+			if entity, ok := details.Entity.(LinkEntity); ok {
+				return contains(entity.ContributorCode)
+			}
+			if entity, ok := details.Entity.(ContributorEntity); ok {
+				return contains(entity.Code)
+			}
+		case PacketLossEventDetails:
+			return contains(details.ContributorCode)
+		case InterfaceEventDetails:
+			return contains(details.ContributorCode)
+		case GroupedInterfaceDetails:
+			return contains(details.ContributorCode)
+		case ValidatorEventDetails:
+			return contains(details.ContributorCode)
 		}
-	case ValidatorEventDetails:
-		if containsAny(details.OwnerPubkey) || containsAny(details.DeviceCode) ||
-			containsAny(details.MetroCode) || containsAny(details.VotePubkey) || containsAny(details.NodePubkey) {
+	case "validator":
+		// Match by owner_pubkey, vote_pubkey, or node_pubkey
+		if (contains(event.EntityCode) || contains(event.EntityPK)) && (event.EntityType == "validator" || event.EntityType == "gossip_node") {
 			return true
+		}
+		switch details := event.Details.(type) {
+		case ValidatorEventDetails:
+			return contains(details.OwnerPubkey) || contains(details.VotePubkey) || contains(details.NodePubkey)
+		}
+	case "user":
+		// Match by owner_pubkey or user PK
+		if contains(event.EntityCode) && event.EntityType == "user" {
+			return true
+		}
+		switch details := event.Details.(type) {
+		case EntityChangeDetails:
+			if entity, ok := details.Entity.(UserEntity); ok {
+				return contains(entity.OwnerPubkey) || contains(entity.PK)
+			}
+		case ValidatorEventDetails:
+			return contains(details.OwnerPubkey) || contains(details.UserPK)
+		}
+	}
+	return false
+}
+
+// eventMatchesSearch checks if an event matches the search filters.
+// Supports field-prefixed terms (e.g. "contributor:cherry,metro:ams").
+// Uses AND across different fields, OR within the same field.
+// Search terms are already lowercased.
+func eventMatchesSearch(event TimelineEvent, searchTerms []string) bool {
+	// Group terms by field prefix
+	grouped := make(map[string][]string) // field -> values
+	for _, term := range searchTerms {
+		if idx := strings.Index(term, ":"); idx > 0 {
+			field := term[:idx]
+			value := term[idx+1:]
+			if value != "" {
+				grouped[field] = append(grouped[field], value)
+			}
 		}
 	}
 
-	return false
+	// AND across fields, OR within same field
+	for field, values := range grouped {
+		matched := false
+		for _, value := range values {
+			if eventMatchesFieldSearch(event, field, value) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return len(grouped) > 0
 }
 
 // isDefaultTimelineRequest checks if the request matches the default cached parameters
@@ -2180,9 +2251,11 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 			l.code as link_code,
 			l.link_type,
 			COALESCE(ma.code, '') as side_a_metro,
-			COALESCE(mz.code, '') as side_z_metro
+			COALESCE(mz.code, '') as side_z_metro,
+			COALESCE(c.code, '') as contributor_code
 		FROM transitions t
 		JOIN dz_links_current l ON t.link_pk = l.pk
+		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
 		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
@@ -2204,19 +2277,20 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			linkPK         string
-			hour           time.Time
-			lossPct        float64
-			prevLossPct    float64
-			transitionType string
-			severity       string
-			linkCode       string
-			linkType       string
-			sideAMetro     string
-			sideZMetro     string
+			linkPK          string
+			hour            time.Time
+			lossPct         float64
+			prevLossPct     float64
+			transitionType  string
+			severity        string
+			linkCode        string
+			linkType        string
+			sideAMetro      string
+			sideZMetro      string
+			contributorCode string
 		)
 
-		if err := rows.Scan(&linkPK, &hour, &lossPct, &prevLossPct, &transitionType, &severity, &linkCode, &linkType, &sideAMetro, &sideZMetro); err != nil {
+		if err := rows.Scan(&linkPK, &hour, &lossPct, &prevLossPct, &transitionType, &severity, &linkCode, &linkType, &sideAMetro, &sideZMetro, &contributorCode); err != nil {
 			return nil, fmt.Errorf("packet loss event scan error: %w", err)
 		}
 
@@ -2248,6 +2322,7 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 				LinkType:        linkType,
 				SideAMetro:      sideAMetro,
 				SideZMetro:      sideZMetro,
+				ContributorCode: contributorCode,
 				PreviousLossPct: prevLossPct,
 				CurrentLossPct:  lossPct,
 				Direction:       transitionType,
@@ -2332,9 +2407,13 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 			t.carrier_transitions,
 			t.transition_type,
 			d.code as device_code,
-			COALESCE(l.code, '') as link_code
+			COALESCE(l.code, '') as link_code,
+			COALESCE(c.code, '') as contributor_code,
+			COALESCE(m.code, '') as metro_code
 		FROM transitions t
 		JOIN dz_devices_current d ON t.device_pk = d.pk
+		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
+		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_links_current l ON t.link_pk = l.pk
 		WHERE t.transition_type IS NOT NULL
 		  AND t.hour >= ?
@@ -2366,9 +2445,11 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 			transitionType     string
 			deviceCode         string
 			linkCode           string
+			contributorCode    string
+			metroCode          string
 		)
 
-		if err := rows.Scan(&hour, &devicePK, &intf, &linkPK, &inErrors, &outErrors, &inDiscards, &outDiscards, &carrierTransitions, &transitionType, &deviceCode, &linkCode); err != nil {
+		if err := rows.Scan(&hour, &devicePK, &intf, &linkPK, &inErrors, &outErrors, &inDiscards, &outDiscards, &carrierTransitions, &transitionType, &deviceCode, &linkCode, &contributorCode, &metroCode); err != nil {
 			return nil, fmt.Errorf("interface event scan error: %w", err)
 		}
 
@@ -2447,6 +2528,8 @@ func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]
 			Details: InterfaceEventDetails{
 				DevicePK:           devicePK,
 				DeviceCode:         deviceCode,
+				ContributorCode:    contributorCode,
+				MetroCode:          metroCode,
 				InterfaceName:      intf,
 				LinkPK:             linkPK,
 				LinkCode:           linkCode,
@@ -2531,6 +2614,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			COALESCE(uc.device_pk, '') as device_pk,
 			COALESCE(d.code, '') as device_code,
 			COALESCE(m.code, '') as metro_code,
+			COALESCE(cont.code, '') as contributor_code,
 			-- Use current gossip info if available, fall back to historical
 			COALESCE(gn_curr.pubkey, gn_hist.pubkey, '') as node_pubkey,
 			COALESCE(va_curr.vote_pubkey, va_hist.vote_pubkey, '') as vote_pubkey,
@@ -2541,6 +2625,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		CROSS JOIN total_stake ts
 		LEFT JOIN dz_devices_current d ON uc.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dz_contributors_current cont ON d.contributor_pk = cont.pk
 		-- Current gossip/vote info (for active validators)
 		LEFT JOIN solana_gossip_nodes_current gn_curr ON uc.dz_ip = gn_curr.gossip_ip
 		LEFT JOIN solana_vote_accounts_current va_curr ON gn_curr.pubkey = va_curr.node_pubkey
@@ -2582,17 +2667,18 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			isDeleted     uint8
 			prevStatus    *string
 			dzIP          string
-			devicePK      string
-			deviceCode    string
-			metroCode     string
-			nodePubkey    string
-			votePubkey    string
-			stakeLamports int64
-			stakeSharePct float64
-			validatorKind string // "validator" or "gossip_only" based on vote account presence
+			devicePK        string
+			deviceCode      string
+			metroCode       string
+			contributorCode string
+			nodePubkey      string
+			votePubkey      string
+			stakeLamports   int64
+			stakeSharePct   float64
+			validatorKind   string // "validator" or "gossip_only" based on vote account presence
 		)
 
-		if err := rows.Scan(&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &isDeleted, &prevStatus, &dzIP, &devicePK, &deviceCode, &metroCode, &nodePubkey, &votePubkey, &stakeLamports, &stakeSharePct, &validatorKind); err != nil {
+		if err := rows.Scan(&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &isDeleted, &prevStatus, &dzIP, &devicePK, &deviceCode, &metroCode, &contributorCode, &nodePubkey, &votePubkey, &stakeLamports, &stakeSharePct, &validatorKind); err != nil {
 			return nil, fmt.Errorf("validator event scan error: %w", err)
 		}
 		var title string
@@ -2644,19 +2730,20 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 			EntityPK:    pk,
 			EntityCode:  ownerPubkey, // Full pubkey - frontend handles truncation
 			Details: ValidatorEventDetails{
-				OwnerPubkey:   ownerPubkey,
-				DZIP:          dzIP,
-				VotePubkey:    votePubkey,
-				NodePubkey:    nodePubkey,
-				StakeLamports: stakeLamports,
-				StakeSol:      stakeSol,
-				StakeSharePct: stakeSharePct,
-				UserPK:        pk,
-				DevicePK:      devicePK,
-				DeviceCode:    deviceCode,
-				MetroCode:     metroCode,
-				Kind:          validatorKind,
-				Action:        action,
+				OwnerPubkey:     ownerPubkey,
+				DZIP:            dzIP,
+				VotePubkey:      votePubkey,
+				NodePubkey:      nodePubkey,
+				StakeLamports:   stakeLamports,
+				StakeSol:        stakeSol,
+				StakeSharePct:   stakeSharePct,
+				UserPK:          pk,
+				DevicePK:        devicePK,
+				DeviceCode:      deviceCode,
+				MetroCode:       metroCode,
+				ContributorCode: contributorCode,
+				Kind:            validatorKind,
+				Action:          action,
 			},
 		})
 	}
@@ -2703,7 +2790,8 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(dev.code, '') as device_code,
 			COALESCE(dev.pk, '') as device_pk,
-			COALESCE(m.code, '') as metro_code
+			COALESCE(m.code, '') as metro_code,
+			COALESCE(cont.code, '') as contributor_code
 		FROM disappeared d
 		CROSS JOIN total_stake ts
 		-- Get historical vote account info (since node is offline, won't be in current)
@@ -2717,6 +2805,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 		LEFT JOIN dz_users_current u ON d.last_gossip_ip = u.dz_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
+		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
 		ORDER BY d.last_seen_ts DESC, d.pubkey
 		LIMIT 100
 	`
@@ -2741,12 +2830,13 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 			stakeSharePct float64
 			dzOwnerPubkey string
 			userPK        string
-			deviceCode    string
-			devicePK      string
-			metroCode     string
+			deviceCode      string
+			devicePK        string
+			metroCode       string
+			contributorCode string
 		)
 
-		if err := rows.Scan(&gossipIP, &nodePubkey, &eventTS, &changeType, &votePubkey, &stakeLamports, &stakeSharePct, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
+		if err := rows.Scan(&gossipIP, &nodePubkey, &eventTS, &changeType, &votePubkey, &stakeLamports, &stakeSharePct, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode, &contributorCode); err != nil {
 			return nil, fmt.Errorf("gossip network change scan error: %w", err)
 		}
 		stakeSol := float64(stakeLamports) / 1_000_000_000
@@ -2786,19 +2876,20 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 			EntityPK:    entityPK,
 			EntityCode:  entityCode,
 			Details: ValidatorEventDetails{
-				OwnerPubkey:   dzOwnerPubkey,
-				DZIP:          gossipIP,
-				VotePubkey:    votePubkey,
-				NodePubkey:    nodePubkey,
-				StakeLamports: stakeLamports,
-				StakeSol:      stakeSol,
-				StakeSharePct: stakeSharePct,
-				UserPK:        userPK,
-				DevicePK:      devicePK,
-				DeviceCode:    deviceCode,
-				MetroCode:     metroCode,
-				Kind:          map[bool]string{true: "validator", false: "gossip_only"}[isValidator],
-				Action:        "left_solana",
+				OwnerPubkey:     dzOwnerPubkey,
+				DZIP:            gossipIP,
+				VotePubkey:      votePubkey,
+				NodePubkey:      nodePubkey,
+				StakeLamports:   stakeLamports,
+				StakeSol:        stakeSol,
+				StakeSharePct:   stakeSharePct,
+				UserPK:          userPK,
+				DevicePK:        devicePK,
+				DeviceCode:      deviceCode,
+				MetroCode:       metroCode,
+				ContributorCode: contributorCode,
+				Kind:            map[bool]string{true: "validator", false: "gossip_only"}[isValidator],
+				Action:          "left_solana",
 			},
 		})
 	}
@@ -2861,13 +2952,15 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(dev.code, '') as device_code,
 			COALESCE(dev.pk, '') as device_pk,
-			COALESCE(m.code, '') as metro_code
+			COALESCE(m.code, '') as metro_code,
+			COALESCE(cont.code, '') as contributor_code
 		FROM left_validators lv
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON lv.node_pubkey = gn.pubkey
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
+		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
 
 		UNION ALL
 
@@ -2883,13 +2976,15 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(dev.code, '') as device_code,
 			COALESCE(dev.pk, '') as device_pk,
-			COALESCE(m.code, '') as metro_code
+			COALESCE(m.code, '') as metro_code,
+			COALESCE(cont.code, '') as contributor_code
 		FROM joined_validators jv
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON jv.node_pubkey = gn.pubkey
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
+		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
 
 		ORDER BY event_ts DESC, vote_pubkey
 		LIMIT 100
@@ -2915,12 +3010,13 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			gossipIP      string
 			dzOwnerPubkey string
 			userPK        string
-			deviceCode    string
-			devicePK      string
-			metroCode     string
+			deviceCode      string
+			devicePK        string
+			metroCode       string
+			contributorCode string
 		)
 
-		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &changeType, &stakeLamports, &stakeSharePct, &gossipIP, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
+		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &changeType, &stakeLamports, &stakeSharePct, &gossipIP, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode, &contributorCode); err != nil {
 			return nil, fmt.Errorf("vote account change scan error: %w", err)
 		}
 		stakeSol := float64(stakeLamports) / 1_000_000_000
@@ -2951,19 +3047,20 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 			EntityPK:    votePubkey,
 			EntityCode:  votePubkey,
 			Details: ValidatorEventDetails{
-				OwnerPubkey:   dzOwnerPubkey,
-				DZIP:          gossipIP,
-				VotePubkey:    votePubkey,
-				NodePubkey:    nodePubkey,
-				StakeLamports: stakeLamports,
-				StakeSol:      stakeSol,
-				StakeSharePct: stakeSharePct,
-				UserPK:        userPK,
-				DevicePK:      devicePK,
-				DeviceCode:    deviceCode,
-				MetroCode:     metroCode,
-				Kind:          "validator",
-				Action:        eventType,
+				OwnerPubkey:     dzOwnerPubkey,
+				DZIP:            gossipIP,
+				VotePubkey:      votePubkey,
+				NodePubkey:      nodePubkey,
+				StakeLamports:   stakeLamports,
+				StakeSol:        stakeSol,
+				StakeSharePct:   stakeSharePct,
+				UserPK:          userPK,
+				DevicePK:        devicePK,
+				DeviceCode:      deviceCode,
+				MetroCode:       metroCode,
+				ContributorCode: contributorCode,
+				Kind:            "validator",
+				Action:          eventType,
 			},
 		})
 	}
@@ -3028,13 +3125,15 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(dev.code, '') as device_code,
 			COALESCE(dev.pk, '') as device_pk,
-			COALESCE(m.code, '') as metro_code
+			COALESCE(m.code, '') as metro_code,
+			COALESCE(cont.code, '') as contributor_code
 		FROM significant_changes sc
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON sc.node_pubkey = gn.pubkey
 		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
+		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
 		ORDER BY sc.snapshot_ts DESC, sc.vote_pubkey
 		LIMIT 200
 	`
@@ -3066,9 +3165,10 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			deviceCode          string
 			devicePK            string
 			metroCode           string
+			contributorCode     string
 		)
 
-		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &currentStake, &prevStake, &change, &changePct, &stakeSharePct, &stakeShareChangePct, &gossipIP, &isOnDZ, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode); err != nil {
+		if err := rows.Scan(&votePubkey, &nodePubkey, &eventTS, &currentStake, &prevStake, &change, &changePct, &stakeSharePct, &stakeShareChangePct, &gossipIP, &isOnDZ, &dzOwnerPubkey, &userPK, &deviceCode, &devicePK, &metroCode, &contributorCode); err != nil {
 			return nil, fmt.Errorf("stake change scan error: %w", err)
 		}
 
@@ -3121,6 +3221,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 				DevicePK:            devicePK,
 				DeviceCode:          deviceCode,
 				MetroCode:           metroCode,
+				ContributorCode:     contributorCode,
 				Kind:                "validator",
 				Action:              action,
 			},
@@ -3521,10 +3622,12 @@ func groupInterfaceEvents(events []TimelineEvent) []TimelineEvent {
 				EntityPK:   firstDetails.DevicePK,
 				EntityCode: firstDetails.DeviceCode,
 				Details: GroupedInterfaceDetails{
-					DevicePK:   firstDetails.DevicePK,
-					DeviceCode: firstDetails.DeviceCode,
-					IssueType:  firstDetails.IssueType,
-					Interfaces: interfaces,
+					DevicePK:        firstDetails.DevicePK,
+					DeviceCode:      firstDetails.DeviceCode,
+					ContributorCode: firstDetails.ContributorCode,
+					MetroCode:       firstDetails.MetroCode,
+					IssueType:       firstDetails.IssueType,
+					Interfaces:      interfaces,
 				},
 			})
 		}

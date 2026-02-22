@@ -5,8 +5,6 @@ import {
   Clock,
   AlertCircle,
   RefreshCw,
-  Search,
-  X,
 } from 'lucide-react'
 import {
   fetchTimeline,
@@ -44,6 +42,12 @@ export function TimelinePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const searchParam = searchParams.get('search') || ''
   const searchFilters = useMemo(() => searchParam ? searchParam.split(',').map(f => f.trim()).filter(Boolean) : [], [searchParam])
+
+  // Send full field:value filters to API (API handles AND across fields, OR within same field)
+  const apiSearchParam = useMemo(() => {
+    if (!searchFilters.length) return ''
+    return searchFilters.join(',')
+  }, [searchFilters])
 
   const initialTimeRange = (searchParams.get('range') || '24h') as TimeRange | 'custom'
   const initialCategories = parseSetParam(searchParams.get('categories'), ALL_CATEGORIES, ALL_CATEGORIES)
@@ -134,6 +138,11 @@ export function TimelinePage() {
   }
 
   const clearSearchFilter = () => updateUrlParams({ search: null })
+  const addSearchFilter = (filter: string) => {
+    if (!searchFilters.includes(filter)) {
+      updateUrlParams({ search: [...searchFilters, filter].join(',') })
+    }
+  }
   const removeSearchFilter = (filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
     updateUrlParams({ search: newFilters.length > 0 ? newFilters.join(',') : null })
@@ -165,7 +174,7 @@ export function TimelinePage() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ['timeline', timeRange, customStart, customEnd, categoryFilter, entityTypeFilter, actionFilter, dzFilterParam, minStakePctParam, includeInternal, searchParam],
+    queryKey: ['timeline', timeRange, customStart, customEnd, categoryFilter, entityTypeFilter, actionFilter, dzFilterParam, minStakePctParam, includeInternal, apiSearchParam],
     queryFn: ({ pageParam = 0 }) => fetchTimeline({
       range: timeRange !== 'custom' ? timeRange : undefined,
       start: timeRange === 'custom' && customStart ? customStart : undefined,
@@ -175,7 +184,7 @@ export function TimelinePage() {
       action: actionFilter,
       dz_filter: dzFilterParam,
       min_stake_pct: minStakePctParam,
-      search: searchParam || undefined,
+      search: apiSearchParam || undefined,
       include_internal: includeInternal,
       limit,
       offset: pageParam,
@@ -251,49 +260,91 @@ export function TimelinePage() {
       if (typeof value === 'number') return String(value).includes(lowerSearch)
       return false
     }
-    const eventMatchesFilter = (event: TimelineEvent, filter: string): boolean => {
-      const lowerSearch = filter.toLowerCase()
-      if (matchesSearch(event.entity_code, lowerSearch)) return true
-      if (matchesSearch(event.title, lowerSearch)) return true
-      if (matchesSearch(event.description, lowerSearch)) return true
+    // Match a field:value filter against specific event fields
+    const eventMatchesFieldFilter = (event: TimelineEvent, field: string, value: string): boolean => {
       const details = event.details
-      if (!details) return false
-      if ('entity' in details && details.entity) {
-        const entity = details.entity as unknown as Record<string, unknown>
-        if (matchesSearch(entity.device_code, lowerSearch)) return true
-        if (matchesSearch(entity.metro_code, lowerSearch)) return true
-        if (matchesSearch(entity.contributor_code, lowerSearch)) return true
-        if (matchesSearch(entity.code, lowerSearch)) return true
-        if (matchesSearch(entity.name, lowerSearch)) return true
-        if (matchesSearch(entity.public_ip, lowerSearch)) return true
-        if (matchesSearch(entity.client_ip, lowerSearch)) return true
-        if (matchesSearch(entity.dz_ip, lowerSearch)) return true
-        if (matchesSearch(entity.owner_pubkey, lowerSearch)) return true
-        if (matchesSearch(entity.side_a_code, lowerSearch)) return true
-        if (matchesSearch(entity.side_z_code, lowerSearch)) return true
-        if (matchesSearch(entity.side_a_metro_code, lowerSearch)) return true
-        if (matchesSearch(entity.side_z_metro_code, lowerSearch)) return true
+      const entity = details && 'entity' in details && details.entity
+        ? details.entity as unknown as Record<string, unknown>
+        : null
+
+      switch (field) {
+        case 'device':
+          if (matchesSearch(event.entity_code, value) && event.entity_type === 'device') return true
+          if (entity && matchesSearch(entity.device_code, value)) return true
+          if (entity && matchesSearch(entity.code, value) && event.entity_type === 'device') return true
+          if (details && 'device_code' in details && matchesSearch(details.device_code, value)) return true
+          return false
+        case 'link':
+          if (matchesSearch(event.entity_code, value) && event.entity_type === 'link') return true
+          if (entity && matchesSearch(entity.code, value) && event.entity_type === 'link') return true
+          if (entity && matchesSearch(entity.side_a_code, value)) return true
+          if (entity && matchesSearch(entity.side_z_code, value)) return true
+          if (details && 'link_code' in details && matchesSearch(details.link_code, value)) return true
+          if (details && 'interfaces' in details && Array.isArray(details.interfaces)) {
+            for (const intf of details.interfaces) {
+              if (matchesSearch(intf.link_code, value)) return true
+            }
+          }
+          return false
+        case 'metro':
+          if (matchesSearch(event.entity_code, value) && event.entity_type === 'metro') return true
+          if (entity && matchesSearch(entity.metro_code, value)) return true
+          if (entity && matchesSearch(entity.side_a_metro_code, value)) return true
+          if (entity && matchesSearch(entity.side_z_metro_code, value)) return true
+          if (details && 'metro_code' in details && matchesSearch(details.metro_code, value)) return true
+          if (details && 'side_a_metro' in details && matchesSearch(details.side_a_metro, value)) return true
+          if (details && 'side_z_metro' in details && matchesSearch(details.side_z_metro, value)) return true
+          return false
+        case 'contributor':
+          if (matchesSearch(event.entity_code, value) && event.entity_type === 'contributor') return true
+          if (entity && matchesSearch(entity.contributor_code, value)) return true
+          if (entity && matchesSearch(entity.code, value) && event.entity_type === 'contributor') return true
+          if (details && 'contributor_code' in details && matchesSearch(details.contributor_code, value)) return true
+          return false
+        case 'validator':
+          if ((matchesSearch(event.entity_code, value) || matchesSearch(event.entity_pk, value)) && (event.entity_type === 'validator' || event.entity_type === 'gossip_node')) return true
+          if (details && 'owner_pubkey' in details && matchesSearch(details.owner_pubkey, value)) return true
+          if (details && 'vote_pubkey' in details && matchesSearch(details.vote_pubkey, value)) return true
+          if (details && 'node_pubkey' in details && matchesSearch(details.node_pubkey, value)) return true
+          return false
+        case 'user':
+          if (matchesSearch(event.entity_code, value) && event.entity_type === 'user') return true
+          if (entity && matchesSearch(entity.owner_pubkey, value)) return true
+          if (entity && matchesSearch(entity.pk, value)) return true
+          if (details && 'owner_pubkey' in details && matchesSearch(details.owner_pubkey, value)) return true
+          if (details && 'user_pk' in details && matchesSearch(details.user_pk, value)) return true
+          return false
+        default:
+          return false
       }
-      if ('device_code' in details && matchesSearch(details.device_code, lowerSearch)) return true
-      if ('metro_code' in details && matchesSearch(details.metro_code, lowerSearch)) return true
-      if ('owner_pubkey' in details && matchesSearch(details.owner_pubkey, lowerSearch)) return true
-      if ('vote_pubkey' in details && matchesSearch(details.vote_pubkey, lowerSearch)) return true
-      if ('node_pubkey' in details && matchesSearch(details.node_pubkey, lowerSearch)) return true
-      if ('dz_ip' in details && matchesSearch(details.dz_ip, lowerSearch)) return true
-      if ('interface_name' in details && matchesSearch(details.interface_name, lowerSearch)) return true
-      if ('link_code' in details && matchesSearch(details.link_code, lowerSearch)) return true
-      if ('interfaces' in details && Array.isArray(details.interfaces)) {
-        for (const intf of details.interfaces) {
-          if (matchesSearch(intf.interface_name, lowerSearch)) return true
-          if (matchesSearch(intf.link_code, lowerSearch)) return true
+    }
+
+    const eventMatchesFilter = (event: TimelineEvent, filter: string): boolean => {
+      const colonIndex = filter.indexOf(':')
+      if (colonIndex > 0) {
+        const field = filter.slice(0, colonIndex).toLowerCase()
+        const value = filter.slice(colonIndex + 1).toLowerCase()
+        if (['device', 'link', 'metro', 'contributor', 'validator', 'user'].includes(field) && value) {
+          return eventMatchesFieldFilter(event, field, value)
         }
       }
-      if ('side_a_metro' in details && matchesSearch(details.side_a_metro, lowerSearch)) return true
-      if ('side_z_metro' in details && matchesSearch(details.side_z_metro, lowerSearch)) return true
       return false
     }
+    // Group filters by field: AND across fields, OR within same field
+    const grouped = new Map<string, string[]>()
+    for (const filter of searchFilters) {
+      const colonIndex = filter.indexOf(':')
+      if (colonIndex > 0) {
+        const field = filter.slice(0, colonIndex).toLowerCase()
+        const existing = grouped.get(field) || []
+        existing.push(filter)
+        grouped.set(field, existing)
+      }
+    }
     return allEvents.filter(event =>
-      searchFilters.some(filter => eventMatchesFilter(event, filter))
+      Array.from(grouped.values()).every(group =>
+        group.some(filter => eventMatchesFilter(event, filter))
+      )
     )
   }, [allEvents, searchFilters])
 
@@ -398,29 +449,6 @@ export function TimelinePage() {
               )}
             </>
           }
-          actions={searchFilters.length > 0 ? (
-            <>
-              {searchFilters.map((filter, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => removeSearchFilter(filter)}
-                  className="inline-flex items-center gap-1 text-sm px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-                >
-                  <Search className="h-3 w-3" />
-                  {filter}
-                  <X className="h-3 w-3" />
-                </button>
-              ))}
-              {searchFilters.length > 1 && (
-                <button
-                  onClick={clearSearchFilter}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Clear all
-                </button>
-              )}
-            </>
-          ) : undefined}
         />
 
         {/* Filters */}
@@ -487,6 +515,10 @@ export function TimelinePage() {
           onRefetch={() => refetch()}
           onResetAll={resetAllFilters}
           onApplyPreset={handleApplyPreset}
+          searchFilters={searchFilters}
+          onAddSearchFilter={addSearchFilter}
+          onRemoveSearchFilter={removeSearchFilter}
+          onClearSearchFilters={clearSearchFilter}
         />
 
         {/* Histogram */}
@@ -570,7 +602,7 @@ export function TimelinePage() {
             </div>
 
             {/* Infinite scroll sentinel */}
-            {searchFilters.length === 0 && (
+            {(
               <div ref={loadMoreRef} className="py-8 flex justify-center">
                 {isFetchingNextPage ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -141,16 +141,18 @@ function ChangeSummary({ changes }: { changes?: FieldChange[] }) {
   )
 }
 
-function FilterButton({ children, value, className }: { children: React.ReactNode; value: string; className?: string }) {
+function FilterButton({ children, value, field, className }: { children: React.ReactNode; value: string; field?: string; className?: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
+
+  const filterValue = field ? `${field}:${value}` : value
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     const currentSearch = searchParams.get('search') || ''
     const currentFilters = currentSearch ? currentSearch.split(',').map(f => f.trim()).filter(Boolean) : []
-    if (!currentFilters.includes(value)) {
-      currentFilters.push(value)
+    if (!currentFilters.includes(filterValue)) {
+      currentFilters.push(filterValue)
     }
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
@@ -163,7 +165,7 @@ function FilterButton({ children, value, className }: { children: React.ReactNod
     <button
       onClick={handleClick}
       className={cn("hover:underline cursor-pointer", className)}
-      title={`Filter by "${value}"`}
+      title={`Filter by ${field ? field + ': ' : ''}"${value}"`}
     >
       {children}
     </button>
@@ -264,11 +266,11 @@ function EventDetails({ event }: { event: TimelineEvent }) {
     const isValidator = d.kind === 'validator'
     return (
       <div className="text-xs text-muted-foreground mt-2 space-y-1">
-        <div>Owner: <FilterButton value={d.owner_pubkey} className="font-mono break-all">{d.owner_pubkey}</FilterButton></div>
-        {d.user_pk && <div>User: <FilterButton value={d.user_pk} className="font-mono break-all">{d.user_pk}</FilterButton></div>}
+        <div>Owner: <FilterButton value={d.owner_pubkey} field="user" className="font-mono break-all">{d.owner_pubkey}</FilterButton></div>
+        {d.user_pk && <div>User: <FilterButton value={d.user_pk} field="user" className="font-mono break-all">{d.user_pk}</FilterButton></div>}
         {d.dz_ip && <div>DZ IP: <span className="font-mono">{d.dz_ip}</span></div>}
-        {isValidator && d.vote_pubkey && <div>Vote Account: <span className="font-mono break-all">{d.vote_pubkey}</span></div>}
-        {!isValidator && d.node_pubkey && <div>Node Pubkey: <span className="font-mono break-all">{d.node_pubkey}</span></div>}
+        {isValidator && d.vote_pubkey && <div>Vote Account: <FilterButton value={d.vote_pubkey} field="validator" className="font-mono break-all">{d.vote_pubkey}</FilterButton></div>}
+        {!isValidator && d.node_pubkey && <div>Node Pubkey: <FilterButton value={d.node_pubkey} field="validator" className="font-mono break-all">{d.node_pubkey}</FilterButton></div>}
         {isValidator && d.stake_sol !== undefined && d.stake_sol > 0 && (
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <span>Stake: <span className="font-medium text-foreground">{d.stake_sol.toLocaleString(undefined, { maximumFractionDigits: 0 })} SOL</span></span>
@@ -386,15 +388,21 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
         )}
       >
         <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <FilterButton
-            value={event.entity_code}
-            className={cn(
+          {(() => {
+            const fieldMap: Record<string, string> = { device: 'device', link: 'link', metro: 'metro', contributor: 'contributor', validator: 'validator', gossip_node: 'validator', user: 'user' }
+            const field = fieldMap[event.entity_type]
+            const codeClassName = cn(
               "text-sm font-semibold text-left",
               event.entity_code.length > 20 && "font-mono max-w-[120px] sm:max-w-[200px] md:max-w-none truncate"
-            )}
-          >
-            {event.entity_code}
-          </FilterButton>
+            )
+            return field ? (
+              <FilterButton value={event.entity_code} field={field} className={codeClassName}>
+                {event.entity_code}
+              </FilterButton>
+            ) : (
+              <span className={codeClassName}>{event.entity_code}</span>
+            )
+          })()}
           {/* State change badges */}
           {changeType === 'created' && (
             <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
@@ -533,9 +541,9 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
         {/* Owner · User inline for validator/gossip events */}
         {validatorDetails?.owner_pubkey && (
           <div className="text-xs text-muted-foreground mt-1">
-            Owner: <FilterButton value={validatorDetails.owner_pubkey} className="font-mono text-foreground">{truncatePubkey(validatorDetails.owner_pubkey)}</FilterButton>
+            Owner: <FilterButton value={validatorDetails.owner_pubkey} field="user" className="font-mono text-foreground">{truncatePubkey(validatorDetails.owner_pubkey)}</FilterButton>
             {validatorDetails.user_pk && (
-              <span> · User: <FilterButton value={validatorDetails.user_pk} className="font-mono text-foreground">{truncatePubkey(validatorDetails.user_pk)}</FilterButton></span>
+              <span> · User: <FilterButton value={validatorDetails.user_pk} field="user" className="font-mono text-foreground">{truncatePubkey(validatorDetails.user_pk)}</FilterButton></span>
             )}
           </div>
         )}
@@ -543,14 +551,14 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
         {/* Device connection */}
         {validatorDetails?.device_pk && validatorDetails?.device_code && (
           <div className="text-xs text-muted-foreground mt-1">
-            Connected to <FilterButton value={validatorDetails.device_code} className="font-medium text-foreground">{validatorDetails.device_code}</FilterButton>
-            {validatorDetails.metro_code && <span> in <FilterButton value={validatorDetails.metro_code} className="text-foreground">{validatorDetails.metro_code}</FilterButton></span>}
+            Connected to <FilterButton value={validatorDetails.device_code} field="device" className="font-medium text-foreground">{validatorDetails.device_code}</FilterButton>
+            {validatorDetails.metro_code && <span> in <FilterButton value={validatorDetails.metro_code} field="metro" className="text-foreground">{validatorDetails.metro_code}</FilterButton></span>}
           </div>
         )}
         {userEntity?.device_pk && userEntity?.device_code && (
           <div className="text-xs text-muted-foreground mt-1">
-            Connected to <FilterButton value={userEntity.device_code} className="font-medium text-foreground">{userEntity.device_code}</FilterButton>
-            {userEntity.metro_code && <span> in <FilterButton value={userEntity.metro_code} className="text-foreground">{userEntity.metro_code}</FilterButton></span>}
+            Connected to <FilterButton value={userEntity.device_code} field="device" className="font-medium text-foreground">{userEntity.device_code}</FilterButton>
+            {userEntity.metro_code && <span> in <FilterButton value={userEntity.metro_code} field="metro" className="text-foreground">{userEntity.metro_code}</FilterButton></span>}
           </div>
         )}
 
@@ -558,9 +566,9 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
         {packetLossDetails && (
           <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
             <div>
-              Route: <FilterButton value={packetLossDetails.side_a_metro} className="font-medium text-foreground">{packetLossDetails.side_a_metro}</FilterButton>
+              Route: <FilterButton value={packetLossDetails.side_a_metro} field="metro" className="font-medium text-foreground">{packetLossDetails.side_a_metro}</FilterButton>
               {' → '}
-              <FilterButton value={packetLossDetails.side_z_metro} className="font-medium text-foreground">{packetLossDetails.side_z_metro}</FilterButton>
+              <FilterButton value={packetLossDetails.side_z_metro} field="metro" className="font-medium text-foreground">{packetLossDetails.side_z_metro}</FilterButton>
             </div>
             <div>
               Loss: <span className={getLossColor(packetLossDetails.current_loss_pct)}>{packetLossDetails.current_loss_pct.toFixed(2)}%</span>

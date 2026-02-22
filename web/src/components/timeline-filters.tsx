@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { fetchFieldValues } from '@/lib/api'
 import {
   Server,
   ChevronDown,
@@ -23,6 +25,9 @@ import {
   Search,
   RotateCw,
   Check,
+  X,
+  Loader2,
+  Filter,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { TimeRange, ActionFilter } from '@/lib/api'
@@ -279,6 +284,245 @@ function countActiveAdvancedFilters({
   return count
 }
 
+const DEBOUNCE_MS = 150
+
+const searchFieldPrefixes = [
+  { prefix: 'device:', description: 'Filter by device code' },
+  { prefix: 'link:', description: 'Filter by link code' },
+  { prefix: 'metro:', description: 'Filter by metro' },
+  { prefix: 'contributor:', description: 'Filter by contributor' },
+  { prefix: 'validator:', description: 'Filter by validator pubkey' },
+  { prefix: 'user:', description: 'Filter by user pubkey' },
+]
+
+const searchAutocompleteConfig: Record<string, { entity: string; field: string; minChars: number }> = {
+  device: { entity: 'devices', field: 'code', minChars: 2 },
+  link: { entity: 'links', field: 'code', minChars: 2 },
+  metro: { entity: 'devices', field: 'metro', minChars: 0 },
+  contributor: { entity: 'devices', field: 'contributor', minChars: 0 },
+}
+
+// Inline search input with field-prefix autocomplete for timeline events
+function TimelineSearchInput({ onCommit }: { onCommit: (filter: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [isFocused, setIsFocused] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  // Parse field:value from query
+  const fieldValueMatch = useMemo(() => {
+    const colonIndex = query.indexOf(':')
+    if (colonIndex <= 0) return null
+    const field = query.slice(0, colonIndex).toLowerCase()
+    const value = query.slice(colonIndex + 1).toLowerCase()
+    const config = searchAutocompleteConfig[field]
+    if (!config) return null
+    return { field, value, entity: config.entity, acField: config.field, minChars: config.minChars }
+  }, [query])
+
+  const meetsMinChars = fieldValueMatch != null && (fieldValueMatch.value.length >= fieldValueMatch.minChars)
+
+  const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
+    queryKey: ['field-values', fieldValueMatch?.entity, fieldValueMatch?.acField],
+    queryFn: () => fetchFieldValues(fieldValueMatch!.entity, fieldValueMatch!.acField),
+    enabled: fieldValueMatch !== null && meetsMinChars,
+    staleTime: 60000,
+  })
+
+  const filteredFieldValues = useMemo(() => {
+    if (!fieldValueMatch || !fieldValuesData) return []
+    const needle = fieldValueMatch.value
+    if (!needle) return fieldValuesData
+    return fieldValuesData.filter(v => v.toLowerCase().includes(needle))
+  }, [fieldValueMatch, fieldValuesData])
+
+  const matchingPrefixes = useMemo(() => {
+    if (query.length === 0 || query.includes(':')) return []
+    return searchFieldPrefixes.filter(p =>
+      p.prefix.toLowerCase().startsWith(query.toLowerCase())
+    )
+  }, [query])
+
+  const showAllPrefixes = query.length === 0 && isFocused
+
+  type DropdownItem =
+    | { type: 'prefix'; prefix: string; description: string }
+    | { type: 'field-value'; field: string; value: string }
+    | { type: 'type-more'; minChars: number }
+
+  const items: DropdownItem[] = useMemo(() => {
+    const result: DropdownItem[] = []
+
+    if (fieldValueMatch && !meetsMinChars && fieldValueMatch.minChars > 0) {
+      result.push({ type: 'type-more', minChars: fieldValueMatch.minChars })
+    }
+
+    if (filteredFieldValues.length > 0 && fieldValueMatch) {
+      result.push(...filteredFieldValues.map(v => ({
+        type: 'field-value' as const,
+        field: fieldValueMatch.field,
+        value: v,
+      })))
+    }
+
+    if (showAllPrefixes) {
+      result.push(...searchFieldPrefixes.map(p => ({
+        type: 'prefix' as const,
+        prefix: p.prefix,
+        description: p.description,
+      })))
+    } else if (matchingPrefixes.length > 0 && filteredFieldValues.length === 0) {
+      result.push(...matchingPrefixes.map(p => ({
+        type: 'prefix' as const,
+        prefix: p.prefix,
+        description: p.description,
+      })))
+    }
+
+    return result
+  }, [query, filteredFieldValues, fieldValueMatch, showAllPrefixes, matchingPrefixes, meetsMinChars])
+
+  useEffect(() => {
+    setSelectedIndex(-1)
+  }, [debouncedQuery, matchingPrefixes.length, showAllPrefixes])
+
+  const commitFilter = useCallback((value: string) => {
+    onCommit(value)
+    setQuery('')
+    inputRef.current?.focus()
+  }, [onCommit])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const isDropdownOpen = isFocused && items.length > 0
+    switch (e.key) {
+      case 'ArrowDown':
+        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, items.length - 1)) }
+        break
+      case 'ArrowUp':
+        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)) }
+        break
+      case 'Enter': {
+        e.preventDefault()
+        const idx = selectedIndex >= 0 ? selectedIndex : 0
+        if (idx < items.length) {
+          const item = items[idx]
+          if (item.type === 'prefix') {
+            setQuery(item.prefix)
+          } else if (item.type === 'field-value') {
+            commitFilter(`${item.field}:${item.value}`)
+          }
+        }
+        break
+      }
+      case 'Tab':
+        if (selectedIndex >= 0 && selectedIndex < items.length) {
+          const item = items[selectedIndex]
+          if (item.type === 'prefix') { e.preventDefault(); setQuery(item.prefix) }
+        }
+        break
+      case 'Escape':
+        e.preventDefault()
+        setQuery('')
+        inputRef.current?.blur()
+        break
+    }
+  }, [items, selectedIndex, query, commitFilter, isFocused])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsFocused(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const showDropdown = isFocused && items.length > 0
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center gap-1.5 px-2.5 py-1 text-sm border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
+        <Search className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          placeholder="Search..."
+          className="w-28 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-sm"
+        />
+        {fieldValuesLoading && <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />}
+      </div>
+
+      {showDropdown && (
+        <div className="absolute top-full left-0 mt-1 w-64 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg z-40">
+          {showAllPrefixes && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border flex items-center gap-1">
+              <Filter className="h-3 w-3" />
+              Filter by field
+            </div>
+          )}
+
+          {items.map((item, index) => {
+            if (item.type === 'type-more') {
+              return (
+                <div key="type-more" className="px-3 py-2 text-xs text-muted-foreground">
+                  Type at least {item.minChars} characters to see suggestions
+                </div>
+              )
+            }
+
+            if (item.type === 'field-value') {
+              return (
+                <button
+                  key={`field-value-${item.value}`}
+                  onClick={() => commitFilter(`${item.field}:${item.value}`)}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
+                    index === selectedIndex && 'bg-muted'
+                  )}
+                >
+                  <span className="flex-1 truncate">{item.value}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{item.field}</span>
+                </button>
+              )
+            }
+
+            if (item.type === 'prefix') {
+              return (
+                <button
+                  key={item.prefix}
+                  onClick={() => { setQuery(item.prefix); inputRef.current?.focus() }}
+                  className={cn(
+                    'w-full flex flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-muted transition-colors',
+                    index === selectedIndex && 'bg-muted'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{item.prefix.slice(0, -1)}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">filter</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{item.description}</span>
+                </button>
+              )
+            }
+
+            return null
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export interface TimelineFiltersProps {
   searchParams: URLSearchParams
   timeRange: TimeRange | 'custom'
@@ -304,6 +548,10 @@ export interface TimelineFiltersProps {
   onRefetch: () => void
   onResetAll: () => void
   onApplyPreset: (preset: typeof presets[0]) => void
+  searchFilters: string[]
+  onAddSearchFilter: (filter: string) => void
+  onRemoveSearchFilter: (filter: string) => void
+  onClearSearchFilters: () => void
 }
 
 export function TimelineFilters({
@@ -331,6 +579,10 @@ export function TimelineFilters({
   onRefetch,
   onResetAll,
   onApplyPreset,
+  searchFilters,
+  onAddSearchFilter,
+  onRemoveSearchFilter,
+  onClearSearchFilters,
 }: TimelineFiltersProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
@@ -402,15 +654,8 @@ export function TimelineFilters({
         {/* Presets dropdown */}
         <PresetsDropdown searchParams={searchParams} onApplyPreset={onApplyPreset} onResetAll={onResetAll} />
 
-        {/* Search button */}
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
-          className="flex items-center gap-1.5 px-2.5 py-1 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md bg-background hover:bg-muted transition-colors"
-          title="Search (Cmd+K)"
-        >
-          <Search className="h-3.5 w-3.5" />
-          <kbd className="font-mono text-[10px] text-muted-foreground">⌘K</kbd>
-        </button>
+        {/* Inline search */}
+        <TimelineSearchInput onCommit={onAddSearchFilter} />
 
         {/* Refresh */}
         <button
@@ -422,6 +667,38 @@ export function TimelineFilters({
           <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
         </button>
       </div>
+
+      {/* Search filter badges */}
+      {searchFilters.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {searchFilters.map((filter, idx) => {
+            const colonIdx = filter.indexOf(':')
+            const field = colonIdx > 0 ? filter.slice(0, colonIdx).toLowerCase() : ''
+            const value = colonIdx > 0 ? filter.slice(colonIdx + 1) : filter
+            const fieldIcons: Record<string, React.ElementType> = { device: Server, link: Link2, metro: MapPin, contributor: Building2, validator: Landmark, user: Users }
+            const Icon = fieldIcons[field] || Search
+            return (
+              <button
+                key={idx}
+                onClick={() => onRemoveSearchFilter(filter)}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+              >
+                <Icon className="h-3 w-3" />
+                {value}
+                <X className="h-3 w-3" />
+              </button>
+            )
+          })}
+          {searchFilters.length > 1 && (
+            <button
+              onClick={onClearSearchFilters}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Advanced filters toggle */}
       <div>
