@@ -176,11 +176,11 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     return map
   }, [data, series])
 
-  // In bidirectional mode, group series by interface (pair in/out)
-  const interfaceGroups = useMemo((): InterfaceGroup[] => {
+  // In bidirectional mode, group ALL series by interface (for legend)
+  const allInterfaceGroups = useMemo((): InterfaceGroup[] => {
     if (!bidirectional) return []
     const groupMap = new Map<string, { in?: SeriesInfo; out?: SeriesInfo }>()
-    for (const s of visibleSeriesList) {
+    for (const s of series) {
       const intfKey = `${s.device}-${s.intf}`
       if (!groupMap.has(intfKey)) groupMap.set(intfKey, {})
       const g = groupMap.get(intfKey)!
@@ -202,7 +202,13 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       })
     }
     return groups
-  }, [bidirectional, visibleSeriesList, series])
+  }, [bidirectional, series])
+
+  // Visible interface groups (for chart rendering)
+  const interfaceGroups = useMemo((): InterfaceGroup[] => {
+    if (!bidirectional) return []
+    return allInterfaceGroups.filter(g => visibleSeries.has(g.inSeries.key))
+  }, [bidirectional, allInterfaceGroups, visibleSeries])
 
   // Keep refs in sync for tooltip hook closure
   useEffect(() => {
@@ -723,36 +729,27 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
 
   // Compute latest values (last non-null per series/interface)
   const latestValues = useMemo(() => {
-    if (bidirectional && interfaceGroups.length > 0) {
-      // Bidirectional: compute Rx/Tx per interface group
+    if (bidirectional && allInterfaceGroups.length > 0) {
+      // Bidirectional: compute Rx/Tx per interface group from raw data
+      // Use raw data so deselected series still have values for legend display
       const m = new Map<string, { rx: number; tx: number }>()
-      for (let gi = 0; gi < interfaceGroups.length; gi++) {
-        const g = interfaceGroups[gi]
-        // Find the Rx and Tx data array indices in uplotData
-        // In non-stacked: pairs at 1+gi*2, 2+gi*2
-        // In stacked: more complex layout, search by label
-        let rxArr: (number | null | undefined)[] | undefined
-        let txArr: (number | null | undefined)[] | undefined
-        for (let si = 1; si < uplotSeries.length; si++) {
-          if (uplotSeries[si].label === `${g.intfKey} Rx`) rxArr = uplotData[si] as (number | null)[]
-          if (uplotSeries[si].label === `${g.intfKey} Tx`) txArr = uplotData[si] as (number | null)[]
+      // Build a map of latest timestamp per interface
+      const latestByIntf = new Map<string, { rx: number; tx: number; time: number }>()
+      for (const pt of data) {
+        const intfKey = `${pt.device}-${pt.intf}`
+        const time = new Date(pt.time).getTime()
+        const existing = latestByIntf.get(intfKey)
+        if (!existing || time > existing.time) {
+          latestByIntf.set(intfKey, { rx: pt.in_bps, tx: pt.out_bps, time })
         }
-        let rx = 0, tx = 0
-        if (rxArr) {
-          for (let j = rxArr.length - 1; j >= 0; j--) {
-            if (rxArr[j] != null) { rx = rxArr[j] as number; break }
-          }
-        }
-        if (txArr) {
-          for (let j = txArr.length - 1; j >= 0; j--) {
-            if (txArr[j] != null) { tx = Math.abs(txArr[j] as number); break }
-          }
-        }
-        m.set(g.intfKey, { rx, tx })
+      }
+      for (const g of allInterfaceGroups) {
+        const latest = latestByIntf.get(g.intfKey)
+        m.set(g.intfKey, latest ? { rx: latest.rx, tx: latest.tx } : { rx: 0, tx: 0 })
       }
       return m
     }
-    // Non-bidirectional: single value per series
+    // Non-bidirectional: single value per series from uplot data
     const m = new Map<string, number>()
     for (let si = 1; si < uplotSeries.length; si++) {
       const label = uplotSeries[si].label
@@ -764,7 +761,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       }
     }
     return m
-  }, [uplotData, uplotSeries, bidirectional, interfaceGroups])
+  }, [data, uplotData, uplotSeries, bidirectional, allInterfaceGroups])
 
   // Compute hover values (at cursor position)
   const hoverValues = useMemo(() => {
@@ -802,30 +799,30 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   // In bidirectional mode, filter/sort interface groups for legend
   const filteredInterfaceGroups = useMemo(() => {
     if (!bidirectional) return []
-    if (!searchText.trim()) return interfaceGroups
+    if (!searchText.trim()) return allInterfaceGroups
     const pattern = searchText.toLowerCase()
     if (pattern.includes('*')) {
       try {
         const regex = new RegExp(pattern.replace(/\*/g, '.*'))
-        return interfaceGroups.filter(g =>
+        return allInterfaceGroups.filter(g =>
           regex.test(g.intfKey.toLowerCase()) ||
           regex.test(g.device.toLowerCase()) ||
           regex.test(g.intf.toLowerCase())
         )
       } catch {
-        return interfaceGroups.filter(g =>
+        return allInterfaceGroups.filter(g =>
           g.intfKey.toLowerCase().includes(pattern) ||
           g.device.toLowerCase().includes(pattern) ||
           g.intf.toLowerCase().includes(pattern)
         )
       }
     }
-    return interfaceGroups.filter(g =>
+    return allInterfaceGroups.filter(g =>
       g.intfKey.toLowerCase().includes(pattern) ||
       g.device.toLowerCase().includes(pattern) ||
       g.intf.toLowerCase().includes(pattern)
     )
-  }, [bidirectional, interfaceGroups, searchText])
+  }, [bidirectional, allInterfaceGroups, searchText])
 
   const sortedInterfaceGroups = useMemo(() => {
     if (!bidirectional) return []
@@ -845,7 +842,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const handleBidirectionalClick = useCallback((intfKey: string, filteredIndex: number, event: React.MouseEvent) => {
     // In bidirectional mode, selectedSeries stores intfKey (not individual in/out keys)
     // We need to map to the actual series keys for visibility
-    const group = interfaceGroups.find(g => g.intfKey === intfKey)
+    const group = allInterfaceGroups.find(g => g.intfKey === intfKey)
     if (!group) return
 
     const inKey = group.inSeries.key
@@ -864,27 +861,38 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       }
       setSelectedSeries(newSelection)
     } else if (event.ctrlKey || event.metaKey) {
-      const newSelection = new Set(selectedSeries)
-      if (newSelection.has(inKey)) {
-        newSelection.delete(inKey)
-        newSelection.delete(outKey)
-      } else {
-        newSelection.add(inKey)
-        newSelection.add(outKey)
-      }
-      setSelectedSeries(newSelection)
+      // Cmd/Ctrl+click: solo this interface (show only this one)
+      setSelectedSeries(new Set([inKey, outKey]))
     } else {
-      if (selectedSeries.has(inKey)) {
+      // Plain click: toggle this interface on/off
+      if (selectedSeries.size === 0) {
+        // Nothing explicitly selected (all visible) — select all except this one
+        const allExcept = new Set<string>()
+        for (const g of allInterfaceGroups) {
+          if (g.intfKey !== intfKey) {
+            allExcept.add(g.inSeries.key)
+            allExcept.add(g.outSeries.key)
+          }
+        }
+        setSelectedSeries(allExcept.size > 0 ? allExcept : new Set(['__none__']))
+      } else if (selectedSeries.has(inKey)) {
+        // Currently visible — hide it
         const newSelection = new Set(selectedSeries)
         newSelection.delete(inKey)
         newSelection.delete(outKey)
-        setSelectedSeries(newSelection)
+        setSelectedSeries(newSelection.size > 0 ? newSelection : new Set())
       } else {
-        setSelectedSeries(new Set([inKey, outKey]))
+        // Currently hidden — show it
+        const newSelection = new Set(selectedSeries)
+        newSelection.add(inKey)
+        newSelection.add(outKey)
+        // If all are now selected, clear selection (show all)
+        const allSelected = allInterfaceGroups.every(g => newSelection.has(g.inSeries.key))
+        setSelectedSeries(allSelected ? new Set() : newSelection)
       }
     }
     setLastClickedIndex(filteredIndex)
-  }, [interfaceGroups, selectedSeries, lastClickedIndex, sortedInterfaceGroups])
+  }, [allInterfaceGroups, selectedSeries, lastClickedIndex, sortedInterfaceGroups])
 
   // Handle series selection
   const handleSeriesClick = (seriesKey: string, filteredIndex: number, event: React.MouseEvent) => {
@@ -897,22 +905,26 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       }
       setSelectedSeries(newSelection)
     } else if (event.ctrlKey || event.metaKey) {
-      const newSelection = new Set(selectedSeries)
-      if (newSelection.has(seriesKey)) {
-        newSelection.delete(seriesKey)
-      } else {
-        newSelection.add(seriesKey)
-      }
-      setSelectedSeries(newSelection)
+      // Cmd/Ctrl+click: solo this series (show only this one)
+      setSelectedSeries(new Set([seriesKey]))
     } else {
-      if (selectedSeries.has(seriesKey)) {
-        // If clicking on already selected item, deselect it
+      // Plain click: toggle this series on/off
+      if (selectedSeries.size === 0) {
+        // Nothing explicitly selected (all visible) — select all except this one
+        const allExcept = new Set(series.map(s => s.key).filter(k => k !== seriesKey))
+        setSelectedSeries(allExcept.size > 0 ? allExcept : new Set(['__none__']))
+      } else if (selectedSeries.has(seriesKey)) {
+        // Currently visible — hide it
         const newSelection = new Set(selectedSeries)
         newSelection.delete(seriesKey)
-        setSelectedSeries(newSelection)
+        setSelectedSeries(newSelection.size > 0 ? newSelection : new Set())
       } else {
-        // Otherwise, select only this item
-        setSelectedSeries(new Set([seriesKey]))
+        // Currently hidden — show it
+        const newSelection = new Set(selectedSeries)
+        newSelection.add(seriesKey)
+        // If all are now selected, clear selection (show all)
+        const allSelected = series.every(s => newSelection.has(s.key))
+        setSelectedSeries(allSelected ? new Set() : newSelection)
       }
     }
     setLastClickedIndex(filteredIndex)
@@ -1081,7 +1093,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                 onClick={() => {
                   if (bidirectional) {
                     const latest = latestValues as Map<string, { rx: number; tx: number }>
-                    const top10 = [...interfaceGroups]
+                    const top10 = [...allInterfaceGroups]
                       .sort((a, b) => {
                         const va = latest.get(a.intfKey)
                         const vb = latest.get(b.intfKey)
@@ -1107,18 +1119,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                 Top 10
               </button>
               <button
-                onClick={() => {
-                  if (bidirectional) {
-                    const keys = new Set<string>()
-                    for (const g of filteredInterfaceGroups) {
-                      keys.add(g.inSeries.key)
-                      keys.add(g.outSeries.key)
-                    }
-                    setSelectedSeries(keys)
-                  } else {
-                    setSelectedSeries(new Set(filteredSeries.map(s => s.key)))
-                  }
-                }}
+                onClick={() => setSelectedSeries(new Set())}
                 className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
               >
                 All
