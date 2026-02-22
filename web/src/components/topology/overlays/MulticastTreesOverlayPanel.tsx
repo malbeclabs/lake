@@ -505,39 +505,6 @@ export function MulticastTreesOverlayPanel({
               </div>
             )}
           </div>
-
-          {/* Legend */}
-          <div className="pt-2 border-t border-[var(--border)]">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5">
-              Legend
-            </div>
-            <div className="space-y-1.5 text-[10px]">
-              <div className="flex items-center gap-2">
-                <div className="flex gap-0.5">
-                  {MULTICAST_PUBLISHER_COLORS.slice(0, 4).map((c, i) => (
-                    <div
-                      key={i}
-                      className="w-2 h-2 rounded-full"
-                      style={{ backgroundColor: isDark ? c.dark : c.light }}
-                    />
-                  ))}
-                </div>
-                <span>Publisher (each has unique color)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
-                <span>Subscriber (destination)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-0.5 bg-purple-500 rounded" />
-                <span>Tree path</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: isDark ? '#a855f7' : '#7c3aed' }} />
-                <span>Validator</span>
-              </div>
-            </div>
-          </div>
         </div>
       )}
     </div>
@@ -545,6 +512,23 @@ export function MulticastTreesOverlayPanel({
 }
 
 const TRAFFIC_TIME_RANGES = ['1h', '6h', '12h', '24h'] as const
+const BUCKET_OPTIONS = ['auto', '2s', '10s', '30s', '1m', '2m', '5m', '10m'] as const
+const AUTO_BUCKET_LABEL: Record<string, string> = { '1h': '30s', '6h': '2m', '12h': '5m', '24h': '10m' }
+
+function formatPps(pps: number): string {
+  if (pps === 0) return '—'
+  if (pps >= 1e9) return `${(pps / 1e9).toFixed(1)} Gpps`
+  if (pps >= 1e6) return `${(pps / 1e6).toFixed(1)} Mpps`
+  if (pps >= 1e3) return `${(pps / 1e3).toFixed(1)} Kpps`
+  return `${pps.toFixed(0)} pps`
+}
+
+function formatAxisPps(pps: number): string {
+  if (pps >= 1e9) return `${(pps / 1e9).toFixed(1)}G`
+  if (pps >= 1e6) return `${(pps / 1e6).toFixed(1)}M`
+  if (pps >= 1e3) return `${(pps / 1e3).toFixed(0)}K`
+  return `${pps.toFixed(0)}`
+}
 
 function formatTime(timeStr: string): string {
   const d = new Date(timeStr)
@@ -585,10 +569,16 @@ function MulticastTrafficChartSection({
 }) {
   const [open, setOpen] = useState(true)
   const [timeRange, setTimeRange] = useState<string>('1h')
+  const [metric, setMetric] = useState<'throughput' | 'packets'>('throughput')
+  const [bucket, setBucket] = useState<string>('auto')
+
+  const bucketSeconds = bucket === 'auto' ? undefined : bucket.endsWith('m')
+    ? String(parseInt(bucket) * 60)
+    : String(parseInt(bucket))
 
   const { data: trafficData, isLoading } = useQuery({
-    queryKey: ['multicast-traffic', groupCode, timeRange],
-    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange),
+    queryKey: ['multicast-traffic', groupCode, timeRange, bucket],
+    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange, bucketSeconds),
     refetchInterval: 30000,
     enabled: open,
   })
@@ -630,8 +620,13 @@ function MulticastTrafficChartSection({
         timeMap.set(p.time, row)
       }
       // From user perspective: device out = user inbound, device in = user outbound
-      row[`t${p.tunnel_id}_in`] = p.out_bps
-      row[`t${p.tunnel_id}_out`] = -p.in_bps
+      if (metric === 'throughput') {
+        row[`t${p.tunnel_id}_in`] = p.out_bps
+        row[`t${p.tunnel_id}_out`] = -p.in_bps
+      } else {
+        row[`t${p.tunnel_id}_in`] = p.out_pps
+        row[`t${p.tunnel_id}_out`] = -p.in_pps
+      }
     }
 
     // Fill missing tunnels with 0 so Recharts renders continuous lines
@@ -646,7 +641,7 @@ function MulticastTrafficChartSection({
       String(a.time).localeCompare(String(b.time))
     )
     return { chartData: data, tunnelIds: [...tunnels].sort((a, b) => a - b) }
-  }, [trafficData, activeTab])
+  }, [trafficData, activeTab, metric])
 
   // Assign a unique color per tunnel from the palette
   const getTunnelColor = (tunnelId: number) => {
@@ -656,6 +651,45 @@ function MulticastTrafficChartSection({
 
   // Track hovered chart index for legend table values
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [hoveredSeries, setHoveredSeries] = useState<number | null>(null)
+  const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set())
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
+
+  // Empty selection = all visible
+  const visibleSeries = useMemo(() => {
+    if (selectedSeries.has(-1)) return new Set<number>()
+    if (selectedSeries.size > 0) return selectedSeries
+    return new Set(tunnelIds)
+  }, [selectedSeries, tunnelIds])
+
+  const handleSeriesClick = (tid: number, index: number, event: React.MouseEvent) => {
+    if (event.shiftKey && lastClickedIndex !== null) {
+      const start = Math.min(lastClickedIndex, index)
+      const end = Math.max(lastClickedIndex, index)
+      const newSelection = new Set(selectedSeries)
+      for (let i = start; i <= end; i++) {
+        newSelection.add(tunnelIds[i])
+      }
+      setSelectedSeries(newSelection)
+    } else if (event.ctrlKey || event.metaKey) {
+      const newSelection = new Set(selectedSeries)
+      if (newSelection.has(tid)) {
+        newSelection.delete(tid)
+      } else {
+        newSelection.add(tid)
+      }
+      setSelectedSeries(newSelection)
+    } else {
+      if (selectedSeries.has(tid)) {
+        const newSelection = new Set(selectedSeries)
+        newSelection.delete(tid)
+        setSelectedSeries(newSelection)
+      } else {
+        setSelectedSeries(new Set([tid]))
+      }
+    }
+    setLastClickedIndex(index)
+  }
 
   // Values to display in the legend: hovered point or latest
   const displayValues = useMemo(() => {
@@ -675,32 +709,48 @@ function MulticastTrafficChartSection({
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider w-full hover:text-foreground transition-colors"
-      >
-        <BarChart3 className="h-3 w-3" />
-        Traffic ({activeTab})
-        {open ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
-      </button>
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors"
+        >
+          <BarChart3 className="h-3 w-3" />
+          Traffic ({activeTab})
+          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        </button>
+        {open && (
+          <div className="flex gap-1 ml-auto" onClick={e => e.stopPropagation()}>
+            <select
+              value={metric}
+              onChange={e => setMetric(e.target.value as 'throughput' | 'packets')}
+              className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
+            >
+              <option value="throughput">bps</option>
+              <option value="packets">pps</option>
+            </select>
+            <select
+              value={bucket}
+              onChange={e => setBucket(e.target.value)}
+              className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
+            >
+              {BUCKET_OPTIONS.map(b => (
+                <option key={b} value={b}>{b === 'auto' ? `auto (${AUTO_BUCKET_LABEL[timeRange] || '30s'})` : b}</option>
+              ))}
+            </select>
+            <select
+              value={timeRange}
+              onChange={e => setTimeRange(e.target.value)}
+              className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
+            >
+              {TRAFFIC_TIME_RANGES.map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
       {open && (
         <div className="mt-2">
-          {/* Time range pills */}
-          <div className="flex gap-1 mb-2">
-            {TRAFFIC_TIME_RANGES.map(r => (
-              <button
-                key={r}
-                onClick={() => setTimeRange(r)}
-                className={`px-1.5 py-0.5 text-[10px] rounded ${
-                  timeRange === r
-                    ? 'bg-purple-500/20 text-purple-500 font-medium'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-[var(--muted)]'
-                }`}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
 
           {isLoading && (
             <div className="text-[10px] text-muted-foreground py-4 text-center">Loading...</div>
@@ -714,8 +764,8 @@ function MulticastTrafficChartSection({
             <div>
               {/* Chart */}
               <div className="relative">
-                <span className="absolute top-0.5 left-[46px] text-[8px] text-muted-foreground/50 pointer-events-none z-10">▲ In</span>
-                <span className="absolute bottom-4 left-[46px] text-[8px] text-muted-foreground/50 pointer-events-none z-10">▼ Out</span>
+                <span className="absolute top-0.5 left-0 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▲ In</span>
+                <span className="absolute bottom-4 left-0 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▼ Out</span>
                 <div className="h-44">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
@@ -739,7 +789,7 @@ function MulticastTrafficChartSection({
                         tick={{ fontSize: 9 }}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={(v) => formatAxisBps(Math.abs(v))}
+                        tickFormatter={(v) => metric === 'throughput' ? formatAxisBps(Math.abs(v)) : formatAxisPps(Math.abs(v))}
                         width={45}
                       />
                       <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
@@ -747,24 +797,26 @@ function MulticastTrafficChartSection({
                         content={() => null}
                         cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
                       />
-                      {tunnelIds.map(tid => (
+                      {tunnelIds.filter(tid => visibleSeries.has(tid)).map(tid => (
                         <Line
                           key={`${tid}_in`}
                           type="monotone"
                           dataKey={`t${tid}_in`}
                           stroke={getTunnelColor(tid)}
                           strokeWidth={1.5}
+                          strokeOpacity={hoveredSeries !== null && hoveredSeries !== tid ? 0 : 1}
                           dot={false}
                           isAnimationActive={false}
                         />
                       ))}
-                      {tunnelIds.map(tid => (
+                      {tunnelIds.filter(tid => visibleSeries.has(tid)).map(tid => (
                         <Line
                           key={`${tid}_out`}
                           type="monotone"
                           dataKey={`t${tid}_out`}
                           stroke={getTunnelColor(tid)}
                           strokeWidth={1.5}
+                          strokeOpacity={hoveredSeries !== null && hoveredSeries !== tid ? 0 : 1}
                           strokeDasharray="4 2"
                           dot={false}
                           isAnimationActive={false}
@@ -776,35 +828,45 @@ function MulticastTrafficChartSection({
               </div>
 
               {/* Legend table */}
-              <div className="mt-2">
-                <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-2 gap-y-0.5 text-[10px]">
-                  {/* Header */}
-                  <div />
-                  <div className="text-muted-foreground/60 font-medium">Device</div>
-                  <div className="text-muted-foreground/60 font-medium text-right">↓ In</div>
-                  <div className="text-muted-foreground/60 font-medium text-right">↑ Out</div>
-                  {/* Rows */}
-                  {tunnelIds.map(tid => {
-                    const info = tunnelInfo.get(tid)
-                    const vals = displayValues.get(tid)
-                    return (
-                      <div key={tid} className="contents">
-                        <div className="flex items-center">
-                          <div className="w-2 h-2 rounded-sm" style={{ backgroundColor: getTunnelColor(tid) }} />
-                        </div>
-                        <div className="text-foreground truncate font-mono">
-                          {info?.code ?? `t${tid}`} <span className="text-muted-foreground">t{tid}</span>
-                        </div>
-                        <div className="text-right font-mono tabular-nums text-foreground">
-                          {vals ? formatBandwidth(vals.inBps) : '—'}
-                        </div>
-                        <div className="text-right font-mono tabular-nums text-muted-foreground">
-                          {vals ? formatBandwidth(vals.outBps) : '—'}
-                        </div>
-                      </div>
-                    )
-                  })}
+              <div className="mt-2 text-[10px]">
+                <div className="flex items-center gap-2 px-1 py-0.5 text-muted-foreground/60 font-medium">
+                  <div className="w-2" />
+                  <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                    Device
+                    <span className="font-normal">
+                      <button className="hover:text-foreground transition-colors" onClick={() => setSelectedSeries(new Set())}>all</button>
+                      {' / '}
+                      <button className="hover:text-foreground transition-colors" onClick={() => setSelectedSeries(new Set([-1]))}>none</button>
+                    </span>
+                  </div>
+                  <div className="text-right">↓ In</div>
+                  <div className="text-right">↑ Out</div>
                 </div>
+                {tunnelIds.map((tid, i) => {
+                  const info = tunnelInfo.get(tid)
+                  const vals = displayValues.get(tid)
+                  const isVisible = visibleSeries.has(tid)
+                  return (
+                    <div
+                      key={tid}
+                      className={`flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer select-none transition-colors hover:bg-muted/60 ${!isVisible ? 'opacity-40' : ''}`}
+                      onClick={(e) => handleSeriesClick(tid, i, e)}
+                      onMouseEnter={() => isVisible && setHoveredSeries(tid)}
+                      onMouseLeave={() => setHoveredSeries(null)}
+                    >
+                      <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : getTunnelColor(tid) }} />
+                      <div className="flex-1 min-w-0 text-foreground truncate font-mono">
+                        {info?.code ?? `t${tid}`} <span className="text-muted-foreground">t{tid}</span>
+                      </div>
+                      <div className="text-right font-mono tabular-nums text-foreground">
+                        {vals && isVisible ? (metric === 'throughput' ? formatBandwidth(vals.inBps) : formatPps(vals.inBps)) : '—'}
+                      </div>
+                      <div className="text-right font-mono tabular-nums text-muted-foreground">
+                        {vals && isVisible ? (metric === 'throughput' ? formatBandwidth(vals.outBps) : formatPps(vals.outBps)) : '—'}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
