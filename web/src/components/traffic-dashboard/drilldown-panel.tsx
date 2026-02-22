@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react'
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
@@ -50,6 +50,16 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   const [sortBy, setSortBy] = useState<'value' | 'name'>('value')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [listHeight, setListHeight] = useState(160)
+  const highlightSeries = useCallback((intf: string | null) => {
+    const u = plotRef.current
+    if (!u) return
+    for (let i = 1; i < u.series.length; i++) {
+      const label = typeof u.series[i].label === 'string' ? u.series[i].label as string : ''
+      const seriesIntf = label.replace(/ (Rx|Tx)$/, '')
+      u.series[i].alpha = intf === null || seriesIntf === intf ? 1 : 0
+    }
+    u.redraw()
+  }, [])
   const listContainerRef = useRef<HTMLDivElement>(null)
 
   const isPinned = state.pinnedEntities.some(
@@ -482,6 +492,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
                             isVisible ? '' : 'opacity-40'
                           }`}
                           onClick={(e) => handleIntfClick(intf, filteredIndex, e)}
+                          onMouseEnter={() => isVisible && highlightSeries(intf)}
+                          onMouseLeave={() => highlightSeries(null)}
                         >
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />

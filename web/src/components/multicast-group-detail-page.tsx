@@ -352,7 +352,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                     dataKey={`${key}_in`}
                     stroke={getSeriesColor(key)}
                     strokeWidth={1.5}
-                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0.2 : 1}
+                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0 : 1}
                     dot={false}
                     isAnimationActive={false}
                   />
@@ -364,7 +364,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                     dataKey={`${key}_out`}
                     stroke={getSeriesColor(key)}
                     strokeWidth={1.5}
-                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0.2 : 1}
+                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0 : 1}
                     strokeDasharray="4 2"
                     dot={false}
                     isAnimationActive={false}

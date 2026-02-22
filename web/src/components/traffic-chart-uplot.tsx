@@ -74,6 +74,18 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [sortBy, setSortBy] = useState<'value' | 'name'>('value')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const highlightSeries = useCallback((key: string | null) => {
+    const u = plotRef.current
+    if (!u || stacked) return
+    for (let i = 1; i < u.series.length; i++) {
+      const label = typeof u.series[i].label === 'string' ? u.series[i].label as string : ''
+      const seriesKey = label.replace(/ (Rx|Tx)$/, '')
+      const isMatch = key === null || seriesKey === key
+      u.series[i].alpha = isMatch ? 1 : 0
+    }
+    u.redraw()
+  }, [stacked])
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const hoveredIdxRef = useRef<number | null>(null)
   const [tooltip, setTooltip] = useState<{
@@ -861,34 +873,25 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       }
       setSelectedSeries(newSelection)
     } else if (event.ctrlKey || event.metaKey) {
-      // Cmd/Ctrl+click: solo this interface (show only this one)
-      setSelectedSeries(new Set([inKey, outKey]))
+      // Cmd/Ctrl+click: toggle individual on/off
+      const newSelection = new Set(selectedSeries)
+      if (newSelection.has(inKey)) {
+        newSelection.delete(inKey)
+        newSelection.delete(outKey)
+      } else {
+        newSelection.add(inKey)
+        newSelection.add(outKey)
+      }
+      setSelectedSeries(newSelection)
     } else {
-      // Plain click: toggle this interface on/off
-      if (selectedSeries.size === 0) {
-        // Nothing explicitly selected (all visible) — select all except this one
-        const allExcept = new Set<string>()
-        for (const g of allInterfaceGroups) {
-          if (g.intfKey !== intfKey) {
-            allExcept.add(g.inSeries.key)
-            allExcept.add(g.outSeries.key)
-          }
-        }
-        setSelectedSeries(allExcept.size > 0 ? allExcept : new Set(['__none__']))
-      } else if (selectedSeries.has(inKey)) {
-        // Currently visible — hide it
+      // Plain click: solo select, or deselect if already selected
+      if (selectedSeries.has(inKey)) {
         const newSelection = new Set(selectedSeries)
         newSelection.delete(inKey)
         newSelection.delete(outKey)
-        setSelectedSeries(newSelection.size > 0 ? newSelection : new Set())
+        setSelectedSeries(newSelection)
       } else {
-        // Currently hidden — show it
-        const newSelection = new Set(selectedSeries)
-        newSelection.add(inKey)
-        newSelection.add(outKey)
-        // If all are now selected, clear selection (show all)
-        const allSelected = allInterfaceGroups.every(g => newSelection.has(g.inSeries.key))
-        setSelectedSeries(allSelected ? new Set() : newSelection)
+        setSelectedSeries(new Set([inKey, outKey]))
       }
     }
     setLastClickedIndex(filteredIndex)
@@ -908,23 +911,13 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       // Cmd/Ctrl+click: solo this series (show only this one)
       setSelectedSeries(new Set([seriesKey]))
     } else {
-      // Plain click: toggle this series on/off
-      if (selectedSeries.size === 0) {
-        // Nothing explicitly selected (all visible) — select all except this one
-        const allExcept = new Set(series.map(s => s.key).filter(k => k !== seriesKey))
-        setSelectedSeries(allExcept.size > 0 ? allExcept : new Set(['__none__']))
-      } else if (selectedSeries.has(seriesKey)) {
-        // Currently visible — hide it
+      // Plain click: solo select, or deselect if already selected
+      if (selectedSeries.has(seriesKey)) {
         const newSelection = new Set(selectedSeries)
         newSelection.delete(seriesKey)
-        setSelectedSeries(newSelection.size > 0 ? newSelection : new Set())
+        setSelectedSeries(newSelection)
       } else {
-        // Currently hidden — show it
-        const newSelection = new Set(selectedSeries)
-        newSelection.add(seriesKey)
-        // If all are now selected, clear selection (show all)
-        const allSelected = series.every(s => newSelection.has(s.key))
-        setSelectedSeries(allSelected ? new Set() : newSelection)
+        setSelectedSeries(new Set([seriesKey]))
       }
     }
     setLastClickedIndex(filteredIndex)
@@ -1167,6 +1160,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                         isVisible ? '' : 'opacity-40'
                       }`}
                       onClick={(e) => handleBidirectionalClick(g.intfKey, filteredIndex, e)}
+                      onMouseEnter={() => isVisible && highlightSeries(g.intfKey)}
+                      onMouseLeave={() => highlightSeries(null)}
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         <div
@@ -1194,6 +1189,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                         isSelected ? '' : 'opacity-40'
                       }`}
                       onClick={(e) => handleSeriesClick(s.key, filteredIndex, e)}
+                      onMouseEnter={() => isSelected && highlightSeries(s.key)}
+                      onMouseLeave={() => highlightSeries(null)}
                     >
                       <div className="flex items-center gap-1.5 min-w-0">
                         <div
