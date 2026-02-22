@@ -2658,15 +2658,15 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			entityID      string
-			snapshotTS    time.Time
-			pk            string
-			ownerPubkey   string
-			kind          string
-			status        string
-			isDeleted     uint8
-			prevStatus    *string
-			dzIP          string
+			entityID        string
+			snapshotTS      time.Time
+			pk              string
+			ownerPubkey     string
+			kind            string
+			status          string
+			isDeleted       uint8
+			prevStatus      *string
+			dzIP            string
 			devicePK        string
 			deviceCode      string
 			metroCode       string
@@ -2821,15 +2821,15 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			gossipIP      string
-			nodePubkey    string
-			eventTS       time.Time
-			changeType    string
-			votePubkey    string
-			stakeLamports int64
-			stakeSharePct float64
-			dzOwnerPubkey string
-			userPK        string
+			gossipIP        string
+			nodePubkey      string
+			eventTS         time.Time
+			changeType      string
+			votePubkey      string
+			stakeLamports   int64
+			stakeSharePct   float64
+			dzOwnerPubkey   string
+			userPK          string
 			deviceCode      string
 			devicePK        string
 			metroCode       string
@@ -3001,15 +3001,15 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			votePubkey    string
-			nodePubkey    string
-			eventTS       time.Time
-			changeType    string
-			stakeLamports int64
-			stakeSharePct float64
-			gossipIP      string
-			dzOwnerPubkey string
-			userPK        string
+			votePubkey      string
+			nodePubkey      string
+			eventTS         time.Time
+			changeType      string
+			stakeLamports   int64
+			stakeSharePct   float64
+			gossipIP        string
+			dzOwnerPubkey   string
+			userPK          string
 			deviceCode      string
 			devicePK        string
 			metroCode       string
