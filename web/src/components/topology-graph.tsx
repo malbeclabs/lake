@@ -134,27 +134,27 @@ export function TopologyGraph({
     setSelectedMulticastGroup(code)
   }, [])
 
-  // Handler to toggle individual publisher
-  const handleTogglePublisher = useCallback((devicePK: string) => {
+  // Handler to toggle individual publisher (by user_pk)
+  const handleTogglePublisher = useCallback((userPK: string) => {
     setEnabledPublishers(prev => {
       const next = new Set(prev)
-      if (next.has(devicePK)) {
-        next.delete(devicePK)
+      if (next.has(userPK)) {
+        next.delete(userPK)
       } else {
-        next.add(devicePK)
+        next.add(userPK)
       }
       return next
     })
   }, [])
 
-  // Handler to toggle individual subscriber
-  const handleToggleSubscriber = useCallback((devicePK: string) => {
+  // Handler to toggle individual subscriber (by user_pk)
+  const handleToggleSubscriber = useCallback((userPK: string) => {
     setEnabledSubscribers(prev => {
       const next = new Set(prev)
-      if (next.has(devicePK)) {
-        next.delete(devicePK)
+      if (next.has(userPK)) {
+        next.delete(userPK)
       } else {
-        next.add(devicePK)
+        next.add(userPK)
       }
       return next
     })
@@ -168,7 +168,7 @@ export function TopologyGraph({
     if (enabled) {
       const pubs = new Set<string>()
       detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.device_pk)
+        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.user_pk)
       })
       setEnabledPublishers(pubs)
     } else {
@@ -184,7 +184,7 @@ export function TopologyGraph({
     if (enabled) {
       const subs = new Set<string>()
       detail.members.forEach(m => {
-        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.device_pk)
+        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.user_pk)
       })
       setEnabledSubscribers(subs)
     } else {
@@ -234,16 +234,43 @@ export function TopologyGraph({
     const pubs = new Set<string>()
     const subs = new Set<string>()
     detail.members.forEach(m => {
-      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.device_pk)) {
-        pubs.add(m.device_pk)
+      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.user_pk)) {
+        pubs.add(m.user_pk)
       }
-      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.device_pk)) {
-        subs.add(m.device_pk)
+      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.user_pk)) {
+        subs.add(m.user_pk)
       }
     })
     setEnabledPublishers(pubs)
     setEnabledSubscribers(subs)
   }, [multicastTreesEnabled, selectedMulticastGroup, multicastGroupDetails])
+
+  // Derive device-level enabled sets from user_pk-keyed enabled sets
+  const enabledPublisherDevicePKs = useMemo(() => {
+    const set = new Set<string>()
+    if (!selectedMulticastGroup) return set
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return set
+    for (const m of detail.members) {
+      if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.user_pk)) {
+        set.add(m.device_pk)
+      }
+    }
+    return set
+  }, [selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
+
+  const enabledSubscriberDevicePKs = useMemo(() => {
+    const set = new Set<string>()
+    if (!selectedMulticastGroup) return set
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return set
+    for (const m of detail.members) {
+      if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.user_pk)) {
+        set.add(m.device_pk)
+      }
+    }
+    return set
+  }, [selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
   // Build publisher color map for consistent colors (shared with panel)
   const multicastPublisherColorMap = useMemo(() => {
@@ -1191,10 +1218,10 @@ export function TopologyGraph({
       const detail = multicastGroupDetails.get(selectedMulticastGroup)
       if (detail?.members) {
         detail.members.forEach(m => {
-          if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)) {
+          if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.user_pk)) {
             publisherCounts.set(m.device_pk, (publisherCounts.get(m.device_pk) || 0) + 1)
           }
-          if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.device_pk)) {
+          if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.user_pk)) {
             subscriberCounts.set(m.device_pk, (subscriberCounts.get(m.device_pk) || 0) + 1)
           }
         })
@@ -1256,7 +1283,7 @@ export function TopologyGraph({
             if (!path?.length) return
             const publisherPK = treePath.publisherDevicePK
             const subscriberPK = treePath.subscriberDevicePK
-            if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
+            if (!enabledPublisherDevicePKs.has(publisherPK) || !enabledSubscriberDevicePKs.has(subscriberPK)) return
 
             if (!publisherSegments.has(publisherPK)) publisherSegments.set(publisherPK, new Set())
             const segs = publisherSegments.get(publisherPK)!
@@ -1364,7 +1391,7 @@ export function TopologyGraph({
     }
 
     previousPathEdgeIdsRef.current = newPathEdgeIds
-  }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers, dimOtherLinks])
+  }, [multicastTreesEnabled, selectedMulticastGroup, multicastTreePaths, multicastGroupDetails, multicastPublisherColorMap, isDark, enabledPublishers, enabledSubscribers, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, dimOtherLinks])
 
   // Clear classes when mode changes
   useEffect(() => {
@@ -1549,11 +1576,11 @@ export function TopologyGraph({
       const detail = multicastGroupDetails.get(selectedMulticastGroup)
       if (detail?.members) {
         const disabledPubs = detail.members
-          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.device_pk))
-          .map(m => m.device_pk)
+          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.user_pk))
+          .map(m => m.user_pk)
         const disabledSubs = detail.members
-          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.device_pk))
-          .map(m => m.device_pk)
+          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.user_pk))
+          .map(m => m.user_pk)
         setParam('mc_pub_off', disabledPubs.length > 0 ? disabledPubs.join(',') : null)
         setParam('mc_sub_off', disabledSubs.length > 0 ? disabledSubs.join(',') : null)
       } else {

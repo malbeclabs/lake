@@ -388,20 +388,20 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setSelectedMulticastGroup(code)
   }, [])
 
-  const handleTogglePublisher = useCallback((devicePK: string) => {
+  const handleTogglePublisher = useCallback((userPK: string) => {
     setEnabledPublishers(prev => {
       const next = new Set(prev)
-      if (next.has(devicePK)) next.delete(devicePK)
-      else next.add(devicePK)
+      if (next.has(userPK)) next.delete(userPK)
+      else next.add(userPK)
       return next
     })
   }, [])
 
-  const handleToggleSubscriber = useCallback((devicePK: string) => {
+  const handleToggleSubscriber = useCallback((userPK: string) => {
     setEnabledSubscribers(prev => {
       const next = new Set(prev)
-      if (next.has(devicePK)) next.delete(devicePK)
-      else next.add(devicePK)
+      if (next.has(userPK)) next.delete(userPK)
+      else next.add(userPK)
       return next
     })
   }, [])
@@ -414,7 +414,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (enabled) {
       const pubs = new Set<string>()
       detail.members.forEach(m => {
-        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.device_pk)
+        if (m.mode === 'P' || m.mode === 'P+S') pubs.add(m.user_pk)
       })
       setEnabledPublishers(pubs)
     } else {
@@ -430,7 +430,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (enabled) {
       const subs = new Set<string>()
       detail.members.forEach(m => {
-        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.device_pk)
+        if (m.mode === 'S' || m.mode === 'P+S') subs.add(m.user_pk)
       })
       setEnabledSubscribers(subs)
     } else {
@@ -477,16 +477,43 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const pubs = new Set<string>()
     const subs = new Set<string>()
     detail.members.forEach(m => {
-      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.device_pk)) {
-        pubs.add(m.device_pk)
+      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.user_pk)) {
+        pubs.add(m.user_pk)
       }
-      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.device_pk)) {
-        subs.add(m.device_pk)
+      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.user_pk)) {
+        subs.add(m.user_pk)
       }
     })
     setEnabledPublishers(pubs)
     setEnabledSubscribers(subs)
   }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
+
+  // Derive device-level enabled sets from user_pk-keyed enabled sets
+  const enabledPublisherDevicePKs = useMemo(() => {
+    const set = new Set<string>()
+    if (!selectedMulticastGroup) return set
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return set
+    for (const m of detail.members) {
+      if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.user_pk)) {
+        set.add(m.device_pk)
+      }
+    }
+    return set
+  }, [selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
+
+  const enabledSubscriberDevicePKs = useMemo(() => {
+    const set = new Set<string>()
+    if (!selectedMulticastGroup) return set
+    const detail = multicastGroupDetails.get(selectedMulticastGroup)
+    if (!detail?.members) return set
+    for (const m of detail.members) {
+      if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.user_pk)) {
+        set.add(m.device_pk)
+      }
+    }
+    return set
+  }, [selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
   // Path finding operational state (local)
   const [pathSource, setPathSource] = useState<string | null>(null)
@@ -834,12 +861,12 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (treeData?.paths?.length) {
       treeData.paths.forEach(treePath => {
         if (!treePath.path?.length) return
-        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+        if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK) || !enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) return
         treePath.path.forEach(hop => set.add(hop.devicePK))
       })
     }
     return set
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs])
 
   // Per-publisher tree segments with device PKs and positions (for multicast-tree arcs)
   const multicastPublisherPaths = useMemo(() => {
@@ -855,7 +882,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const publisherPK = treePath.publisherDevicePK
         const subscriberPK = treePath.subscriberDevicePK
         if (!path?.length) return
-        if (!enabledPublishers.has(publisherPK) || !enabledSubscribers.has(subscriberPK)) return
+        if (!enabledPublisherDevicePKs.has(publisherPK) || !enabledSubscriberDevicePKs.has(subscriberPK)) return
 
         if (!publisherSegments.has(publisherPK)) publisherSegments.set(publisherPK, new Map())
         const segs = publisherSegments.get(publisherPK)!
@@ -880,7 +907,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       if (segments.length > 0) result.push({ publisherPK, segments })
     }
     return result
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers, devicePositions])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, devicePositions])
 
   // Map from canonical segment key -> ordered publisher PKs (for altitude offset calculation)
   const multicastSegmentPublishers = useMemo(() => {
@@ -892,7 +919,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       treeData.paths.forEach(treePath => {
         const path = treePath.path
         if (!path?.length) return
-        if (!enabledPublishers.has(treePath.publisherDevicePK) || !enabledSubscribers.has(treePath.subscriberDevicePK)) return
+        if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK) || !enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) return
 
         for (let i = 0; i < path.length - 1; i++) {
           const canonicalKey = [path[i].devicePK, path[i + 1].devicePK].sort().join('|')
@@ -903,7 +930,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       })
     }
     return map
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublishers, enabledSubscribers])
+  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs])
 
   const multicastPublisherColorMap = useMemo(() => {
     const map = new Map<string, number>()
@@ -932,7 +959,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
       if (detail?.members) {
-        detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').filter(m => enabledPublishers.has(m.device_pk)).forEach(m => set.add(m.device_pk))
+        detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').filter(m => enabledPublishers.has(m.user_pk)).forEach(m => set.add(m.device_pk))
       }
     }
     return set
@@ -945,7 +972,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       const code = selectedMulticastGroup
       const detail = multicastGroupDetails.get(code)
       if (detail?.members) {
-        detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').filter(m => enabledSubscribers.has(m.device_pk)).forEach(m => set.add(m.device_pk))
+        detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').filter(m => enabledSubscribers.has(m.user_pk)).forEach(m => set.add(m.device_pk))
       }
     }
     return set
@@ -959,8 +986,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const detail = multicastGroupDetails.get(selectedMulticastGroup)
     if (!detail?.members) return map
     for (const m of detail.members) {
-      const isPub = (m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.device_pk)
-      const isSub = (m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.device_pk)
+      const isPub = (m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.user_pk)
+      const isSub = (m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.user_pk)
       if (isPub) {
         const colorIndex = multicastPublisherColorMap.get(m.device_pk) ?? 0
         const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
@@ -1317,11 +1344,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       const detail = multicastGroupDetails.get(selectedMulticastGroup)
       if (detail?.members) {
         const disabledPubs = detail.members
-          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.device_pk))
-          .map(m => m.device_pk)
+          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.user_pk))
+          .map(m => m.user_pk)
         const disabledSubs = detail.members
-          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.device_pk))
-          .map(m => m.device_pk)
+          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.user_pk))
+          .map(m => m.user_pk)
         setParam('mc_pub_off', disabledPubs.length > 0 ? disabledPubs.join(',') : null)
         setParam('mc_sub_off', disabledSubs.length > 0 ? disabledSubs.join(',') : null)
       } else {

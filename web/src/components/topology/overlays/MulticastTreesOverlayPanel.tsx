@@ -33,10 +33,10 @@ interface MulticastTreesOverlayPanelProps {
   onSelectGroup: (code: string | null) => void
   groupDetails: Map<string, MulticastGroupDetail>  // Cached group details
   // Publisher/subscriber filtering
-  enabledPublishers: Set<string>  // device PKs of enabled publishers
-  enabledSubscribers: Set<string>  // device PKs of enabled subscribers
-  onTogglePublisher: (devicePK: string) => void
-  onToggleSubscriber: (devicePK: string) => void
+  enabledPublishers: Set<string>  // user PKs of enabled publishers
+  enabledSubscribers: Set<string>  // user PKs of enabled subscribers
+  onTogglePublisher: (userPK: string) => void
+  onToggleSubscriber: (userPK: string) => void
   onSetAllPublishers: (enabled: boolean) => void
   onSetAllSubscribers: (enabled: boolean) => void
   // Publisher color map for consistent colors
@@ -257,8 +257,8 @@ export function MulticastTreesOverlayPanel({
   const subscribersByMetro = useMemo(() => groupByMetro(subscribers), [subscribers])
 
   // Check if all are enabled for select/deselect all
-  const allPublishersEnabled = publishers.length > 0 && publishers.every(m => enabledPublishers.has(m.device_pk))
-  const allSubscribersEnabled = subscribers.length > 0 && subscribers.every(m => enabledSubscribers.has(m.device_pk))
+  const allPublishersEnabled = publishers.length > 0 && publishers.every(m => enabledPublishers.has(m.user_pk))
+  const allSubscribersEnabled = subscribers.length > 0 && subscribers.every(m => enabledSubscribers.has(m.user_pk))
 
   return (
     <div className="p-3 text-xs">
@@ -890,7 +890,7 @@ function MetroGroup({
   metro: string
   members: MulticastMember[]
   enabledMembers: Set<string>
-  onToggleMember: (devicePK: string) => void
+  onToggleMember: (userPK: string) => void
   keySuffix: string
   colorDotForMember: (m: MulticastMember) => React.ReactNode
 }) {
@@ -912,8 +912,8 @@ function MetroGroup({
             <MemberRow
               key={m.user_pk + keySuffix}
               member={m}
-              isEnabled={enabledMembers.has(m.device_pk)}
-              onToggle={() => onToggleMember(m.device_pk)}
+              isEnabled={enabledMembers.has(m.user_pk)}
+              onToggle={() => onToggleMember(m.user_pk)}
               colorDot={colorDotForMember(m)}
             />
           ))}
