@@ -611,8 +611,8 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		devicePKs = append(devicePKs, m.devicePK)
 	}
 
-	// Query traffic time series — filter to member edge devices only
-	// to avoid including transit device traffic for the same tunnel IDs
+	// Query traffic time series — filter by device_pk and tunnel_id independently,
+	// then post-filter to exact (device_pk, tunnel_id) pairs to avoid cross-matches
 	trafficQuery := `
 		SELECT
 			formatDateTime(toStartOfInterval(event_ts, INTERVAL ` + interval + ` SECOND), '%Y-%m-%dT%H:%i:%s') as time,
@@ -663,11 +663,13 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Look up mode from member info
+		// Only include rows for exact (device_pk, tunnel_id) member pairs
 		key := tunnelKey{p.DevicePK, p.TunnelID}
-		if mode, ok := tunnelMode[key]; ok {
-			p.Mode = mode
+		mode, ok := tunnelMode[key]
+		if !ok {
+			continue
 		}
+		p.Mode = mode
 		points = append(points, p)
 	}
 

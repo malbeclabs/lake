@@ -101,32 +101,38 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
     refetchInterval: 30000,
   })
 
-  const tunnelInfo = useMemo(() => {
-    const map = new Map<number, { code: string; mode: string }>()
+  // Build a lookup from device_pk+tunnel_id to display info
+  const seriesInfo = useMemo(() => {
+    const map = new Map<string, { code: string; tunnelId: number; mode: string }>()
     for (const m of members) {
-      if (m.tunnel_id > 0 && !map.has(m.tunnel_id)) {
-        const effectiveMode = m.mode === 'P+S' ? 'P' : m.mode
-        map.set(m.tunnel_id, {
-          code: m.device_code || m.device_pk.slice(0, 8),
-          mode: effectiveMode,
-        })
+      if (m.tunnel_id > 0) {
+        const key = `${m.device_pk}_${m.tunnel_id}`
+        if (!map.has(key)) {
+          const effectiveMode = m.mode === 'P+S' ? 'P' : m.mode
+          map.set(key, {
+            code: m.device_code || m.device_pk.slice(0, 8),
+            tunnelId: m.tunnel_id,
+            mode: effectiveMode,
+          })
+        }
       }
     }
     return map
   }, [members])
 
-  const { chartData, tunnelIds } = useMemo(() => {
-    if (!trafficData || trafficData.length === 0) return { chartData: [], tunnelIds: [] as number[] }
+  const { chartData, seriesKeys } = useMemo(() => {
+    if (!trafficData || trafficData.length === 0) return { chartData: [], seriesKeys: [] as string[] }
 
     const showPubs = activeTab === 'publishers'
-    const tunnels = new Set<number>()
+    const keys = new Set<string>()
     const timeMap = new Map<string, Record<string, string | number>>()
 
     for (const p of trafficData) {
       const isPub = p.mode === 'P'
       if (isPub !== showPubs) continue
 
-      tunnels.add(p.tunnel_id)
+      const seriesKey = `${p.device_pk}_${p.tunnel_id}`
+      keys.add(seriesKey)
 
       let row = timeMap.get(p.time)
       if (!row) {
@@ -134,48 +140,116 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
         timeMap.set(p.time, row)
       }
       if (metric === 'throughput') {
-        row[`t${p.tunnel_id}_in`] = p.out_bps
-        row[`t${p.tunnel_id}_out`] = -p.in_bps
+        row[`${seriesKey}_in`] = p.out_bps
+        row[`${seriesKey}_out`] = -p.in_bps
       } else {
-        row[`t${p.tunnel_id}_in`] = p.out_pps
-        row[`t${p.tunnel_id}_out`] = -p.in_pps
+        row[`${seriesKey}_in`] = p.out_pps
+        row[`${seriesKey}_out`] = -p.in_pps
       }
     }
 
     for (const row of timeMap.values()) {
-      for (const tid of tunnels) {
-        if (!(`t${tid}_in` in row)) row[`t${tid}_in`] = 0
-        if (!(`t${tid}_out` in row)) row[`t${tid}_out`] = 0
+      for (const k of keys) {
+        if (!(`${k}_in` in row)) row[`${k}_in`] = 0
+        if (!(`${k}_out` in row)) row[`${k}_out`] = 0
       }
     }
 
     const data = [...timeMap.values()].sort((a, b) =>
       String(a.time).localeCompare(String(b.time))
     )
-    return { chartData: data, tunnelIds: [...tunnels].sort((a, b) => a - b) }
+    return { chartData: data, seriesKeys: [...keys].sort() }
   }, [trafficData, activeTab, metric])
 
-  const getTunnelColor = (tunnelId: number) => {
-    const idx = tunnelIds.indexOf(tunnelId)
+  const getSeriesColor = (key: string) => {
+    const idx = seriesKeys.indexOf(key)
     return TRAFFIC_COLORS[idx % TRAFFIC_COLORS.length]
   }
 
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [snapToPeak, setSnapToPeak] = useState(false)
+  const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
+  const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
+
+  // Empty selection = all visible, __none__ sentinel = none visible
+  const visibleSeries = useMemo(() => {
+    if (selectedSeries.has('__none__')) return new Set<string>()
+    if (selectedSeries.size > 0) return selectedSeries
+    return new Set(seriesKeys)
+  }, [selectedSeries, seriesKeys])
+
+  const handleSeriesClick = (key: string, index: number, event: React.MouseEvent) => {
+    if (event.shiftKey && lastClickedIndex !== null) {
+      const start = Math.min(lastClickedIndex, index)
+      const end = Math.max(lastClickedIndex, index)
+      const newSelection = new Set(selectedSeries)
+      for (let i = start; i <= end; i++) {
+        newSelection.add(seriesKeys[i])
+      }
+      setSelectedSeries(newSelection)
+    } else if (event.ctrlKey || event.metaKey) {
+      const newSelection = new Set(selectedSeries)
+      if (newSelection.has(key)) {
+        newSelection.delete(key)
+      } else {
+        newSelection.add(key)
+      }
+      setSelectedSeries(newSelection)
+    } else {
+      if (selectedSeries.has(key)) {
+        const newSelection = new Set(selectedSeries)
+        newSelection.delete(key)
+        setSelectedSeries(newSelection)
+      } else {
+        setSelectedSeries(new Set([key]))
+      }
+    }
+    setLastClickedIndex(index)
+  }
+
+  // When snap-to-peak is on, find the index with the highest value in a window around the hovered point.
+  // Window scales with data density — 5% of total points in each direction, clamped to [5, 150].
+  const effectiveIdx = useMemo(() => {
+    if (hoveredIdx === null) return null
+    if (!snapToPeak || chartData.length === 0) return hoveredIdx
+
+    const peakWindow = Math.min(150, Math.max(5, Math.round(chartData.length * 0.05)))
+    const lo = Math.max(0, hoveredIdx - peakWindow)
+    const hi = Math.min(chartData.length - 1, hoveredIdx + peakWindow)
+    let bestIdx = hoveredIdx
+    let bestVal = -Infinity
+
+    for (let i = lo; i <= hi; i++) {
+      const row = chartData[i]
+      let rowMax = 0
+      for (const key of seriesKeys) {
+        const inVal = Math.abs((row[`${key}_in`] as number) ?? 0)
+        const outVal = Math.abs((row[`${key}_out`] as number) ?? 0)
+        rowMax = Math.max(rowMax, inVal, outVal)
+      }
+      if (rowMax > bestVal) {
+        bestVal = rowMax
+        bestIdx = i
+      }
+    }
+    return bestIdx
+  }, [hoveredIdx, snapToPeak, chartData, seriesKeys])
 
   const displayValues = useMemo(() => {
-    if (chartData.length === 0) return new Map<number, { inBps: number; outBps: number }>()
-    const row = hoveredIdx !== null && hoveredIdx < chartData.length
-      ? chartData[hoveredIdx]
+    if (chartData.length === 0) return new Map<string, { inBps: number; outBps: number }>()
+    const row = effectiveIdx !== null && effectiveIdx < chartData.length
+      ? chartData[effectiveIdx]
       : chartData[chartData.length - 1]
-    const map = new Map<number, { inBps: number; outBps: number }>()
-    for (const tid of tunnelIds) {
-      map.set(tid, {
-        inBps: (row[`t${tid}_in`] as number) ?? 0,
-        outBps: Math.abs((row[`t${tid}_out`] as number) ?? 0),
+    const map = new Map<string, { inBps: number; outBps: number }>()
+    for (const key of seriesKeys) {
+      map.set(key, {
+        inBps: (row[`${key}_in`] as number) ?? 0,
+        outBps: Math.abs((row[`${key}_out`] as number) ?? 0),
       })
     }
     return map
-  }, [chartData, tunnelIds, hoveredIdx])
+  }, [chartData, seriesKeys, effectiveIdx])
 
   const fmtValue = metric === 'throughput' ? formatBps : formatPps
   const fmtAxis = (v: number) => formatAxisBps(Math.abs(v))
@@ -185,6 +259,17 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-muted-foreground">Traffic ({activeTab})</h3>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSnapToPeak(v => !v)}
+            className={`text-xs rounded px-1.5 py-1 cursor-pointer transition-colors inline-flex items-center gap-1 border text-foreground ${
+              snapToPeak
+                ? 'bg-muted border-border'
+                : 'bg-transparent border-border hover:bg-muted/50'
+            }`}
+            title="Snap hover to nearest peak value"
+          >
+            snap to peak
+          </button>
           <select
             value={metric}
             onChange={e => setMetric(e.target.value as TrafficMetric)}
@@ -260,24 +345,26 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                   content={() => null}
                   cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 2' }}
                 />
-                {tunnelIds.map(tid => (
+                {seriesKeys.filter(k => visibleSeries.has(k)).map(key => (
                   <Line
-                    key={`${tid}_in`}
+                    key={`${key}_in`}
                     type="monotone"
-                    dataKey={`t${tid}_in`}
-                    stroke={getTunnelColor(tid)}
+                    dataKey={`${key}_in`}
+                    stroke={getSeriesColor(key)}
                     strokeWidth={1.5}
+                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0.2 : 1}
                     dot={false}
                     isAnimationActive={false}
                   />
                 ))}
-                {tunnelIds.map(tid => (
+                {seriesKeys.filter(k => visibleSeries.has(k)).map(key => (
                   <Line
-                    key={`${tid}_out`}
+                    key={`${key}_out`}
                     type="monotone"
-                    dataKey={`t${tid}_out`}
-                    stroke={getTunnelColor(tid)}
+                    dataKey={`${key}_out`}
+                    stroke={getSeriesColor(key)}
                     strokeWidth={1.5}
+                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0.2 : 1}
                     strokeDasharray="4 2"
                     dot={false}
                     isAnimationActive={false}
@@ -286,30 +373,48 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          {tunnelIds.length > 0 && (
+          {seriesKeys.length > 0 && (
             <div className="mt-2 text-xs">
-              <div className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'auto 1fr 1fr 1fr' }}>
-                <div />
-                <div className="text-muted-foreground font-medium">Device</div>
-                <div className="text-muted-foreground font-medium text-right">Inbound</div>
-                <div className="text-muted-foreground font-medium text-right">Outbound</div>
-                {tunnelIds.map((tid, i) => {
-                  const info = tunnelInfo.get(tid)
-                  const vals = displayValues.get(tid)
-                  return (
-                    <div key={tid} className="contents">
-                      <div className="flex items-center">
-                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] }} />
-                      </div>
-                      <div className="text-foreground truncate font-mono">
-                        {info?.code ?? `t${tid}`}
-                      </div>
-                      <div className="text-right tabular-nums">{vals ? fmtValue(vals.inBps) : '—'}</div>
-                      <div className="text-right tabular-nums">{vals ? fmtValue(vals.outBps) : '—'}</div>
-                    </div>
-                  )
-                })}
+              <div className="flex items-center gap-4 px-1.5 py-0.5 text-muted-foreground font-medium">
+                <div className="w-2.5" />
+                <div className="flex-1 min-w-0 flex items-center gap-2">
+                  Device / Tunnel
+                  <span className="font-normal">
+                    <button
+                      className="hover:text-foreground transition-colors"
+                      onClick={() => setSelectedSeries(new Set())}
+                    >all</button>
+                    {' / '}
+                    <button
+                      className="hover:text-foreground transition-colors"
+                      onClick={() => setSelectedSeries(new Set(['__none__']))}
+                    >none</button>
+                  </span>
+                </div>
+                <div className="w-16 text-right">Inbound</div>
+                <div className="w-16 text-right">Outbound</div>
               </div>
+              {seriesKeys.map((key, i) => {
+                const info = seriesInfo.get(key)
+                const vals = displayValues.get(key)
+                const isVisible = visibleSeries.has(key)
+                return (
+                  <div
+                    key={key}
+                    className={`flex items-center gap-4 px-1.5 py-0.5 rounded cursor-pointer select-none transition-colors hover:bg-muted/60 ${!isVisible ? 'opacity-40' : ''}`}
+                    onClick={(e) => handleSeriesClick(key, i, e)}
+                    onMouseEnter={() => isVisible && setHoveredSeries(key)}
+                    onMouseLeave={() => setHoveredSeries(null)}
+                  >
+                    <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] }} />
+                    <div className="flex-1 min-w-0 text-foreground truncate font-mono">
+                      {info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}
+                    </div>
+                    <div className="w-16 text-right tabular-nums">{vals && isVisible ? fmtValue(vals.inBps) : '—'}</div>
+                    <div className="w-16 text-right tabular-nums">{vals && isVisible ? fmtValue(vals.outBps) : '—'}</div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
