@@ -4,17 +4,17 @@ Steps:
 1. Run `git fetch origin` to ensure remote tracking is up to date
 2. Run `git diff origin/main...HEAD --numstat` to get per-file added/removed line counts
 3. Categorize each changed file using these heuristics (applied in order, first match wins):
-   - **Tests**: files matching `*_test.go`, `*_test.rs`, `tests/`, `e2e/`, `*_test.py`, `*.test.ts`, `*.test.js`
-   - **Fixtures/snapshots**: paths containing `fixtures/`, `snapshots/`, or `.bin`/`.json` files within those directories
-   - **Config/build**: `Cargo.toml`, `go.mod`, `go.sum`, `Makefile`, `*.toml`, `*.yml`, `*.yaml`, `Dockerfile`, `*.lock`
-   - **Docs**: `*.md`, paths under `rfcs/`
-   - **Generated**: lock files (`Cargo.lock`, `go.sum`, `bun.lockb`, `package-lock.json`), protobuf generated output (`*.pb.go`, `*.pb.rs`)
+   - **Tests**: files matching `*_test.go`, `*.test.ts`, `*.test.tsx`, `tests/`, `e2e/`, `evals/`
+   - **Fixtures/snapshots**: paths containing `fixtures/`, `snapshots/`, or test data files within those directories
+   - **Config/build**: `go.mod`, `go.sum`, `Makefile`, `*.toml`, `*.yml`, `*.yaml`, `Dockerfile`, `docker-compose.yml`, `package.json`, `tsconfig.json`, `vite.config.*`, `tailwind.config.*`
+   - **Docs**: `*.md`, paths under `docs/`
+   - **Generated**: lock files (`go.sum`, `bun.lockb`, `package-lock.json`), protobuf generated output (`*.pb.go`)
    - **Scaffolding**: code that wires things together but contains little logic of its own:
      - Metrics/instrumentation definitions (`metrics.go`, prometheus boilerplate)
-     - Thin CLI wrappers — files that are mostly clap/cobra struct definitions + a single function call (e.g. `enable.rs`, `disable.rs` that just call one controller method)
-     - Subcommand/route registration (`mod.rs` adding a `pub mod`, `command.rs` adding a variant, `main.go` wiring a new dependency)
-     - Interface/trait definitions that are pure signatures with no logic
-   - **Core logic**: everything else — the files where the real business logic and algorithms live
+     - Thin CLI wrappers or route registration (`main.go` wiring a new dependency, adding a route in a chi router)
+     - Interface definitions that are pure signatures with no logic
+     - Re-exports or barrel files (`index.ts` re-exporting modules)
+   - **Core logic**: everything else — the files where the real business logic, components, and algorithms live
 4. Tally lines added and removed per category, and count distinct files per category
 5. Omit categories with zero changes
 
@@ -32,8 +32,8 @@ Output the breakdown as plain text (NOT inside a code block) so it's readable in
 | **Total**         |    20 | +1716 / -64 |  +1652 |
 
 ### Core changes
-- `client/doublezerod/internal/reconciler/reconciler.go` — +396/-0 (reconciliation loop, onchain state polling)
-- `client/doublezero/src/command/status.rs` — +95/-12 (v2 status endpoint, synthetic disconnected entry)
+- `api/handlers/multicast.go` — +396/-0 (post-filter traffic query to exact device/tunnel pairs)
+- `web/src/components/topology-map.tsx` — +95/-12 (hover opacity modulation on GeoJSON tree paths)
 
 Summary: ~680 lines of core logic across 4 files, supported by ~200 lines of scaffolding, ~820 lines of tests, and 7 fixture updates.
 

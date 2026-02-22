@@ -33,7 +33,7 @@ Resolves: #<issue number if known, otherwise omit this line>
 <summary>Key files (click to expand)</summary>
 
 - [`path/to/file.go`](PR_FILES_URL#diff-HASH) — brief description of what changed
-- [`path/to/other.rs`](PR_FILES_URL#diff-HASH) — brief description of what changed
+- [`path/to/component.tsx`](PR_FILES_URL#diff-HASH) — brief description of what changed
 
 </details>
 
@@ -43,17 +43,17 @@ Resolves: #<issue number if known, otherwise omit this line>
 ```
 
 PR Title guidelines:
-- Format: `<component>: <short description>` (e.g., "lake/indexer: add ClickHouse analytics service", "telemetry: fix metrics collection")
-- Component should be the primary directory/module being changed
+- Format: `<component>: <short description>` (e.g., "web: improve multicast chart controls", "indexer: add ClickHouse analytics service", "api: fix traffic query filtering")
+- Component should be the primary directory/module being changed (e.g., `web`, `api`, `agent`, `indexer`, `slack`)
 - Keep the description short and lowercase (except proper nouns)
 
 Guidelines:
 - Summary should describe the net result: what does this branch add or change compared to origin/main?
 - Ignore commit history - only describe what the final diff shows
-- Include a Diff Breakdown table categorizing changes using `git diff origin/main...HEAD --numstat`. Categorize files as: Core logic, Scaffolding (metrics, thin CLI wrappers, subcommand registration, interface-only files), Tests, Fixtures, Config/build, Docs, Generated. Omit categories with zero changes. Add a one-line summary below the table characterizing the balance of changes.
+- Include a Diff Breakdown table categorizing changes using `git diff origin/main...HEAD --numstat`. Categorize files as: Core logic, Scaffolding (metrics, thin wrappers, route registration, interface-only files), Tests, Fixtures, Config/build, Docs, Generated. Omit categories with zero changes. Add a one-line summary below the table characterizing the balance of changes.
 - Include a "Key files" list after the diff breakdown showing the most important core logic files (up to 8), sorted by lines changed descending. Each entry should have a brief description of what changed. This helps reviewers know where to focus.
 - Link each key file to its diff in the PR. Use `gh pr view --json number,url` to get the PR URL, then link to `<PR_URL>/files#diff-<SHA256_OF_FILE_PATH>` where the hash is `echo -n "path/to/file" | shasum -a 256`. If no PR exists yet, use plain backtick paths instead.
-- Testing Verification should describe how the changes were tested (e.g., unit tests added/passing, manual testing performed, build verified)
+- Testing Verification should describe how the changes were tested (e.g., unit tests added/passing, manual testing performed, build verified). Omit CI checks like builds, linting, or type checks.
 - Focus on the "what" and "why", not the "how"
 - Group related changes together
 - Mention any breaking changes or migration steps if applicable
