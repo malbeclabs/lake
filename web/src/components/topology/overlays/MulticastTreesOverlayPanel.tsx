@@ -1073,7 +1073,7 @@ function MetroGroup({
       >
         {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         <span className="px-1 py-0 rounded bg-[var(--muted)] text-[9px] font-medium">{metro}</span>
-        <span className="ml-auto">{members.length}</span>
+        <span className="ml-auto text-muted-foreground/50">{members.length}</span>
       </button>
       {open && (
         <div className="space-y-1 mt-1 ml-1">
