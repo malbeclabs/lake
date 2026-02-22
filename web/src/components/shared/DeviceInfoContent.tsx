@@ -1,8 +1,11 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { DeviceInterface } from '@/lib/api'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { InterfaceHealthCharts } from '@/components/topology/InterfaceHealthCharts'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
+import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange } from '@/components/topology/utils'
 
 // Shared device info type that both topology and device page can use
 export interface DeviceInfoData {
@@ -25,6 +28,10 @@ interface DeviceInfoContentProps {
   device: DeviceInfoData
   /** Compact mode for sidebar panels */
   compact?: boolean
+  /** Controlled time range (when managed by parent) */
+  timeRange?: TimeRange
+  /** Callback when time range changes (when managed by parent) */
+  onTimeRangeChange?: (range: TimeRange) => void
 }
 
 function formatStake(sol: number): string {
@@ -43,7 +50,10 @@ function formatStakeShare(share: number): string {
  * Shared component for displaying device information.
  * Used by both the topology panel and the device detail page.
  */
-export function DeviceInfoContent({ device, compact = false }: DeviceInfoContentProps) {
+export function DeviceInfoContent({ device, compact = false, timeRange: controlledTimeRange, onTimeRangeChange }: DeviceInfoContentProps) {
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
+  const timeRange = controlledTimeRange ?? internalTimeRange
+  const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
   const stats = [
     { label: 'Type', value: device.deviceType },
     {
@@ -119,14 +129,19 @@ export function DeviceInfoContent({ device, compact = false }: DeviceInfoContent
           </div>
         )}
 
+        {/* Time range selector */}
+        <div className="flex justify-end">
+          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        </div>
+
         {/* Device Status History Timeline */}
-        <SingleDeviceStatusRow devicePk={device.pk} />
+        <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
 
         {/* Traffic charts */}
-        <TrafficCharts entityType="device" entityPk={device.pk} />
+        <TrafficCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
 
         {/* Interface health charts */}
-        <InterfaceHealthCharts devicePk={device.pk} />
+        <InterfaceHealthCharts devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
       </div>
     )
   }
@@ -173,13 +188,20 @@ export function DeviceInfoContent({ device, compact = false }: DeviceInfoContent
         )}
       </div>
 
+      {/* Time range selector (only shown when not controlled by parent) */}
+      {!controlledTimeRange && (
+        <div className="flex justify-end">
+          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        </div>
+      )}
+
       {/* Charts row - side by side on large screens */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div>
-          <TrafficCharts entityType="device" entityPk={device.pk} />
+          <TrafficCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
         </div>
         <div>
-          <InterfaceHealthCharts devicePk={device.pk} />
+          <InterfaceHealthCharts devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
         </div>
       </div>
     </div>

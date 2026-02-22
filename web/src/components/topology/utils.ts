@@ -58,9 +58,21 @@ export function formatStake(stakeSol: number): string {
 // Fetch traffic history for a link, device, or validator
 export async function fetchTrafficHistory(
   type: 'link' | 'device' | 'validator',
-  pk: string
+  pk: string,
+  timeRange?: TimeRange
 ): Promise<{ time: string; avgIn: number; avgOut: number; peakIn: number; peakOut: number }[]> {
-  const res = await apiFetch(`/api/topology/traffic?type=${type}&pk=${encodeURIComponent(pk)}`)
+  const params = new URLSearchParams({ type, pk })
+
+  if (timeRange) {
+    if (timeRange.preset === 'custom' && timeRange.from && timeRange.to) {
+      params.set('from', timeRange.from)
+      params.set('to', timeRange.to)
+    } else if (timeRange.preset !== 'custom') {
+      params.set('range', timeRange.preset)
+    }
+  }
+
+  const res = await apiFetch(`/api/topology/traffic?${params.toString()}`)
   if (!res.ok) return []
   const data = await res.json()
   return data.points || []

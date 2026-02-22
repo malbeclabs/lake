@@ -2,10 +2,13 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { useTheme } from '@/hooks/use-theme'
+import { useChartLegend } from '@/hooks/use-chart-legend'
+import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
 import { fetchDeviceInterfaceHistory } from '@/lib/api'
 
 interface InterfaceHealthChartsProps {
   devicePk: string
+  timeRange?: string
 }
 
 interface AggregatedHealthData {
@@ -26,13 +29,13 @@ function formatCount(value: number): string {
   return value.toString()
 }
 
-export function InterfaceHealthCharts({ devicePk }: InterfaceHealthChartsProps) {
+export function InterfaceHealthCharts({ devicePk, timeRange = '24h' }: InterfaceHealthChartsProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const { data: historyData, isLoading, error } = useQuery({
-    queryKey: ['device-interface-health', devicePk],
-    queryFn: () => fetchDeviceInterfaceHistory(devicePk, '24h', 24),
+    queryKey: ['device-interface-health', devicePk, timeRange],
+    queryFn: () => fetchDeviceInterfaceHistory(devicePk, timeRange),
     refetchInterval: 60000,
     retry: false,
   })
@@ -77,6 +80,15 @@ export function InterfaceHealthCharts({ devicePk }: InterfaceHealthChartsProps) 
   const discardColor = isDark ? '#f59e0b' : '#d97706'
   const carrierColor = isDark ? '#8b5cf6' : '#7c3aed'
 
+  const legendKeys = useMemo(() => ['errors', 'discards', 'carrierTransitions'], [])
+  const legend = useChartLegend(legendKeys)
+
+  const legendSeries: ChartLegendSeries[] = useMemo(() => [
+    { key: 'errors', color: errorColor, label: 'Errors' },
+    { key: 'discards', color: discardColor, label: 'Discards' },
+    { key: 'carrierTransitions', color: carrierColor, label: 'Carrier Transitions' },
+  ], [errorColor, discardColor, carrierColor])
+
   if (isLoading) {
     return (
       <div className="text-sm text-muted-foreground text-center py-4">
@@ -104,7 +116,7 @@ export function InterfaceHealthCharts({ devicePk }: InterfaceHealthChartsProps) 
   if (!hasAnyIssues) {
     return (
       <div className="text-sm text-green-600 dark:text-green-400 text-center py-4">
-        No interface issues in the last 24 hours
+        No interface issues in the last {timeRange}
       </div>
     )
   }
@@ -112,7 +124,7 @@ export function InterfaceHealthCharts({ devicePk }: InterfaceHealthChartsProps) 
   return (
     <div className="space-y-4">
       <div className="text-xs text-muted-foreground uppercase tracking-wider">
-        Interface Health (24h)
+        Interface Health ({timeRange})
       </div>
       <div className="h-36">
         <ResponsiveContainer width="100%" height="100%">
@@ -154,38 +166,28 @@ export function InterfaceHealthCharts({ devicePk }: InterfaceHealthChartsProps) 
             <Bar
               dataKey="errors"
               fill={errorColor}
+              fillOpacity={legend.getOpacity('errors')}
               radius={[2, 2, 0, 0]}
               name="errors"
             />
             <Bar
               dataKey="discards"
               fill={discardColor}
+              fillOpacity={legend.getOpacity('discards')}
               radius={[2, 2, 0, 0]}
               name="discards"
             />
             <Bar
               dataKey="carrierTransitions"
               fill={carrierColor}
+              fillOpacity={legend.getOpacity('carrierTransitions')}
               radius={[2, 2, 0, 0]}
               name="carrierTransitions"
             />
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="flex justify-center gap-4 text-xs">
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: errorColor }} />
-          Errors
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: discardColor }} />
-          Discards
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: carrierColor }} />
-          Carrier Transitions
-        </span>
-      </div>
+      <ChartLegend series={legendSeries} legend={legend} />
     </div>
   )
 }

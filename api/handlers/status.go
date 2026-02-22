@@ -2767,8 +2767,12 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	linkQuery := `
 		SELECT l.code, l.bandwidth_bps, l.committed_rtt_ns / 1000.0 as committed_rtt_us,
 			   l.side_a_pk, l.side_z_pk, l.side_a_iface_name, l.side_z_iface_name,
-			   l.link_type, l.side_a_metro, l.side_z_metro
+			   l.link_type,
+			   COALESCE(da.metro_pk, '') as side_a_metro,
+			   COALESCE(dz.metro_pk, '') as side_z_metro
 		FROM dz_links_current l
+		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
+		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 		WHERE l.pk = ?
 	`
 	var code string

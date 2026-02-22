@@ -6,7 +6,7 @@ import { StatusTimeline } from './status-timeline'
 
 interface SingleLinkStatusRowProps {
   linkPk: string
-  timeRange?: '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
+  timeRange?: string
 }
 
 function useBucketCount() {

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Server, AlertCircle, ArrowLeft } from 'lucide-react'
@@ -6,6 +7,8 @@ import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
+import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange } from '@/components/topology/utils'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -26,6 +29,7 @@ const statusColors: Record<string, string> = {
 export function DeviceDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
 
   const { data: device, isLoading, error } = useQuery({
     queryKey: ['device', pk],
@@ -114,15 +118,18 @@ export function DeviceDetailPage() {
         </div>
       </div>
 
-      {/* Status row */}
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
-        <SingleDeviceStatusRow devicePk={device.pk} />
-      </div>
+      {/* Time range selector + status row + charts */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8 space-y-6">
+        <div className="flex justify-end">
+          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        </div>
 
-      {/* Shared device info content - constrained width */}
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8">
+        {/* Status row */}
+        <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
+
+        {/* Shared device info content */}
         <div className="border border-border rounded-lg p-4 bg-card">
-          <DeviceInfoContent device={deviceInfo} />
+          <DeviceInfoContent device={deviceInfo} timeRange={timeRange} onTimeRangeChange={setTimeRange} />
         </div>
       </div>
     </div>

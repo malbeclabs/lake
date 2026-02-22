@@ -416,66 +416,93 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse time range parameters
+	rangeParam := r.URL.Query().Get("range")
+	fromParam := r.URL.Query().Get("from")
+	toParam := r.URL.Query().Get("to")
+
+	var timeFilter string
+	var bucketSeconds int
+	var timeFormat string
+
+	if fromParam != "" && toParam != "" {
+		fromTime, err := time.Parse("2006-01-02-15:04:05", fromParam)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: "invalid 'from' format, use yyyy-mm-dd-hh:mm:ss"})
+			return
+		}
+		toTime, err := time.Parse("2006-01-02-15:04:05", toParam)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: "invalid 'to' format, use yyyy-mm-dd-hh:mm:ss"})
+			return
+		}
+		duration := toTime.Sub(fromTime)
+		bucketSeconds = calculateBucketSize(duration)
+		timeFormat = timeFormatForBucket(bucketSeconds)
+		timeFilter = fmt.Sprintf("event_ts >= '%s' AND event_ts <= '%s'",
+			fromTime.UTC().Format("2006-01-02 15:04:05"),
+			toTime.UTC().Format("2006-01-02 15:04:05"))
+	} else {
+		var intervalMinutes int
+		switch rangeParam {
+		case "15m":
+			intervalMinutes = 15
+		case "30m":
+			intervalMinutes = 30
+		case "1h":
+			intervalMinutes = 60
+		case "3h":
+			intervalMinutes = 180
+		case "6h":
+			intervalMinutes = 360
+		case "12h":
+			intervalMinutes = 720
+		case "2d":
+			intervalMinutes = 2880
+		case "7d":
+			intervalMinutes = 10080
+		default: // 24h
+			intervalMinutes = 1440
+		}
+		bucketSeconds = calculateBucketSize(time.Duration(intervalMinutes) * time.Minute)
+		timeFormat = timeFormatForBucket(bucketSeconds)
+		timeFilter = fmt.Sprintf("event_ts > now() - INTERVAL %d MINUTE", intervalMinutes)
+	}
+
+	bucketExpr := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d SECOND)", bucketSeconds)
+
 	start := time.Now()
 
 	var points []TrafficDataPoint
-	var query string
+	var whereColumn string
 
-	if itemType == "link" {
-		// Get hourly traffic for a link over the last 24 hours
-		query = `
-			SELECT
-				formatDateTime(toStartOfHour(event_ts), '%H:%i') as time_bucket,
-				avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
-				avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
-				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-				max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 24 HOUR
-				AND link_pk = $1
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY time_bucket
-			ORDER BY min(event_ts)
-		`
-	} else if itemType == "validator" {
-		// Get hourly traffic for a validator (user tunnel) over the last 24 hours
-		query = `
-			SELECT
-				formatDateTime(toStartOfHour(event_ts), '%H:%i') as time_bucket,
-				avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
-				avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
-				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-				max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 24 HOUR
-				AND user_tunnel_id = $1
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY time_bucket
-			ORDER BY min(event_ts)
-		`
-	} else {
-		// Get hourly traffic for a device over the last 24 hours
-		query = `
-			SELECT
-				formatDateTime(toStartOfHour(event_ts), '%H:%i') as time_bucket,
-				avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
-				avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
-				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-				max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 24 HOUR
-				AND device_pk = $1
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY time_bucket
-			ORDER BY min(event_ts)
-		`
+	switch itemType {
+	case "link":
+		whereColumn = "link_pk"
+	case "validator":
+		whereColumn = "user_tunnel_id"
+	default:
+		whereColumn = "device_pk"
 	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			formatDateTime(%s, '%s') as time_bucket,
+			avg(in_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_in_bps,
+			avg(out_octets_delta * 8 / nullIf(delta_duration, 0)) as avg_out_bps,
+			max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
+			max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
+		FROM fact_dz_device_interface_counters
+		WHERE %s
+			AND %s = $1
+			AND delta_duration > 0
+			AND in_octets_delta >= 0
+			AND out_octets_delta >= 0
+		GROUP BY time_bucket
+		ORDER BY min(event_ts)
+	`, bucketExpr, timeFormat, timeFilter, whereColumn)
 
 	rows, err := envDB(ctx).Query(ctx, query, pk)
 	if err != nil {

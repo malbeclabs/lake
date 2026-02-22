@@ -2,11 +2,14 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { useTheme } from '@/hooks/use-theme'
+import { useChartLegend } from '@/hooks/use-chart-legend'
+import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
 import { fetchSingleLinkHistory } from '@/lib/api'
 import type { LinkHourStatus } from '@/lib/api'
 
 interface LinkStatusChartsProps {
   linkPk: string
+  timeRange?: string
 }
 
 function formatTime(hourStr: string): string {
@@ -40,13 +43,13 @@ function hasInterfaceIssueData(hours: LinkHourStatus[]): boolean {
   )
 }
 
-export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
+export function LinkStatusCharts({ linkPk, timeRange = '24h' }: LinkStatusChartsProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const { data: historyData, isLoading, error } = useQuery({
-    queryKey: ['single-link-history', linkPk],
-    queryFn: () => fetchSingleLinkHistory(linkPk, '24h', 24),
+    queryKey: ['single-link-history', linkPk, timeRange],
+    queryFn: () => fetchSingleLinkHistory(linkPk, timeRange),
     refetchInterval: 60000,
     retry: false,
   })
@@ -87,6 +90,20 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
   const discardColor = isDark ? '#f59e0b' : '#d97706' // amber
   const carrierColor = isDark ? '#8b5cf6' : '#7c3aed' // violet
 
+  const packetLossKeys = useMemo(() => ['total'], [])
+  const packetLossLegend = useChartLegend(packetLossKeys)
+  const packetLossSeries: ChartLegendSeries[] = useMemo(() => [
+    { key: 'total', color: lossColor, label: 'Packet Loss' },
+  ], [lossColor])
+
+  const interfaceIssueKeys = useMemo(() => ['errors', 'discards', 'carrier'], [])
+  const interfaceIssueLegend = useChartLegend(interfaceIssueKeys)
+  const interfaceIssueSeries: ChartLegendSeries[] = useMemo(() => [
+    { key: 'errors', color: errorColor, label: 'Errors' },
+    { key: 'discards', color: discardColor, label: 'Discards' },
+    { key: 'carrier', color: carrierColor, label: 'Carrier' },
+  ], [errorColor, discardColor, carrierColor])
+
   if (isLoading) {
     return (
       <div className="text-sm text-muted-foreground text-center py-4">
@@ -122,7 +139,7 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
     }
     return (
       <div className="text-sm text-green-600 dark:text-green-400 text-center py-4">
-        No packet loss or interface issues in the last 24 hours
+        No packet loss or interface issues in the last {timeRange}
       </div>
     )
   }
@@ -133,7 +150,7 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
       {showPacketLoss && (
         <div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Packet Loss (24h)
+            Packet Loss ({timeRange})
           </div>
           <div className="h-36">
             <ResponsiveContainer width="100%" height="100%">
@@ -177,18 +194,14 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
                   dataKey="total"
                   stroke={lossColor}
                   strokeWidth={2}
+                  strokeOpacity={packetLossLegend.getOpacity('total')}
                   dot={false}
                   name="total"
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex justify-center gap-4 text-xs mt-1">
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: lossColor }} />
-              Packet Loss
-            </span>
-          </div>
+          <ChartLegend series={packetLossSeries} legend={packetLossLegend} />
         </div>
       )}
 
@@ -196,7 +209,7 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
       {showInterfaceIssues && (
         <div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Interface Issues (24h)
+            Interface Issues ({timeRange})
           </div>
           <div className="h-36">
             <ResponsiveContainer width="100%" height="100%">
@@ -242,38 +255,28 @@ export function LinkStatusCharts({ linkPk }: LinkStatusChartsProps) {
                 <Bar
                   dataKey="errors"
                   fill={errorColor}
+                  fillOpacity={interfaceIssueLegend.getOpacity('errors')}
                   radius={[2, 2, 0, 0]}
                   name="errors"
                 />
                 <Bar
                   dataKey="discards"
                   fill={discardColor}
+                  fillOpacity={interfaceIssueLegend.getOpacity('discards')}
                   radius={[2, 2, 0, 0]}
                   name="discards"
                 />
                 <Bar
                   dataKey="carrier"
                   fill={carrierColor}
+                  fillOpacity={interfaceIssueLegend.getOpacity('carrier')}
                   radius={[2, 2, 0, 0]}
                   name="carrier"
                 />
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <div className="flex justify-center gap-4 text-xs mt-1">
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: errorColor }} />
-              Errors
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: discardColor }} />
-              Discards
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: carrierColor }} />
-              Carrier
-            </span>
-          </div>
+          <ChartLegend series={interfaceIssueSeries} legend={interfaceIssueLegend} />
         </div>
       )}
     </div>

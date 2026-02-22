@@ -1,8 +1,11 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
 import { SingleLinkStatusRow } from '@/components/single-link-status-row'
+import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange } from '@/components/topology/utils'
 
 // Shared link info type that both topology and link page can use
 export interface LinkInfoData {
@@ -48,6 +51,10 @@ interface LinkInfoContentProps {
   hideStatusRow?: boolean
   /** Hide charts section (to be rendered separately at page level) */
   hideCharts?: boolean
+  /** Controlled time range (when managed by parent) */
+  timeRange?: TimeRange
+  /** Callback when time range changes (when managed by parent) */
+  onTimeRangeChange?: (range: TimeRange) => void
 }
 
 function formatBps(bps: number): string {
@@ -88,7 +95,11 @@ const statusColors: Record<string, string> = {
  * Shared component for displaying link information.
  * Used by both the topology panel and the link detail page.
  */
-export function LinkInfoContent({ link, compact = false, hideStatusRow = false, hideCharts = false }: LinkInfoContentProps) {
+export function LinkInfoContent({ link, compact = false, hideStatusRow = false, hideCharts = false, timeRange: controlledTimeRange, onTimeRangeChange }: LinkInfoContentProps) {
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
+  const timeRange = controlledTimeRange ?? internalTimeRange
+  const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
+
   // Check if we have directional latency data
   const hasDirectionalData = link.latencyAtoZUs > 0 || link.latencyZtoAUs > 0
 
@@ -209,17 +220,22 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
           </div>
         </div>
 
+        {/* Time range selector */}
+        <div className="flex justify-end">
+          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        </div>
+
         {/* Link Status History Timeline */}
-        <SingleLinkStatusRow linkPk={link.pk} />
+        <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
 
         {/* Traffic charts */}
-        <TrafficCharts entityType="link" entityPk={link.pk} />
+        <TrafficCharts entityType="link" entityPk={link.pk} timeRange={timeRange} />
 
         {/* Latency charts */}
-        <LatencyCharts linkPk={link.pk} />
+        <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
 
         {/* Link status charts (packet loss, interface issues) */}
-        <LinkStatusCharts linkPk={link.pk} />
+        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
       </div>
     )
   }
@@ -379,24 +395,31 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
 
       {/* Link Status History Timeline */}
       {!hideStatusRow && (
-        <SingleLinkStatusRow linkPk={link.pk} />
+        <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
       )}
 
       {/* Charts section */}
       {!hideCharts && (
         <>
+          {/* Time range selector (only shown when not controlled by parent) */}
+          {!controlledTimeRange && (
+            <div className="flex justify-end">
+              <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+            </div>
+          )}
+
           {/* Charts row - side by side on large screens */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div>
-              <TrafficCharts entityType="link" entityPk={link.pk} />
+              <TrafficCharts entityType="link" entityPk={link.pk} timeRange={timeRange} />
             </div>
             <div>
-              <LatencyCharts linkPk={link.pk} />
+              <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
             </div>
           </div>
 
           {/* Link status charts (packet loss, interface issues) */}
-          <LinkStatusCharts linkPk={link.pk} />
+          <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
         </>
       )}
     </div>

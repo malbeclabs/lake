@@ -1,12 +1,16 @@
+import { useState } from 'react'
 import type { ValidatorInfo } from '../types'
 import { EntityLink } from '../EntityLink'
 import { TrafficCharts } from '../TrafficCharts'
+import { TimeRangeSelector } from '../TimeRangeSelector'
+import type { TimeRange } from '../utils'
 
 interface ValidatorDetailsProps {
   validator: ValidatorInfo
 }
 
 export function ValidatorDetails({ validator }: ValidatorDetailsProps) {
+  const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const stats = [
     { label: 'Location', value: `${validator.city}, ${validator.country}` },
     {
@@ -81,8 +85,13 @@ export function ValidatorDetails({ validator }: ValidatorDetailsProps) {
         </div>
       </div>
 
+      {/* Time range selector */}
+      <div className="flex justify-end">
+        <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+      </div>
+
       {/* Traffic charts */}
-      <TrafficCharts entityType="validator" entityPk={String(validator.tunnelId)} />
+      <TrafficCharts entityType="validator" entityPk={String(validator.tunnelId)} timeRange={timeRange} />
 
       {/* External link */}
       <div className="pt-2 border-t border-[var(--border)]">

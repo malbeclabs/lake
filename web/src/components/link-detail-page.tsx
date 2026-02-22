@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Cable, AlertCircle, ArrowLeft } from 'lucide-react'
@@ -8,11 +9,14 @@ import { SingleLinkStatusRow } from '@/components/single-link-status-row'
 import { TrafficCharts } from '@/components/topology/TrafficCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
+import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
 
   const { data: link, isLoading, error } = useQuery({
     queryKey: ['link', pk],
@@ -75,25 +79,27 @@ export function LinkDetailPage() {
         <LinkInfoContent link={linkDetailToInfo(link)} hideStatusRow hideCharts />
       </div>
 
-      {/* Status row */}
-      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
-        <SingleLinkStatusRow linkPk={link.pk} />
-      </div>
-
-      {/* Charts - constrained width */}
+      {/* Time range selector + status row + charts */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8 space-y-6">
+        <div className="flex justify-end">
+          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        </div>
+
+        {/* Status row */}
+        <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
+
         {/* Charts row - side by side on large screens */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div>
-            <TrafficCharts entityType="link" entityPk={link.pk} />
+            <TrafficCharts entityType="link" entityPk={link.pk} timeRange={timeRange} />
           </div>
           <div>
-            <LatencyCharts linkPk={link.pk} />
+            <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
           </div>
         </div>
 
         {/* Link status charts (packet loss, interface issues) */}
-        <LinkStatusCharts linkPk={link.pk} />
+        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
       </div>
     </div>
   )
