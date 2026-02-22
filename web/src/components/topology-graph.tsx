@@ -1235,10 +1235,10 @@ export function TopologyGraph({
         const label = subCount > 1 ? `S${subCount}` : 'S'
         node.data('multicastLabel', label)
         node.style({
-          'background-color': '#ef4444', 'border-color': '#ef4444', 'border-width': 3,
+          'background-color': '#14b8a6', 'border-color': '#14b8a6', 'border-width': 3,
           'width': 20, 'height': 20, 'label': label,
           'text-valign': 'center', 'text-halign': 'center', 'font-size': 8,
-          'color': '#ffffff', 'text-background-color': '#ef4444', 'text-background-opacity': 0,
+          'color': '#ffffff', 'text-background-color': '#14b8a6', 'text-background-opacity': 0,
         })
       }
     }

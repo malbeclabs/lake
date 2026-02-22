@@ -74,7 +74,7 @@ const statusColors: Record<string, string> = {
 }
 
 const TRAFFIC_COLORS = [
-  '#9333ea', '#2563eb', '#16a34a', '#ea580c', '#0891b2', '#ca8a04', '#db2777', '#5bc0de',
+  '#7c5cbf', '#4a8fe7', '#3dad6f', '#d4854a', '#2ba3a8', '#c4a23d', '#c45fa0', '#6ba8f2',
 ]
 
 const TIME_RANGES = ['1h', '6h', '12h', '24h'] as const

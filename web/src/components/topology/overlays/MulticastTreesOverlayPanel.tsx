@@ -17,14 +17,14 @@ import {
 // Colors for multicast publishers — exported so map/globe/graph views use the same palette
 // eslint-disable-next-line react-refresh/only-export-components
 export const MULTICAST_PUBLISHER_COLORS = [
-  { light: '#9333ea', dark: '#a855f7' },  // purple
-  { light: '#2563eb', dark: '#3b82f6' },  // blue
-  { light: '#16a34a', dark: '#22c55e' },  // green
-  { light: '#ea580c', dark: '#f97316' },  // orange
-  { light: '#0891b2', dark: '#06b6d4' },  // cyan
-  { light: '#dc2626', dark: '#ef4444' },  // red
-  { light: '#ca8a04', dark: '#eab308' },  // yellow
-  { light: '#db2777', dark: '#ec4899' },  // pink
+  { light: '#7c5cbf', dark: '#a78bda' },  // soft purple
+  { light: '#4a8fe7', dark: '#6ba8f2' },  // soft blue
+  { light: '#3dad6f', dark: '#5ec98d' },  // soft green
+  { light: '#d4854a', dark: '#e8a06e' },  // soft orange
+  { light: '#2ba3a8', dark: '#4fc5ca' },  // soft teal
+  { light: '#d46a7e', dark: '#e88d9e' },  // soft rose
+  { light: '#c4a23d', dark: '#dbbe5c' },  // soft gold
+  { light: '#c45fa0', dark: '#da82b8' },  // soft magenta
 ]
 
 interface MulticastTreesOverlayPanelProps {
@@ -451,7 +451,7 @@ export function MulticastTreesOverlayPanel({
 
                                 keySuffix="-sub"
                                 colorDotForMember={() => (
-                                  <div className="w-3 h-3 rounded-full bg-red-500 flex-shrink-0" />
+                                  <div className="w-3 h-3 rounded-full bg-teal-500 flex-shrink-0" />
                                 )}
                               />
                             ))}
@@ -545,14 +545,14 @@ function formatAxisBps(bps: number): string {
 
 /** Color palette for traffic chart lines — same set used by the main traffic page */
 const TRAFFIC_COLORS = [
-  '#9333ea', // purple
-  '#2563eb', // blue
-  '#16a34a', // green
-  '#ea580c', // orange
-  '#0891b2', // cyan
-  '#ca8a04', // yellow
-  '#db2777', // pink
-  '#5bc0de', // light blue
+  '#7c5cbf', // soft purple
+  '#4a8fe7', // soft blue
+  '#3dad6f', // soft green
+  '#d4854a', // soft orange
+  '#2ba3a8', // soft teal
+  '#c4a23d', // soft gold
+  '#c45fa0', // soft magenta
+  '#6ba8f2', // soft sky
 ]
 
 /** Collapsible traffic chart for a selected multicast group */

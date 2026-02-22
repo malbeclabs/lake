@@ -966,7 +966,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
         map.set(m.device_pk, isDark ? c.dark : c.light)
       } else if (isSub) {
-        map.set(m.device_pk, '#ef4444') // red for subscriber
+        map.set(m.device_pk, '#14b8a6') // teal for subscriber
       }
     }
     return map
@@ -1805,7 +1805,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (metroPathModeEnabled && isInSelectedMetroPath) return PATH_COLORS[0]
     if (metroPathModeEnabled && isInAnyMetroPath && metroDevicePathIndices) return PATH_COLORS[metroDevicePathIndices[0] % PATH_COLORS.length]
     if (multicastTreesMode && isMulticastPublisher) { const mc = MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(d.pk) ?? 0) % MULTICAST_PUBLISHER_COLORS.length]; return isDark ? mc.dark : mc.light }
-    if (multicastTreesMode && isMulticastSubscriber) return '#ef4444'
+    if (multicastTreesMode && isMulticastSubscriber) return '#14b8a6'
     if (multicastTreesMode && isInAnyMulticastTree) {
       // Find the first publisher that routes through this device
       const firstPub = multicastPublisherPaths.find(pp => pp.segments.some(s => s.fromPK === d.pk || s.toPK === d.pk))

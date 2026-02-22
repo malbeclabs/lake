@@ -1609,7 +1609,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
         map.set(m.device_pk, isDark ? c.dark : c.light)
       } else if (isSub) {
-        map.set(m.device_pk, '#ef4444') // red for subscriber
+        map.set(m.device_pk, '#14b8a6') // teal for subscriber
       }
     }
     return map
@@ -3233,9 +3233,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
             borderWidth = 4
             opacity = 1
           } else if (multicastTreesMode && isMulticastSubscriber) {
-            // Multicast subscriber: keep red to distinguish from publishers
-            markerColor = '#ef4444' // red
-            borderColor = '#ef4444'
+            // Multicast subscriber: teal to distinguish from publishers
+            markerColor = '#14b8a6' // teal
+            borderColor = '#14b8a6'
             markerSize = 18
             borderWidth = 3
             opacity = 1
