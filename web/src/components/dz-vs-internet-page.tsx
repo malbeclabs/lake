@@ -1,12 +1,128 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Zap, Download, ArrowRight, ChevronUp, ChevronDown, Search, X, MapPin } from 'lucide-react'
+import { Loader2, Zap, Download, ArrowRight, ChevronUp, ChevronDown, Search, X, MapPin, Filter } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
-import { fetchLatencyComparison, fetchLatencyHistory } from '@/lib/api'
+import { fetchLatencyComparison, fetchLatencyHistory, fetchFieldValues } from '@/lib/api'
 import type { LatencyComparison } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { cn } from '@/lib/utils'
+
+const DEBOUNCE_MS = 150
+
+function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [isFocused, setIsFocused] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  const { data: metroValues, isLoading } = useQuery({
+    queryKey: ['field-values', 'devices', 'metro'],
+    queryFn: () => fetchFieldValues('devices', 'metro'),
+    staleTime: 60000,
+  })
+
+  const filteredValues = useMemo(() => {
+    if (!metroValues) return []
+    if (!query) return metroValues
+    return metroValues.filter(v => v.toLowerCase().includes(query.toLowerCase()))
+  }, [metroValues, query])
+
+  const items = isFocused ? filteredValues : []
+
+  useEffect(() => {
+    setSelectedIndex(-1)
+  }, [debouncedQuery])
+
+  const commit = useCallback((value: string) => {
+    onCommit(value)
+    setQuery('')
+    inputRef.current?.focus()
+  }, [onCommit])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const isDropdownOpen = isFocused && items.length > 0
+    switch (e.key) {
+      case 'ArrowDown':
+        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, items.length - 1)) }
+        break
+      case 'ArrowUp':
+        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)) }
+        break
+      case 'Enter': {
+        e.preventDefault()
+        const idx = selectedIndex >= 0 ? selectedIndex : 0
+        if (idx < items.length) commit(items[idx])
+        break
+      }
+      case 'Escape':
+        e.preventDefault()
+        setQuery('')
+        inputRef.current?.blur()
+        break
+    }
+  }, [items, selectedIndex, commit, isFocused])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsFocused(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const showDropdown = isFocused && items.length > 0
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center gap-1.5 px-2 py-1 text-xs border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
+        <Search className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          placeholder="Filter by metro..."
+          className="w-28 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-xs"
+        />
+        {isLoading && <Loader2 className="h-3 w-3 text-muted-foreground animate-spin" />}
+      </div>
+
+      {showDropdown && (
+        <div className="absolute top-full left-0 mt-1 w-48 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg z-40">
+          {!query && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border flex items-center gap-1">
+              <Filter className="h-3 w-3" />
+              Select metro
+            </div>
+          )}
+          {items.map((value, index) => (
+            <button
+              key={value}
+              onClick={() => commit(value)}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted transition-colors',
+                index === selectedIndex && 'bg-muted'
+              )}
+            >
+              <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+              <span className="truncate">{value}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from '@/components/page-header'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
@@ -103,10 +219,16 @@ export function DzVsInternetPage() {
     })
   }, [setSearchParams])
 
-  // Open the search spotlight
-  const openSearch = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('open-search'))
-  }, [])
+  // Add a metro filter
+  const addMetroFilter = useCallback((metro: string) => {
+    setSearchParams(prev => {
+      const current = parseMetroFilters(prev.get('metros') || '')
+      if (!current.includes(metro)) {
+        prev.set('metros', [...current, metro].join(','))
+      }
+      return prev
+    })
+  }, [setSearchParams])
 
   // Fetch latency history for selected comparison
   const { data: historyData, isLoading: historyLoading } = useQuery({
@@ -303,16 +425,8 @@ export function DzVsInternetPage() {
 
         {/* Filter bar */}
         <div className="flex items-center gap-2 flex-wrap mt-4">
-          {/* Search button */}
-          <button
-            onClick={openSearch}
-            className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-md bg-background hover:bg-muted transition-colors"
-            title="Filter by metro (Cmd+K)"
-          >
-            <Search className="h-3 w-3" />
-            <span>Filter</span>
-            <kbd className="ml-0.5 font-mono text-[10px] text-muted-foreground/70">⌘K</kbd>
-          </button>
+          {/* Inline filter input */}
+          <MetroInlineFilter onCommit={addMetroFilter} />
 
           {/* Filter tags */}
           {metroFilters.map((metro) => (

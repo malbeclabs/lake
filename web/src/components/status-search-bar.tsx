@@ -383,6 +383,9 @@ export function StatusFilters({ className }: StatusFiltersProps) {
   return (
     <div className={className}>
       <div className="flex items-center gap-2 flex-wrap">
+        {/* Inline filter input */}
+        <StatusInlineFilter onCommit={addFilter} />
+
         {/* Filter tags */}
         {filters.map((filter, idx) => {
           const Icon = entityIcons[filter.type] || Server
@@ -408,9 +411,6 @@ export function StatusFilters({ className }: StatusFiltersProps) {
             Clear all
           </button>
         )}
-
-        {/* Inline filter input */}
-        <StatusInlineFilter onCommit={addFilter} />
       </div>
     </div>
   )
