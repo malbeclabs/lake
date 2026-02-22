@@ -572,7 +572,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {link.link_type}{link.contributor && ` · ${link.contributor}`}
+              {link.link_type}{link.contributor && ` · ${link.contributor}`} · {link.side_a_metro} ↔ {link.side_z_metro}
             </div>
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">

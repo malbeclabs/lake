@@ -736,9 +736,9 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
               </Link>
               <DeviceInfoPopover device={device} />
             </div>
-            {device.contributor && (
-              <div className="text-xs text-muted-foreground">{device.contributor}</div>
-            )}
+            <div className="text-xs text-muted-foreground">
+              {device.contributor}{device.metro && ` · ${device.metro}`}
+            </div>
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {issueReasons.includes('interface_errors') && (

@@ -2048,11 +2048,32 @@ function DeviceIssuesFilterCard({
   )
 }
 
+// Group filters by type: AND across types, OR within same type
+function groupFiltersByType(filters: StatusFilter[]): Map<string, StatusFilter[]> {
+  const grouped = new Map<string, StatusFilter[]>()
+  for (const filter of filters) {
+    const existing = grouped.get(filter.type) || []
+    existing.push(filter)
+    grouped.set(filter.type, existing)
+  }
+  return grouped
+}
+
+// Generic filter matcher: AND across filter types, OR within same type
+function matchesGroupedFilters(
+  filters: StatusFilter[],
+  matchSingle: (filter: StatusFilter) => boolean,
+): boolean {
+  if (filters.length === 0) return true
+  const grouped = groupFiltersByType(filters)
+  return Array.from(grouped.values()).every(group =>
+    group.some(matchSingle)
+  )
+}
+
 // Helper to check if a device matches search filters
 function deviceMatchesSearchFilters(device: DeviceHistory, filters: StatusFilter[]): boolean {
-  if (filters.length === 0) return true
-
-  return filters.some(filter => {
+  return matchesGroupedFilters(filters, filter => {
     switch (filter.type) {
       case 'device':
         return device.code.toLowerCase().includes(filter.value.toLowerCase())
@@ -2068,9 +2089,7 @@ function deviceMatchesSearchFilters(device: DeviceHistory, filters: StatusFilter
 
 // Helper to check if an interface issue matches search filters
 function interfaceIssueMatchesSearchFilters(issue: InterfaceIssue, filters: StatusFilter[]): boolean {
-  if (filters.length === 0) return true
-
-  return filters.some(filter => {
+  return matchesGroupedFilters(filters, filter => {
     switch (filter.type) {
       case 'device':
         return issue.device_code.toLowerCase().includes(filter.value.toLowerCase())
@@ -2079,7 +2098,7 @@ function interfaceIssueMatchesSearchFilters(issue: InterfaceIssue, filters: Stat
       case 'contributor':
         return issue.contributor?.toLowerCase().includes(filter.value.toLowerCase())
       case 'link':
-        return issue.link_code?.toLowerCase().includes(filter.value.toLowerCase())
+        return issue.link_code?.toLowerCase().includes(filter.value.toLowerCase()) ?? false
       default:
         return false
     }
@@ -2088,20 +2107,18 @@ function interfaceIssueMatchesSearchFilters(issue: InterfaceIssue, filters: Stat
 
 // Helper to check if a link matches search filters
 function linkMatchesSearchFilters(link: LinkHistory, filters: StatusFilter[]): boolean {
-  if (filters.length === 0) return true
-
-  return filters.some(filter => {
+  return matchesGroupedFilters(filters, filter => {
     switch (filter.type) {
       case 'link':
         return link.code.toLowerCase().includes(filter.value.toLowerCase())
       case 'device':
         return link.side_a_device?.toLowerCase().includes(filter.value.toLowerCase()) ||
-               link.side_z_device?.toLowerCase().includes(filter.value.toLowerCase())
+               link.side_z_device?.toLowerCase().includes(filter.value.toLowerCase()) || false
       case 'metro':
         return link.side_a_metro?.toLowerCase() === filter.value.toLowerCase() ||
                link.side_z_metro?.toLowerCase() === filter.value.toLowerCase()
       case 'contributor':
-        return link.contributor?.toLowerCase().includes(filter.value.toLowerCase())
+        return link.contributor?.toLowerCase().includes(filter.value.toLowerCase()) ?? false
       default:
         return false
     }
@@ -2110,9 +2127,7 @@ function linkMatchesSearchFilters(link: LinkHistory, filters: StatusFilter[]): b
 
 // Helper to check if a link metric (for utilization) matches search filters
 function linkMetricMatchesSearchFilters(link: LinkMetric, filters: StatusFilter[]): boolean {
-  if (filters.length === 0) return true
-
-  return filters.some(filter => {
+  return matchesGroupedFilters(filters, filter => {
     switch (filter.type) {
       case 'link':
         return link.code.toLowerCase().includes(filter.value.toLowerCase())
@@ -2120,7 +2135,7 @@ function linkMetricMatchesSearchFilters(link: LinkMetric, filters: StatusFilter[
         return link.side_a_metro?.toLowerCase() === filter.value.toLowerCase() ||
                link.side_z_metro?.toLowerCase() === filter.value.toLowerCase()
       case 'contributor':
-        return link.contributor?.toLowerCase().includes(filter.value.toLowerCase())
+        return link.contributor?.toLowerCase().includes(filter.value.toLowerCase()) ?? false
       default:
         return false
     }
@@ -2129,16 +2144,14 @@ function linkMetricMatchesSearchFilters(link: LinkMetric, filters: StatusFilter[
 
 // Helper to check if a device utilization matches search filters
 function deviceUtilMatchesSearchFilters(device: DeviceUtilization, filters: StatusFilter[]): boolean {
-  if (filters.length === 0) return true
-
-  return filters.some(filter => {
+  return matchesGroupedFilters(filters, filter => {
     switch (filter.type) {
       case 'device':
         return device.code.toLowerCase().includes(filter.value.toLowerCase())
       case 'metro':
         return device.metro?.toLowerCase() === filter.value.toLowerCase()
       case 'contributor':
-        return device.contributor?.toLowerCase().includes(filter.value.toLowerCase())
+        return device.contributor?.toLowerCase().includes(filter.value.toLowerCase()) ?? false
       default:
         return false
     }
