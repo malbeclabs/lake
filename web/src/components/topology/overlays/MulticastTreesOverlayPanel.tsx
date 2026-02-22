@@ -617,6 +617,7 @@ export function MulticastTreesOverlayPanel({
               isDark={isDark}
               publisherColorMap={publisherColorMap}
               activeTab={activeTab}
+              enabledMembers={activeTab === 'publishers' ? enabledPublishers : enabledSubscribers}
               hoveredTunnelId={hoveredTunnelId}
               onHoverUserPK={handleTrafficChartHoverUserPK}
             />
@@ -704,6 +705,7 @@ function MulticastTrafficChartSection({
   groupCode,
   members,
   activeTab,
+  enabledMembers,
   hoveredTunnelId,
   onHoverUserPK,
 }: {
@@ -712,6 +714,7 @@ function MulticastTrafficChartSection({
   isDark: boolean
   publisherColorMap: Map<string, number>
   activeTab: 'publishers' | 'subscribers'
+  enabledMembers: Set<string>
   hoveredTunnelId: number | null
   onHoverUserPK: (userPK: string | null) => void
 }) {
@@ -801,47 +804,31 @@ function MulticastTrafficChartSection({
   // Track hovered chart index for legend table values
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [localHoveredSeries, setLocalHoveredSeries] = useState<number | null>(null)
-  const [selectedSeries, setSelectedSeries] = useState<Set<number>>(new Set())
-  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
 
   // Merge local legend hover with member list hover (hoveredTunnelId from parent)
   const effectiveHoveredSeries = localHoveredSeries ?? hoveredTunnelId
 
-  // Empty selection = all visible
+  // Derive visible series from enabled members — member list is the source of truth
   const visibleSeries = useMemo(() => {
-    if (selectedSeries.has(-1)) return new Set<number>()
-    if (selectedSeries.size > 0) return selectedSeries
-    return new Set(tunnelIds)
-  }, [selectedSeries, tunnelIds])
-
-  const handleSeriesClick = (tid: number, index: number, event: React.MouseEvent) => {
-    if (event.shiftKey && lastClickedIndex !== null) {
-      const start = Math.min(lastClickedIndex, index)
-      const end = Math.max(lastClickedIndex, index)
-      const newSelection = new Set(selectedSeries)
-      for (let i = start; i <= end; i++) {
-        newSelection.add(tunnelIds[i])
-      }
-      setSelectedSeries(newSelection)
-    } else if (event.ctrlKey || event.metaKey) {
-      const newSelection = new Set(selectedSeries)
-      if (newSelection.has(tid)) {
-        newSelection.delete(tid)
-      } else {
-        newSelection.add(tid)
-      }
-      setSelectedSeries(newSelection)
-    } else {
-      if (selectedSeries.has(tid)) {
-        const newSelection = new Set(selectedSeries)
-        newSelection.delete(tid)
-        setSelectedSeries(newSelection)
-      } else {
-        setSelectedSeries(new Set([tid]))
+    const visible = new Set<number>()
+    for (const tid of tunnelIds) {
+      const info = tunnelInfo.get(tid)
+      if (info && enabledMembers.has(info.userPk)) {
+        visible.add(tid)
       }
     }
-    setLastClickedIndex(index)
-  }
+    return visible
+  }, [tunnelIds, tunnelInfo, enabledMembers])
+
+  // Rendered series = visible + hovered preview (if hovered tunnel isn't already visible)
+  const renderedSeries = useMemo(() => {
+    if (hoveredTunnelId !== null && !visibleSeries.has(hoveredTunnelId) && tunnelIds.includes(hoveredTunnelId)) {
+      const set = new Set(visibleSeries)
+      set.add(hoveredTunnelId)
+      return set
+    }
+    return visibleSeries
+  }, [visibleSeries, hoveredTunnelId, tunnelIds])
 
   // Values to display in the legend: hovered point or latest
   const displayValues = useMemo(() => {
@@ -949,31 +936,41 @@ function MulticastTrafficChartSection({
                         content={() => null}
                         cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
                       />
-                      {tunnelIds.filter(tid => visibleSeries.has(tid)).map(tid => (
-                        <Line
-                          key={`${tid}_in`}
-                          type="monotone"
-                          dataKey={`t${tid}_in`}
-                          stroke={getTunnelColor(tid)}
-                          strokeWidth={1.5}
-                          strokeOpacity={effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? 0 : 1}
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                      ))}
-                      {tunnelIds.filter(tid => visibleSeries.has(tid)).map(tid => (
-                        <Line
-                          key={`${tid}_out`}
-                          type="monotone"
-                          dataKey={`t${tid}_out`}
-                          stroke={getTunnelColor(tid)}
-                          strokeWidth={1.5}
-                          strokeOpacity={effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? 0 : 1}
-                          strokeDasharray="4 2"
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                      ))}
+                      {tunnelIds.filter(tid => renderedSeries.has(tid)).map(tid => {
+                        const isPreview = !visibleSeries.has(tid)
+                        const baseOpacity = isPreview ? 0.35 : 1
+                        const opacity = effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? baseOpacity * 0.2 : baseOpacity
+                        return (
+                          <Line
+                            key={`${tid}_in`}
+                            type="monotone"
+                            dataKey={`t${tid}_in`}
+                            stroke={getTunnelColor(tid)}
+                            strokeWidth={1.5}
+                            strokeOpacity={opacity}
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                        )
+                      })}
+                      {tunnelIds.filter(tid => renderedSeries.has(tid)).map(tid => {
+                        const isPreview = !visibleSeries.has(tid)
+                        const baseOpacity = isPreview ? 0.35 : 1
+                        const opacity = effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? baseOpacity * 0.2 : baseOpacity
+                        return (
+                          <Line
+                            key={`${tid}_out`}
+                            type="monotone"
+                            dataKey={`t${tid}_out`}
+                            stroke={getTunnelColor(tid)}
+                            strokeWidth={1.5}
+                            strokeOpacity={opacity}
+                            strokeDasharray="4 2"
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                        )
+                      })}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -983,18 +980,11 @@ function MulticastTrafficChartSection({
               <div className="mt-2 text-[10px]">
                 <div className="flex items-center gap-2 px-1 py-0.5 text-muted-foreground/60 font-medium">
                   <div className="w-2" />
-                  <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                    Device
-                    <span className="font-normal">
-                      <button className="hover:text-foreground transition-colors" onClick={() => setSelectedSeries(new Set())}>all</button>
-                      {' / '}
-                      <button className="hover:text-foreground transition-colors" onClick={() => setSelectedSeries(new Set([-1]))}>none</button>
-                    </span>
-                  </div>
+                  <div className="flex-1 min-w-0">Device</div>
                   <div className="text-right">↓ In</div>
                   <div className="text-right">↑ Out</div>
                 </div>
-                {tunnelIds.map((tid, i) => {
+                {tunnelIds.map((tid) => {
                   const info = tunnelInfo.get(tid)
                   const vals = displayValues.get(tid)
                   const isVisible = visibleSeries.has(tid)
@@ -1002,10 +992,9 @@ function MulticastTrafficChartSection({
                   return (
                     <div
                       key={tid}
-                      className={`flex items-center gap-2 px-1 py-0.5 rounded cursor-pointer select-none transition-colors ${
+                      className={`flex items-center gap-2 px-1 py-0.5 rounded select-none transition-colors ${
                         isHighlighted ? 'bg-muted/80' : 'hover:bg-muted/60'
-                      } ${!isVisible ? 'opacity-40' : ''}`}
-                      onClick={(e) => handleSeriesClick(tid, i, e)}
+                      } ${!isVisible ? 'opacity-55' : ''}`}
                       onMouseEnter={() => {
                         if (isVisible) {
                           setLocalHoveredSeries(tid)
