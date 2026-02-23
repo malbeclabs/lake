@@ -10,7 +10,7 @@ import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
 import { TimeRangeSelector, TrafficFilters, timeRangeToString } from '@/components/topology/TimeRangeSelector'
-import type { TimeRange, BucketSize, TrafficMetric } from '@/components/topology/utils'
+import type { TimeRange, BucketSize } from '@/components/topology/utils'
 import { bucketLabels, resolveAutoBucket, type TimeRangePreset } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
@@ -19,8 +19,6 @@ export function LinkDetailPage() {
   const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [bucket, setBucket] = useState<BucketSize>('auto')
-  const [metric, setMetric] = useState<TrafficMetric>('throughput')
-  const [trafficView, setTrafficView] = useState<'avg' | 'peak'>('avg')
 
   const effectiveBucketLabel = bucket === 'auto'
     ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
@@ -105,17 +103,16 @@ export function LinkDetailPage() {
           <TrafficFilters
             bucket={bucket}
             onBucketChange={setBucket}
-            metric={metric}
-            onMetricChange={setMetric}
             effectiveBucketLabel={effectiveBucketLabel}
-            trafficView={trafficView}
-            onTrafficViewChange={setTrafficView}
           />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
 
         {/* Status row */}
         <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
+
+        {/* Link status charts (packet loss, interface issues) */}
+        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} className="rounded-lg border border-border p-4" />
 
         {/* Interface traffic charts */}
         <InterfaceCharts
@@ -125,17 +122,11 @@ export function LinkDetailPage() {
           interfaceLabels={interfaceLabels}
           bucket={bucket}
           onBucketChange={setBucket}
-          metric={metric}
-          onMetricChange={setMetric}
-          trafficView={trafficView}
-          onTrafficViewChange={setTrafficView}
+          className="rounded-lg border border-border p-4"
         />
 
         {/* Latency charts */}
-        <LatencyCharts linkPk={link.pk} timeRange={timeRange} bucket={bucket} />
-
-        {/* Link status charts (packet loss, interface issues) */}
-        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} />
+        <LatencyCharts linkPk={link.pk} timeRange={timeRange} bucket={bucket} className="rounded-lg border border-border p-4" />
       </div>
     </div>
   )

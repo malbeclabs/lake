@@ -168,10 +168,10 @@ export function TrafficFilters({
   trafficView,
   onTrafficViewChange,
 }: {
-  bucket: BucketSize
-  onBucketChange: (bucket: BucketSize) => void
-  metric: TrafficMetric
-  onMetricChange: (metric: TrafficMetric) => void
+  bucket?: BucketSize
+  onBucketChange?: (bucket: BucketSize) => void
+  metric?: TrafficMetric
+  onMetricChange?: (metric: TrafficMetric) => void
   effectiveBucketLabel?: string
   trafficView?: TrafficView
   onTrafficViewChange?: (view: TrafficView) => void
@@ -182,17 +182,21 @@ export function TrafficFilters({
 
   return (
     <div className="flex items-center gap-2">
-      <SmallDropdown
-        value={bucket}
-        displayLabel={bucketDisplayLabel}
-        options={BUCKET_OPTIONS}
-        onChange={onBucketChange}
-      />
-      <SmallDropdown
-        value={metric}
-        options={METRIC_OPTIONS}
-        onChange={onMetricChange}
-      />
+      {bucket && onBucketChange && (
+        <SmallDropdown
+          value={bucket}
+          displayLabel={bucketDisplayLabel}
+          options={BUCKET_OPTIONS}
+          onChange={onBucketChange}
+        />
+      )}
+      {metric && onMetricChange && (
+        <SmallDropdown
+          value={metric}
+          options={METRIC_OPTIONS}
+          onChange={onMetricChange}
+        />
+      )}
       {trafficView && onTrafficViewChange && (
         <SmallDropdown
           value={trafficView}

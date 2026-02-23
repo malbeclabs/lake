@@ -7,6 +7,7 @@ import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
+import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
 
@@ -89,33 +90,39 @@ export function DeviceDetailPage() {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Additional device-specific info not in topology panel */}
+      {/* Device stats - constrained width */}
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-6">
+        {/* Device-specific info cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Public IP</div>
-            <div className="text-sm font-mono">{device.public_ip || '—'}</div>
+          <div className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium font-mono">{device.public_ip || '—'}</div>
+            <div className="text-xs text-muted-foreground">Public IP</div>
           </div>
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Current Traffic</div>
-            <div className="text-sm">
-              <span className="text-muted-foreground">In:</span> {formatBps(device.in_bps)}
-              <span className="mx-2">|</span>
-              <span className="text-muted-foreground">Out:</span> {formatBps(device.out_bps)}
+          <div className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium">
+              <span className="text-muted-foreground text-xs">In:</span> {formatBps(device.in_bps)}
+              <span className="mx-2 text-muted-foreground">|</span>
+              <span className="text-muted-foreground text-xs">Out:</span> {formatBps(device.out_bps)}
             </div>
+            <div className="text-xs text-muted-foreground">Current Traffic</div>
           </div>
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Capacity</div>
-            <div className="text-sm">
+          <div className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium">
               {device.current_users} / {device.max_users} users
               {device.max_users > 0 && (
-                <span className="text-muted-foreground ml-1">
+                <span className="text-muted-foreground text-xs ml-1">
                   ({((device.current_users / device.max_users) * 100).toFixed(0)}%)
                 </span>
               )}
             </div>
+            <div className="text-xs text-muted-foreground">Capacity</div>
           </div>
         </div>
+
+        {/* Shared device info (stats grid + interfaces) */}
+        <DeviceInfoContent device={deviceInfo} hideStatusRow hideCharts />
       </div>
 
       {/* Filters + status row + charts */}
@@ -127,10 +134,8 @@ export function DeviceDetailPage() {
         {/* Status row */}
         <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
 
-        {/* Shared device info content */}
-        <div className="border border-border rounded-lg p-4 bg-card">
-          <DeviceInfoContent device={deviceInfo} timeRange={timeRange} onTimeRangeChange={setTimeRange} />
-        </div>
+        {/* Interface charts (traffic + health) */}
+        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} className="rounded-lg border border-border p-4" />
       </div>
     </div>
   )

@@ -31,6 +31,10 @@ interface DeviceInfoContentProps {
   timeRange?: TimeRange
   /** Callback when time range changes (when managed by parent) */
   onTimeRangeChange?: (range: TimeRange) => void
+  /** Hide the status row (when rendered separately by parent) */
+  hideStatusRow?: boolean
+  /** Hide charts (when rendered separately by parent) */
+  hideCharts?: boolean
 }
 
 function formatStake(sol: number): string {
@@ -54,6 +58,8 @@ export function DeviceInfoContent({
   compact = false,
   timeRange: controlledTimeRange,
   onTimeRangeChange,
+  hideStatusRow = false,
+  hideCharts = false,
 }: DeviceInfoContentProps) {
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
 
@@ -135,15 +141,21 @@ export function DeviceInfoContent({
         )}
 
         {/* Time range selector */}
-        <div className="flex justify-end">
-          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
-        </div>
+        {!hideCharts && (
+          <div className="flex justify-end">
+            <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+          </div>
+        )}
 
         {/* Device Status History Timeline */}
-        <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
+        {!hideStatusRow && (
+          <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
+        )}
 
         {/* Interface charts (traffic + health) */}
-        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
+        {!hideCharts && (
+          <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
+        )}
       </div>
     )
   }
@@ -186,14 +198,16 @@ export function DeviceInfoContent({
         </div>
       )}
 
-      {/* Time range selector (only shown when not controlled by parent) */}
-      {!controlledTimeRange && (
+      {/* Time range selector (only shown when not controlled by parent and charts visible) */}
+      {!hideCharts && !controlledTimeRange && (
         <div className="flex justify-end">
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
       )}
 
-      <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
+      {!hideCharts && (
+        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
+      )}
     </div>
   )
 }

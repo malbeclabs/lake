@@ -125,6 +125,8 @@ interface InterfaceChartsProps {
   onMetricChange?: (metric: TrafficMetric) => void
   trafficView?: 'avg' | 'peak'
   onTrafficViewChange?: (view: 'avg' | 'peak') => void
+  /** Additional CSS classes for the outer wrapper */
+  className?: string
 }
 
 /** Convert flat per-interface points into columnar uPlot AlignedData with Unix timestamp x-axis */
@@ -237,7 +239,7 @@ function buildHealthColumnar(
   return { data: arrays as uPlot.AlignedData, hasData }
 }
 
-export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabels, bucket: controlledBucket, onBucketChange, metric: controlledMetric, onMetricChange, trafficView: controlledTrafficView, onTrafficViewChange }: InterfaceChartsProps) {
+export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabels, bucket: controlledBucket, onBucketChange, metric: controlledMetric, onMetricChange, trafficView: controlledTrafficView, onTrafficViewChange, className }: InterfaceChartsProps) {
   const effectiveRange = timeRange ?? { preset: '24h' as const }
   const rangeLabel = getTimeRangeLabel(effectiveRange)
   const timeRangeStr = effectiveRange.preset === 'custom' ? 'custom' : effectiveRange.preset
@@ -494,9 +496,9 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {errorHealth?.hasData && (
-        <div>
+        <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Errors by Interface ({rangeLabel})
           </div>
@@ -514,7 +516,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       )}
 
       {discardHealth?.hasData && (
-        <div>
+        <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Discards by Interface ({rangeLabel})
           </div>
@@ -532,7 +534,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       )}
 
       {transitionHealth?.hasData && (
-        <div>
+        <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Carrier Transitions by Interface ({rangeLabel})
           </div>
@@ -549,35 +551,33 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
         </div>
       )}
 
-      <div>
+      <div className={className}>
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs text-muted-foreground uppercase tracking-wider">
             {trafficView === 'avg' ? 'Avg' : 'Peak'} Traffic by Interface ({rangeLabel})
           </div>
-          {!controlledBucket && (
-            <TrafficFilters
-              bucket={bucket}
-              onBucketChange={setBucket}
-              metric={metric}
-              onMetricChange={setMetric}
-              effectiveBucketLabel={effectiveBucketLabel}
-              trafficView={trafficView}
-              onTrafficViewChange={setTrafficView}
-            />
-          )}
+          <TrafficFilters
+            bucket={!controlledBucket ? bucket : undefined}
+            onBucketChange={!controlledBucket ? setBucket : undefined}
+            metric={metric}
+            onMetricChange={setMetric}
+            effectiveBucketLabel={effectiveBucketLabel}
+            trafficView={trafficView}
+            onTrafficViewChange={setTrafficView}
+          />
         </div>
         <div ref={trafficChartRef} className="h-36" />
-      </div>
 
-      <InterfaceLegendTable
-        interfaces={interfaces}
-        colors={colors}
-        legend={legend}
-        visibleSeries={visibleSeries}
-        latestValues={displayValues}
-        formatValue={metric === 'packets' ? formatPpsTooltip : formatChartTooltipRate}
-        interfaceLabels={interfaceLabels}
-      />
+        <InterfaceLegendTable
+          interfaces={interfaces}
+          colors={colors}
+          legend={legend}
+          visibleSeries={visibleSeries}
+          latestValues={displayValues}
+          formatValue={metric === 'packets' ? formatPpsTooltip : formatChartTooltipRate}
+          interfaceLabels={interfaceLabels}
+        />
+      </div>
     </div>
   )
 }

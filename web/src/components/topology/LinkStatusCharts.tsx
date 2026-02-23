@@ -15,19 +15,12 @@ interface LinkStatusChartsProps {
   linkPk: string
   timeRange?: string
   bucket?: BucketSize
+  /** Additional CSS classes for the outer wrapper */
+  className?: string
 }
 
 function hasPacketLossData(hours: LinkHourStatus[]): boolean {
   return hours.some(h => h.avg_loss_pct > 0)
-}
-
-function hasLatencyIssues(hours: LinkHourStatus[], committedRttUs?: number): boolean {
-  if (!committedRttUs || committedRttUs <= 0) return false
-  return hours.some(h => {
-    if (h.avg_latency_us <= 0) return false
-    const latencyOveragePct = ((h.avg_latency_us - committedRttUs) / committedRttUs) * 100
-    return latencyOveragePct >= 20
-  })
 }
 
 function hasInterfaceIssueData(hours: LinkHourStatus[]): boolean {
@@ -46,7 +39,7 @@ function formatCount(value: number): string {
   return value.toString()
 }
 
-export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket }: LinkStatusChartsProps) {
+export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className }: LinkStatusChartsProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
@@ -135,7 +128,6 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket }: LinkStat
   }, [historyData, errorColor, discardColor, carrierColor])
 
   const showPacketLoss = historyData?.hours && hasPacketLossData(historyData.hours)
-  const showLatencyIssues = historyData?.hours && hasLatencyIssues(historyData.hours, historyData.committed_rtt_us)
   const showInterfaceIssues = historyData?.hours && hasInterfaceIssueData(historyData.hours)
 
   // Legends
@@ -212,24 +204,13 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket }: LinkStat
   }
 
   if (!showPacketLoss && !showInterfaceIssues) {
-    if (showLatencyIssues) {
-      return (
-        <div className="text-sm text-amber-600 dark:text-amber-400 text-center py-4">
-          Link latency is exceeding SLA. See Round-Trip Time chart above for details.
-        </div>
-      )
-    }
-    return (
-      <div className="text-sm text-green-600 dark:text-green-400 text-center py-4">
-        No packet loss or interface issues in the last {timeRange}
-      </div>
-    )
+    return null
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {showPacketLoss && (
-        <div>
+        <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Packet Loss ({timeRange})
           </div>
@@ -239,7 +220,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket }: LinkStat
       )}
 
       {showInterfaceIssues && (
-        <div>
+        <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Interface Issues ({timeRange})
           </div>

@@ -254,153 +254,150 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
   // Wide mode: optimized for full-page view on desktop
   return (
     <div className="space-y-6">
-      {/* Endpoints and Stats row - side by side on large screens */}
-      <div className="grid grid-cols-1 lg:grid-cols-[auto,1fr] gap-6">
-        {/* Endpoints */}
-        <div className="grid grid-cols-2 gap-4 lg:w-96">
-          <div className="p-3 bg-muted/30 rounded-lg">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">A-Side</div>
-            <div className="text-sm font-medium">
-              <Link to={`/dz/devices/${link.sideAPk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
-                {link.sideACode}
-              </Link>
-              {link.sideAMetro && <span className="text-muted-foreground ml-1">({link.sideAMetro})</span>}
-            </div>
-            {link.sideAIfaceName && (
-              <div className="text-xs text-muted-foreground font-mono mt-1">{link.sideAIfaceName}</div>
-            )}
-            {link.sideAIP && (
-              <div className="text-xs text-muted-foreground font-mono">{link.sideAIP}</div>
-            )}
-            {hasDirectionalData && (
-              <div className="mt-3 pt-3 border-t border-muted/50 grid grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">RTT</div>
-                  <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyAtoZUs)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Jitter</div>
-                  <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterAtoZUs)}</div>
-                </div>
-              </div>
-            )}
+      {/* Endpoints row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-3 bg-muted/30 rounded-lg">
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">A-Side</div>
+          <div className="text-sm font-medium">
+            <Link to={`/dz/devices/${link.sideAPk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+              {link.sideACode}
+            </Link>
+            {link.sideAMetro && <span className="text-muted-foreground ml-1">({link.sideAMetro})</span>}
           </div>
-          <div className="p-3 bg-muted/30 rounded-lg">
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Z-Side</div>
-            <div className="text-sm font-medium">
-              <Link to={`/dz/devices/${link.sideZPk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
-                {link.sideZCode}
-              </Link>
-              {link.sideZMetro && <span className="text-muted-foreground ml-1">({link.sideZMetro})</span>}
-            </div>
-            {link.sideZIfaceName && (
-              <div className="text-xs text-muted-foreground font-mono mt-1">{link.sideZIfaceName}</div>
-            )}
-            {link.sideZIP && (
-              <div className="text-xs text-muted-foreground font-mono">{link.sideZIP}</div>
-            )}
-            {hasDirectionalData && (
-              <div className="mt-3 pt-3 border-t border-muted/50 grid grid-cols-2 gap-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">RTT</div>
-                  <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyZtoAUs)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Jitter</div>
-                  <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterZtoAUs)}</div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Stats grid - responsive columns */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2">
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className={`text-base font-medium capitalize ${statusColors[link.status] || ''}`}>{link.status}</div>
-            <div className="text-xs text-muted-foreground">Status</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium">{link.linkType}</div>
-            <div className="text-xs text-muted-foreground">Type</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums">{formatBps(link.bandwidthBps)}</div>
-            <div className="text-xs text-muted-foreground">Bandwidth</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums">{link.utilizationIn.toFixed(1)}%</div>
-            <div className="text-xs text-muted-foreground">Util In</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums">{link.utilizationOut.toFixed(1)}%</div>
-            <div className="text-xs text-muted-foreground">Util Out</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums">{formatBps(link.inBps)}</div>
-            <div className="text-xs text-muted-foreground">Current In</div>
-          </div>
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums">{formatBps(link.outBps)}</div>
-            <div className="text-xs text-muted-foreground">Current Out</div>
-          </div>
-          {link.peakInBps !== undefined && (
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums">{formatBps(link.peakInBps)}</div>
-              <div className="text-xs text-muted-foreground">Peak In (1h)</div>
-            </div>
+          {link.sideAIfaceName && (
+            <div className="text-xs text-muted-foreground font-mono mt-1">{link.sideAIfaceName}</div>
           )}
-          {link.peakOutBps !== undefined && (
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums">{formatBps(link.peakOutBps)}</div>
-              <div className="text-xs text-muted-foreground">Peak Out (1h)</div>
-            </div>
+          {link.sideAIP && (
+            <div className="text-xs text-muted-foreground font-mono">{link.sideAIP}</div>
           )}
-          {link.committedRttNs !== undefined && (
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums">
-                {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? (
-                  <div>
-                    <div className="line-through text-muted-foreground">{formatLatencyNs(link.committedRttNs)}</div>
-                    <div>{formatLatencyNs(link.isisDelayOverrideNs)}</div>
-                  </div>
-                ) : (
-                  formatLatencyNs(link.committedRttNs)
-                )}
+          {hasDirectionalData && (
+            <div className="mt-3 pt-3 border-t border-muted/50 grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-muted-foreground">RTT</div>
+                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyAtoZUs)}</div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Override Latency' : 'Committed Latency'}
-              </div>
-            </div>
-          )}
-          {!hasDirectionalData && (
-            <>
-              <div className="text-center p-3 bg-muted/30 rounded-lg">
-                <div className="text-base font-medium tabular-nums">{formatLatencyUs(link.latencyUs)}</div>
-                <div className="text-xs text-muted-foreground">Latency</div>
-              </div>
-              <div className="text-center p-3 bg-muted/30 rounded-lg">
-                <div className="text-base font-medium tabular-nums">{formatLatencyUs(link.jitterUs)}</div>
+              <div>
                 <div className="text-xs text-muted-foreground">Jitter</div>
+                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterAtoZUs)}</div>
               </div>
-            </>
+            </div>
           )}
-          <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums">{formatPercent(link.lossPercent)}</div>
-            <div className="text-xs text-muted-foreground">Packet Loss</div>
+        </div>
+        <div className="p-3 bg-muted/30 rounded-lg">
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Z-Side</div>
+          <div className="text-sm font-medium">
+            <Link to={`/dz/devices/${link.sideZPk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+              {link.sideZCode}
+            </Link>
+            {link.sideZMetro && <span className="text-muted-foreground ml-1">({link.sideZMetro})</span>}
           </div>
+          {link.sideZIfaceName && (
+            <div className="text-xs text-muted-foreground font-mono mt-1">{link.sideZIfaceName}</div>
+          )}
+          {link.sideZIP && (
+            <div className="text-xs text-muted-foreground font-mono">{link.sideZIP}</div>
+          )}
+          {hasDirectionalData && (
+            <div className="mt-3 pt-3 border-t border-muted/50 grid grid-cols-2 gap-2">
+              <div>
+                <div className="text-xs text-muted-foreground">RTT</div>
+                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyZtoAUs)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Jitter</div>
+                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterZtoAUs)}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Stats grid - responsive columns */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2">
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className={`text-base font-medium capitalize ${statusColors[link.status] || ''}`}>{link.status}</div>
+          <div className="text-xs text-muted-foreground">Status</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium">{link.linkType}</div>
+          <div className="text-xs text-muted-foreground">Type</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium tabular-nums">{formatBps(link.bandwidthBps)}</div>
+          <div className="text-xs text-muted-foreground">Bandwidth</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium tabular-nums">{link.utilizationIn.toFixed(1)}%</div>
+          <div className="text-xs text-muted-foreground">Util In</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium tabular-nums">{link.utilizationOut.toFixed(1)}%</div>
+          <div className="text-xs text-muted-foreground">Util Out</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium tabular-nums">{formatBps(link.inBps)}</div>
+          <div className="text-xs text-muted-foreground">Current In</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium tabular-nums">{formatBps(link.outBps)}</div>
+          <div className="text-xs text-muted-foreground">Current Out</div>
+        </div>
+        {link.peakInBps !== undefined && (
           <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium">
-              {link.contributorPk ? (
-                <Link to={`/dz/contributors/${link.contributorPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
-                  {link.contributorCode}
-                </Link>
+            <div className="text-base font-medium tabular-nums">{formatBps(link.peakInBps)}</div>
+            <div className="text-xs text-muted-foreground">Peak In (1h)</div>
+          </div>
+        )}
+        {link.peakOutBps !== undefined && (
+          <div className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium tabular-nums">{formatBps(link.peakOutBps)}</div>
+            <div className="text-xs text-muted-foreground">Peak Out (1h)</div>
+          </div>
+        )}
+        {link.committedRttNs !== undefined && (
+          <div className="text-center p-3 bg-muted/30 rounded-lg">
+            <div className="text-base font-medium tabular-nums">
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? (
+                <div>
+                  <div className="line-through text-muted-foreground">{formatLatencyNs(link.committedRttNs)}</div>
+                  <div>{formatLatencyNs(link.isisDelayOverrideNs)}</div>
+                </div>
               ) : (
-                link.contributorCode || '—'
+                formatLatencyNs(link.committedRttNs)
               )}
             </div>
-            <div className="text-xs text-muted-foreground">Contributor</div>
+            <div className="text-xs text-muted-foreground">
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Override Latency' : 'Committed Latency'}
+            </div>
           </div>
+        )}
+        {!hasDirectionalData && (
+          <>
+            <div className="text-center p-3 bg-muted/30 rounded-lg">
+              <div className="text-base font-medium tabular-nums">{formatLatencyUs(link.latencyUs)}</div>
+              <div className="text-xs text-muted-foreground">Latency</div>
+            </div>
+            <div className="text-center p-3 bg-muted/30 rounded-lg">
+              <div className="text-base font-medium tabular-nums">{formatLatencyUs(link.jitterUs)}</div>
+              <div className="text-xs text-muted-foreground">Jitter</div>
+            </div>
+          </>
+        )}
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium tabular-nums">{formatPercent(link.lossPercent)}</div>
+          <div className="text-xs text-muted-foreground">Packet Loss</div>
+        </div>
+        <div className="text-center p-3 bg-muted/30 rounded-lg">
+          <div className="text-base font-medium">
+            {link.contributorPk ? (
+              <Link to={`/dz/contributors/${link.contributorPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                {link.contributorCode}
+              </Link>
+            ) : (
+              link.contributorCode || '—'
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground">Contributor</div>
         </div>
       </div>
 

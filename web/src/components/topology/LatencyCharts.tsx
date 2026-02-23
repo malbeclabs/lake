@@ -13,9 +13,11 @@ interface LatencyChartsProps {
   linkPk: string
   timeRange?: TimeRange
   bucket?: BucketSize
+  /** Additional CSS classes for the outer wrapper */
+  className?: string
 }
 
-export function LatencyCharts({ linkPk, timeRange, bucket }: LatencyChartsProps) {
+export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyChartsProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
@@ -198,35 +200,39 @@ export function LatencyCharts({ linkPk, timeRange, bucket }: LatencyChartsProps)
 
   const rangeLabel = getTimeRangeLabel(effectiveRange)
 
-  return (
-    <div className="space-y-4">
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground text-center py-4">
-          Loading latency data...
-        </div>
-      ) : !latencyData || latencyData.length === 0 ? (
-        <div className="text-sm text-muted-foreground text-center py-4">
-          No latency data available for this time range
-        </div>
-      ) : (
-        <>
-          <div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Round-Trip Time by Direction ({rangeLabel})
-            </div>
-            <div ref={rttChartRef} className="h-36" />
-            <ChartLegend series={rttLegendSeries} legend={rttLegend} />
-          </div>
+  if (isLoading) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        Loading latency data...
+      </div>
+    )
+  }
 
-          <div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Jitter by Direction ({rangeLabel})
-            </div>
-            <div ref={jitterChartRef} className="h-36" />
-            <ChartLegend series={jitterLegendSeries} legend={jitterLegend} />
-          </div>
-        </>
-      )}
+  if (!latencyData || latencyData.length === 0) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        No latency data available for this time range
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className={className}>
+        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+          Round-Trip Time by Direction ({rangeLabel})
+        </div>
+        <div ref={rttChartRef} className="h-36" />
+        <ChartLegend series={rttLegendSeries} legend={rttLegend} />
+      </div>
+
+      <div className={className}>
+        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+          Jitter by Direction ({rangeLabel})
+        </div>
+        <div ref={jitterChartRef} className="h-36" />
+        <ChartLegend series={jitterLegendSeries} legend={jitterLegend} />
+      </div>
     </div>
   )
 }
