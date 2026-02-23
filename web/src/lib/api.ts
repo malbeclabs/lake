@@ -5391,6 +5391,114 @@ export async function fetchEdgeScoreboard(
   return res.json()
 }
 
+// ============================================================
+// Rewards (Shapley value) types and functions
+// ============================================================
+
+export interface RewardsPrivateLink {
+  device1: string
+  device2: string
+  latency: number
+  bandwidth: number
+  uptime: number
+  shared: string
+}
+
+export interface RewardsDevice {
+  device: string
+  edge: number
+  operator_pk?: string
+  operator: string
+  city?: string
+  city_name?: string
+  operator_name?: string
+}
+
+export interface RewardsPublicLink {
+  city1: string
+  city2: string
+  latency: number
+}
+
+export interface RewardsDemand {
+  start: string
+  end: string
+  receivers: number
+  traffic: number
+  priority: number
+  type: number
+  multicast: string
+}
+
+export interface RewardsNetwork {
+  private_links: RewardsPrivateLink[]
+  devices: RewardsDevice[]
+  demands: RewardsDemand[]
+  public_links: RewardsPublicLink[]
+  operator_uptime: number
+  contiguity_bonus: number
+  demand_multiplier: number
+}
+
+export interface OperatorValue {
+  operator: string
+  value: number
+  proportion: number
+}
+
+export interface RewardsSimulateResponse {
+  results: OperatorValue[]
+  total_value: number
+}
+
+export interface OperatorDelta {
+  operator: string
+  baseline_value: number
+  modified_value: number
+  value_delta: number
+  baseline_proportion: number
+  modified_proportion: number
+  proportion_delta: number
+}
+
+export interface RewardsCompareResponse {
+  baseline_results: OperatorValue[]
+  modified_results: OperatorValue[]
+  deltas: OperatorDelta[]
+  baseline_total: number
+  modified_total: number
+}
+
+export interface RewardsLinkResult {
+  device1: string
+  device2: string
+  bandwidth: number
+  latency: number
+  value: number
+  percent: number
+}
+
+export interface RewardsLinkEstimateResponse {
+  results: RewardsLinkResult[]
+  total_value: number
+}
+
+export interface RewardsLiveNetworkResponse {
+  network: RewardsNetwork
+  device_count: number
+  link_count: number
+  operator_count: number
+  metro_count: number
+}
+
+export async function fetchRewardsLiveNetwork(): Promise<RewardsLiveNetworkResponse> {
+  const res = await fetchWithRetry('/api/rewards/live-network')
+  if (!res.ok) {
+    throw new Error('Failed to fetch live network')
+  }
+  return res.json()
+}
+
 // --- Unified Metrics Types ---
 
 export interface EntityStatusChange {
@@ -5751,6 +5859,26 @@ export async function fetchShredDevices(params: {
   return res.json()
 }
 
+export async function fetchRewardsSimulate(params?: {
+  operator_uptime?: number
+  contiguity_bonus?: number
+  demand_multiplier?: number
+  full?: boolean
+}): Promise<RewardsSimulateResponse> {
+  const searchParams = new URLSearchParams()
+  if (params?.operator_uptime !== undefined) searchParams.set('operator_uptime', String(params.operator_uptime))
+  if (params?.contiguity_bonus !== undefined) searchParams.set('contiguity_bonus', String(params.contiguity_bonus))
+  if (params?.demand_multiplier !== undefined) searchParams.set('demand_multiplier', String(params.demand_multiplier))
+  if (params?.full) searchParams.set('full', 'true')
+  const qs = searchParams.toString()
+  const res = await fetchWithRetry(`/api/rewards/simulate${qs ? '?' + qs : ''}`)
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Simulation failed')
+  }
+  return res.json()
+}
+
 // Geolocation types
 export interface GeolocProbe {
   pk: string
@@ -5785,6 +5913,22 @@ export async function fetchGeolocProbes(
   return res.json()
 }
 
+export async function fetchRewardsCompare(
+  baseline: RewardsNetwork,
+  modified: RewardsNetwork,
+): Promise<RewardsCompareResponse> {
+  const res = await fetchWithRetry('/api/rewards/compare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ baseline, modified }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Comparison failed')
+  }
+  return res.json()
+}
+
 export interface GeolocUser {
   pk: string
   owner: string
@@ -5813,6 +5957,22 @@ export async function fetchGeolocUsers(
   const res = await apiFetch(`/api/dz/geoloc/users?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch geolocation users')
+  }
+  return res.json()
+}
+
+export async function fetchRewardsLinkEstimate(
+  operator: string,
+  network: RewardsNetwork,
+): Promise<RewardsLinkEstimateResponse> {
+  const res = await fetchWithRetry('/api/rewards/link-estimate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operator, network }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || 'Link estimate failed')
   }
   return res.json()
 }

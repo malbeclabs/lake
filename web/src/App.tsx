@@ -66,6 +66,8 @@ import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 
 import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
+import { StakePage } from '@/components/stake-page'
+import { RewardsPage } from '@/components/rewards-page'
 import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
@@ -670,6 +672,10 @@ function AppContent() {
             <Route path="/incidents/links" element={<IncidentsPage />} />
             <Route path="/incidents/devices" element={<IncidentsPage />} />
 
+
+            {/* Rewards simulation (under topology tools) */}
+            <Route path="/topology/rewards" element={<RewardsPage />} />
+            <Route path="/rewards" element={<Navigate to="/topology/rewards" replace />} />
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />

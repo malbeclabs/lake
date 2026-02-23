@@ -16,3 +16,5 @@ logs/
 
 controlcenter-data/
 bin/
+main
+shapley-cli/target/

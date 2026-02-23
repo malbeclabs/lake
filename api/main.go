@@ -27,6 +27,7 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/rewards"
 	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -375,6 +376,15 @@ func main() {
 		}()
 	}
 
+	// Configure shapley-cli binary path for rewards calculations
+	if shapleyBin := os.Getenv("SHAPLEY_CLI_PATH"); shapleyBin != "" {
+		rewards.SetBinaryPath(shapleyBin)
+	}
+
+	// Initialize status cache for fast page loads
+	handlers.InitStatusCache()
+	// Note: StopStatusCache() is called explicitly before server shutdown, not deferred
+
 	// Start metrics server
 	var metricsServer *http.Server
 	if *metricsAddrFlag != "" {
@@ -591,6 +601,12 @@ func main() {
 		r.Get("/api/stake/history", api.GetStakeHistory)
 		r.Get("/api/stake/changes", api.GetStakeChanges)
 		r.Get("/api/stake/validators", api.GetStakeValidators)
+
+		// Rewards (Shapley value) routes
+		r.Get("/api/rewards/simulate", handlers.GetRewardsSimulate)
+		r.Post("/api/rewards/compare", handlers.PostRewardsCompare)
+		r.Post("/api/rewards/link-estimate", handlers.PostRewardsLinkEstimate)
+		r.Get("/api/rewards/live-network", handlers.GetRewardsLiveNetwork)
 
 		// Traffic analytics routes
 		r.Get("/api/traffic/data", api.GetTrafficData)
