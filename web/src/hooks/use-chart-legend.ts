@@ -10,7 +10,7 @@ export interface UseChartLegendReturn {
   getOpacity: (key: string) => number
 }
 
-export function useChartLegend(_allKeys: string[]): UseChartLegendReturn {
+export function useChartLegend(): UseChartLegendReturn {
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)

@@ -1,20 +1,8 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import type { TimeRange, TimeRangePreset, BucketSize, TrafficMetric } from './utils'
-import { bucketLabels } from './utils'
+import type { TimeRange, TimeRangePreset, BucketSize, TrafficMetric, TrafficView } from './utils'
+import { bucketLabels, TIME_RANGE_OPTIONS } from './utils'
 
-export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
-  { value: '15m', label: '15 min' },
-  { value: '30m', label: '30 min' },
-  { value: '1h', label: '1 hour' },
-  { value: '3h', label: '3 hours' },
-  { value: '6h', label: '6 hours' },
-  { value: '12h', label: '12 hours' },
-  { value: '24h', label: '24 hours' },
-  { value: '2d', label: '2 days' },
-  { value: '7d', label: '7 days' },
-  { value: 'custom', label: 'Custom' },
-]
 
 const BUCKET_OPTIONS: { value: BucketSize; label: string }[] = Object.entries(bucketLabels).map(
   ([value, label]) => ({ value: value as BucketSize, label })
@@ -24,8 +12,6 @@ const METRIC_OPTIONS: { value: TrafficMetric; label: string }[] = [
   { value: 'throughput', label: 'bps' },
   { value: 'packets', label: 'pps' },
 ]
-
-export type TrafficView = 'avg' | 'peak'
 
 const TRAFFIC_VIEW_OPTIONS: { value: TrafficView; label: string }[] = [
   { value: 'avg', label: 'Avg' },
@@ -206,17 +192,4 @@ export function TrafficFilters({
       )}
     </div>
   )
-}
-
-/** Get a human-readable label for a time range */
-export function getTimeRangeLabel(timeRange: TimeRange): string {
-  if (timeRange.preset === 'custom') return 'Custom Range'
-  const opt = TIME_RANGE_OPTIONS.find(o => o.value === timeRange.preset)
-  return opt?.label || '24 hours'
-}
-
-/** Convert a TimeRange preset to the simple string the status APIs expect */
-export function timeRangeToString(timeRange: TimeRange): string {
-  if (timeRange.preset === 'custom') return '24h'
-  return timeRange.preset
 }

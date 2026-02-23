@@ -7,7 +7,7 @@ import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { InterfaceLegendTable, type InterfaceValues } from './InterfaceLegendTable'
 import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, resolveAutoBucket, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric } from './utils'
 import { fetchDeviceInterfaceHistory } from '@/lib/api'
-import { getTimeRangeLabel, TrafficFilters } from './TimeRangeSelector'
+import { TrafficFilters } from './TimeRangeSelector'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
 
@@ -241,7 +241,7 @@ function buildHealthColumnar(
 
 export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabels, bucket: controlledBucket, onBucketChange, metric: controlledMetric, onMetricChange, trafficView: controlledTrafficView, onTrafficViewChange, className }: InterfaceChartsProps) {
   const effectiveRange = timeRange ?? { preset: '24h' as const }
-  const rangeLabel = getTimeRangeLabel(effectiveRange)
+
   const timeRangeStr = effectiveRange.preset === 'custom' ? 'custom' : effectiveRange.preset
 
   const [internalBucket, setInternalBucket] = useState<BucketSize>('auto')
@@ -381,8 +381,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(v)) },
   ], [])
 
-  const legendKeys = useMemo(() => interfaces, [interfaces])
-  const legend = useChartLegend(legendKeys)
+  const legend = useChartLegend()
 
   const visibleSeries = useMemo(() => {
     if (legend.selectedSeries.has('__none__')) return new Set<string>()
@@ -509,8 +508,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       {errorHealth?.hasData && (
         <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Errors by Interface ({rangeLabel})
-          </div>
+            Errors</div>
           <div ref={errorChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -527,8 +525,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       {discardHealth?.hasData && (
         <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Discards by Interface ({rangeLabel})
-          </div>
+            Discards</div>
           <div ref={discardChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -545,8 +542,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       {transitionHealth?.hasData && (
         <div className={className}>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Carrier Transitions by Interface ({rangeLabel})
-          </div>
+            Carrier Transitions</div>
           <div ref={transitionChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -563,8 +559,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       <div className={className}>
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs text-muted-foreground uppercase tracking-wider">
-            {trafficView === 'avg' ? 'Avg' : 'Peak'} Traffic by Interface ({rangeLabel})
-          </div>
+            {trafficView === 'avg' ? 'Avg' : 'Peak'} Traffic</div>
           <TrafficFilters
             bucket={!controlledBucket ? bucket : undefined}
             onBucketChange={!controlledBucket ? setBucket : undefined}
@@ -585,6 +580,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
           latestValues={displayValues}
           formatValue={metric === 'packets' ? formatPpsTooltip : formatChartTooltipRate}
           interfaceLabels={interfaceLabels}
+          trafficView={trafficView}
         />
       </div>
     </div>

@@ -8,8 +8,9 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
 import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
-import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
+import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
+import { timeRangeToString } from '@/components/topology/utils'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'

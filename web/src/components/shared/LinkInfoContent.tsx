@@ -4,8 +4,9 @@ import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
 import { SingleLinkStatusRow } from '@/components/single-link-status-row'
-import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
-import type { TimeRange } from '@/components/topology/utils'
+import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange, BucketSize, TimeRangePreset } from '@/components/topology/utils'
+import { resolveAutoBucket, bucketLabels, timeRangeToString } from '@/components/topology/utils'
 
 // Shared link info type that both topology and link page can use
 export interface LinkInfoData {
@@ -103,16 +104,24 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
   // Check if we have directional latency data
   const hasDirectionalData = link.latencyAtoZUs > 0 || link.latencyZtoAUs > 0
 
+  const [bucket, setBucket] = useState<BucketSize>('auto')
+
   const interfaceLabels = useMemo(() => {
     const map = new Map<string, string>()
     if (link.sideAIfaceName) {
-      map.set(link.sideAIfaceName, `A: ${link.sideACode} · ${link.sideAIfaceName}`)
+      map.set(`A:${link.sideAIfaceName}`, `A: ${link.sideACode} · ${link.sideAIfaceName}`)
     }
     if (link.sideZIfaceName) {
-      map.set(link.sideZIfaceName, `Z: ${link.sideZCode} · ${link.sideZIfaceName}`)
+      map.set(`Z:${link.sideZIfaceName}`, `Z: ${link.sideZCode} · ${link.sideZIfaceName}`)
     }
     return map
   }, [link.sideAIfaceName, link.sideACode, link.sideZIfaceName, link.sideZCode])
+
+  const effectiveBucketLabel = bucket === 'auto'
+    ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
+    : undefined
+
+  const cardClass = "rounded-lg border border-border p-4"
 
   // Compact mode: optimized for sidebar panels
   if (compact) {
@@ -231,22 +240,27 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
           </div>
         </div>
 
-        {/* Time range selector */}
-        <div className="flex justify-end">
+        {/* Time range and bucket selectors */}
+        <div className="flex items-center justify-end gap-2">
+          <TrafficFilters
+            bucket={bucket}
+            onBucketChange={setBucket}
+            effectiveBucketLabel={effectiveBucketLabel}
+          />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
 
         {/* Link Status History Timeline */}
         <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
 
+        {/* Link status charts (packet loss, interface issues) */}
+        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} className={cardClass} />
+
         {/* Interface traffic charts */}
-        <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} />
+        <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
 
         {/* Latency charts */}
-        <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
-
-        {/* Link status charts (packet loss, interface issues) */}
-        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
+        <LatencyCharts linkPk={link.pk} timeRange={timeRange} bucket={bucket} className={cardClass} />
       </div>
     )
   }
@@ -409,21 +423,26 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
       {/* Charts section */}
       {!hideCharts && (
         <>
-          {/* Time range selector (only shown when not controlled by parent) */}
+          {/* Time range and bucket selectors (only shown when not controlled by parent) */}
           {!controlledTimeRange && (
-            <div className="flex justify-end">
+            <div className="flex items-center justify-end gap-2">
+              <TrafficFilters
+                bucket={bucket}
+                onBucketChange={setBucket}
+                effectiveBucketLabel={effectiveBucketLabel}
+              />
               <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
             </div>
           )}
 
+          {/* Link status charts (packet loss, interface issues) */}
+          <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} className={cardClass} />
+
           {/* Interface traffic charts */}
-          <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} />
+          <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
 
           {/* Latency charts */}
-          <LatencyCharts linkPk={link.pk} timeRange={timeRange} />
-
-          {/* Link status charts (packet loss, interface issues) */}
-          <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
+          <LatencyCharts linkPk={link.pk} timeRange={timeRange} bucket={bucket} className={cardClass} />
         </>
       )}
     </div>

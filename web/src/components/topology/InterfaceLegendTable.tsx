@@ -18,6 +18,8 @@ interface InterfaceLegendTableProps {
   formatValue?: (v: number) => string
   /** Optional display labels for interfaces */
   interfaceLabels?: Map<string, string>
+  /** Which view is active — controls which columns are shown */
+  trafficView?: 'avg' | 'peak'
 }
 
 export function InterfaceLegendTable({
@@ -28,6 +30,7 @@ export function InterfaceLegendTable({
   latestValues,
   formatValue = (v) => v.toLocaleString(),
   interfaceLabels,
+  trafficView = 'avg',
 }: InterfaceLegendTableProps) {
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [searchText, setSearchText] = useState('')
@@ -156,10 +159,9 @@ export function InterfaceLegendTable({
             onClick={() => { setSortBy('value'); setSortDir(sortBy === 'value' ? (sortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
             className="flex items-center justify-end gap-0.5 text-xs text-muted-foreground hover:text-foreground whitespace-nowrap w-48"
           >
-            Avg (In / Out)
+            In / Out
             {sortBy === 'value' && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
           </button>
-          <span className="text-xs text-muted-foreground whitespace-nowrap w-48 text-right">Peak (In / Out)</span>
         </div>
       </div>
       {/* Scrollable items */}
@@ -188,10 +190,7 @@ export function InterfaceLegendTable({
                   <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf}</span>
                 </div>
                 <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-48 text-right">
-                  {lv ? `${formatValue(lv.avgIn)} / ${formatValue(lv.avgOut)}` : '—'}
-                </span>
-                <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-48 text-right">
-                  {lv ? `${formatValue(lv.peakIn)} / ${formatValue(lv.peakOut)}` : '—'}
+                  {lv ? `${formatValue(trafficView === 'avg' ? lv.avgIn : lv.peakIn)} / ${formatValue(trafficView === 'avg' ? lv.avgOut : lv.peakOut)}` : '—'}
                 </span>
               </div>
             )

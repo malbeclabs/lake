@@ -229,6 +229,34 @@ export interface TimeRange {
   to?: string   // yyyy-mm-dd-hh:mm:ss
 }
 
+export type TrafficView = 'avg' | 'peak'
+
+export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
+  { value: '15m', label: '15 min' },
+  { value: '30m', label: '30 min' },
+  { value: '1h', label: '1 hour' },
+  { value: '3h', label: '3 hours' },
+  { value: '6h', label: '6 hours' },
+  { value: '12h', label: '12 hours' },
+  { value: '24h', label: '24 hours' },
+  { value: '2d', label: '2 days' },
+  { value: '7d', label: '7 days' },
+  { value: 'custom', label: 'Custom' },
+]
+
+/** Get a human-readable label for a time range */
+export function getTimeRangeLabel(timeRange: TimeRange): string {
+  if (timeRange.preset === 'custom') return 'Custom Range'
+  const opt = TIME_RANGE_OPTIONS.find(o => o.value === timeRange.preset)
+  return opt?.label || '24 hours'
+}
+
+/** Convert a TimeRange preset to the simple string the status APIs expect */
+export function timeRangeToString(timeRange: TimeRange): string {
+  if (timeRange.preset === 'custom') return '24h'
+  return timeRange.preset
+}
+
 // Fetch latency history for a link with optional time range
 export async function fetchLatencyHistory(
   pk: string,
@@ -251,6 +279,8 @@ export async function fetchLatencyHistory(
 
   const res = await apiFetch(`/api/topology/link-latency?${params.toString()}`)
   if (!res.ok) throw new Error(`Latency fetch failed: ${res.status}`)
-  const data = await res.json()
+  const text = await res.text()
+  if (!text) return []
+  const data = JSON.parse(text)
   return data.points || []
 }

@@ -131,16 +131,14 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   const showInterfaceIssues = historyData?.hours && hasInterfaceIssueData(historyData.hours)
 
   // Legends
-  const packetLossKeys = useMemo(() => ['total', 'sideA', 'sideZ'], [])
-  const packetLossLegend = useChartLegend(packetLossKeys)
+  const packetLossLegend = useChartLegend()
   const packetLossLegendSeries: ChartLegendSeries[] = useMemo(() => [
     { key: 'total', color: lossColor, label: 'Average', dashed: true },
     { key: 'sideA', color: sideAColor, label: 'Side A' },
     { key: 'sideZ', color: sideZColor, label: 'Side Z' },
   ], [lossColor, sideAColor, sideZColor])
 
-  const interfaceIssueKeys = useMemo(() => ['errors', 'discards', 'carrier'], [])
-  const interfaceIssueLegend = useChartLegend(interfaceIssueKeys)
+  const interfaceIssueLegend = useChartLegend()
   const interfaceIssueLegendSeries: ChartLegendSeries[] = useMemo(() => [
     { key: 'errors', color: errorColor, label: 'Errors' },
     { key: 'discards', color: discardColor, label: 'Discards' },
@@ -176,8 +174,8 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   })
 
   // Legend sync
-  useUPlotLegendSync(packetLossPlotRef, packetLossLegend, packetLossKeys)
-  useUPlotLegendSync(issuesPlotRef, interfaceIssueLegend, interfaceIssueKeys)
+  useUPlotLegendSync(packetLossPlotRef, packetLossLegend, ['total', 'sideA', 'sideZ'])
+  useUPlotLegendSync(issuesPlotRef, interfaceIssueLegend, ['errors', 'discards', 'carrier'])
 
   if (isLoading) {
     return (

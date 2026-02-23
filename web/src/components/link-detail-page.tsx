@@ -9,9 +9,9 @@ import { SingleLinkStatusRow } from '@/components/single-link-status-row'
 import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
-import { TimeRangeSelector, TrafficFilters, timeRangeToString } from '@/components/topology/TimeRangeSelector'
+import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange, BucketSize } from '@/components/topology/utils'
-import { bucketLabels, resolveAutoBucket, type TimeRangePreset } from '@/components/topology/utils'
+import { bucketLabels, resolveAutoBucket, timeRangeToString, type TimeRangePreset } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
 export function LinkDetailPage() {

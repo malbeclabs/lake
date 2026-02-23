@@ -91,7 +91,7 @@ export function ValidatorDetails({ validator }: ValidatorDetailsProps) {
       </div>
 
       {/* Traffic charts */}
-      <TrafficCharts entityType="validator" entityPk={String(validator.tunnelId)} timeRange={timeRange} />
+      <TrafficCharts entityType="validator" entityPk={String(validator.tunnelId)} timeRange={timeRange} className="rounded-lg border border-border p-4" />
 
       {/* External link */}
       <div className="pt-2 border-t border-[var(--border)]">

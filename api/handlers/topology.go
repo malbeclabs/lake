@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"time"
 
@@ -822,13 +823,13 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		JOIN dz_links_current l ON f.link_pk = l.pk
 		LEFT JOIN loss_max lm ON lm.display_bucket = ` + displayBucketExpr + `
 		WHERE ` + timeFilter + `
-			AND f.link_pk = $1
+			AND f.link_pk = $2
 		GROUP BY ` + displayBucketExpr + `
 		ORDER BY ` + displayBucketExpr
 
-	rows, err := envDB(ctx).Query(ctx, query, pk)
+	rows, err := envDB(ctx).Query(ctx, query, pk, pk)
 	if err != nil {
-		log.Printf("Latency query error: %v", err)
+		log.Printf("Latency query error: pk=%s err=%v", pk, err)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 		return
@@ -845,34 +846,34 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 			return
 		}
-		if avgRtt != nil {
+		if avgRtt != nil && !math.IsNaN(*avgRtt) {
 			p.AvgRttMs = *avgRtt
 		}
-		if p95Rtt != nil {
+		if p95Rtt != nil && !math.IsNaN(*p95Rtt) {
 			p.P95RttMs = *p95Rtt
 		}
-		if avgJitter != nil {
+		if avgJitter != nil && !math.IsNaN(*avgJitter) {
 			p.AvgJitter = *avgJitter
 		}
-		if lossPct != nil {
+		if lossPct != nil && !math.IsNaN(*lossPct) {
 			p.LossPct = *lossPct
 		}
-		if avgRttAtoZ != nil {
+		if avgRttAtoZ != nil && !math.IsNaN(*avgRttAtoZ) {
 			p.AvgRttAtoZMs = *avgRttAtoZ
 		}
-		if p95RttAtoZ != nil {
+		if p95RttAtoZ != nil && !math.IsNaN(*p95RttAtoZ) {
 			p.P95RttAtoZMs = *p95RttAtoZ
 		}
-		if avgRttZtoA != nil {
+		if avgRttZtoA != nil && !math.IsNaN(*avgRttZtoA) {
 			p.AvgRttZtoAMs = *avgRttZtoA
 		}
-		if p95RttZtoA != nil {
+		if p95RttZtoA != nil && !math.IsNaN(*p95RttZtoA) {
 			p.P95RttZtoAMs = *p95RttZtoA
 		}
-		if jitterAtoZ != nil {
+		if jitterAtoZ != nil && !math.IsNaN(*jitterAtoZ) {
 			p.JitterAtoZMs = *jitterAtoZ
 		}
-		if jitterZtoA != nil {
+		if jitterZtoA != nil && !math.IsNaN(*jitterZtoA) {
 			p.JitterZtoAMs = *jitterZtoA
 		}
 		points = append(points, p)
@@ -881,12 +882,21 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, rows.Err())
 
+	if err := rows.Err(); err != nil {
+		log.Printf("Latency rows iteration error: pk=%s err=%v", pk, err)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
+		return
+	}
+
 	if points == nil {
 		points = []LinkLatencyDataPoint{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Points: points})
+	if err := json.NewEncoder(w).Encode(LinkLatencyResponse{Points: points}); err != nil {
+		log.Printf("Latency encode error: pk=%s err=%v", pk, err)
+	}
 }
 
 // DZ vs Internet latency comparison types

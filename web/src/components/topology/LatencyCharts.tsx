@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
@@ -7,7 +7,6 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
 import { fetchLatencyHistory, type TimeRange, type BucketSize } from './utils'
-import { getTimeRangeLabel } from './TimeRangeSelector'
 
 interface LatencyChartsProps {
   linkPk: string
@@ -32,11 +31,6 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
 
   const rttChartRef = useRef<HTMLDivElement>(null)
   const jitterChartRef = useRef<HTMLDivElement>(null)
-  const [_hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-
-  const handleCursorIdx = useCallback((idx: number | null) => {
-    setHoveredIdx(idx)
-  }, [])
 
   // Colors
   const rttAAvgColor = isDark ? '#22c55e' : '#16a34a'
@@ -57,7 +51,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
       : ['avgRttMs', 'p95RttMs'],
     [hasDirectionalData]
   )
-  const rttLegend = useChartLegend(rttKeys)
+  const rttLegend = useChartLegend()
   const rttLegendSeries: ChartLegendSeries[] = useMemo(() =>
     hasDirectionalData
       ? [
@@ -80,7 +74,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
       : ['avgJitter'],
     [hasDirectionalData]
   )
-  const jitterLegend = useChartLegend(jitterKeys)
+  const jitterLegend = useChartLegend()
   const jitterLegendSeries: ChartLegendSeries[] = useMemo(() =>
     hasDirectionalData
       ? [
@@ -183,7 +177,6 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     series: rttUPlotSeries,
     height: 144,
     axes: msAxes,
-    onCursorIdx: handleCursorIdx,
   })
 
   const { plotRef: jitterPlotRef} = useUPlotChart({
@@ -192,14 +185,13 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     series: jitterUPlotSeries,
     height: 144,
     axes: msAxes,
-    onCursorIdx: handleCursorIdx,
   })
 
   // Legend sync
   useUPlotLegendSync(rttPlotRef, rttLegend, rttKeys)
   useUPlotLegendSync(jitterPlotRef, jitterLegend, jitterKeys)
 
-  const rangeLabel = getTimeRangeLabel(effectiveRange)
+
 
   if (isLoading) {
     return (
@@ -229,16 +221,14 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     <div className="space-y-6">
       <div className={className}>
         <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Round-Trip Time by Direction ({rangeLabel})
-        </div>
+          Round-Trip Time</div>
         <div ref={rttChartRef} className="h-36" />
         <ChartLegend series={rttLegendSeries} legend={rttLegend} />
       </div>
 
       <div className={className}>
         <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Jitter by Direction ({rangeLabel})
-        </div>
+          Jitter</div>
         <div ref={jitterChartRef} className="h-36" />
         <ChartLegend series={jitterLegendSeries} legend={jitterLegend} />
       </div>

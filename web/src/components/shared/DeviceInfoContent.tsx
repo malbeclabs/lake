@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom'
 import type { DeviceInterface } from '@/lib/api'
 import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
-import { TimeRangeSelector, timeRangeToString } from '@/components/topology/TimeRangeSelector'
-import type { TimeRange } from '@/components/topology/utils'
+import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange, BucketSize, TimeRangePreset } from '@/components/topology/utils'
+import { resolveAutoBucket, bucketLabels, timeRangeToString } from '@/components/topology/utils'
 
 // Shared device info type that both topology and device page can use
 export interface DeviceInfoData {
@@ -62,9 +63,16 @@ export function DeviceInfoContent({
   hideCharts = false,
 }: DeviceInfoContentProps) {
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
+  const [bucket, setBucket] = useState<BucketSize>('auto')
 
   const timeRange = controlledTimeRange ?? internalTimeRange
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
+
+  const effectiveBucketLabel = bucket === 'auto'
+    ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
+    : undefined
+
+  const cardClass = "rounded-lg border border-border p-4"
   const stats = [
     { label: 'Type', value: device.deviceType },
     {
@@ -140,9 +148,14 @@ export function DeviceInfoContent({
           </div>
         )}
 
-        {/* Time range selector */}
+        {/* Time range and bucket selectors */}
         {!hideCharts && (
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-2">
+            <TrafficFilters
+              bucket={bucket}
+              onBucketChange={setBucket}
+              effectiveBucketLabel={effectiveBucketLabel}
+            />
             <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
           </div>
         )}
@@ -154,7 +167,7 @@ export function DeviceInfoContent({
 
         {/* Interface charts (traffic + health) */}
         {!hideCharts && (
-          <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
+          <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
         )}
       </div>
     )
@@ -198,15 +211,20 @@ export function DeviceInfoContent({
         </div>
       )}
 
-      {/* Time range selector (only shown when not controlled by parent and charts visible) */}
+      {/* Time range and bucket selectors (only shown when not controlled by parent and charts visible) */}
       {!hideCharts && !controlledTimeRange && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <TrafficFilters
+            bucket={bucket}
+            onBucketChange={setBucket}
+            effectiveBucketLabel={effectiveBucketLabel}
+          />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
       )}
 
       {!hideCharts && (
-        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} />
+        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
       )}
     </div>
   )
