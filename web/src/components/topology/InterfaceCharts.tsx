@@ -270,10 +270,11 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const transitionChartRef = useRef<HTMLDivElement>(null)
 
   // Traffic data
-  const { data: rawPoints, isLoading: trafficLoading } = useQuery({
+  const { data: rawPoints, isLoading: trafficLoading, error: trafficError } = useQuery({
     queryKey: ['topology-traffic-interface', entityType, entityPk, effectiveRange, bucket, metric],
     queryFn: () => fetchTrafficHistoryByInterface(entityType, entityPk, effectiveRange, bucket, metric),
     refetchInterval: 60000,
+    retry: 2,
   })
 
   // Health data (only for devices)
@@ -483,6 +484,14 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     return (
       <div className="text-sm text-muted-foreground text-center py-4">
         Loading interface data...
+      </div>
+    )
+  }
+
+  if (trafficError) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        Unable to load traffic data
       </div>
     )
   }

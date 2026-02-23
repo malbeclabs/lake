@@ -23,10 +23,11 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
 
   const effectiveRange = timeRange ?? { preset: '24h' as const }
 
-  const { data: latencyData, isLoading } = useQuery({
+  const { data: latencyData, isLoading, error } = useQuery({
     queryKey: ['topology-latency', linkPk, effectiveRange, bucket],
     queryFn: () => fetchLatencyHistory(linkPk, effectiveRange, bucket),
     refetchInterval: 60000,
+    retry: 2,
   })
 
   const rttChartRef = useRef<HTMLDivElement>(null)
@@ -204,6 +205,14 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     return (
       <div className="text-sm text-muted-foreground text-center py-4">
         Loading latency data...
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="text-sm text-muted-foreground text-center py-4">
+        Unable to load latency data
       </div>
     )
   }

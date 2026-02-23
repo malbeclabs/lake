@@ -169,7 +169,7 @@ export async function fetchTrafficHistory(
   }
 
   const res = await apiFetch(`/api/topology/traffic?${params.toString()}`)
-  if (!res.ok) return []
+  if (!res.ok) throw new Error(`Traffic fetch failed: ${res.status}`)
   const data = await res.json()
   return data.points || []
 }
@@ -200,7 +200,7 @@ export async function fetchTrafficHistoryByInterface(
   }
 
   const res = await apiFetch(`/api/topology/traffic?${params.toString()}`)
-  if (!res.ok) return []
+  if (!res.ok) throw new Error(`Interface traffic fetch failed: ${res.status}`)
   const data = await res.json()
   return data.interfaces || []
 }
@@ -250,7 +250,7 @@ export async function fetchLatencyHistory(
   }
 
   const res = await apiFetch(`/api/topology/link-latency?${params.toString()}`)
-  if (!res.ok) return []
+  if (!res.ok) throw new Error(`Latency fetch failed: ${res.status}`)
   const data = await res.json()
   return data.points || []
 }
