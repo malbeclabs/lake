@@ -36,10 +36,10 @@ export function LinkDetailPage() {
     if (!link) return undefined
     const map = new Map<string, string>()
     if (link.side_a_iface_name) {
-      map.set(link.side_a_iface_name, `A: ${link.side_a_code} · ${link.side_a_iface_name}`)
+      map.set(`A:${link.side_a_iface_name}`, `A: ${link.side_a_code} · ${link.side_a_iface_name}`)
     }
     if (link.side_z_iface_name) {
-      map.set(link.side_z_iface_name, `Z: ${link.side_z_code} · ${link.side_z_iface_name}`)
+      map.set(`Z:${link.side_z_iface_name}`, `Z: ${link.side_z_code} · ${link.side_z_iface_name}`)
     }
     return map
   }, [link])

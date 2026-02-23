@@ -585,10 +585,16 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 	// If breakdown=interface requested and type is device or link, run per-interface query
 	breakdown := r.URL.Query().Get("breakdown")
 	if breakdown == "interface" && (itemType == "device" || itemType == "link") {
+		// For links, prefix intf with link_side ('A:'/'Z:') to distinguish sides
+		// that may share the same interface name (e.g. both sides have Ethernet1/1)
+		intfExpr := "intf"
+		if itemType == "link" {
+			intfExpr = "concat(link_side, ':', intf)"
+		}
 		intfQuery := fmt.Sprintf(`
 			SELECT
 				formatDateTime(%s, '%s') as time_bucket,
-				intf,
+				%s as intf_key,
 				%s as avg_in,
 				%s as avg_out,
 				%s as peak_in,
@@ -599,9 +605,9 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 				AND delta_duration > 0
 				AND in_octets_delta >= 0
 				AND out_octets_delta >= 0
-			GROUP BY time_bucket, intf
-			ORDER BY min(event_ts), intf
-		`, bucketExpr, timeFormat, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
+			GROUP BY time_bucket, intf_key
+			ORDER BY min(event_ts), intf_key
+		`, bucketExpr, timeFormat, intfExpr, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
 
 		intfRows, intfErr := envDB(ctx).Query(ctx, intfQuery, pk)
 		if intfErr != nil {
