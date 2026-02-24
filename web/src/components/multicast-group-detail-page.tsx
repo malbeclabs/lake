@@ -419,6 +419,7 @@ export function MulticastGroupDetailPage() {
     queryKey: ['multicast-group', pk],
     queryFn: () => fetchMulticastGroup(pk!),
     enabled: !!pk,
+    refetchInterval: 30000,
   })
 
   useDocumentTitle(group?.code || 'Multicast Group')
