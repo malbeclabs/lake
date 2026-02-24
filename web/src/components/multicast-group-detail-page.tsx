@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Radio, AlertCircle, ArrowLeft } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
 import { fetchMulticastGroup, fetchMulticastGroupTraffic, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
@@ -103,13 +103,15 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
 
   // Build a lookup from device_pk+tunnel_id to display info
   const seriesInfo = useMemo(() => {
-    const map = new Map<string, { code: string; tunnelId: number; mode: string }>()
+    const map = new Map<string, { ownerPubkey: string; nodePubkey: string; code: string; tunnelId: number; mode: string }>()
     for (const m of members) {
       if (m.tunnel_id > 0) {
         const key = `${m.device_pk}_${m.tunnel_id}`
         if (!map.has(key)) {
           const effectiveMode = m.mode === 'P+S' ? 'P' : m.mode
           map.set(key, {
+            ownerPubkey: m.owner_pubkey,
+            nodePubkey: m.node_pubkey,
             code: m.device_code || m.device_pk.slice(0, 8),
             tunnelId: m.tunnel_id,
             mode: effectiveMode,
@@ -139,19 +141,17 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
         row = { time: p.time } as Record<string, string | number>
         timeMap.set(p.time, row)
       }
+      // Publishers: show outbound only; Subscribers: show inbound only
       if (metric === 'throughput') {
-        row[`${seriesKey}_in`] = p.out_bps
-        row[`${seriesKey}_out`] = -p.in_bps
+        row[seriesKey] = showPubs ? p.in_bps : p.out_bps
       } else {
-        row[`${seriesKey}_in`] = p.out_pps
-        row[`${seriesKey}_out`] = -p.in_pps
+        row[seriesKey] = showPubs ? p.in_pps : p.out_pps
       }
     }
 
     for (const row of timeMap.values()) {
       for (const k of keys) {
-        if (!(`${k}_in` in row)) row[`${k}_in`] = 0
-        if (!(`${k}_out` in row)) row[`${k}_out`] = 0
+        if (!(k in row)) row[k] = 0
       }
     }
 
@@ -224,9 +224,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
       const row = chartData[i]
       let rowMax = 0
       for (const key of seriesKeys) {
-        const inVal = Math.abs((row[`${key}_in`] as number) ?? 0)
-        const outVal = Math.abs((row[`${key}_out`] as number) ?? 0)
-        rowMax = Math.max(rowMax, inVal, outVal)
+        const val = (row[key] as number) ?? 0
+        rowMax = Math.max(rowMax, val)
       }
       if (rowMax > bestVal) {
         bestVal = rowMax
@@ -237,22 +236,19 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
   }, [hoveredIdx, snapToPeak, chartData, seriesKeys])
 
   const displayValues = useMemo(() => {
-    if (chartData.length === 0) return new Map<string, { inBps: number; outBps: number }>()
+    if (chartData.length === 0) return new Map<string, number>()
     const row = effectiveIdx !== null && effectiveIdx < chartData.length
       ? chartData[effectiveIdx]
       : chartData[chartData.length - 1]
-    const map = new Map<string, { inBps: number; outBps: number }>()
+    const map = new Map<string, number>()
     for (const key of seriesKeys) {
-      map.set(key, {
-        inBps: (row[`${key}_in`] as number) ?? 0,
-        outBps: Math.abs((row[`${key}_out`] as number) ?? 0),
-      })
+      map.set(key, (row[key] as number) ?? 0)
     }
     return map
   }, [chartData, seriesKeys, effectiveIdx])
 
   const fmtValue = metric === 'throughput' ? formatBps : formatPps
-  const fmtAxis = (v: number) => formatAxisBps(Math.abs(v))
+  const fmtAxis = (v: number) => formatAxisBps(v)
 
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
@@ -314,9 +310,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
 
       {!isLoading && chartData.length > 0 && (
         <div>
-          <div className="h-56 relative">
-            <span className="absolute top-0 left-0 text-[10px] text-muted-foreground/60 pointer-events-none z-10">▲ In</span>
-            <span className="absolute bottom-5 left-0 text-[10px] text-muted-foreground/60 pointer-events-none z-10">▼ Out</span>
+          <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={chartData}
@@ -340,32 +334,18 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                   tickFormatter={fmtAxis}
                   width={45}
                 />
-                <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
                 <RechartsTooltip
                   content={() => null}
                   cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 2' }}
                 />
                 {seriesKeys.filter(k => visibleSeries.has(k)).map(key => (
                   <Line
-                    key={`${key}_in`}
+                    key={key}
                     type="monotone"
-                    dataKey={`${key}_in`}
+                    dataKey={key}
                     stroke={getSeriesColor(key)}
                     strokeWidth={1.5}
                     strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0 : 1}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))}
-                {seriesKeys.filter(k => visibleSeries.has(k)).map(key => (
-                  <Line
-                    key={`${key}_out`}
-                    type="monotone"
-                    dataKey={`${key}_out`}
-                    stroke={getSeriesColor(key)}
-                    strokeWidth={1.5}
-                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0 : 1}
-                    strokeDasharray="4 2"
                     dot={false}
                     isAnimationActive={false}
                   />
@@ -378,7 +358,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
               <div className="flex items-center gap-4 px-1.5 py-0.5 text-muted-foreground font-medium">
                 <div className="w-2.5" />
                 <div className="flex-1 min-w-0 flex items-center gap-2">
-                  Device / Tunnel
+                  Owner
                   <span className="font-normal">
                     <button
                       className="hover:text-foreground transition-colors"
@@ -391,13 +371,19 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                     >none</button>
                   </span>
                 </div>
-                <div className="w-16 text-right">Inbound</div>
-                <div className="w-16 text-right">Outbound</div>
+                <div className="w-20 text-right whitespace-nowrap">Node</div>
+                <div className="w-20 text-right">{activeTab === 'publishers' ? 'Outbound' : 'Inbound'}</div>
               </div>
               {seriesKeys.map((key, i) => {
                 const info = seriesInfo.get(key)
-                const vals = displayValues.get(key)
+                const val = displayValues.get(key)
                 const isVisible = visibleSeries.has(key)
+                const ownerLabel = info?.ownerPubkey
+                  ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
+                  : key.split('_')[0].slice(0, 8)
+                const nodeLabel = info?.nodePubkey
+                  ? `${info.nodePubkey.slice(0, 4)}..${info.nodePubkey.slice(-4)}`
+                  : '—'
                 return (
                   <div
                     key={key}
@@ -408,10 +394,11 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                   >
                     <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] }} />
                     <div className="flex-1 min-w-0 text-foreground truncate font-mono">
-                      {info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}
+                      {ownerLabel}
+                      <span className="text-muted-foreground ml-2">{info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}</span>
                     </div>
-                    <div className="w-16 text-right tabular-nums">{vals && isVisible ? fmtValue(vals.inBps) : '—'}</div>
-                    <div className="w-16 text-right tabular-nums">{vals && isVisible ? fmtValue(vals.outBps) : '—'}</div>
+                    <div className="w-20 text-right tabular-nums font-mono text-muted-foreground">{nodeLabel}</div>
+                    <div className="w-20 text-right tabular-nums">{val !== undefined && isVisible ? fmtValue(val) : '—'}</div>
                   </div>
                 )
               })}
@@ -540,7 +527,8 @@ export function MulticastGroupDetailPage() {
             <table className="w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">User</th>
+                  <th className="px-4 py-3 font-medium">Owner</th>
+                  <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium">Device</th>
                   <th className="px-4 py-3 font-medium">Metro</th>
                   <th className="px-4 py-3 font-medium">DZ IP</th>
@@ -555,13 +543,25 @@ export function MulticastGroupDetailPage() {
                     key={member.user_pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
                   >
-                    <td className="px-4 py-3">
-                      <Link
-                        to={`/dz/users/${member.user_pk}`}
-                        className="text-blue-600 dark:text-blue-400 hover:underline font-mono text-sm"
-                      >
-                        {member.user_pk.slice(0, 8)}...{member.user_pk.slice(-4)}
-                      </Link>
+                    <td className="px-4 py-3 text-sm font-mono">
+                      {member.owner_pubkey ? (
+                        <Link
+                          to={`/dz/users/${member.user_pk}`}
+                          className="text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          {member.owner_pubkey.slice(0, 4)}..{member.owner_pubkey.slice(-4)}
+                        </Link>
+                      ) : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-mono">
+                      {member.node_pubkey ? (
+                        <Link
+                          to={`/solana/gossip-nodes/${member.node_pubkey}`}
+                          className="text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          {member.node_pubkey.slice(0, 4)}..{member.node_pubkey.slice(-4)}
+                        </Link>
+                      ) : '—'}
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {member.device_pk ? (
@@ -612,7 +612,7 @@ export function MulticastGroupDetailPage() {
                 ))}
                 {activeMembers.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                       No {activeTab} found
                     </td>
                   </tr>
