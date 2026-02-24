@@ -141,11 +141,11 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
         row = { time: p.time } as Record<string, string | number>
         timeMap.set(p.time, row)
       }
-      // Publishers: show outbound only; Subscribers: show inbound only
+      // Publishers send data out; Subscribers receive data in
       if (metric === 'throughput') {
-        row[seriesKey] = showPubs ? p.in_bps : p.out_bps
+        row[seriesKey] = showPubs ? p.out_bps : p.in_bps
       } else {
-        row[seriesKey] = showPubs ? p.in_pps : p.out_pps
+        row[seriesKey] = showPubs ? p.out_pps : p.in_pps
       }
     }
 
