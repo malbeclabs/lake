@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -153,8 +152,6 @@ func CollapseSmallOperators(input ShapleyInput, threshold int) ShapleyInput {
 	}
 }
 
-// deviceDigitRe matches any digit in a device code.
-var deviceDigitRe = regexp.MustCompile(`\d`)
 
 // Simulate runs the Shapley computation on the given input.
 func Simulate(ctx context.Context, input ShapleyInput) ([]OperatorValue, error) {
@@ -316,9 +313,10 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput)
 		}
 	}
 
-	// isRealDevice: must contain at least one digit and NOT end with "00"
+	// isRealDevice: excludes metro aggregate devices, which end with "00".
+	// The digit check is intentionally omitted — some real devices have non-numeric names (e.g. "cherydam").
 	isRealDevice := func(code string) bool {
-		return deviceDigitRe.MatchString(code) && !strings.HasSuffix(code, "00")
+		return !strings.HasSuffix(code, "00")
 	}
 
 	// Tag focus operator links as pseudo-operators
@@ -443,15 +441,23 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput)
 		Tag       string
 	}
 
+	// Deduplicate by sorted device pair so bidirectional entries appear once,
+	// and single-direction entries (some links are stored only one way in the DB) are still included.
+	seenPair := make(map[[2]string]bool)
 	var schedule []linkInfo
 	for _, l := range links {
 		if dropTags[l.Operator1] && dropTags[l.Operator2] {
 			continue
 		}
-		// Only keep one direction (alphabetically smaller device first)
-		if l.Device1 > l.Device2 {
+		d1, d2 := l.Device1, l.Device2
+		if d1 > d2 {
+			d1, d2 = d2, d1
+		}
+		key := [2]string{d1, d2}
+		if seenPair[key] {
 			continue
 		}
+		seenPair[key] = true
 		tag := l.Operator1
 		if dropTags[tag] {
 			tag = l.Operator2

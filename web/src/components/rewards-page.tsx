@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   fetchRewardsLiveNetwork,
@@ -11,7 +11,7 @@ import {
   type RewardsLinkResult,
   type RewardsCompareResponse,
 } from '@/lib/api'
-import { Loader2, Play, GitCompare, Unlink, Plus, RefreshCw, TrendingUp, TrendingDown, Coins, ChevronUp, ChevronDown } from 'lucide-react'
+import { Loader2, Play, GitCompare, Unlink, Plus, RefreshCw, TrendingUp, TrendingDown, Coins, ChevronUp, ChevronDown, X } from 'lucide-react'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { Link, useSearchParams } from 'react-router-dom'
 import { PageHeader } from './page-header'
@@ -596,17 +596,24 @@ export function RewardsPage() {
   const [compareResults, setCompareResults] = useState<RewardsCompareResponse | null>(null)
   const [linkResults, setLinkResults] = useState<RewardsLinkResult[] | null>(null)
 
+  // AbortControllers for cancellation
+  const simAbortRef = useRef<AbortController | null>(null)
+  const compareAbortRef = useRef<AbortController | null>(null)
+  const linkAbortRef = useRef<AbortController | null>(null)
+
   // Load live network automatically
   const liveNetworkQuery = useQuery({
     queryKey: ['rewardsLiveNetwork'],
     queryFn: fetchRewardsLiveNetwork,
     refetchInterval: 60000,
+    refetchOnWindowFocus: false,
   })
 
   // Simulate mutation
   const simulateMutation = useMutation({
     mutationFn: async () => {
-      const data = await fetchRewardsSimulate({ full: fullSim })
+      simAbortRef.current = new AbortController()
+      const data = await fetchRewardsSimulate({ full: fullSim, signal: simAbortRef.current.signal })
       return data
     },
     onSuccess: (data) => {
@@ -638,7 +645,8 @@ export function RewardsPage() {
   const compareMutation = useMutation({
     mutationFn: async () => {
       if (!baselineNetwork || !modifiedNetwork) throw new Error('Networks not loaded')
-      return fetchRewardsCompare(baselineNetwork, modifiedNetwork)
+      compareAbortRef.current = new AbortController()
+      return fetchRewardsCompare(baselineNetwork, modifiedNetwork, compareAbortRef.current.signal)
     },
     onSuccess: (data) => {
       setCompareResults(data)
@@ -649,12 +657,28 @@ export function RewardsPage() {
   const linkEstimateMutation = useMutation({
     mutationFn: async () => {
       if (!baselineNetwork || !selectedOperator) throw new Error('Network or operator not selected')
-      return fetchRewardsLinkEstimate(selectedOperator, baselineNetwork)
+      linkAbortRef.current = new AbortController()
+      return fetchRewardsLinkEstimate(selectedOperator, baselineNetwork, linkAbortRef.current.signal)
     },
     onSuccess: (data) => {
       setLinkResults(data.results)
     },
   })
+
+  const cancelSimulation = useCallback(() => {
+    simAbortRef.current?.abort()
+    simulateMutation.reset()
+  }, [simulateMutation])
+
+  const cancelCompare = useCallback(() => {
+    compareAbortRef.current?.abort()
+    compareMutation.reset()
+  }, [compareMutation])
+
+  const cancelLinkEstimate = useCallback(() => {
+    linkAbortRef.current?.abort()
+    linkEstimateMutation.reset()
+  }, [linkEstimateMutation])
 
   // Build name lookup maps from network devices
   const { operatorNames, operatorPks } = useMemo(() => {
@@ -807,6 +831,12 @@ export function RewardsPage() {
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Running simulation... {simElapsed > 0 && formatElapsed(simElapsed)}
+                <button
+                  onClick={cancelSimulation}
+                  className="ml-1 flex items-center gap-1 px-2 py-0.5 text-xs border border-border rounded hover:bg-muted/50 transition-colors text-foreground"
+                >
+                  <X className="h-3 w-3" /> Cancel
+                </button>
               </div>
             )}
 
@@ -880,14 +910,24 @@ export function RewardsPage() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => compareMutation.mutate()}
-                  disabled={networkLoading || compareMutation.isPending || addedLinks.length === 0}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                >
-                  {compareMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />}
-                  {compareMutation.isPending ? `Running... ${compareElapsed > 0 ? formatElapsed(compareElapsed) : ''}` : 'Run Comparison'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => compareMutation.mutate()}
+                    disabled={networkLoading || compareMutation.isPending || addedLinks.length === 0}
+                    className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    {compareMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />}
+                    {compareMutation.isPending ? `Running... ${compareElapsed > 0 ? formatElapsed(compareElapsed) : ''}` : 'Run Comparison'}
+                  </button>
+                  {compareMutation.isPending && (
+                    <button
+                      onClick={cancelCompare}
+                      className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-muted/50 transition-colors"
+                    >
+                      <X className="h-3 w-3" /> Cancel
+                    </button>
+                  )}
+                </div>
               </>
             )}
 
@@ -933,6 +973,14 @@ export function RewardsPage() {
                     {linkEstimateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlink className="h-4 w-4" />}
                     Estimate Link Values
                   </button>
+                  {linkEstimateMutation.isPending && (
+                    <button
+                      onClick={cancelLinkEstimate}
+                      className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-muted/50 transition-colors"
+                    >
+                      <X className="h-3 w-3" /> Cancel
+                    </button>
+                  )}
                 </div>
                 {linkEstimateMutation.isPending && (
                   <p className="text-sm text-muted-foreground">

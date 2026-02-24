@@ -5864,6 +5864,7 @@ export async function fetchRewardsSimulate(params?: {
   contiguity_bonus?: number
   demand_multiplier?: number
   full?: boolean
+  signal?: AbortSignal
 }): Promise<RewardsSimulateResponse> {
   const searchParams = new URLSearchParams()
   if (params?.operator_uptime !== undefined) searchParams.set('operator_uptime', String(params.operator_uptime))
@@ -5871,7 +5872,7 @@ export async function fetchRewardsSimulate(params?: {
   if (params?.demand_multiplier !== undefined) searchParams.set('demand_multiplier', String(params.demand_multiplier))
   if (params?.full) searchParams.set('full', 'true')
   const qs = searchParams.toString()
-  const res = await fetchWithRetry(`/api/rewards/simulate${qs ? '?' + qs : ''}`)
+  const res = await fetchWithRetry(`/api/rewards/simulate${qs ? '?' + qs : ''}`, { signal: params?.signal })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || 'Simulation failed')
@@ -5916,11 +5917,13 @@ export async function fetchGeolocProbes(
 export async function fetchRewardsCompare(
   baseline: RewardsNetwork,
   modified: RewardsNetwork,
+  signal?: AbortSignal,
 ): Promise<RewardsCompareResponse> {
   const res = await fetchWithRetry('/api/rewards/compare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ baseline, modified }),
+    signal,
   })
   if (!res.ok) {
     const text = await res.text()
@@ -5964,11 +5967,13 @@ export async function fetchGeolocUsers(
 export async function fetchRewardsLinkEstimate(
   operator: string,
   network: RewardsNetwork,
+  signal?: AbortSignal,
 ): Promise<RewardsLinkEstimateResponse> {
   const res = await fetchWithRetry('/api/rewards/link-estimate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ operator, network }),
+    signal,
   })
   if (!res.ok) {
     const text = await res.text()
