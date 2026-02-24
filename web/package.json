@@ -44,7 +44,7 @@
     "sql-formatter": "^15.7.0",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4.1.18",
-    "three": "^0.182.0",
+    "three": "^0.183.1",
     "uplot": "^1.6.32"
   },
   "devDependencies": {
