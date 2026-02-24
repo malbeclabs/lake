@@ -20,7 +20,7 @@ require (
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/lmittmann/tint v1.1.3
 	github.com/malbeclabs/doublezero v0.0.0-20260127003248-a7973ff42f73
-	github.com/modelcontextprotocol/go-sdk v1.3.0
+	github.com/modelcontextprotocol/go-sdk v1.3.1
 	github.com/mr-tron/base58 v1.2.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/oschwald/geoip2-golang v1.13.0
@@ -134,6 +134,7 @@ require (
 	github.com/prometheus/common v0.67.4 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
+	github.com/segmentio/encoding v0.5.3 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.25.6 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
