@@ -78,7 +78,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
   groupCode: string
   members: MulticastMember[]
   activeTab: 'publishers' | 'subscribers'
-  onHoverMember?: (devicePK: string | null) => void
+  onHoverMember?: (seriesKey: string | null) => void
 }) {
   const [timeRange, setTimeRange] = useState<string>('1h')
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
@@ -173,8 +173,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
   if (legend.hoveredSeries !== prevHoveredKey.current) {
     prevHoveredKey.current = legend.hoveredSeries
     if (legend.hoveredSeries) {
-      const idx = legend.hoveredSeries.lastIndexOf('_')
-      onHoverMember?.(idx > 0 ? legend.hoveredSeries.slice(0, idx) : legend.hoveredSeries)
+      onHoverMember?.(legend.hoveredSeries)
     } else {
       onHoverMember?.(null)
     }
@@ -466,7 +465,7 @@ export function MulticastGroupDetailPage() {
   const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const [liveFilter, setLiveFilter] = useState('')
-  const [hoveredDevicePK, setHoveredDevicePK] = useState<string | null>(null)
+  const [hoveredSeriesKey, setHoveredSeriesKey] = useState<string | null>(null)
 
   const setActiveTab = useCallback((tab: 'publishers' | 'subscribers') => {
     setSearchParams(prev => {
@@ -785,7 +784,7 @@ export function MulticastGroupDetailPage() {
                 {activeMembers.map((member) => (
                   <tr
                     key={member.user_pk}
-                    className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${hoveredDevicePK === member.device_pk ? 'bg-muted' : ''}`}
+                    className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${hoveredSeriesKey === `${member.device_pk}_${member.tunnel_id}` ? 'bg-muted' : ''}`}
                   >
                     <td className="px-4 py-3 text-sm font-mono">
                       {member.owner_pubkey ? (
@@ -872,7 +871,7 @@ export function MulticastGroupDetailPage() {
             groupCode={pk}
             members={activeMembers}
             activeTab={activeTab}
-            onHoverMember={setHoveredDevicePK}
+            onHoverMember={setHoveredSeriesKey}
           />
         )}
       </div>
