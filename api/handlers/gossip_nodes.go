@@ -212,22 +212,22 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 type GossipNodeDetail struct {
-	Pubkey       string  `json:"pubkey"`
-	GossipIP     string  `json:"gossip_ip"`
-	GossipPort   int32   `json:"gossip_port"`
-	Version      string  `json:"version"`
-	City         string  `json:"city"`
-	Country      string  `json:"country"`
-	OnDZ         bool    `json:"on_dz"`
-	UserPK       string  `json:"user_pk"`
-	OwnerPubkey  string  `json:"owner_pubkey"`
-	DevicePK     string  `json:"device_pk"`
-	DeviceCode   string  `json:"device_code"`
-	MetroPK      string  `json:"metro_pk"`
-	MetroCode    string  `json:"metro_code"`
-	StakeSol     float64 `json:"stake_sol"`
-	IsValidator  bool    `json:"is_validator"`
-	VotePubkey   string  `json:"vote_pubkey"`
+	Pubkey      string  `json:"pubkey"`
+	GossipIP    string  `json:"gossip_ip"`
+	GossipPort  int32   `json:"gossip_port"`
+	Version     string  `json:"version"`
+	City        string  `json:"city"`
+	Country     string  `json:"country"`
+	OnDZ        bool    `json:"on_dz"`
+	UserPK      string  `json:"user_pk"`
+	OwnerPubkey string  `json:"owner_pubkey"`
+	DevicePK    string  `json:"device_pk"`
+	DeviceCode  string  `json:"device_code"`
+	MetroPK     string  `json:"metro_pk"`
+	MetroCode   string  `json:"metro_code"`
+	StakeSol    float64 `json:"stake_sol"`
+	IsValidator bool    `json:"is_validator"`
+	VotePubkey  string  `json:"vote_pubkey"`
 }
 
 func GetGossipNode(w http.ResponseWriter, r *http.Request) {
