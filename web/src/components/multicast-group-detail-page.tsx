@@ -373,7 +373,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                   </span>
                 </div>
                 <div className="w-20 text-right whitespace-nowrap">Node</div>
-                <div className="w-20 text-right">{activeTab === 'publishers' ? 'Outbound' : 'Inbound'}</div>
+                <div className="w-20 text-right">Rate</div>
               </div>
               {seriesKeys.map((key, i) => {
                 const info = seriesInfo.get(key)
