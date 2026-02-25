@@ -96,13 +96,18 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 			WHERE epoch_vote_account = 'true'
 		),
 		dz_ip_info AS (
-			SELECT u.client_ip, u.tunnel_id, d.code as device_code, m.code as metro_code
+			SELECT
+				u.client_ip,
+				any(u.tunnel_id) as tunnel_id,
+				any(d.code) as device_code,
+				any(m.code) as metro_code
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
 				AND u.client_ip IS NOT NULL
 				AND u.client_ip != ''
+			GROUP BY u.client_ip
 		),
 		traffic_rates AS (
 			SELECT
@@ -188,7 +193,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	`
 
 	// Get total count (with filter)
-	countQuery := baseQuery + `SELECT count(*) FROM validators_data WHERE 1=1` + whereFilter
+	countQuery := baseQuery + `SELECT count(DISTINCT vote_pubkey) FROM validators_data WHERE 1=1` + whereFilter
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
 		log.Printf("Validators count error: %v", err)
@@ -197,7 +202,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get on_dz count (with filter)
-	onDZCountQuery := baseQuery + `SELECT count(*) FROM validators_data WHERE on_dz = true` + whereFilter
+	onDZCountQuery := baseQuery + `SELECT count(DISTINCT vote_pubkey) FROM validators_data WHERE on_dz = true` + whereFilter
 	var onDZCount uint64
 	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
 		log.Printf("Validators on_dz count error: %v", err)
@@ -334,14 +339,20 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 			WHERE epoch_vote_account = 'true'
 		),
 		dz_ip_info AS (
-			SELECT u.client_ip, u.tunnel_id, u.device_pk, d.code as device_code,
-				d.metro_pk, m.code as metro_code
+			SELECT
+				u.client_ip,
+				any(u.tunnel_id) as tunnel_id,
+				any(u.device_pk) as device_pk,
+				any(d.code) as device_code,
+				any(d.metro_pk) as metro_pk,
+				any(m.code) as metro_code
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
 				AND u.client_ip IS NOT NULL
 				AND u.client_ip != ''
+			GROUP BY u.client_ip
 		),
 		traffic_rates AS (
 			SELECT
