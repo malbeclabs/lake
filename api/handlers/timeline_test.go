@@ -1235,15 +1235,15 @@ func insertDZUserHistory(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK
 	// Use unique attrs_hash per row so the timeline query detects attribute changes
 	attrsHash := uint64(ts.UnixMilli())
 	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
-		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, %d, '%s', '%s', '%s', '', '', '%s', '%s', 0)`,
-		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, devicePK)))
+		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, %d, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
+		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
 func insertDZUserHistoryDeleted(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
 	attrsHash := uint64(ts.UnixMilli())
 	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
-		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 1, %d, '%s', '%s', '%s', '', '', '%s', '%s', 0)`,
-		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, devicePK)))
+		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 1, %d, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
+		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
 // insertDZUserCurrent inserts a DZ user into the history table with a
@@ -1252,8 +1252,8 @@ func insertDZUserCurrent(t *testing.T, pk, dzIP, status, ownerPubkey, devicePK s
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
 	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
-		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s', '', '', '%s', '%s', 0)`,
-		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, ownerPubkey, status, dzIP, devicePK)))
+		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
+		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
 func findEventsByType(events []handlers.TimelineEvent, eventType string) []handlers.TimelineEvent {

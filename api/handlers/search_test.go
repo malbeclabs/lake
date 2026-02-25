@@ -65,6 +65,7 @@ func setupSearchTables(t *testing.T) {
 			pk String,
 			kind String,
 			owner_pubkey String,
+			client_ip Nullable(String),
 			dz_ip Nullable(String)
 		) ENGINE = Memory
 	`)

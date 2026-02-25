@@ -20,6 +20,7 @@ func setupStatsSchema(t *testing.T) {
 	// Create minimal tables for stats queries
 	tables := []string{
 		`CREATE TABLE IF NOT EXISTS dz_users_current (
+			client_ip String,
 			dz_ip String,
 			status String
 		) ENGINE = Memory`,
@@ -96,7 +97,7 @@ func TestGetStats_WithData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert test data for users
-	err := config.DB.Exec(ctx, `INSERT INTO dz_users_current (dz_ip, status) VALUES ('1.2.3.4', 'activated'), ('5.6.7.8', 'activated')`)
+	err := config.DB.Exec(ctx, `INSERT INTO dz_users_current (client_ip, dz_ip, status) VALUES ('1.2.3.4', '1.2.3.4', 'activated'), ('5.6.7.8', '5.6.7.8', 'activated')`)
 	require.NoError(t, err)
 
 	// Insert test data for devices
@@ -162,7 +163,7 @@ func TestGetStats_ValidatorsWithStake(t *testing.T) {
 
 	// Set up the chain: dz_user -> gossip_node -> vote_account
 	// User with gossip IP
-	err := config.DB.Exec(ctx, `INSERT INTO dz_users_current (dz_ip, status) VALUES ('10.0.0.1', 'activated')`)
+	err := config.DB.Exec(ctx, `INSERT INTO dz_users_current (client_ip, dz_ip, status) VALUES ('10.0.0.1', '10.0.0.1', 'activated')`)
 	require.NoError(t, err)
 
 	// Gossip node matching the user's IP

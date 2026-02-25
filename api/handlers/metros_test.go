@@ -50,6 +50,7 @@ func setupMetrosTables(t *testing.T) {
 			device_pk String,
 			kind String,
 			owner_pubkey String,
+			client_ip Nullable(String),
 			dz_ip Nullable(String)
 		) ENGINE = Memory
 	`)
@@ -80,11 +81,11 @@ func insertMetrosTestData(t *testing.T) {
 
 	// Insert users
 	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_users_current (pk, status, device_pk, kind, owner_pubkey, dz_ip) VALUES
-		('user-1', 'activated', 'dev-1', 'validator', 'pubkey1', '192.168.1.1'),
-		('user-2', 'activated', 'dev-1', 'validator', 'pubkey2', '192.168.1.2'),
-		('user-3', 'activated', 'dev-3', 'validator', 'pubkey3', '192.168.2.1'),
-		('user-4', 'pending', 'dev-2', 'validator', 'pubkey4', '192.168.1.3')
+		INSERT INTO dz_users_current (pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip) VALUES
+		('user-1', 'activated', 'dev-1', 'validator', 'pubkey1', '192.168.1.1', '192.168.1.1'),
+		('user-2', 'activated', 'dev-1', 'validator', 'pubkey2', '192.168.1.2', '192.168.1.2'),
+		('user-3', 'activated', 'dev-3', 'validator', 'pubkey3', '192.168.2.1', '192.168.2.1'),
+		('user-4', 'pending', 'dev-2', 'validator', 'pubkey4', '192.168.1.3', '192.168.1.3')
 	`)
 	require.NoError(t, err)
 }
