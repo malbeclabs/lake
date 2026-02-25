@@ -166,7 +166,6 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
   }
 
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const [snapToPeak, setSnapToPeak] = useState(true)
   const legend = useChartLegend()
 
   // Notify parent of hovered member's device_pk
@@ -181,11 +180,11 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
     }
   }
 
-  // When snap-to-peak is on, find the index with the highest value in a window around the hovered point.
+  // Snap-to-peak: find the index with the highest value in a window around the hovered point.
   // Window scales with data density — 5% of total points in each direction, clamped to [5, 150].
   const effectiveIdx = useMemo(() => {
     if (hoveredIdx === null) return null
-    if (!snapToPeak || chartData.length === 0) return hoveredIdx
+    if (chartData.length === 0) return hoveredIdx
 
     const peakWindow = Math.min(150, Math.max(5, Math.round(chartData.length * 0.05)))
     const lo = Math.max(0, hoveredIdx - peakWindow)
@@ -206,7 +205,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
       }
     }
     return bestIdx
-  }, [hoveredIdx, snapToPeak, chartData, seriesKeys])
+  }, [hoveredIdx, chartData, seriesKeys])
 
   const displayValues = useMemo(() => {
     if (chartData.length === 0) return new Map<string, number>()
@@ -256,17 +255,6 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
           {hoveredTime && <span className="ml-2 text-foreground tabular-nums">{hoveredTime}</span>}
         </h3>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setSnapToPeak(v => !v)}
-            className={`text-xs rounded px-1.5 py-1 cursor-pointer transition-colors inline-flex items-center gap-1 border ${
-              snapToPeak
-                ? 'bg-purple-500/15 border-purple-500/30 text-purple-600 dark:text-purple-400'
-                : 'bg-transparent border-border text-muted-foreground hover:bg-muted/50'
-            }`}
-            title="Snap hover to nearest peak value"
-          >
-            snap to peak
-          </button>
           <select
             value={metric}
             onChange={e => setMetric(e.target.value as TrafficMetric)}
@@ -687,6 +675,14 @@ export function MulticastGroupDetailPage() {
 
         {/* Members filter + tabs */}
         <div className="flex items-center gap-2 mb-3">
+          <InlineFilter
+            fieldPrefixes={memberFieldPrefixes}
+            entity="multicast-members"
+            autocompleteFields={memberAutocompleteFields}
+            placeholder="Filter members..."
+            onLiveFilterChange={setLiveFilter}
+            filterParams={pk ? { group: pk } : undefined}
+          />
           {searchFilters.map((filter, idx) => (
             <button
               key={`${filter}-${idx}`}
@@ -705,16 +701,6 @@ export function MulticastGroupDetailPage() {
               Clear all
             </button>
           )}
-          <div className="ml-auto">
-            <InlineFilter
-              fieldPrefixes={memberFieldPrefixes}
-              entity="multicast-members"
-              autocompleteFields={memberAutocompleteFields}
-              placeholder="Filter members..."
-              onLiveFilterChange={setLiveFilter}
-              filterParams={pk ? { group: pk } : undefined}
-            />
-          </div>
         </div>
 
         {/* Members table */}
