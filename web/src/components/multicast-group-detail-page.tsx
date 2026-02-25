@@ -150,11 +150,15 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
       }
     }
 
+    // Only include series that have a matching member
+    const memberKeys = new Set(members.filter(m => m.tunnel_id > 0).map(m => `${m.device_pk}_${m.tunnel_id}`))
+    const filteredKeys = [...keys].filter(k => memberKeys.has(k)).sort()
+
     const data = [...timeMap.values()].sort((a, b) =>
       String(a.time).localeCompare(String(b.time))
     )
-    return { chartData: data, seriesKeys: [...keys].sort() }
-  }, [trafficData, activeTab, metric])
+    return { chartData: data, seriesKeys: filteredKeys }
+  }, [trafficData, activeTab, metric, members])
 
   const getSeriesColor = (key: string) => {
     const idx = seriesKeys.indexOf(key)
@@ -880,7 +884,7 @@ export function MulticastGroupDetailPage() {
         {pk && group.members.length > 0 && (
           <MulticastTrafficChart
             groupCode={pk}
-            members={group.members}
+            members={activeMembers}
             activeTab={activeTab}
             onHoverMember={setHoveredDevicePK}
           />
