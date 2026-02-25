@@ -422,7 +422,7 @@ const memberFieldPrefixes = [
   { prefix: 'owner:', description: 'Filter by owner pubkey' },
 ]
 
-const memberAutocompleteFields: string[] = []
+const memberAutocompleteFields = ['device', 'metro']
 
 function parseMemberSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
@@ -710,6 +710,7 @@ export function MulticastGroupDetailPage() {
                 autocompleteFields={memberAutocompleteFields}
                 placeholder="Filter members..."
                 onLiveFilterChange={setLiveFilter}
+                filterParams={pk ? { group: pk } : undefined}
               />
             </div>
           </div>

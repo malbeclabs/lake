@@ -64,6 +64,10 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 	"multicast_groups": {
 		"status": {table: "dz_multicast_groups_current", column: "status"},
 	},
+	"multicast-members": {
+		"device": {table: "dz_users_current u JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
+		"metro":  {table: "dz_users_current u JOIN dz_devices_current d ON u.device_pk = d.pk JOIN dz_metros_current m ON d.metro_pk = m.pk", column: "m.name"},
+	},
 	"gossip": {
 		"dz":        {table: "(SELECT 'yes' AS val UNION ALL SELECT 'no' AS val)", column: "val"},
 		"validator": {table: "(SELECT 'yes' AS val UNION ALL SELECT 'no' AS val)", column: "val"},
@@ -91,6 +95,29 @@ func quoteCSV(csv string) string {
 		quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
 	}
 	return strings.Join(quoted, ",")
+}
+
+// buildMulticastMembersFieldQuery builds a group-scoped field values query
+// for multicast-members. Returns empty string for other entities.
+func buildMulticastMembersFieldQuery(entity, field string, cfg fieldConfig, r *http.Request) string {
+	if entity != "multicast-members" {
+		return ""
+	}
+	groupPK := r.URL.Query().Get("group")
+	if groupPK == "" {
+		return ""
+	}
+
+	safeGroupPK := escapeSingleQuote(groupPK)
+	groupFilter := fmt.Sprintf(
+		"u.kind = 'multicast' AND u.status = 'activated' AND (has(JSONExtract(u.publishers, 'Array(String)'), '%s') OR has(JSONExtract(u.subscribers, 'Array(String)'), '%s'))",
+		safeGroupPK, safeGroupPK,
+	)
+
+	return fmt.Sprintf(
+		"SELECT DISTINCT %s AS val FROM %s WHERE %s AND %s IS NOT NULL AND %s != '' ORDER BY val LIMIT 100",
+		cfg.column, cfg.table, groupFilter, cfg.column, cfg.column,
+	)
 }
 
 // BuildScopedFieldValuesQuery builds a scoped query for dashboard-relevant
@@ -230,7 +257,10 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try scoped query first (dashboard filter-aware), fall back to generic
-	query := BuildScopedFieldValuesQuery(entity, field, fieldCfg, r)
+	query := buildMulticastMembersFieldQuery(entity, field, fieldCfg, r)
+	if query == "" {
+		query = BuildScopedFieldValuesQuery(entity, field, fieldCfg, r)
+	}
 	if query == "" {
 		timeFilter := ""
 		if strings.HasPrefix(fieldCfg.table, "fact_") {

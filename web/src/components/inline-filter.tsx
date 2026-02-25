@@ -19,6 +19,7 @@ interface InlineFilterProps {
   autocompleteFields: (string | { field: string; minChars: number })[]
   placeholder?: string
   onLiveFilterChange?: (filter: string) => void
+  filterParams?: Record<string, string>
 }
 
 export function InlineFilter({
@@ -27,6 +28,7 @@ export function InlineFilter({
   autocompleteFields,
   placeholder = 'Filter...',
   onLiveFilterChange,
+  filterParams,
 }: InlineFilterProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState('')
@@ -87,8 +89,8 @@ export function InlineFilter({
 
   // Fetch field values when a valid field prefix is detected
   const { data: fieldValuesData, isLoading: fieldValuesLoading } = useQuery({
-    queryKey: ['field-values', entity, fieldValueMatch?.field],
-    queryFn: () => fetchFieldValues(entity, fieldValueMatch!.field),
+    queryKey: ['field-values', entity, fieldValueMatch?.field, filterParams],
+    queryFn: () => fetchFieldValues(entity, fieldValueMatch!.field, filterParams),
     enabled: fieldValueMatch !== null && meetsMinChars,
     staleTime: 60000,
   })
