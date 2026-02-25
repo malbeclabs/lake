@@ -46,7 +46,12 @@ jobs:
         id: v
         shell: bash
         run: |
-          SHORT_SHA="${GITHUB_SHA::8}"
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            SHORT_SHA="${{ github.event.pull_request.head.sha }}"
+            SHORT_SHA="${SHORT_SHA::8}"
+          else
+            SHORT_SHA="${GITHUB_SHA::8}"
+          fi
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
 
           # Use head_ref for PRs, ref_name for pushes
