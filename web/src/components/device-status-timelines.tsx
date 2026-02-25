@@ -861,12 +861,9 @@ export function DeviceStatusTimelines({
         : (device.issue_reasons ?? [])
       const hasIssues = issueReasons.length > 0
 
-      let matchesIssue = false
-      if (hasIssues) {
-        matchesIssue = issueReasons.some(reason => issueTypesSelected.includes(reason))
-      } else {
-        matchesIssue = noIssuesSelected
-      }
+      const matchesIssue = hasIssues
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+        : noIssuesSelected
 
       const matchesHealth = deviceMatchesHealthFilters(device)
 

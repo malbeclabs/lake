@@ -1215,10 +1215,7 @@ export function TopologyGraph({
           ? MULTICAST_PUBLISHER_COLORS[pubColorIdx % MULTICAST_PUBLISHER_COLORS.length].dark
           : MULTICAST_PUBLISHER_COLORS[pubColorIdx % MULTICAST_PUBLISHER_COLORS.length].light
         const isAlsoSubscriber = subscriberCounts.has(devicePK)
-        let label = ''
-        if (isAlsoSubscriber) label = 'P+S'
-        else if (pubCount > 1) label = `P${pubCount}`
-        else label = 'P'
+        const label = isAlsoSubscriber ? 'P+S' : pubCount > 1 ? `P${pubCount}` : 'P'
         node.data('multicastLabel', label)
         node.style({
           'background-color': pubColor, 'border-color': pubColor, 'border-width': 3,

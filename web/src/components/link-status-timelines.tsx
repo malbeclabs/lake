@@ -734,14 +734,9 @@ export function LinkStatusTimelines({
       }
 
       // Check if link matches issue filters
-      let matchesIssue = false
-      if (hasIssues) {
-        // Link has issues - check if any match the selected issue types
-        matchesIssue = issueReasons.some(reason => issueTypesSelected.includes(reason))
-      } else {
-        // Link has no issues - include if "no_issues" filter is selected
-        matchesIssue = noIssuesSelected
-      }
+      const matchesIssue = hasIssues
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+        : noIssuesSelected
 
       // Must match at least one health filter
       const matchesHealth = linkMatchesHealthFilters(link)

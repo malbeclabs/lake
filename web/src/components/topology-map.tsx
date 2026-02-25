@@ -2764,7 +2764,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           const metroZ = deviceZ ? metroMap.get(deviceZ.metro_pk) : undefined
           if (metroA && metroZ) {
             if (linkFitsInView(metroA.longitude, metroA.latitude, metroZ.longitude, metroZ.latitude)) {
-              itemFound = true
+              // Already in view, no need to fly
             } else {
             const aLng = metroA.longitude
             let zLng = metroZ.longitude
