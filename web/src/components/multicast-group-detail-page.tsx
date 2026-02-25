@@ -1,10 +1,11 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X } from 'lucide-react'
+import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
 import { fetchMulticastGroup, fetchMulticastGroupTraffic, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useChartLegend } from '@/hooks/use-chart-legend'
 import { InlineFilter } from '@/components/inline-filter'
 
 function formatBps(bps: number): string {
@@ -169,45 +170,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
 
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [snapToPeak, setSnapToPeak] = useState(true)
-  const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
-  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
-  const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
-
-  // Empty selection = all visible, __none__ sentinel = none visible
-  const visibleSeries = useMemo(() => {
-    if (selectedSeries.has('__none__')) return new Set<string>()
-    if (selectedSeries.size > 0) return selectedSeries
-    return new Set(seriesKeys)
-  }, [selectedSeries, seriesKeys])
-
-  const handleSeriesClick = (key: string, index: number, event: React.MouseEvent) => {
-    if (event.shiftKey && lastClickedIndex !== null) {
-      const start = Math.min(lastClickedIndex, index)
-      const end = Math.max(lastClickedIndex, index)
-      const newSelection = new Set(selectedSeries)
-      for (let i = start; i <= end; i++) {
-        newSelection.add(seriesKeys[i])
-      }
-      setSelectedSeries(newSelection)
-    } else if (event.ctrlKey || event.metaKey) {
-      const newSelection = new Set(selectedSeries)
-      if (newSelection.has(key)) {
-        newSelection.delete(key)
-      } else {
-        newSelection.add(key)
-      }
-      setSelectedSeries(newSelection)
-    } else {
-      if (selectedSeries.has(key)) {
-        const newSelection = new Set(selectedSeries)
-        newSelection.delete(key)
-        setSelectedSeries(newSelection)
-      } else {
-        setSelectedSeries(new Set([key]))
-      }
-    }
-    setLastClickedIndex(index)
-  }
+  const legend = useChartLegend()
 
   // When snap-to-peak is on, find the index with the highest value in a window around the hovered point.
   // Window scales with data density — 5% of total points in each direction, clamped to [5, 150].
@@ -350,14 +313,14 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                   content={() => null}
                   cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 2' }}
                 />
-                {seriesKeys.filter(k => visibleSeries.has(k)).map(key => (
+                {seriesKeys.map(key => (
                   <Line
                     key={key}
                     type="monotone"
                     dataKey={key}
                     stroke={getSeriesColor(key)}
                     strokeWidth={1.5}
-                    strokeOpacity={hoveredSeries && hoveredSeries !== key ? 0 : 1}
+                    strokeOpacity={legend.getOpacity(key)}
                     dot={false}
                     isAnimationActive={false}
                   />
@@ -371,16 +334,25 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                 <div className="w-2.5" />
                 <div className="flex-1 min-w-0 flex items-center gap-2">
                   Owner
-                  <span className="font-normal">
+                  <span className="font-normal flex items-center gap-1.5">
                     <button
                       className="hover:text-foreground transition-colors"
-                      onClick={() => setSelectedSeries(new Set())}
+                      onClick={() => legend.setSelectedSeries(new Set())}
                     >all</button>
                     {' / '}
                     <button
                       className="hover:text-foreground transition-colors"
-                      onClick={() => setSelectedSeries(new Set(['__none__']))}
+                      onClick={() => legend.setSelectedSeries(new Set(['__none__']))}
                     >none</button>
+                    <div className="relative group flex-shrink-0">
+                      <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
+                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
+                        <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[10px] leading-relaxed whitespace-nowrap shadow-md">
+                          <div><strong>Click</strong> — solo select</div>
+                          <div><strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle</div>
+                        </div>
+                      </div>
+                    </div>
                   </span>
                 </div>
                 <div className="w-20 text-right whitespace-nowrap">Node</div>
@@ -389,7 +361,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
               {seriesKeys.map((key, i) => {
                 const info = seriesInfo.get(key)
                 const val = displayValues.get(key)
-                const isVisible = visibleSeries.has(key)
+                const opacity = legend.getOpacity(key)
+                const isSelected = legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
                 const ownerLabel = info?.ownerPubkey
                   ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
                   : key.split('_')[0].slice(0, 8)
@@ -399,18 +372,22 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
                 return (
                   <div
                     key={key}
-                    className={`flex items-center gap-4 px-1.5 py-0.5 rounded cursor-pointer select-none transition-colors hover:bg-muted/60 ${!isVisible ? 'opacity-40' : ''}`}
-                    onClick={(e) => handleSeriesClick(key, i, e)}
-                    onMouseEnter={() => isVisible && setHoveredSeries(key)}
-                    onMouseLeave={() => setHoveredSeries(null)}
+                    className="flex items-center gap-4 px-1.5 py-0.5 rounded cursor-pointer select-none transition-opacity hover:bg-muted/60"
+                    style={{ opacity: Math.max(opacity, 0.3) }}
+                    onClick={(e) => legend.handleClick(key, e)}
+                    onMouseEnter={() => legend.handleMouseEnter(key)}
+                    onMouseLeave={() => legend.handleMouseLeave()}
                   >
-                    <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: !isVisible ? 'var(--muted-foreground)' : TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] }} />
+                    <div
+                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors"
+                      style={{ backgroundColor: isSelected ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] : 'var(--border)' }}
+                    />
                     <div className="flex-1 min-w-0 text-foreground truncate font-mono">
                       {ownerLabel}
                       <span className="text-muted-foreground ml-2">{info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}</span>
                     </div>
                     <div className="w-20 text-right tabular-nums font-mono text-muted-foreground">{nodeLabel}</div>
-                    <div className="w-20 text-right tabular-nums">{val !== undefined && isVisible ? fmtValue(val) : '—'}</div>
+                    <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
                   </div>
                 )
               })}
