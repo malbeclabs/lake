@@ -724,6 +724,20 @@ func seedUsers(t *testing.T, ctx context.Context, conn clickhouse.Connection, us
 	require.NoError(t, err)
 }
 
+func seedMulticastGroups(t *testing.T, ctx context.Context, conn clickhouse.Connection, groups []serviceability.MulticastGroup, snapshotTS time.Time, opID uuid.UUID) {
+	log := testLogger(t)
+	mgDS, err := serviceability.NewMulticastGroupDataset(log)
+	require.NoError(t, err)
+	var mgSchema serviceability.MulticastGroupSchema
+	err = mgDS.WriteBatch(ctx, conn, len(groups), func(i int) ([]any, error) {
+		return mgSchema.ToRow(groups[i]), nil
+	}, &dataset.DimensionType2DatasetWriteConfig{
+		SnapshotTS: snapshotTS,
+		OpID:       opID,
+	})
+	require.NoError(t, err)
+}
+
 // Test helper types for Solana entities (used by test files)
 type testGossipNode struct {
 	Pubkey      string

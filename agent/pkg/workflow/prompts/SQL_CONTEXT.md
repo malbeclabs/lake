@@ -470,6 +470,51 @@ GROUP BY u.owner_pubkey, u.dz_ip
 ORDER BY total_bytes DESC
 ```
 
+### Multicast Groups & Members
+The `dz_multicast_groups_current` table stores multicast group metadata:
+- Columns: `pk`, `code`, `multicast_ip`, `max_bandwidth`, `status`, `publisher_count`, `subscriber_count`
+
+**Publisher/subscriber membership** is stored as JSON arrays on `dz_users_current`:
+- `publishers` column: `["group_pk1","group_pk2"]` — groups this user publishes to
+- `subscribers` column: `["group_pk1","group_pk2"]` — groups this user subscribes to
+- Multicast users have `kind = 'multicast'`
+
+**Key ClickHouse JSON patterns:**
+```sql
+-- Check if user is a publisher for a specific group
+has(JSONExtract(u.publishers, 'Array(String)'), 'group_pk_value')
+
+-- Expand JSON array to rows (one row per group membership)
+arrayJoin(JSONExtract(u.publishers, 'Array(String)')) AS group_pk
+
+-- Check non-empty array
+JSONLength(u.publishers) > 0
+```
+
+**Canonical pub/sub counting query** — get publisher and subscriber counts per group:
+```sql
+SELECT group_pk, countIf(mode = 'P' OR mode = 'P+S') AS pub_count, countIf(mode = 'S' OR mode = 'P+S') AS sub_count
+FROM (
+    SELECT arrayJoin(JSONExtract(u.publishers, 'Array(String)')) AS group_pk, 'P' AS mode FROM dz_users_current u WHERE u.status = 'activated' AND u.kind = 'multicast' AND JSONLength(u.publishers) > 0
+    UNION ALL
+    SELECT arrayJoin(JSONExtract(u.subscribers, 'Array(String)')) AS group_pk, 'S' AS mode FROM dz_users_current u WHERE u.status = 'activated' AND u.kind = 'multicast' AND JSONLength(u.subscribers) > 0
+)
+GROUP BY group_pk
+```
+
+**Multicast user → validator enrichment:** Join via `client_ip = gossip_ip` (same as unicast users):
+```sql
+SELECT u.owner_pubkey, u.client_ip, gn.pubkey AS node_pubkey, va.vote_pubkey, d.code AS device_code, m.code AS metro_code
+FROM dz_users_current u
+JOIN dz_devices_current d ON u.device_pk = d.pk
+JOIN dz_metros_current m ON d.metro_pk = m.pk
+JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
+JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
+WHERE u.status = 'activated' AND u.kind = 'multicast' AND has(JSONExtract(u.publishers, 'Array(String)'), 'group_pk_value')
+```
+
+**Traffic gotcha:** On tunnel interfaces, use `in_octets_delta`/`out_octets_delta` for bandwidth. Do NOT use `in_multicast_pkts_delta`/`out_multicast_pkts_delta` — these counters are unreliable on tunnel interfaces.
+
 ### History Tables (CRITICAL)
 **ALWAYS check the schema for exact table and column names.** Do NOT guess.
 
