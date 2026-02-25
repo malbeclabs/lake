@@ -85,14 +85,17 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 	// Sum total stake for validators on DZ (in lamports, convert to SOL)
 	g.Go(func() error {
 		query := `
-			SELECT COALESCE(SUM(va.activated_stake_lamports), 0) / 1000000000.0 AS total_stake_sol
-			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
-			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
-			WHERE u.status = 'activated'
-			  AND u.client_ip != ''
-			  AND va.epoch_vote_account = 'true'
-			  AND va.activated_stake_lamports > 0
+			SELECT COALESCE(SUM(stake), 0) / 1000000000.0 AS total_stake_sol
+			FROM (
+				SELECT DISTINCT va.vote_pubkey, va.activated_stake_lamports AS stake
+				FROM dz_users_current u
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
+				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
+				WHERE u.status = 'activated'
+				  AND u.client_ip != ''
+				  AND va.epoch_vote_account = 'true'
+				  AND va.activated_stake_lamports > 0
+			)
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.TotalStakeSol)
@@ -103,11 +106,13 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 		query := `
 			SELECT
 				COALESCE(
-					(SELECT SUM(va.activated_stake_lamports)
+					(SELECT SUM(stake) FROM (
+					 SELECT DISTINCT va.vote_pubkey, va.activated_stake_lamports AS stake
 					 FROM dz_users_current u
 					 JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 					 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
-					 WHERE u.status = 'activated' AND u.client_ip != '' AND va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0)
+					 WHERE u.status = 'activated' AND u.client_ip != '' AND va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
+					))
 					* 100.0 / NULLIF((SELECT SUM(activated_stake_lamports) FROM solana_vote_accounts_current WHERE activated_stake_lamports > 0), 0),
 					0
 				) AS stake_share_pct

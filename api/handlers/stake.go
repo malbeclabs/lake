@@ -64,15 +64,18 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 	g.Go(func() error {
 		query := `
 			SELECT
-				COALESCE(SUM(va.activated_stake_lamports), 0) / 1e9 AS dz_stake_sol,
-				COUNT(DISTINCT va.vote_pubkey) AS validator_count
-			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
-			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
-			WHERE u.status = 'activated'
-			  AND u.client_ip != ''
-			  AND va.epoch_vote_account = 'true'
-			  AND va.activated_stake_lamports > 0
+				COALESCE(SUM(stake), 0) / 1e9 AS dz_stake_sol,
+				COUNT(*) AS validator_count
+			FROM (
+				SELECT DISTINCT va.vote_pubkey, va.activated_stake_lamports AS stake
+				FROM dz_users_current u
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
+				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
+				WHERE u.status = 'activated'
+				  AND u.client_ip != ''
+				  AND va.epoch_vote_account = 'true'
+				  AND va.activated_stake_lamports > 0
+			)
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol, &overview.ValidatorCount)
