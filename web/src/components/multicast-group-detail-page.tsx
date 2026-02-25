@@ -90,7 +90,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
   const [bucket, setBucket] = useState<string>('auto')
 
-  const autoBucketLabel: Record<string, string> = { '1h': '30s', '6h': '2m', '12h': '5m', '24h': '10m' }
+  const autoBucketLabel: Record<string, string> = { '1h': '10s', '6h': '2m', '12h': '5m', '24h': '10m' }
 
   const bucketSeconds = bucket === 'auto' ? undefined : bucket.endsWith('m')
     ? String(parseInt(bucket) * 60)

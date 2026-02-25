@@ -515,7 +515,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	var interval, lookback string
 	switch timeRange {
 	case "1h":
-		interval, lookback = "30", "1 HOUR"
+		interval, lookback = "10", "1 HOUR"
 	case "6h":
 		interval, lookback = "120", "6 HOUR"
 	case "12h":
