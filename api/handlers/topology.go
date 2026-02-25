@@ -159,6 +159,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 					AND va.epoch_vote_account = 'true'
 					AND va.activated_stake_lamports > 0
 				WHERE u.status = 'activated'
+					AND u.client_ip != ''
 				GROUP BY u.device_pk
 			)
 			SELECT
@@ -290,6 +291,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 					AND va.epoch_vote_account = 'true'
 					AND va.activated_stake_lamports > 0
 				WHERE u.status = 'activated'
+					AND u.client_ip != ''
 			),
 			user_traffic AS (
 				SELECT
@@ -335,6 +337,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN user_traffic traffic ON u.tunnel_id = traffic.user_tunnel_id
 			CROSS JOIN total_dz_stake ts
 			WHERE u.status = 'activated'
+				AND u.client_ip != ''
 				AND geo.latitude IS NOT NULL
 				AND geo.longitude IS NOT NULL
 		`

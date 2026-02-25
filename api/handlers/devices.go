@@ -257,7 +257,7 @@ func GetDevice(w http.ResponseWriter, r *http.Request) {
 			FROM dz_users_current u
 			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
 			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
-			WHERE u.status = 'activated' AND v.epoch_vote_account = 'true'
+			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
 			GROUP BY u.device_pk
 		),
 		total_stake AS (

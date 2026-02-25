@@ -169,7 +169,7 @@ func GetMetro(w http.ResponseWriter, r *http.Request) {
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
 			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
-			WHERE u.status = 'activated' AND v.epoch_vote_account = 'true' AND d.metro_pk IS NOT NULL
+			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true' AND d.metro_pk IS NOT NULL
 			GROUP BY d.metro_pk
 		),
 		traffic_rates AS (

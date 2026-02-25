@@ -79,14 +79,15 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 		WITH dz_nodes AS (
 			SELECT
 				u.client_ip,
-				d.code as device_code,
-				m.code as metro_code
+				any(d.code) as device_code,
+				any(m.code) as metro_code
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
 				AND u.client_ip IS NOT NULL
 				AND u.client_ip != ''
+			GROUP BY u.client_ip
 		),
 		validator_stake AS (
 			SELECT
@@ -245,18 +246,19 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 		WITH dz_nodes AS (
 			SELECT
 				u.client_ip,
-				u.pk as user_pk,
-				u.owner_pubkey,
-				u.device_pk,
-				d.code as device_code,
-				d.metro_pk,
-				m.code as metro_code
+				any(u.pk) as user_pk,
+				any(u.owner_pubkey) as owner_pubkey,
+				any(u.device_pk) as device_pk,
+				any(d.code) as device_code,
+				any(d.metro_pk) as metro_pk,
+				any(m.code) as metro_code
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
 				AND u.client_ip IS NOT NULL
 				AND u.client_ip != ''
+			GROUP BY u.client_ip
 		),
 		validator_stake AS (
 			SELECT

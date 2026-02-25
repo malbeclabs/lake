@@ -70,6 +70,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			WHERE u.status = 'activated'
+			  AND u.client_ip != ''
 			  AND va.epoch_vote_account = 'true'
 			  AND va.activated_stake_lamports > 0
 		`
@@ -261,6 +262,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 			FROM dz_users_current u
 			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			WHERE u.status = 'activated'
+				AND u.client_ip != ''
 		),
 		-- Get distinct hours from user history as our time buckets
 		time_buckets AS (
@@ -406,6 +408,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				WHERE u.status = 'activated'
+				  AND u.client_ip != ''
 				  AND va.epoch_vote_account = 'true'
 				  AND va.activated_stake_lamports > 0
 			),
@@ -467,6 +470,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				WHERE u.status = 'activated'
+				  AND u.client_ip != ''
 				  AND va.epoch_vote_account = 'true'
 				  AND va.activated_stake_lamports > 0
 			),
