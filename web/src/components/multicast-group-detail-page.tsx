@@ -458,18 +458,42 @@ export function MulticastGroupDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [activeTab, setActiveTab] = useState<'publishers' | 'subscribers'>('publishers')
-  const [sortField, setSortField] = useState<MemberSortField>('stake_sol')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as 'publishers' | 'subscribers'
+  const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
+  const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const [liveFilter, setLiveFilter] = useState('')
 
+  const setActiveTab = useCallback((tab: 'publishers' | 'subscribers') => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (tab === 'publishers') { p.delete('tab') } else { p.set('tab', tab) }
+      return p
+    })
+  }, [setSearchParams])
+
   const handleSort = (field: MemberSortField) => {
-    if (sortField === field) {
-      setSortDirection(d => d === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortField(field)
-      setSortDirection('desc')
-    }
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      let newField = field
+      let newDir: SortDirection = 'desc'
+      if (sortField === field) {
+        if (sortDirection === 'desc') {
+          newDir = 'asc'
+        } else {
+          // Already asc — reset to default
+          newField = 'stake_sol'
+          newDir = 'desc'
+        }
+      }
+      if (newField === 'stake_sol' && newDir === 'desc') {
+        p.delete('sort')
+        p.delete('dir')
+      } else {
+        p.set('sort', newField)
+        p.set('dir', newDir)
+      }
+      return p
+    })
   }
 
   const SortIcon = ({ field }: { field: MemberSortField }) => {
