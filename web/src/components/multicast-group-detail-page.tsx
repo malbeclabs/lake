@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info } from 'lucide-react'
@@ -82,10 +82,11 @@ const TRAFFIC_COLORS = [
 const TIME_RANGES = ['1h', '6h', '12h', '24h'] as const
 const BUCKET_OPTIONS = ['auto', '2s', '10s', '30s', '1m', '2m', '5m', '10m'] as const
 
-function MulticastTrafficChart({ groupCode, members, activeTab }: {
+function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }: {
   groupCode: string
   members: MulticastMember[]
   activeTab: 'publishers' | 'subscribers'
+  onHoverMember?: (devicePK: string | null) => void
 }) {
   const [timeRange, setTimeRange] = useState<string>('1h')
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
@@ -171,6 +172,18 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [snapToPeak, setSnapToPeak] = useState(true)
   const legend = useChartLegend()
+
+  // Notify parent of hovered member's device_pk
+  const prevHoveredKey = useRef<string | null>(null)
+  if (legend.hoveredSeries !== prevHoveredKey.current) {
+    prevHoveredKey.current = legend.hoveredSeries
+    if (legend.hoveredSeries) {
+      const idx = legend.hoveredSeries.lastIndexOf('_')
+      onHoverMember?.(idx > 0 ? legend.hoveredSeries.slice(0, idx) : legend.hoveredSeries)
+    } else {
+      onHoverMember?.(null)
+    }
+  }
 
   // When snap-to-peak is on, find the index with the highest value in a window around the hovered point.
   // Window scales with data density — 5% of total points in each direction, clamped to [5, 150].
@@ -450,6 +463,7 @@ export function MulticastGroupDetailPage() {
   const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const [liveFilter, setLiveFilter] = useState('')
+  const [hoveredDevicePK, setHoveredDevicePK] = useState<string | null>(null)
 
   const setActiveTab = useCallback((tab: 'publishers' | 'subscribers') => {
     setSearchParams(prev => {
@@ -784,7 +798,7 @@ export function MulticastGroupDetailPage() {
                 {activeMembers.map((member) => (
                   <tr
                     key={member.user_pk}
-                    className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
+                    className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${hoveredDevicePK === member.device_pk ? 'bg-muted' : ''}`}
                   >
                     <td className="px-4 py-3 text-sm font-mono">
                       {member.owner_pubkey ? (
@@ -871,6 +885,7 @@ export function MulticastGroupDetailPage() {
             groupCode={pk}
             members={group.members}
             activeTab={activeTab}
+            onHoverMember={setHoveredDevicePK}
           />
         )}
       </div>
