@@ -168,7 +168,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
   }
 
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const [snapToPeak, setSnapToPeak] = useState(false)
+  const [snapToPeak, setSnapToPeak] = useState(true)
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
   const [hoveredSeries, setHoveredSeries] = useState<string | null>(null)
@@ -258,10 +258,10 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSnapToPeak(v => !v)}
-            className={`text-xs rounded px-1.5 py-1 cursor-pointer transition-colors inline-flex items-center gap-1 border text-foreground ${
+            className={`text-xs rounded px-1.5 py-1 cursor-pointer transition-colors inline-flex items-center gap-1 border ${
               snapToPeak
-                ? 'bg-muted border-border'
-                : 'bg-transparent border-border hover:bg-muted/50'
+                ? 'bg-purple-500/15 border-purple-500/30 text-purple-600 dark:text-purple-400'
+                : 'bg-transparent border-border text-muted-foreground hover:bg-muted/50'
             }`}
             title="Snap hover to nearest peak value"
           >
