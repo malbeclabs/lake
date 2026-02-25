@@ -67,14 +67,6 @@ function leaderTimingText(member: MulticastMember): string | null {
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
-const statusColors: Record<string, string> = {
-  active: 'text-green-600 dark:text-green-400',
-  activated: 'text-muted-foreground',
-  provisioning: 'text-blue-600 dark:text-blue-400',
-  suspended: 'text-red-600 dark:text-red-400',
-  pending: 'text-amber-600 dark:text-amber-400',
-}
-
 const TRAFFIC_COLORS = [
   '#7c5cbf', '#4a8fe7', '#3dad6f', '#d4854a', '#2ba3a8', '#c4a23d', '#c45fa0', '#6ba8f2',
 ]
@@ -667,24 +659,6 @@ export function MulticastGroupDetailPage() {
           <div>
             <h1 className="text-2xl font-medium font-mono">{group.code}</h1>
             <div className="text-sm text-muted-foreground font-mono">{group.multicast_ip}</div>
-          </div>
-        </div>
-
-        {/* Info grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Status</h3>
-            <div className={`text-sm capitalize ${statusColors[group.status] || ''}`}>{group.status}</div>
-          </div>
-
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Publishers</h3>
-            <div className="text-sm">{publishers.length}</div>
-          </div>
-
-          <div className="border border-border rounded-lg p-4 bg-card">
-            <h3 className="text-sm font-medium text-muted-foreground mb-3">Subscribers</h3>
-            <div className="text-sm">{subscribers.length}</div>
           </div>
         </div>
 
