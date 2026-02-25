@@ -152,7 +152,6 @@ func CollapseSmallOperators(input ShapleyInput, threshold int) ShapleyInput {
 	}
 }
 
-
 // Simulate runs the Shapley computation on the given input.
 func Simulate(ctx context.Context, input ShapleyInput) ([]OperatorValue, error) {
 	inputJSON, err := json.Marshal(input)
@@ -179,19 +178,8 @@ func Simulate(ctx context.Context, input ShapleyInput) ([]OperatorValue, error) 
 	return results, nil
 }
 
-// Compare runs Simulate on both baseline and modified inputs, then computes deltas.
-func Compare(ctx context.Context, baseline, modified ShapleyInput) (*CompareResult, error) {
-	baselineResults, err := Simulate(ctx, baseline)
-	if err != nil {
-		return nil, fmt.Errorf("baseline simulation: %w", err)
-	}
-
-	modifiedResults, err := Simulate(ctx, modified)
-	if err != nil {
-		return nil, fmt.Errorf("modified simulation: %w", err)
-	}
-
-	// Build lookup maps
+// BuildCompareResult computes deltas between baseline and modified simulation results.
+func BuildCompareResult(baselineResults, modifiedResults []OperatorValue) *CompareResult {
 	baseMap := make(map[string]OperatorValue)
 	for _, r := range baselineResults {
 		baseMap[r.Operator] = r
@@ -201,7 +189,6 @@ func Compare(ctx context.Context, baseline, modified ShapleyInput) (*CompareResu
 		modMap[r.Operator] = r
 	}
 
-	// Collect all operators
 	allOps := make(map[string]bool)
 	for _, r := range baselineResults {
 		allOps[r.Operator] = true
@@ -245,12 +232,13 @@ func Compare(ctx context.Context, baseline, modified ShapleyInput) (*CompareResu
 		Deltas:          deltas,
 		BaselineTotal:   baseTotal,
 		ModifiedTotal:   modTotal,
-	}, nil
+	}
 }
 
 // LinkEstimate computes per-link Shapley values for a specific operator.
+// cachedBaselineResults, if non-nil, skips the baseline simulation in the approx path.
 // This ports the Python network_linkestimate.py logic to Go.
-func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput) (*LinkEstimateResult, error) {
+func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput, cachedBaselineResults []OperatorValue) (*LinkEstimateResult, error) {
 	// Build device-to-operator lookup
 	deviceOperator := make(map[string]string)
 	for _, d := range input.Devices {
@@ -267,7 +255,7 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput)
 		}
 	}
 	if opLinkCount > 15 {
-		return linkEstimateApprox(ctx, operatorFocus, input, deviceOperator)
+		return linkEstimateApprox(ctx, operatorFocus, input, deviceOperator, cachedBaselineResults)
 	}
 
 	// Retag links: each link of the focus operator becomes a pseudo-operator (numbered "1", "2", ...),
@@ -508,7 +496,8 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput)
 // linkEstimateApprox uses leave-one-out approximation for operators with >15 links.
 // For each link, it removes that link and re-runs the full simulation. The marginal
 // value of each link is the difference between the baseline and the reduced network.
-func linkEstimateApprox(ctx context.Context, operatorFocus string, input ShapleyInput, deviceOperator map[string]string) (*LinkEstimateResult, error) {
+// cachedBaseline, if non-nil, skips the initial baseline simulation.
+func linkEstimateApprox(ctx context.Context, operatorFocus string, input ShapleyInput, deviceOperator map[string]string, cachedBaseline []OperatorValue) (*LinkEstimateResult, error) {
 	// Identify which links belong to the focus operator, deduplicating bidirectional pairs
 	type opLink struct {
 		index int
@@ -534,10 +523,14 @@ func linkEstimateApprox(ctx context.Context, operatorFocus string, input Shapley
 		}
 	}
 
-	// Run baseline simulation with full network
-	baselineResults, err := Simulate(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("baseline simulation: %w", err)
+	// Use cached baseline if available, otherwise run baseline simulation
+	baselineResults := cachedBaseline
+	if baselineResults == nil {
+		var err error
+		baselineResults, err = Simulate(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("baseline simulation: %w", err)
+		}
 	}
 
 	// Find baseline value for the focus operator

@@ -25,8 +25,12 @@ function formatPercent(value: number, decimals = 2): string {
   return `${(value * 100).toFixed(decimals)}%`
 }
 
-function formatValue(value: number, decimals = 4): string {
-  return value.toFixed(decimals)
+function formatValue(value: number): string {
+  if (value === 0) return '0'
+  const abs = Math.abs(value)
+  if (abs >= 0.0001) return value.toFixed(4)
+  if (abs >= 0.000001) return value.toFixed(6)
+  return value.toExponential(2)
 }
 
 // Operator color palette
@@ -592,34 +596,40 @@ export function RewardsPage() {
   const [selectedOperator, setSelectedOperator] = useState<string>('')
 
   // Simulation results
-  const [simResults, setSimResults] = useState<OperatorValue[] | null>(null)
   const [compareResults, setCompareResults] = useState<RewardsCompareResponse | null>(null)
   const [linkResults, setLinkResults] = useState<RewardsLinkResult[] | null>(null)
 
   // AbortControllers for cancellation
-  const simAbortRef = useRef<AbortController | null>(null)
   const compareAbortRef = useRef<AbortController | null>(null)
   const linkAbortRef = useRef<AbortController | null>(null)
 
-  // Load live network automatically
+  // Load live network automatically (fetch once, long stale time since cache handles freshness)
   const liveNetworkQuery = useQuery({
     queryKey: ['rewardsLiveNetwork'],
     queryFn: fetchRewardsLiveNetwork,
-    refetchInterval: 60000,
+    staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   })
 
-  // Simulate mutation
-  const simulateMutation = useMutation({
-    mutationFn: async () => {
-      simAbortRef.current = new AbortController()
-      const data = await fetchRewardsSimulate({ full: fullSim, signal: simAbortRef.current.signal })
-      return data
+  // Simulate query (auto-fetch, results come from background cache)
+  const simulateQuery = useQuery({
+    queryKey: ['rewardsSimulate'],
+    queryFn: () => fetchRewardsSimulate(),
+    retry: (failureCount, error) => {
+      // Keep retrying 503 (computing) with longer intervals
+      if (error instanceof Error && error.message === 'computing') return failureCount < 30
+      return failureCount < 3
     },
-    onSuccess: (data) => {
-      setSimResults(data.results)
+    retryDelay: (attemptIndex, error) => {
+      if (error instanceof Error && error.message === 'computing') return 10000
+      return Math.min(1000 * 2 ** attemptIndex, 30000)
     },
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   })
+
+  const simResults = simulateQuery.data?.results ?? null
+  const simComputing = simulateQuery.error instanceof Error && simulateQuery.error.message === 'computing'
 
   // Update state when live network loads
   useEffect(() => {
@@ -635,7 +645,6 @@ export function RewardsPage() {
   const refreshNetwork = async () => {
     const result = await liveNetworkQuery.refetch()
     if (result.data) {
-      setSimResults(null)
       setCompareResults(null)
       setLinkResults(null)
     }
@@ -664,11 +673,6 @@ export function RewardsPage() {
       setLinkResults(data.results)
     },
   })
-
-  const cancelSimulation = useCallback(() => {
-    simAbortRef.current?.abort()
-    simulateMutation.reset()
-  }, [simulateMutation])
 
   const cancelCompare = useCallback(() => {
     compareAbortRef.current?.abort()
@@ -707,13 +711,12 @@ export function RewardsPage() {
     ).length
   }, [baselineNetwork, selectedOperator])
 
-  const simElapsed = useElapsed(simulateMutation.isPending)
   const compareElapsed = useElapsed(compareMutation.isPending)
   const linkElapsed = useElapsed(linkEstimateMutation.isPending)
 
   const networkLoading = liveNetworkQuery.isFetching
-  const isLoading = networkLoading || simulateMutation.isPending || compareMutation.isPending || linkEstimateMutation.isPending
-  const error = simulateMutation.error || compareMutation.error || linkEstimateMutation.error || liveNetworkQuery.error
+  const isLoading = networkLoading || compareMutation.isPending || linkEstimateMutation.isPending
+  const error = (simulateQuery.error instanceof Error && simulateQuery.error.message !== 'computing' ? simulateQuery.error : null) || compareMutation.error || linkEstimateMutation.error || liveNetworkQuery.error
 
   const showSkeleton = useDelayedLoading(liveNetworkQuery.isLoading && !baselineNetwork)
 
@@ -728,7 +731,6 @@ export function RewardsPage() {
   }, [baselineNetwork, modifiedNetwork])
 
   const [showAddedLinks, setShowAddedLinks] = useState(false)
-  const [fullSim, setFullSim] = useState(false)
 
   const networkSubtitle = liveNetworkQuery.data ? (
     <span className="text-sm text-muted-foreground">
@@ -798,62 +800,36 @@ export function RewardsPage() {
               <ContributorSummary network={baselineNetwork} operatorNames={operatorNames} operatorPks={operatorPks} />
             )}
 
-            {!simResults && !simulateMutation.isPending && (
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => simulateMutation.mutate()}
-                    disabled={networkLoading || simulateMutation.isPending}
-                    className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                  >
-                    <Play className="h-4 w-4" />
-                    Run Shapley Simulation
-                  </button>
-                  {fullSim && liveNetworkQuery.data && liveNetworkQuery.data.operator_count > 8 && (
-                    <span className="text-xs text-muted-foreground">
-                      {liveNetworkQuery.data.operator_count} contributors — may take several minutes
-                    </span>
-                  )}
+            {simComputing && (
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+                <div>
+                  <p className="text-sm font-medium">Computing Shapley values...</p>
+                  <p className="text-xs text-muted-foreground">First run takes 1–2 minutes. Results will appear automatically.</p>
                 </div>
-                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer w-fit">
-                  <input
-                    type="checkbox"
-                    checked={fullSim}
-                    onChange={e => setFullSim(e.target.checked)}
-                    className="rounded"
-                  />
-                  Full simulation — all contributors (slower)
-                </label>
               </div>
             )}
 
-            {simulateMutation.isPending && (
+            {simulateQuery.isLoading && !simComputing && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Running simulation... {simElapsed > 0 && formatElapsed(simElapsed)}
-                <button
-                  onClick={cancelSimulation}
-                  className="ml-1 flex items-center gap-1 px-2 py-0.5 text-xs border border-border rounded hover:bg-muted/50 transition-colors text-foreground"
-                >
-                  <X className="h-3 w-3" /> Cancel
-                </button>
-              </div>
-            )}
-
-            {simulateMutation.isError && (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-red-500">Simulation failed</span>
-                <button
-                  onClick={() => simulateMutation.mutate()}
-                  className="text-sm text-blue-500 hover:underline"
-                >
-                  Retry
-                </button>
+                Loading simulation results...
               </div>
             )}
 
             {simResults && simResults.length > 0 ? (
-              <OperatorTable results={simResults} title="Shapley Reward Shares" operatorNames={operatorNames} operatorPks={operatorPks} />
+              <>
+                <OperatorTable results={simResults} title="Shapley Reward Shares" operatorNames={operatorNames} operatorPks={operatorPks} />
+                {simulateQuery.data?.computed_at && (
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      Last computed {new Date(simulateQuery.data.computed_at).toLocaleString()}
+                      {simulateQuery.data.epoch ? ` · Epoch ${simulateQuery.data.epoch}` : ''}
+                    </span>
+                    <span>Refreshes automatically each epoch (~2–3 days)</span>
+                  </div>
+                )}
+              </>
             ) : simResults ? (
               <div className="text-center text-muted-foreground py-8">
                 No simulation results available
@@ -917,7 +893,7 @@ export function RewardsPage() {
                     className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                   >
                     {compareMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />}
-                    {compareMutation.isPending ? `Running... ${compareElapsed > 0 ? formatElapsed(compareElapsed) : ''}` : 'Run Comparison'}
+                    {compareMutation.isPending ? `Running... ${compareElapsed > 0 ? formatElapsed(compareElapsed) : ''}` : 'Run Comparison (~1 min)'}
                   </button>
                   {compareMutation.isPending && (
                     <button
@@ -984,7 +960,7 @@ export function RewardsPage() {
                 </div>
                 {linkEstimateMutation.isPending && (
                   <p className="text-sm text-muted-foreground">
-                    Estimating link values ({selectedOperatorLinkCount + 1} simulations)... {linkElapsed > 0 && formatElapsed(linkElapsed)}
+                    Estimating link values ({selectedOperatorLinkCount + 1} simulations, may take a few minutes)... {linkElapsed > 0 && formatElapsed(linkElapsed)}
                   </p>
                 )}
                 {!linkEstimateMutation.isPending && (

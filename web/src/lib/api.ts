@@ -5449,6 +5449,8 @@ export interface OperatorValue {
 export interface RewardsSimulateResponse {
   results: OperatorValue[]
   total_value: number
+  computed_at?: string
+  epoch?: number
 }
 
 export interface OperatorDelta {
@@ -5873,6 +5875,9 @@ export async function fetchRewardsSimulate(params?: {
   if (params?.full) searchParams.set('full', 'true')
   const qs = searchParams.toString()
   const res = await fetchWithRetry(`/api/rewards/simulate${qs ? '?' + qs : ''}`, { signal: params?.signal })
+  if (res.status === 503) {
+    throw new Error('computing')
+  }
   if (!res.ok) {
     const text = await res.text()
     throw new Error(text || 'Simulation failed')

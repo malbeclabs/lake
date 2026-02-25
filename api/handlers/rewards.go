@@ -3,93 +3,50 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/api/rewards"
+	"golang.org/x/sync/errgroup"
 )
+
+// rewardsCache holds the background-computed Shapley results.
+var rewardsCache *rewards.RewardsCache
+
+// SetRewardsCache sets the global rewards cache instance.
+func SetRewardsCache(rc *rewards.RewardsCache) {
+	rewardsCache = rc
+}
 
 // maxRewardsBody limits request body size for rewards POST endpoints (5 MB).
 const maxRewardsBody = 5 * 1024 * 1024
 
-// rewardsParams extracts common simulation parameters from query string.
-func rewardsParams(r *http.Request) (operatorUptime, contiguityBonus, demandMultiplier float64) {
-	operatorUptime = rewards.DefaultOperatorUptime
-	contiguityBonus = rewards.DefaultContiguityBonus
-	demandMultiplier = rewards.DefaultDemandMultiplier
-
-	if v := r.URL.Query().Get("operator_uptime"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f <= 1 {
-			operatorUptime = f
-		}
-	}
-	if v := r.URL.Query().Get("contiguity_bonus"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
-			contiguityBonus = f
-		}
-	}
-	if v := r.URL.Query().Get("demand_multiplier"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
-			demandMultiplier = f
-		}
-	}
-	return
-}
-
-// applyParams sets simulation parameters on a ShapleyInput, keeping existing values as defaults.
-func applyParams(input *rewards.ShapleyInput, uptime, bonus, multiplier float64) {
-	input.OperatorUptime = uptime
-	input.ContiguityBonus = bonus
-	input.DemandMultiplier = multiplier
-}
-
 // GetRewardsSimulate handles GET /api/rewards/simulate.
-// Fetches live network from ClickHouse and runs Shapley simulation.
+// Returns pre-computed Shapley results from the background cache.
 func GetRewardsSimulate(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-
-	uptime, bonus, multiplier := rewardsParams(r)
-
-	start := time.Now()
-	liveNet, err := rewards.FetchLiveNetwork(ctx, envDB(ctx))
-	metrics.RecordClickHouseQuery(time.Since(start), err)
-	if err != nil {
-		log.Printf("rewards: fetch live network: %v", err)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+	if rewardsCache == nil || !rewardsCache.IsReady() {
+		http.Error(w, "rewards simulation is computing, please try again shortly", http.StatusServiceUnavailable)
 		return
 	}
 
-	applyParams(&liveNet.Network, uptime, bonus, multiplier)
-
-	// By default, collapse small operators into "Others" to reduce coalition
-	// count (2^n) and keep simulation tractable. Pass full=true to disable.
-	const collapseThreshold = 5
-	network := rewards.CollapseSmallOperators(liveNet.Network, collapseThreshold)
-	if r.URL.Query().Get("full") == "true" {
-		network = liveNet.Network
-	}
-
-	results, err := rewards.Simulate(ctx, network)
-	if err != nil {
-		log.Printf("rewards: simulate: %v", err)
-		http.Error(w, "simulation failed", http.StatusInternalServerError)
-		return
-	}
+	results, total, computedAt, epoch := rewardsCache.GetSimulation()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"results":     results,
-		"total_value": totalValue(results),
+		"total_value": total,
+		"computed_at": computedAt.UTC().Format(time.RFC3339),
+		"epoch":       epoch,
 	})
 }
 
 // PostRewardsCompare handles POST /api/rewards/compare.
 // Body: { "baseline": <ShapleyInput>, "modified": <ShapleyInput> }
+// Uses cached baseline results when available (skips one ~2min simulation).
 func PostRewardsCompare(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRewardsBody)
 
@@ -106,12 +63,44 @@ func PostRewardsCompare(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	result, err := rewards.Compare(ctx, req.Baseline, req.Modified)
-	if err != nil {
+	var baselineResults, modifiedResults []rewards.OperatorValue
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		// Use cached baseline when available (the frontend always sends the
+		// unmodified live network as baseline, which matches the cache).
+		if rewardsCache != nil && rewardsCache.IsReady() {
+			cachedResults, _, _, _ := rewardsCache.GetSimulation()
+			baselineResults = cachedResults
+			return nil
+		}
+		const collapseThreshold = 5
+		baseline := rewards.CollapseSmallOperators(req.Baseline, collapseThreshold)
+		var err error
+		baselineResults, err = rewards.Simulate(gctx, baseline)
+		if err != nil {
+			return fmt.Errorf("baseline simulation: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		const collapseThreshold = 5
+		modified := rewards.CollapseSmallOperators(req.Modified, collapseThreshold)
+		var err error
+		modifiedResults, err = rewards.Simulate(gctx, modified)
+		if err != nil {
+			return fmt.Errorf("modified simulation: %w", err)
+		}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
 		log.Printf("rewards: compare: %v", err)
 		http.Error(w, "comparison failed", http.StatusInternalServerError)
 		return
 	}
+
+	result := rewards.BuildCompareResult(baselineResults, modifiedResults)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
@@ -140,7 +129,13 @@ func PostRewardsLinkEstimate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	result, err := rewards.LinkEstimate(ctx, req.Operator, req.Network)
+	// Pass cached baseline results to skip redundant baseline simulation (approx path)
+	var cachedBaseline []rewards.OperatorValue
+	if rewardsCache != nil && rewardsCache.IsReady() {
+		cachedBaseline, _, _, _ = rewardsCache.GetSimulation()
+	}
+
+	result, err := rewards.LinkEstimate(ctx, req.Operator, req.Network, cachedBaseline)
 	if err != nil {
 		log.Printf("rewards: link estimate: %v", err)
 		http.Error(w, "link estimate failed", http.StatusInternalServerError)
@@ -152,8 +147,18 @@ func PostRewardsLinkEstimate(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetRewardsLiveNetwork handles GET /api/rewards/live-network.
-// Returns the current network topology from ClickHouse as JSON.
+// Returns the current network topology, preferring the cache.
 func GetRewardsLiveNetwork(w http.ResponseWriter, r *http.Request) {
+	// Serve from cache if available
+	if rewardsCache != nil {
+		if cached := rewardsCache.GetLiveNetwork(); cached != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(cached)
+			return
+		}
+	}
+
+	// Fall back to direct ClickHouse query
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -168,12 +173,4 @@ func GetRewardsLiveNetwork(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(liveNet)
-}
-
-func totalValue(results []rewards.OperatorValue) float64 {
-	var total float64
-	for _, r := range results {
-		total += r.Value
-	}
-	return total
 }

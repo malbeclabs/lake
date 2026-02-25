@@ -7,9 +7,36 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+// Cache for validator demand results to avoid re-querying ClickHouse on every poll.
+var demandCache struct {
+	sync.Mutex
+	demands []Demand
+	fetched time.Time
+}
+
+const demandCacheTTL = 5 * time.Minute
+
+func getCachedDemand() []Demand {
+	demandCache.Lock()
+	defer demandCache.Unlock()
+	if time.Since(demandCache.fetched) < demandCacheTTL && len(demandCache.demands) > 0 {
+		return demandCache.demands
+	}
+	return nil
+}
+
+func setCachedDemand(d []Demand) {
+	demandCache.Lock()
+	defer demandCache.Unlock()
+	demandCache.demands = d
+	demandCache.fetched = time.Now()
+}
 
 // Pseudo-operator names used by the Shapley computation.
 const (
@@ -25,6 +52,11 @@ const (
 	DefaultDemandMultiplier = 1.0
 	defaultLinkUptime       = 0.99
 	maxSyntheticDemands     = 10 // cap synthetic demands for tractability
+	maxDemandMetros         = 10 // cap validator demand metros for shapley-cli tractability
+
+	// Constants matching doublezero-offchain/crates/contributor-rewards/src/calculator/constants.rs
+	slotsInEpoch  = 432000.0
+	demandTraffic = 0.05
 )
 
 // Haversine / latency estimation constants.
@@ -228,12 +260,21 @@ func FetchLiveNetwork(ctx context.Context, db driver.Conn) (*LiveNetworkResponse
 		}
 	}
 
-	// Build demand from real metro-to-metro traffic data
-	demands, err := fetchMetroTrafficDemand(ctx, db, cities)
-	if err != nil {
-		log.Printf("rewards: fetch metro traffic demand (falling back to synthetic): %v", err)
+	// Build demand from validator leader-schedule slots, matching the offchain reward calculator.
+	// Cache the result to avoid re-querying ClickHouse on every frontend poll.
+	demands := getCachedDemand()
+	if demands == nil {
+		var demandErr error
+		demands, demandErr = fetchValidatorDemand(ctx, db, cities)
+		if demandErr != nil {
+			log.Printf("rewards: fetch validator demand failed (falling back to synthetic): %v", demandErr)
+		}
+		if len(demands) > 0 {
+			setCachedDemand(demands)
+		}
 	}
 	if len(demands) == 0 {
+		log.Printf("rewards: 0 metros with validator slots found, using synthetic demand for %d cities", len(cities))
 		// Generate synthetic demands so the LP has flow requirements.
 		typeCounter := 1
 		for i, c1 := range cityList {
@@ -319,105 +360,141 @@ func fetchMetroLatencies(ctx context.Context, db driver.Conn) (map[string]float6
 	return latencies, nil
 }
 
-// fetchMetroTrafficDemand queries real metro-to-metro traffic volumes from ClickHouse
-// and converts them into demand entries weighted by actual bandwidth usage.
-func fetchMetroTrafficDemand(ctx context.Context, db driver.Conn, activeCities map[string]bool) ([]Demand, error) {
-	query := `
-		WITH link_metros AS (
-			SELECT
-				l.pk AS link_pk,
-				da.metro_pk AS side_a_metro_pk,
-				dz.metro_pk AS side_z_metro_pk
-			FROM dz_links_current l
-			JOIN dz_devices_current da ON l.side_a_pk = da.pk
-			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-			WHERE l.status = 'activated'
-		),
-		metro_codes AS (
-			SELECT pk, upper(code) AS code FROM dz_metros_current
-		),
-		per_link_traffic AS (
-			SELECT
-				f.link_pk,
-				SUM(GREATEST(0, f.in_octets_delta) + GREATEST(0, f.out_octets_delta)) AS total_bytes
-			FROM fact_dz_device_interface_counters f
-			WHERE f.event_ts > now() - INTERVAL 24 HOUR
-			  AND f.link_pk != ''
-			  AND f.delta_duration > 0
-			  AND f.in_octets_delta >= 0
-			  AND f.out_octets_delta >= 0
-			GROUP BY f.link_pk
-		)
-		SELECT
-			ma.code AS origin_metro,
-			mz.code AS dest_metro,
-			SUM(t.total_bytes) AS traffic_volume_bytes
-		FROM per_link_traffic t
-		JOIN link_metros lm ON t.link_pk = lm.link_pk
-		JOIN metro_codes ma ON lm.side_a_metro_pk = ma.pk
-		JOIN metro_codes mz ON lm.side_z_metro_pk = mz.pk
-		GROUP BY ma.code, mz.code
-		HAVING traffic_volume_bytes > 0
-		ORDER BY traffic_volume_bytes DESC
+// fetchValidatorDemand queries ClickHouse for DZ validators, maps them to metro codes
+// via their device, and weights city-to-city demand pairs by leader schedule slots.
+// This matches the demand model used by the production offchain reward calculator
+// (doublezero-offchain/crates/contributor-rewards/src/ingestor/demand.rs).
+func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[string]bool) ([]Demand, error) {
+	// Step 1: Get metro → pubkeys mapping from DZ validators.
+	metroQuery := `
+		SELECT upper(m.code) AS metro, g.pubkey
+		FROM dz_users_current u
+		JOIN dz_devices_current d ON u.device_pk = d.pk
+		JOIN dz_metros_current m ON d.metro_pk = m.pk
+		JOIN solana_gossip_nodes_current g ON g.gossip_ip = u.dz_ip
+		WHERE u.status = 'activated'
+		  AND u.dz_ip != ''
+		  AND m.code != ''
 	`
-
-	rows, err := db.Query(ctx, query)
+	metroRows, err := db.Query(ctx, metroQuery)
 	if err != nil {
-		return nil, fmt.Errorf("query metro traffic: %w", err)
+		return nil, fmt.Errorf("query metro pubkeys: %w", err)
 	}
-	defer rows.Close()
-
-	type trafficPair struct {
-		origin, dest string
-		bytes        float64
+	type pubkeyInfo struct {
+		metro  string
+		pubkey string
 	}
-	var pairs []trafficPair
-	var maxBytes float64
-
-	for rows.Next() {
-		var origin, dest string
-		var volumeBytes uint64
-		if err := rows.Scan(&origin, &dest, &volumeBytes); err != nil {
+	var pubkeys []pubkeyInfo
+	for metroRows.Next() {
+		var pi pubkeyInfo
+		if err := metroRows.Scan(&pi.metro, &pi.pubkey); err != nil {
 			continue
 		}
-		origin = strings.ToUpper(origin)
-		dest = strings.ToUpper(dest)
-		if !activeCities[origin] || !activeCities[dest] || origin == dest {
+		pi.metro = strings.ToUpper(pi.metro)
+		pubkeys = append(pubkeys, pi)
+	}
+	metroRows.Close() // Must close before next query on same connection.
+
+	// Step 2: Get pubkey → slots from block production.
+	// Use max() instead of argMax() — column is cumulative so max = latest value.
+	// This also avoids potential ClickHouse driver type issues with argMax.
+	slotsQuery := `
+		SELECT leader_identity_pubkey, max(leader_slots_assigned_cum) AS slots
+		FROM fact_solana_block_production
+		GROUP BY leader_identity_pubkey
+		HAVING slots > 0
+	`
+	slotsRows, err := db.Query(ctx, slotsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("query block production slots: %w", err)
+	}
+	slotsByPubkey := make(map[string]int64)
+	for slotsRows.Next() {
+		var pubkey string
+		var slots int64
+		if err := slotsRows.Scan(&pubkey, &slots); err != nil {
 			continue
 		}
-		b := float64(volumeBytes)
-		pairs = append(pairs, trafficPair{origin: origin, dest: dest, bytes: b})
-		if b > maxBytes {
-			maxBytes = b
+		slotsByPubkey[pubkey] = slots
+	}
+	slotsRows.Close()
+
+	// Step 3: Join in Go — aggregate by metro.
+	type metroStats struct {
+		metro          string
+		validatorCount int64
+		totalSlots     int64
+	}
+	metroMap := make(map[string]*metroStats)
+	var matched int
+	for _, pi := range pubkeys {
+		slots, ok := slotsByPubkey[pi.pubkey]
+		if !ok {
+			continue
 		}
+		matched++
+		ms, exists := metroMap[pi.metro]
+		if !exists {
+			ms = &metroStats{metro: pi.metro}
+			metroMap[pi.metro] = ms
+		}
+		ms.validatorCount++
+		ms.totalSlots += slots
 	}
 
-	if len(pairs) == 0 {
+	var metros []metroStats
+	for _, ms := range metroMap {
+		if !activeCities[ms.metro] || ms.validatorCount == 0 {
+			continue
+		}
+		metros = append(metros, *ms)
+	}
+
+	// Sort by total slots descending and optionally cap to top metros for shapley-cli tractability.
+	sort.Slice(metros, func(i, j int) bool {
+		return metros[i].totalSlots > metros[j].totalSlots
+	})
+	if len(metros) > maxDemandMetros {
+		metros = metros[:maxDemandMetros]
+	}
+
+	var totalSlotsAll int64
+	for _, ms := range metros {
+		totalSlotsAll += ms.totalSlots
+	}
+
+	log.Printf("rewards: validator demand: %d metros (capped from %d), %d validators matched, %d total slots",
+		len(metros), len(metroMap), matched, totalSlotsAll)
+
+	if len(metros) < 2 || totalSlotsAll == 0 {
 		return nil, nil
 	}
 
-	// Normalize traffic volumes to 0.01-1.0 range for the Shapley computation.
-	// Scale receivers proportionally (1-100) so higher-traffic pairs have more weight.
+	// Generate city-to-city demand pairs matching the offchain calculator:
+	// doublezero-offchain/crates/contributor-rewards/src/ingestor/demand.rs
+	// Priority = (1/SLOTS_IN_EPOCH) * (dst.totalSlots / dst.validatorCount)
+	// Traffic = constant 0.05
+	// Multicast = false
 	var demands []Demand
-	for i, p := range pairs {
-		normalizedTraffic := p.bytes / maxBytes
-		if normalizedTraffic < 0.01 {
-			normalizedTraffic = 0.01
+	typeCounter := 1
+	for _, src := range metros {
+		for _, dst := range metros {
+			if dst.metro == src.metro {
+				continue
+			}
+			slotsPerValidator := float64(dst.totalSlots) / float64(dst.validatorCount)
+			priority := (1.0 / slotsInEpoch) * slotsPerValidator
+			demands = append(demands, Demand{
+				Start:     src.metro,
+				End:       dst.metro,
+				Receivers: int(dst.validatorCount),
+				Traffic:   demandTraffic,
+				Priority:  priority,
+				Type:      typeCounter,
+				Multicast: "FALSE",
+			})
+			typeCounter++
 		}
-		receivers := int(math.Round(normalizedTraffic * 100))
-		if receivers < 1 {
-			receivers = 1
-		}
-
-		demands = append(demands, Demand{
-			Start:     p.origin,
-			End:       p.dest,
-			Receivers: receivers,
-			Traffic:   math.Round(normalizedTraffic*100) / 100,
-			Priority:  0.5,
-			Type:      i + 1,
-			Multicast: "FALSE",
-		})
 	}
 
 	return demands, nil
