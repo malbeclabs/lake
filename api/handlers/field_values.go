@@ -57,7 +57,7 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 	"validators": {
 		"dz":      {table: "(SELECT 'yes' AS val UNION ALL SELECT 'no' AS val)", column: "val"},
 		"version": {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey", column: "g.version"},
-		"device":  {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN dz_users_current u ON g.gossip_ip = u.dz_ip JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
+		"device":  {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN dz_users_current u ON g.gossip_ip = u.client_ip JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
 		"city":    {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.city"},
 		"country": {table: "solana_vote_accounts_current v JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.country"},
 	},
@@ -74,7 +74,7 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"version":   {table: "solana_gossip_nodes_current", column: "version"},
 		"city":      {table: "solana_gossip_nodes_current g JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.city"},
 		"country":   {table: "solana_gossip_nodes_current g JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.country"},
-		"device":    {table: "solana_gossip_nodes_current g JOIN dz_users_current u ON g.gossip_ip = u.dz_ip JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
+		"device":    {table: "solana_gossip_nodes_current g JOIN dz_users_current u ON g.gossip_ip = u.client_ip JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
 	},
 }
 

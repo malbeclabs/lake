@@ -285,7 +285,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		query := `
 			SELECT COUNT(DISTINCT va.vote_pubkey) AS validators_on_dz
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			WHERE u.status = 'activated'
 			  AND va.activated_stake_lamports > 0
@@ -298,7 +298,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		query := `
 			SELECT COALESCE(SUM(va.activated_stake_lamports), 0) / 1000000000.0 AS total_stake_sol
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			WHERE u.status = 'activated'
 			  AND va.activated_stake_lamports > 0
@@ -313,7 +313,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				COALESCE(
 					(SELECT SUM(va.activated_stake_lamports)
 					 FROM dz_users_current u
-					 JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+					 JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 					 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 					 WHERE u.status = 'activated' AND va.activated_stake_lamports > 0)
 					* 100.0 / NULLIF((SELECT SUM(activated_stake_lamports) FROM solana_vote_accounts_current WHERE activated_stake_lamports > 0), 0),
@@ -337,7 +337,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				SELECT COALESCE(
 					(SELECT SUM(va.activated_stake_lamports)
 					 FROM dz_users_current u
-					 JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+					 JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 					 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 					 WHERE u.status = 'activated' AND va.activated_stake_lamports > 0)
 					* 100.0 / NULLIF((SELECT SUM(activated_stake_lamports) FROM solana_vote_accounts_current WHERE activated_stake_lamports > 0), 0),
@@ -348,7 +348,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				SELECT COALESCE(
 					(SELECT SUM(va.activated_stake_lamports)
 					 FROM dim_dz_users_history u
-					 JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+					 JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 					 JOIN dim_solana_vote_accounts_history va ON gn.pubkey = va.node_pubkey
 					 WHERE u.status = 'activated'
 					   AND va.activated_stake_lamports > 0

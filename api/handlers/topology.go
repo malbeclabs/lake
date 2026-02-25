@@ -154,7 +154,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 					COUNT(DISTINCT va.vote_pubkey) as validator_count,
 					COALESCE(SUM(va.activated_stake_lamports), 0) / 1e9 as stake_sol
 				FROM dz_users_current u
-				LEFT JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				LEFT JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				LEFT JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 					AND va.epoch_vote_account = 'true'
 					AND va.activated_stake_lamports > 0
@@ -285,7 +285,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 			WITH total_dz_stake AS (
 				SELECT COALESCE(SUM(va.activated_stake_lamports), 0) as total_lamports
 				FROM dz_users_current u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 					AND va.epoch_vote_account = 'true'
 					AND va.activated_stake_lamports > 0
@@ -327,7 +327,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 				COALESCE(traffic.in_bps, 0) as in_bps,
 				COALESCE(traffic.out_bps, 0) as out_bps
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				AND va.epoch_vote_account = 'true'
 				AND va.activated_stake_lamports > 0

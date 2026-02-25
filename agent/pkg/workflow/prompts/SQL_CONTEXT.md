@@ -46,9 +46,9 @@ The `_current` views (e.g. `solana_gossip_nodes_current`, `dz_users_current`, `d
 **WRONG — DO NOT directly JOIN `_current` views with each other:**
 ```sql
 -- This returns wrong results: every gossip node matches every user
-SELECT g.pubkey, u.dz_ip
+SELECT g.pubkey, u.client_ip
 FROM solana_gossip_nodes_current g
-JOIN dz_users_current u ON g.gossip_ip = u.dz_ip
+JOIN dz_users_current u ON g.gossip_ip = u.client_ip
 ```
 
 **CORRECT — Use `IN` subqueries instead of JOINs between `_current` views:**
@@ -57,8 +57,8 @@ JOIN dz_users_current u ON g.gossip_ip = u.dz_ip
 SELECT g.pubkey
 FROM solana_gossip_nodes_current g
 WHERE g.gossip_ip IN (
-    SELECT dz_ip FROM dz_users_current
-    WHERE status = 'activated' AND dz_ip != ''
+    SELECT client_ip FROM dz_users_current
+    WHERE status = 'activated' AND client_ip != ''
 )
 ```
 
@@ -518,13 +518,13 @@ WHERE rn = 1
 Solana validators/nodes connect to DZ as **users**, not directly to devices.
 
 **Entity relationships:**
-- `dz_users_current` = Solana validators connected to DZ (each user has a `dz_ip`)
+- `dz_users_current` = Solana validators connected to DZ (each user has a `client_ip`)
 - `dz_devices_current` = DZ network devices (routers/switches)
 - Users connect TO devices via `dz_users_current.device_pk = dz_devices_current.pk`
 
 **To find "Solana validators on DZ" or "connected validators":**
 1. Start from `dz_users_current` with `status = 'activated'`
-2. Join `dz_users_current.dz_ip` to `solana_gossip_nodes_current.gossip_ip`
+2. Join `dz_users_current.client_ip` to `solana_gossip_nodes_current.gossip_ip`
 3. Join gossip to vote accounts: `solana_gossip_nodes_current.pubkey = solana_vote_accounts_current.node_pubkey`
 
 **Use the pre-built views instead:**
@@ -555,7 +555,7 @@ ORDER BY stake_sol DESC
 -- Count ALL gossip nodes on DZ (not just validators)
 SELECT COUNT(DISTINCT gn.pubkey) AS gossip_node_count
 FROM dz_users_current u
-JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 WHERE u.status = 'activated';
 ```
 
@@ -736,7 +736,7 @@ SELECT
 FROM solana_gossip_nodes_current gn
 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 LEFT JOIN geoip_records_current geo ON gn.gossip_ip = geo.ip
-LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip AND u.status = 'activated'
+LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip AND u.status = 'activated'
 WHERE u.pk = ''  -- Anti-join: not on DZ
   AND va.activated_stake_lamports > 0
   AND geo.city = 'Tokyo'
@@ -757,7 +757,7 @@ JOIN dz_devices_current side_z_device ON l.side_z_pk = side_z_device.pk
 ```
 
 ### Common Joins
-- **DZ User to Solana Gossip**: `dz_users_current.dz_ip = solana_gossip_nodes_current.gossip_ip`
+- **DZ User to Solana Gossip**: `dz_users_current.client_ip = solana_gossip_nodes_current.gossip_ip`
 - **Gossip to Validator**: `solana_gossip_nodes_current.pubkey = solana_vote_accounts_current.node_pubkey`
 - **User to Device**: `dz_users_current.device_pk = dz_devices_current.pk`
 - **Device to Metro**: `dz_devices_current.metro_pk = dz_metros_current.pk`

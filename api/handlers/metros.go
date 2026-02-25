@@ -167,7 +167,7 @@ func GetMetro(w http.ResponseWriter, r *http.Request) {
 				sum(v.activated_stake_lamports) / 1e9 as stake_sol
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
-			JOIN solana_gossip_nodes_current g ON u.dz_ip = g.gossip_ip
+			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
 			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
 			WHERE u.status = 'activated' AND v.epoch_vote_account = 'true' AND d.metro_pk IS NOT NULL
 			GROUP BY d.metro_pk

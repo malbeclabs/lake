@@ -67,7 +67,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 				COALESCE(SUM(va.activated_stake_lamports), 0) / 1e9 AS dz_stake_sol,
 				COUNT(DISTINCT va.vote_pubkey) AS validator_count
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			WHERE u.status = 'activated'
 			  AND va.epoch_vote_account = 'true'
@@ -102,12 +102,12 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			users_at_time AS (
 				SELECT
 					entity_id,
-					argMax(dz_ip, snapshot_ts) as dz_ip,
+					argMax(client_ip, snapshot_ts) as client_ip,
 					argMax(status, snapshot_ts) as status
 				FROM dim_dz_users_history
 				WHERE snapshot_ts <= (SELECT ts FROM target_ts)
 				GROUP BY entity_id
-				HAVING status = 'activated' AND dz_ip != ''
+				HAVING status = 'activated' AND client_ip != ''
 			),
 			-- Get latest vote account state at target time
 			validators_at_time AS (
@@ -127,7 +127,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			dz_stake AS (
 				SELECT COALESCE(SUM(v.stake), 0) as dz_total
 				FROM users_at_time u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN validators_at_time v ON gn.pubkey = v.node_pubkey
 			)
 			SELECT
@@ -152,12 +152,12 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			users_at_time AS (
 				SELECT
 					entity_id,
-					argMax(dz_ip, snapshot_ts) as dz_ip,
+					argMax(client_ip, snapshot_ts) as client_ip,
 					argMax(status, snapshot_ts) as status
 				FROM dim_dz_users_history
 				WHERE snapshot_ts <= (SELECT ts FROM target_ts)
 				GROUP BY entity_id
-				HAVING status = 'activated' AND dz_ip != ''
+				HAVING status = 'activated' AND client_ip != ''
 			),
 			-- Get latest vote account state at target time
 			validators_at_time AS (
@@ -177,7 +177,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 			dz_stake AS (
 				SELECT COALESCE(SUM(v.stake), 0) as dz_total
 				FROM users_at_time u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN validators_at_time v ON gn.pubkey = v.node_pubkey
 			)
 			SELECT
@@ -259,7 +259,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 		dz_node_pubkeys AS (
 			SELECT DISTINCT gn.pubkey as node_pubkey
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			WHERE u.status = 'activated'
 		),
 		-- Get distinct hours from user history as our time buckets
@@ -403,7 +403,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 					va.activated_stake_lamports,
 					gn.gossip_ip
 				FROM dz_users_current u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				WHERE u.status = 'activated'
 				  AND va.epoch_vote_account = 'true'
@@ -413,11 +413,11 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 			past_dz AS (
 				SELECT DISTINCT va.vote_pubkey
 				FROM dim_dz_users_history u
-				JOIN dim_solana_gossip_nodes_history gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip != ''
+				JOIN dim_solana_gossip_nodes_history gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip != ''
 				JOIN dim_solana_vote_accounts_history va ON gn.pubkey = va.node_pubkey
 				WHERE u.snapshot_ts <= now() - INTERVAL ` + rangeInterval + `
 				  AND u.status = 'activated'
-				  AND u.dz_ip != ''
+				  AND u.client_ip != ''
 				  AND u.is_deleted = 0
 				  AND va.epoch_vote_account = 'true'
 				  AND va.activated_stake_lamports > 0
@@ -464,7 +464,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 			current_dz AS (
 				SELECT DISTINCT va.vote_pubkey
 				FROM dz_users_current u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				WHERE u.status = 'activated'
 				  AND va.epoch_vote_account = 'true'
@@ -477,11 +477,11 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 					va.node_pubkey,
 					va.activated_stake_lamports
 				FROM dim_dz_users_history u
-				JOIN dim_solana_gossip_nodes_history gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip != ''
+				JOIN dim_solana_gossip_nodes_history gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip != ''
 				JOIN dim_solana_vote_accounts_history va ON gn.pubkey = va.node_pubkey
 				WHERE u.snapshot_ts <= now() - INTERVAL ` + rangeInterval + `
 				  AND u.status = 'activated'
-				  AND u.dz_ip != ''
+				  AND u.client_ip != ''
 				  AND u.is_deleted = 0
 				  AND va.epoch_vote_account = 'true'
 				  AND va.activated_stake_lamports > 0
@@ -630,7 +630,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 				COALESCE(d.code, '') AS device_code,
 				COALESCE(m.code, '') AS metro_code
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			LEFT JOIN geoip_records_current geo ON gn.gossip_ip = geo.ip
 			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
@@ -645,7 +645,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 			WITH dz_validators AS (
 				SELECT DISTINCT va.vote_pubkey
 				FROM dz_users_current u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				WHERE u.status = 'activated'
 			)
@@ -677,7 +677,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 					d.code AS device_code,
 					m.code AS metro_code
 				FROM dz_users_current u
-				JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 				LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk

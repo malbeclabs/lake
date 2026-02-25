@@ -2553,7 +2553,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		internalFilter = fmt.Sprintf(" AND u.owner_pubkey NOT IN ('%s')", strings.Join(internalUserPubkeys, "','"))
 	}
 
-	// Validators/gossip nodes are identified by joining users with gossip_nodes via dz_ip = gossip_ip
+	// Validators/gossip nodes are identified by joining users with gossip_nodes via client_ip = gossip_ip
 	// A user is a "validator" if their gossip node has a vote account, otherwise "gossip_node"
 	// We use history tables to detect both join AND leave events (current tables miss users who left)
 	query := fmt.Sprintf(`
@@ -2577,6 +2577,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 				u.status,
 				u.is_deleted,
 				u.dz_ip,
+				u.client_ip,
 				u.device_pk,
 				u.attrs_hash,
 				row_number() OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as row_num,
@@ -2584,8 +2585,8 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 				lag(u.is_deleted) OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as prev_is_deleted,
 				lag(u.attrs_hash) OVER (PARTITION BY u.entity_id ORDER BY u.snapshot_ts, u.ingested_at, u.op_id) as prev_attrs_hash
 			FROM dim_dz_users_history u
-			-- Include users whose dz_ip was in the gossip nodes during the time range
-			WHERE u.dz_ip IN (SELECT gossip_ip FROM gossip_ips)%s
+			-- Include users whose client_ip was in the gossip nodes during the time range
+			WHERE u.client_ip IN (SELECT gossip_ip FROM gossip_ips)%s
 		),
 		-- Get latest gossip node info for each IP from history (for validators who may have left)
 		latest_gossip AS (
@@ -2627,10 +2628,10 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current cont ON d.contributor_pk = cont.pk
 		-- Current gossip/vote info (for active validators)
-		LEFT JOIN solana_gossip_nodes_current gn_curr ON uc.dz_ip = gn_curr.gossip_ip
+		LEFT JOIN solana_gossip_nodes_current gn_curr ON uc.client_ip = gn_curr.gossip_ip
 		LEFT JOIN solana_vote_accounts_current va_curr ON gn_curr.pubkey = va_curr.node_pubkey
 		-- Historical gossip/vote info (for validators who have left)
-		LEFT JOIN latest_gossip gn_hist ON uc.dz_ip = gn_hist.gossip_ip
+		LEFT JOIN latest_gossip gn_hist ON uc.client_ip = gn_hist.gossip_ip
 		LEFT JOIN latest_vote va_hist ON gn_hist.pubkey = va_hist.node_pubkey
 		WHERE (uc.attrs_hash != uc.prev_attrs_hash OR uc.prev_attrs_hash = 0)
 		  AND ((uc.status = 'activated' AND uc.prev_status != 'activated')
@@ -2802,7 +2803,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 			GROUP BY node_pubkey
 		) va_hist ON d.pubkey = va_hist.node_pubkey
 		-- Check if this node was connected to DZ (using last known IP)
-		LEFT JOIN dz_users_current u ON d.last_gossip_ip = u.dz_ip
+		LEFT JOIN dz_users_current u ON d.last_gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
@@ -2908,7 +2909,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 		),
 		-- IPs that are connected to DZ (current state)
 		dz_ips AS (
-			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		),
 		-- Current vote pubkeys (validators that are currently active)
 		current_vote_pubkeys AS (
@@ -2957,7 +2958,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 		FROM left_validators lv
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON lv.node_pubkey = gn.pubkey
-		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
+		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
@@ -2981,7 +2982,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 		FROM joined_validators jv
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON jv.node_pubkey = gn.pubkey
-		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
+		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
@@ -3077,7 +3078,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			FROM solana_vote_accounts_current
 		),
 		dz_ips AS (
-			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		),
 		-- Get stake snapshots within the time range
 		stake_snapshots AS (
@@ -3120,7 +3121,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			sc.stake * 100.0 / NULLIF(ts.total, 0) as stake_share_pct,
 			sc.change * 100.0 / NULLIF(ts.total, 0) as stake_share_change_pct,
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
-			gn.gossip_ip IN (SELECT dz_ip FROM dz_ips) as is_on_dz,
+			gn.gossip_ip IN (SELECT client_ip FROM dz_ips) as is_on_dz,
 			COALESCE(u.owner_pubkey, '') as dz_owner_pubkey,
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(dev.code, '') as device_code,
@@ -3130,7 +3131,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 		FROM significant_changes sc
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current gn ON sc.node_pubkey = gn.pubkey
-		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip
+		LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip
 		LEFT JOIN dz_devices_current dev ON u.device_pk = dev.pk
 		LEFT JOIN dz_metros_current m ON dev.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current cont ON dev.contributor_pk = cont.pk
@@ -3241,12 +3242,12 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			FROM solana_vote_accounts_current
 		),
 		dz_ips AS (
-			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		),
 		per_validator AS (
 			SELECT
 				va.snapshot_ts,
-				toInt64(va.activated_stake_lamports) * toInt64(COALESCE(gn.gossip_ip, '') IN (SELECT dz_ip FROM dz_ips)) as dz_contribution
+				toInt64(va.activated_stake_lamports) * toInt64(COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips)) as dz_contribution
 			FROM dim_solana_vote_accounts_history va
 			ASOF LEFT JOIN dim_solana_gossip_nodes_history gn
 				ON va.node_pubkey = gn.pubkey AND va.snapshot_ts >= gn.snapshot_ts
@@ -3320,7 +3321,7 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			FROM solana_vote_accounts_current
 		),
 		dz_ips AS (
-			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		)
 		SELECT
 			va.vote_pubkey,
@@ -3328,8 +3329,8 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 			va.snapshot_ts,
 			va.activated_stake_lamports as stake,
 			COALESCE(gn.gossip_ip, '') as gossip_ip,
-			COALESCE(gn.gossip_ip, '') IN (SELECT dz_ip FROM dz_ips) as is_on_dz,
-			toInt64(va.activated_stake_lamports) * toInt64(COALESCE(gn.gossip_ip, '') IN (SELECT dz_ip FROM dz_ips)) as dz_contribution,
+			COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips) as is_on_dz,
+			toInt64(va.activated_stake_lamports) * toInt64(COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips)) as dz_contribution,
 			va.activated_stake_lamports * 100.0 / NULLIF(ts.total, 0) as stake_share_pct
 		FROM dim_solana_vote_accounts_history va
 		CROSS JOIN total_stake ts
@@ -3521,10 +3522,10 @@ func queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error
 			FROM solana_vote_accounts_current
 		),
 		dz_ips AS (
-			SELECT DISTINCT dz_ip FROM dz_users_current WHERE dz_ip != ''
+			SELECT DISTINCT client_ip FROM dz_users_current WHERE client_ip != ''
 		)
 		SELECT
-			sum(va.activated_stake_lamports * toUInt64(COALESCE(gn.gossip_ip, '') IN (SELECT dz_ip FROM dz_ips))) * 100.0
+			sum(va.activated_stake_lamports * toUInt64(COALESCE(gn.gossip_ip, '') IN (SELECT client_ip FROM dz_ips))) * 100.0
 				/ NULLIF(any(ts.total), 0) as dz_total_pct,
 			any(ts.total) as total_stake
 		FROM solana_vote_accounts_current va

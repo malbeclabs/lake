@@ -149,17 +149,17 @@ func seedValidatorsByRegionData(t *testing.T, ctx context.Context, conn clickhou
 	}
 	seedUsers(t, ctx, conn, users, now, now, opID)
 
-	// Seed gossip nodes - match dz_ip to gossip_ip
+	// Seed gossip nodes - match client_ip to gossip_ip
 	gossipNodes := []*testGossipNode{
 		// NYC validators
-		{Pubkey: "node1", GossipIP: net.ParseIP("10.1.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.1.1.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
-		{Pubkey: "node2", GossipIP: net.ParseIP("10.1.1.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.1.1.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "node1", GossipIP: net.ParseIP("203.0.113.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("203.0.113.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "node2", GossipIP: net.ParseIP("203.0.113.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("203.0.113.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
 		// LON validator
-		{Pubkey: "node3", GossipIP: net.ParseIP("10.2.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.2.1.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "node3", GossipIP: net.ParseIP("198.51.100.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("198.51.100.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
 		// TOK validators
-		{Pubkey: "node4", GossipIP: net.ParseIP("10.3.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.3.1.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
-		{Pubkey: "node5", GossipIP: net.ParseIP("10.3.1.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.3.1.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
-		{Pubkey: "node6", GossipIP: net.ParseIP("10.3.1.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.3.1.3"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "node4", GossipIP: net.ParseIP("192.0.2.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("192.0.2.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "node5", GossipIP: net.ParseIP("192.0.2.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("192.0.2.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "node6", GossipIP: net.ParseIP("192.0.2.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("192.0.2.3"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
 	}
 	seedGossipNodes(t, ctx, conn, gossipNodes, now, now, opID)
 
@@ -189,7 +189,7 @@ SELECT
 FROM dz_users_current u
 JOIN dz_devices_current d ON u.device_pk = d.pk
 JOIN dz_metros_current m ON d.metro_pk = m.pk
-JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 WHERE u.status = 'activated'
   AND va.activated_stake_lamports > 0

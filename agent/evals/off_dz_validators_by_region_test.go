@@ -140,8 +140,8 @@ func seedOffDZValidatorsByRegionData(t *testing.T, ctx context.Context, conn cli
 	// - 2 OFF-DZ in New York (no matching dz_user)
 	gossipNodes := []*testGossipNode{
 		// ON-DZ validators (Tokyo)
-		{Pubkey: "onnode1", GossipIP: net.ParseIP("10.1.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.1.1.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
-		{Pubkey: "onnode2", GossipIP: net.ParseIP("10.1.1.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.1.1.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "onnode1", GossipIP: net.ParseIP("203.0.113.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("203.0.113.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
+		{Pubkey: "onnode2", GossipIP: net.ParseIP("203.0.113.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("203.0.113.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
 		// OFF-DZ validators (Tokyo) - different IPs, no dz_user match
 		{Pubkey: "offnode1", GossipIP: net.ParseIP("45.76.100.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("45.76.100.1"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
 		{Pubkey: "offnode2", GossipIP: net.ParseIP("45.76.100.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("45.76.100.2"), TPUQUICPort: 8003, Version: "1.18.0", Epoch: 500},
@@ -203,7 +203,7 @@ SELECT
 FROM solana_gossip_nodes_current gn
 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 LEFT JOIN geoip_records_current geo ON gn.gossip_ip = geo.ip
-LEFT JOIN dz_users_current u ON gn.gossip_ip = u.dz_ip AND u.status = 'activated'
+LEFT JOIN dz_users_current u ON gn.gossip_ip = u.client_ip AND u.status = 'activated'
 WHERE u.pk = ''
   AND va.activated_stake_lamports > 0
   AND geo.city = 'Tokyo'

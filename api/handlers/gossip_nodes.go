@@ -78,15 +78,15 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	baseQuery := `
 		WITH dz_nodes AS (
 			SELECT
-				u.dz_ip,
+				u.client_ip,
 				d.code as device_code,
 				m.code as metro_code
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
-				AND u.dz_ip IS NOT NULL
-				AND u.dz_ip != ''
+				AND u.client_ip IS NOT NULL
+				AND u.client_ip != ''
 		),
 		validator_stake AS (
 			SELECT
@@ -103,14 +103,14 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 				COALESCE(g.version, '') as version,
 				COALESCE(geo.city, '') as city,
 				COALESCE(geo.country, '') as country,
-				dz.dz_ip != '' as on_dz,
+				dz.client_ip != '' as on_dz,
 				COALESCE(dz.device_code, '') as device_code,
 				COALESCE(dz.metro_code, '') as metro_code,
 				COALESCE(vs.stake_sol, 0) as stake_sol,
 				vs.node_pubkey IS NOT NULL as is_validator
 			FROM solana_gossip_nodes_current g
 			LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
-			LEFT JOIN dz_nodes dz ON g.gossip_ip = dz.dz_ip
+			LEFT JOIN dz_nodes dz ON g.gossip_ip = dz.client_ip
 			LEFT JOIN validator_stake vs ON g.pubkey = vs.node_pubkey
 		)
 	`
@@ -244,7 +244,7 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	query := `
 		WITH dz_nodes AS (
 			SELECT
-				u.dz_ip,
+				u.client_ip,
 				u.pk as user_pk,
 				u.owner_pubkey,
 				u.device_pk,
@@ -255,8 +255,8 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
-				AND u.dz_ip IS NOT NULL
-				AND u.dz_ip != ''
+				AND u.client_ip IS NOT NULL
+				AND u.client_ip != ''
 		),
 		validator_stake AS (
 			SELECT
@@ -273,7 +273,7 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 			COALESCE(g.version, '') as version,
 			COALESCE(geo.city, '') as city,
 			COALESCE(geo.country, '') as country,
-			dz.dz_ip != '' as on_dz,
+			dz.client_ip != '' as on_dz,
 			COALESCE(dz.user_pk, '') as user_pk,
 			COALESCE(dz.owner_pubkey, '') as owner_pubkey,
 			COALESCE(dz.device_pk, '') as device_pk,
@@ -285,7 +285,7 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 			COALESCE(vs.vote_pubkey, '') as vote_pubkey
 		FROM solana_gossip_nodes_current g
 		LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
-		LEFT JOIN dz_nodes dz ON g.gossip_ip = dz.dz_ip
+		LEFT JOIN dz_nodes dz ON g.gossip_ip = dz.client_ip
 		LEFT JOIN validator_stake vs ON g.pubkey = vs.node_pubkey
 		WHERE g.pubkey = ?
 	`

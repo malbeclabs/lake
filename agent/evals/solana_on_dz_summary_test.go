@@ -165,7 +165,7 @@ func seedSolanaValidatorsGossipNodesOnDZSummaryData(t *testing.T, ctx context.Co
 		if len(remainingUsers) > 0 {
 			err = userDS.WriteBatch(ctx, conn, len(remainingUsers), func(i int) ([]any, error) {
 				row := remainingUsers[i]
-				// PK: pk, Payload: owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id
+				// PK: pk, Payload: owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers
 				return []any{
 					row["pk"],
 					row["owner_pubkey"],
@@ -175,6 +175,8 @@ func seedSolanaValidatorsGossipNodesOnDZSummaryData(t *testing.T, ctx context.Co
 					row["dz_ip"],
 					row["device_pk"],
 					row["tunnel_id"],
+					row["publishers"],
+					row["subscribers"],
 				}, nil
 			}, &dataset.DimensionType2DatasetWriteConfig{
 				SnapshotTS:          deletedTS,
@@ -192,11 +194,11 @@ func seedSolanaValidatorsGossipNodesOnDZSummaryData(t *testing.T, ctx context.Co
 	// Historical on DZ: nodes 6-7 (matching historical users)
 	// Not on DZ: nodes 8-15 (various IPs, not matching any DZ users)
 	gossipNodesOnDZ := []*testGossipNode{
-		{Pubkey: "node1", GossipIP: net.ParseIP("10.0.0.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node2", GossipIP: net.ParseIP("10.0.0.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node3", GossipIP: net.ParseIP("10.0.0.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node4", GossipIP: net.ParseIP("10.0.0.4"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.4"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node5", GossipIP: net.ParseIP("10.0.0.5"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.5"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node1", GossipIP: net.ParseIP("1.1.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("1.1.1.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node2", GossipIP: net.ParseIP("2.2.2.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("2.2.2.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node3", GossipIP: net.ParseIP("3.3.3.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("3.3.3.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node4", GossipIP: net.ParseIP("4.4.4.4"), GossipPort: 8001, TPUQUICIP: net.ParseIP("4.4.4.4"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node5", GossipIP: net.ParseIP("5.5.5.5"), GossipPort: 8001, TPUQUICIP: net.ParseIP("5.5.5.5"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
 	}
 	seedGossipNodes(t, ctx, conn, []*testGossipNode{gossipNodesOnDZ[0]}, now.Add(-7*24*time.Hour), now, testOpID())  // node1: 7 days ago
 	seedGossipNodes(t, ctx, conn, []*testGossipNode{gossipNodesOnDZ[1]}, now.Add(-30*24*time.Hour), now, testOpID()) // node2: 30 days ago
@@ -280,7 +282,7 @@ SELECT
 -- Start with activated DZ users
 FROM dz_users_current u
 -- Join gossip nodes where the gossip IP matches the user's DZ IP
-JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip
+JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 -- LEFT JOIN vote accounts to identify which gossip nodes are validators
 -- A gossip node is a validator if it has a vote account with activated stake
 -- Note: Unmatched rows will have va.vote_pubkey = '' (empty string), not NULL

@@ -140,12 +140,12 @@ func seedSolanaValidatorsOnDZVsOffDZData(t *testing.T, ctx context.Context, conn
 	seedUsers(t, ctx, conn, users, now.Add(-30*24*time.Hour), now, testOpID())
 
 	// Seed Solana gossip nodes
-	// node1-3: On DZ (matching user1-3 dz_ip)
+	// node1-3: On DZ (matching user1-3 client_ip)
 	// node4-6: Off DZ (different IPs, not matching any user)
 	gossipNodesOnDZ := []*testGossipNode{
-		{Pubkey: "node1", GossipIP: net.ParseIP("10.0.0.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node2", GossipIP: net.ParseIP("10.0.0.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node3", GossipIP: net.ParseIP("10.0.0.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node1", GossipIP: net.ParseIP("1.1.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("1.1.1.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node2", GossipIP: net.ParseIP("2.2.2.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("2.2.2.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node3", GossipIP: net.ParseIP("3.3.3.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("3.3.3.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
 	}
 	gossipNodesOffDZ := []*testGossipNode{
 		{Pubkey: "node4", GossipIP: net.ParseIP("192.168.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("192.168.1.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
@@ -285,7 +285,7 @@ func validateSolanaValidatorsOnDZVsOffDZQuery(t *testing.T, ctx context.Context,
 	onDZQuery := `
 SELECT COUNT(DISTINCT va.vote_pubkey) AS validator_count
 FROM dz_users_current u
-JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
+JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 WHERE u.status = 'activated' AND va.activated_stake_lamports > 0
 `
@@ -321,7 +321,7 @@ WHERE va.activated_stake_lamports > 0
   AND va.vote_pubkey NOT IN (
     SELECT DISTINCT va2.vote_pubkey
     FROM dz_users_current u
-    JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
+    JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
     JOIN solana_vote_accounts_current va2 ON gn.pubkey = va2.node_pubkey
     WHERE u.status = 'activated' AND va2.activated_stake_lamports > 0
   )

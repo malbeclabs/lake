@@ -35,6 +35,12 @@ func runTest_ConversationalFollowup(t *testing.T, llmFactory LLMClientFactory) {
 	require.NoError(t, err)
 	defer conn.Close()
 
+	// Skip workflow execution in short mode
+	if testing.Short() {
+		t.Log("Skipping workflow execution in short mode")
+		return
+	}
+
 	// Set up workflow with LLM client
 	p := setupWorkflow(t, ctx, clientInfo, llmFactory, debug, debugLevel)
 
@@ -115,6 +121,12 @@ func runTest_CapabilitiesQuestion(t *testing.T, llmFactory LLMClientFactory) {
 	require.NoError(t, err)
 	defer conn.Close()
 
+	// Skip workflow execution in short mode
+	if testing.Short() {
+		t.Log("Skipping workflow execution in short mode")
+		return
+	}
+
 	// Set up workflow with LLM client
 	p := setupWorkflow(t, ctx, clientInfo, llmFactory, debug, debugLevel)
 
@@ -183,6 +195,12 @@ func runTest_AffirmativeQueryConfirmation(t *testing.T, llmFactory LLMClientFact
 	require.NoError(t, err)
 	defer conn.Close()
 
+	// Skip workflow execution in short mode
+	if testing.Short() {
+		t.Log("Skipping workflow execution in short mode")
+		return
+	}
+
 	// Set up workflow with LLM client
 	p := setupWorkflow(t, ctx, clientInfo, llmFactory, debug, debugLevel)
 
@@ -246,6 +264,12 @@ func runTest_ThankYouResponse(t *testing.T, llmFactory LLMClientFactory) {
 	conn, err := clientInfo.Client.Conn(ctx)
 	require.NoError(t, err)
 	defer conn.Close()
+
+	// Skip workflow execution in short mode
+	if testing.Short() {
+		t.Log("Skipping workflow execution in short mode")
+		return
+	}
 
 	// Set up workflow with LLM client
 	p := setupWorkflow(t, ctx, clientInfo, llmFactory, debug, debugLevel)

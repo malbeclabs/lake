@@ -111,7 +111,7 @@ The system prompt includes domain context for:
 
 - **Network**: Devices, links (WAN/DZX), metros, contributors
 - **Users**: Multicast (`kind = 'multicast'`), unicast (`kind = 'ibrl'`), edge filtering
-- **Solana**: Validators joined via `dz_users.dz_ip = solana_gossip_nodes.gossip_ip`
+- **Solana**: Validators joined via `dz_users.client_ip = solana_gossip_nodes.gossip_ip`
 - **Status values**: `pending`, `activated`, `suspended`, `deleted`, `rejected`, `drained`
 - **ClickHouse specifics**: NULL vs empty string, quantile syntax, date functions
 

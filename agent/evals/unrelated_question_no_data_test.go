@@ -35,6 +35,12 @@ func runTest_UnrelatedQuestionNoData(t *testing.T, llmFactory LLMClientFactory) 
 	require.NoError(t, err)
 	defer conn.Close()
 
+	// Skip workflow execution in short mode
+	if testing.Short() {
+		t.Log("Skipping workflow execution in short mode")
+		return
+	}
+
 	// Set up workflow with LLM client
 	p := setupWorkflow(t, ctx, clientInfo, llmFactory, debug, debugLevel)
 

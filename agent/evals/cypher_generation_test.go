@@ -40,6 +40,10 @@ func TestLake_Agent_Evals_Anthropic_CypherGenerationPreserveQuery(t *testing.T) 
 }
 
 func runTest_CypherGenerationLiteral(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping LLM generation test in short mode")
+	}
+
 	ctx := context.Background()
 	debugLevel, debug := getDebugLevel()
 
@@ -183,6 +187,10 @@ func runTest_CypherGenerationLiteral(t *testing.T) {
 }
 
 func runTest_CypherGenerationPreserveQuery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping LLM generation test in short mode")
+	}
+
 	ctx := context.Background()
 	debugLevel, debug := getDebugLevel()
 
@@ -362,6 +370,10 @@ func extractCypher(response string) string {
 // This catches issues where queries look syntactically correct but fail due to schema mismatches.
 func TestLake_Agent_Evals_Anthropic_CypherExecutionIntegration(t *testing.T) {
 	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("Skipping LLM generation test in short mode")
+	}
 
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {

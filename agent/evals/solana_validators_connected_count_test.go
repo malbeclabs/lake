@@ -142,19 +142,19 @@ func seedSolanaValidatorsConnectedCountData(t *testing.T, ctx context.Context, c
 
 	// Seed Solana gossip nodes history
 	gossipNodes30DaysAgo := []*testGossipNode{
-		{Pubkey: "node3", GossipIP: net.ParseIP("10.0.0.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node4", GossipIP: net.ParseIP("10.0.0.4"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.4"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node3", GossipIP: net.ParseIP("3.3.3.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("3.3.3.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node4", GossipIP: net.ParseIP("4.4.4.4"), GossipPort: 8001, TPUQUICIP: net.ParseIP("4.4.4.4"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
 	}
 	seedGossipNodes(t, ctx, conn, gossipNodes30DaysAgo, now.Add(-30*24*time.Hour), now, testOpID()) // node3, node4: 30 days ago
 
 	gossipNodes12HoursAgo := []*testGossipNode{
-		{Pubkey: "node1", GossipIP: net.ParseIP("10.0.0.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node5", GossipIP: net.ParseIP("10.0.0.5"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.5"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node1", GossipIP: net.ParseIP("1.1.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("1.1.1.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node5", GossipIP: net.ParseIP("5.5.5.5"), GossipPort: 8001, TPUQUICIP: net.ParseIP("5.5.5.5"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
 	}
 	seedGossipNodes(t, ctx, conn, gossipNodes12HoursAgo, now.Add(-12*time.Hour), now, testOpID()) // node1, node5: 12 hours ago
 
 	gossipNodes6HoursAgo := []*testGossipNode{
-		{Pubkey: "node2", GossipIP: net.ParseIP("10.0.0.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node2", GossipIP: net.ParseIP("2.2.2.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("2.2.2.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
 	}
 	seedGossipNodes(t, ctx, conn, gossipNodes6HoursAgo, now.Add(-6*time.Hour), now, testOpID()) // node2: 6 hours ago
 
@@ -204,7 +204,7 @@ FROM (
   SELECT DISTINCT va.vote_pubkey
   FROM dz_users_current u
   -- Join to gossip nodes: user's DZ IP must match gossip node's gossip IP
-  JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
+  JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
   -- Join to vote accounts: gossip node's pubkey must match vote account's node_pubkey
   JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
   WHERE u.status = 'activated'
@@ -231,7 +231,7 @@ WHERE cv.vote_pubkey NOT IN (
     FROM dim_solana_gossip_nodes_history
     WHERE snapshot_ts <= ?  -- Only records at or before 24h ago
       AND is_deleted = 0     -- Exclude soft-deleted records
-  ) gn2 ON u2.dz_ip = gn2.gossip_ip
+  ) gn2 ON u2.client_ip = gn2.gossip_ip
        AND gn2.gossip_ip IS NOT NULL
        AND gn2.rn = 1  -- Only join to the latest snapshot for each gossip node
   JOIN (
@@ -245,7 +245,7 @@ WHERE cv.vote_pubkey NOT IN (
        AND va2.rn = 1  -- Only join to the latest snapshot for each vote account
   WHERE u2.rn = 1                    -- Only use the latest user snapshot
     AND u2.status = 'activated'      -- User must be activated
-    AND u2.dz_ip IS NOT NULL         -- User must have a DZ IP
+    AND u2.client_ip IS NOT NULL         -- User must have a DZ IP
     AND va2.epoch_vote_account = 'true'  -- Vote account must be an epoch vote account (stored as string)
     AND va2.activated_stake_lamports > 0  -- Vote account must have activated stake
 )
@@ -287,7 +287,7 @@ SELECT DISTINCT cv.vote_pubkey
 FROM (
   SELECT DISTINCT va.vote_pubkey
   FROM dz_users_current u
-  JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
+  JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
   JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
   WHERE u.status = 'activated' AND va.activated_stake_lamports > 0
 ) cv
@@ -304,14 +304,14 @@ WHERE cv.vote_pubkey NOT IN (
       ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_solana_gossip_nodes_history
     WHERE snapshot_ts <= ? AND is_deleted = 0
-  ) gn2 ON u2.dz_ip = gn2.gossip_ip AND gn2.gossip_ip IS NOT NULL AND gn2.rn = 1
+  ) gn2 ON u2.client_ip = gn2.gossip_ip AND gn2.gossip_ip IS NOT NULL AND gn2.rn = 1
   JOIN (
     SELECT *,
       ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_solana_vote_accounts_history
     WHERE snapshot_ts <= ? AND is_deleted = 0
   ) va2 ON gn2.pubkey = va2.node_pubkey AND va2.rn = 1
-  WHERE u2.rn = 1 AND u2.status = 'activated' AND u2.dz_ip IS NOT NULL
+  WHERE u2.rn = 1 AND u2.status = 'activated' AND u2.client_ip IS NOT NULL
     AND va2.epoch_vote_account = 'true' AND va2.activated_stake_lamports > 0
 )
 ORDER BY cv.vote_pubkey

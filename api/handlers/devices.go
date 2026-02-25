@@ -255,7 +255,7 @@ func GetDevice(w http.ResponseWriter, r *http.Request) {
 				count(DISTINCT v.vote_pubkey) as validator_count,
 				sum(v.activated_stake_lamports) / 1e9 as stake_sol
 			FROM dz_users_current u
-			JOIN solana_gossip_nodes_current g ON u.dz_ip = g.gossip_ip
+			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
 			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
 			WHERE u.status = 'activated' AND v.epoch_vote_account = 'true'
 			GROUP BY u.device_pk

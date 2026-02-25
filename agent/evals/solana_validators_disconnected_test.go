@@ -102,9 +102,9 @@ func runTest_SolanaValidatorsDisconnected(t *testing.T, llmFactory LLMClientFact
 
 // seedSolanaValidatorsDisconnectedData seeds data for testing disconnected validators
 // Test cases:
-// - vote1: Disconnected 12 hours ago, gossip_ip changed from 10.0.0.1 to 192.168.1.1 (validator changed IP)
-// - vote2: Disconnected 6 hours ago, user disconnected (gossip_ip stayed 10.0.0.2)
-// - vote3: Disconnected 18 hours ago, user disconnected (gossip_ip stayed 10.0.0.3)
+// - vote1: Disconnected 12 hours ago, gossip_ip changed from 1.1.1.1 to 192.168.1.1 (validator changed IP)
+// - vote2: Disconnected 6 hours ago, user disconnected (gossip_ip stayed 2.2.2.2)
+// - vote3: Disconnected 18 hours ago, user disconnected (gossip_ip stayed 3.3.3.3)
 // - vote4: Disconnected 20 hours ago but reconnected 10 hours ago (should NOT be in results)
 // - vote5: Still connected (should NOT be in results)
 // - vote6: Disconnected 15 hours ago, reconnected 8 hours ago, disconnected again 2 hours ago (flapping - should be in results as currently disconnected)
@@ -150,8 +150,8 @@ func seedSolanaValidatorsDisconnectedData(t *testing.T, ctx context.Context, con
 	insertUser := func(pk, ownerPubkey, clientIP, dzIP string, tunnelID int32, connectedTS time.Time) {
 		// Insert connected state
 		err = userDS.WriteBatch(ctx, conn, 1, func(i int) ([]any, error) {
-			// PK: pk, Payload: owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id
-			return []any{pk, ownerPubkey, "activated", "IBRL", clientIP, dzIP, "device1", tunnelID}, nil
+			// PK: pk, Payload: owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers
+			return []any{pk, ownerPubkey, "activated", "IBRL", clientIP, dzIP, "device1", tunnelID, "[]", "[]"}, nil
 		}, &dataset.DimensionType2DatasetWriteConfig{
 			SnapshotTS: connectedTS,
 			OpID:       testOpID(),
@@ -177,7 +177,7 @@ func seedSolanaValidatorsDisconnectedData(t *testing.T, ctx context.Context, con
 		if len(remainingUsers) > 0 {
 			err = userDS.WriteBatch(ctx, conn, len(remainingUsers), func(i int) ([]any, error) {
 				row := remainingUsers[i]
-				// PK: pk, Payload: owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id
+				// PK: pk, Payload: owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers
 				return []any{
 					row["pk"],
 					row["owner_pubkey"],
@@ -187,6 +187,8 @@ func seedSolanaValidatorsDisconnectedData(t *testing.T, ctx context.Context, con
 					row["dz_ip"],
 					row["device_pk"],
 					row["tunnel_id"],
+					row["publishers"],
+					row["subscribers"],
 				}, nil
 			}, &dataset.DimensionType2DatasetWriteConfig{
 				SnapshotTS:          deletedTS,
@@ -232,12 +234,12 @@ func seedSolanaValidatorsDisconnectedData(t *testing.T, ctx context.Context, con
 	deleteUser("user6", now.Add(-2*time.Hour))
 
 	// Seed Solana gossip nodes history
-	// node1 (vote1): gossip_ip changed from 10.0.0.1 to 192.168.1.1 (validator changed IP)
-	// node2 (vote2): gossip_ip stayed 10.0.0.2
-	// node3 (vote3): gossip_ip stayed 10.0.0.3
-	// node4 (vote4): gossip_ip stayed 10.0.0.4 (reconnected)
-	// node5 (vote5): gossip_ip stayed 10.0.0.5 (still connected)
-	// node6 (vote6): gossip_ip stayed 10.0.0.6 (flapping - disconnected 2 hours ago)
+	// node1 (vote1): gossip_ip changed from 1.1.1.1 to 192.168.1.1 (validator changed IP)
+	// node2 (vote2): gossip_ip stayed 2.2.2.2
+	// node3 (vote3): gossip_ip stayed 3.3.3.3
+	// node4 (vote4): gossip_ip stayed 4.4.4.4 (reconnected)
+	// node5 (vote5): gossip_ip stayed 5.5.5.5 (still connected)
+	// node6 (vote6): gossip_ip stayed 6.6.6.6 (flapping - disconnected 2 hours ago)
 	gossipDS, err := sol.NewGossipNodeDataset(log)
 	require.NoError(t, err)
 
@@ -299,8 +301,8 @@ func seedSolanaValidatorsDisconnectedData(t *testing.T, ctx context.Context, con
 		}
 	}
 
-	// node1: gossip_ip was 10.0.0.1, changed to 192.168.1.1 (disconnected 12 hours ago)
-	insertGossipNode("node1", "10.0.0.1", "10.0.0.1", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
+	// node1: gossip_ip was 1.1.1.1, changed to 192.168.1.1 (disconnected 12 hours ago)
+	insertGossipNode("node1", "1.1.1.1", "1.1.1.1", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
 	deleteGossipNode("node1", now.Add(-12*time.Hour))
 	// Insert new IP after disconnection
 	err = gossipDS.WriteBatch(ctx, conn, 1, func(i int) ([]any, error) {
@@ -312,21 +314,21 @@ func seedSolanaValidatorsDisconnectedData(t *testing.T, ctx context.Context, con
 	require.NoError(t, err)
 
 	// node2: disconnected 6 hours ago
-	insertGossipNode("node2", "10.0.0.2", "10.0.0.2", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
+	insertGossipNode("node2", "2.2.2.2", "2.2.2.2", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
 	deleteGossipNode("node2", now.Add(-6*time.Hour))
 
 	// node3: disconnected 18 hours ago
-	insertGossipNode("node3", "10.0.0.3", "10.0.0.3", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
+	insertGossipNode("node3", "3.3.3.3", "3.3.3.3", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
 	deleteGossipNode("node3", now.Add(-18*time.Hour))
 
 	// node4: reconnected 10 hours ago (still connected)
-	insertGossipNode("node4", "10.0.0.4", "10.0.0.4", "1.18.0", 100, 8001, 8002, now.Add(-10*time.Hour))
+	insertGossipNode("node4", "4.4.4.4", "4.4.4.4", "1.18.0", 100, 8001, 8002, now.Add(-10*time.Hour))
 
 	// node5: still connected
-	insertGossipNode("node5", "10.0.0.5", "10.0.0.5", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
+	insertGossipNode("node5", "5.5.5.5", "5.5.5.5", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
 
 	// node6: disconnected 2 hours ago
-	insertGossipNode("node6", "10.0.0.6", "10.0.0.6", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
+	insertGossipNode("node6", "6.6.6.6", "6.6.6.6", "1.18.0", 100, 8001, 8002, now.Add(-30*24*time.Hour))
 	deleteGossipNode("node6", now.Add(-2*time.Hour))
 
 	// Seed Solana vote accounts history
@@ -395,7 +397,7 @@ FROM (
     FROM dim_solana_gossip_nodes_history
     WHERE snapshot_ts <= ?  -- Only records at or before 24h ago
       AND is_deleted = 0     -- Exclude soft-deleted records
-  ) gn ON u.dz_ip = gn.gossip_ip
+  ) gn ON u.client_ip = gn.gossip_ip
        AND gn.gossip_ip IS NOT NULL
        AND gn.rn = 1  -- Only join to the latest snapshot for each gossip node
   JOIN (
@@ -409,7 +411,7 @@ FROM (
        AND va.rn = 1  -- Only join to the latest snapshot for each vote account
   WHERE u.rn = 1                    -- Only use the latest user snapshot
     AND u.status = 'activated'      -- User must be activated
-    AND u.dz_ip IS NOT NULL         -- User must have a DZ IP
+    AND u.client_ip IS NOT NULL         -- User must have a DZ IP
     AND va.epoch_vote_account = 'true'  -- Vote account must be an epoch vote account (stored as string)
     AND va.activated_stake_lamports > 0  -- Vote account must have activated stake
 ) v24h
@@ -418,7 +420,7 @@ WHERE v24h.vote_pubkey NOT IN (
   -- This uses the _current views to get the current state
   SELECT DISTINCT va.vote_pubkey
   FROM dz_users_current u
-  JOIN solana_gossip_nodes_current gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
+  JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
   JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
   WHERE u.status = 'activated' AND va.activated_stake_lamports > 0
 )

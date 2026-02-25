@@ -146,15 +146,15 @@ func seedSolanaValidatorsConnectedStakeIncreaseData(t *testing.T, ctx context.Co
 
 	// Seed Solana gossip nodes history
 	gossipNodesBeforeT1 := []*testGossipNode{
-		{Pubkey: "node3", GossipIP: net.ParseIP("10.0.0.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
-		{Pubkey: "node4", GossipIP: net.ParseIP("10.0.0.4"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.4"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node3", GossipIP: net.ParseIP("3.3.3.3"), GossipPort: 8001, TPUQUICIP: net.ParseIP("3.3.3.3"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
+		{Pubkey: "node4", GossipIP: net.ParseIP("4.4.4.4"), GossipPort: 8001, TPUQUICIP: net.ParseIP("4.4.4.4"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100},
 	}
 	seedGossipNodes(t, ctx, conn, gossipNodesBeforeT1, now.Add(-30*24*time.Hour), now, testOpID()) // Connected 30 days ago
 
-	node2 := &testGossipNode{Pubkey: "node2", GossipIP: net.ParseIP("10.0.0.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100}
+	node2 := &testGossipNode{Pubkey: "node2", GossipIP: net.ParseIP("2.2.2.2"), GossipPort: 8001, TPUQUICIP: net.ParseIP("2.2.2.2"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100}
 	seedGossipNodes(t, ctx, conn, []*testGossipNode{node2}, now.Add(-23*time.Hour-30*time.Minute), now, testOpID()) // Connected at T1+30min
 
-	node1 := &testGossipNode{Pubkey: "node1", GossipIP: net.ParseIP("10.0.0.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("10.0.0.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100}
+	node1 := &testGossipNode{Pubkey: "node1", GossipIP: net.ParseIP("1.1.1.1"), GossipPort: 8001, TPUQUICIP: net.ParseIP("1.1.1.1"), TPUQUICPort: 8002, Version: "1.18.0", Epoch: 100}
 	seedGossipNodes(t, ctx, conn, []*testGossipNode{node1}, now.Add(-23*time.Hour), now, testOpID()) // Connected at T1+1hour
 
 	// Seed Solana vote accounts history
@@ -203,9 +203,9 @@ WITH connection_events AS (
     va.vote_pubkey,
     GREATEST(u.snapshot_ts, gn.snapshot_ts, va.snapshot_ts) AS connection_ts
   FROM dim_dz_users_history u
-  JOIN dim_solana_gossip_nodes_history gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
+  JOIN dim_solana_gossip_nodes_history gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL
   JOIN dim_solana_vote_accounts_history va ON gn.pubkey = va.node_pubkey
-  WHERE u.is_deleted = 0 AND u.status = 'activated' AND u.dz_ip IS NOT NULL
+  WHERE u.is_deleted = 0 AND u.status = 'activated' AND u.client_ip IS NOT NULL
     AND gn.is_deleted = 0
     AND va.is_deleted = 0
     AND va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
@@ -237,14 +237,14 @@ validators_connected_before_window AS (
       ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_solana_gossip_nodes_history
     WHERE snapshot_ts < ? AND is_deleted = 0
-  ) gn ON u.dz_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL AND gn.rn = 1
+  ) gn ON u.client_ip = gn.gossip_ip AND gn.gossip_ip IS NOT NULL AND gn.rn = 1
   JOIN (
     SELECT *,
       ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
     FROM dim_solana_vote_accounts_history
     WHERE snapshot_ts < ? AND is_deleted = 0
   ) va ON gn.pubkey = va.node_pubkey AND va.rn = 1
-  WHERE u.rn = 1 AND u.status = 'activated' AND u.dz_ip IS NOT NULL
+  WHERE u.rn = 1 AND u.status = 'activated' AND u.client_ip IS NOT NULL
     AND va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0
 )
 -- Validators that connected during the window but were NOT connected before T1
