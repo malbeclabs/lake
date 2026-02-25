@@ -248,13 +248,24 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
     return map
   }, [chartData, seriesKeys, effectiveIdx])
 
+  const hoveredTime = useMemo(() => {
+    if (hoveredIdx === null || hoveredIdx >= chartData.length) return null
+    const t = chartData[hoveredIdx].time as string
+    if (!t) return null
+    const d = new Date(t)
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  }, [hoveredIdx, chartData])
+
   const fmtValue = metric === 'throughput' ? formatBps : formatPps
   const fmtAxis = (v: number) => formatAxisBps(v)
 
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-muted-foreground">Traffic ({activeTab})</h3>
+        <h3 className="text-sm font-medium text-muted-foreground">
+          Traffic ({activeTab})
+          {hoveredTime && <span className="ml-2 text-foreground tabular-nums">{hoveredTime}</span>}
+        </h3>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSnapToPeak(v => !v)}
