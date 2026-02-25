@@ -74,6 +74,8 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			WHERE u.status = 'activated'
+			  AND u.client_ip != ''
+			  AND va.epoch_vote_account = 'true'
 			  AND va.activated_stake_lamports > 0
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
@@ -88,6 +90,8 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 			WHERE u.status = 'activated'
+			  AND u.client_ip != ''
+			  AND va.epoch_vote_account = 'true'
 			  AND va.activated_stake_lamports > 0
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
@@ -103,7 +107,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 					 FROM dz_users_current u
 					 JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 					 JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
-					 WHERE u.status = 'activated' AND va.activated_stake_lamports > 0)
+					 WHERE u.status = 'activated' AND u.client_ip != '' AND va.epoch_vote_account = 'true' AND va.activated_stake_lamports > 0)
 					* 100.0 / NULLIF((SELECT SUM(activated_stake_lamports) FROM solana_vote_accounts_current WHERE activated_stake_lamports > 0), 0),
 					0
 				) AS stake_share_pct

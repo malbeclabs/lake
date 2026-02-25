@@ -162,6 +162,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 			LEFT JOIN skip_rates sr ON v.node_pubkey = sr.leader_identity_pubkey
 			WHERE v.epoch_vote_account = 'true'
+				AND v.activated_stake_lamports > 0
 		),
 		validators_data AS (
 			SELECT

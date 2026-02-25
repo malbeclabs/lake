@@ -636,6 +636,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 			WHERE u.status = 'activated'
+			  AND u.client_ip != ''
 			  AND va.epoch_vote_account = 'true'
 			  AND va.activated_stake_lamports > 0
 			ORDER BY stake_sol DESC
@@ -648,6 +649,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
 				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
 				WHERE u.status = 'activated'
+				  AND u.client_ip != ''
 			)
 			SELECT
 				va.vote_pubkey,
@@ -682,6 +684,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 				LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 				LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 				WHERE u.status = 'activated'
+				  AND u.client_ip != ''
 			)
 			SELECT
 				va.vote_pubkey,
