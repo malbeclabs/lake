@@ -4,20 +4,16 @@ import { Loader2, Radio, AlertCircle, ArrowLeft, Check } from 'lucide-react'
 import { fetchGossipNode } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 
-function formatBps(bps: number): string {
-  if (bps === 0) return '—'
-  if (bps >= 1e12) return `${(bps / 1e12).toFixed(1)} Tbps`
-  if (bps >= 1e9) return `${(bps / 1e9).toFixed(1)} Gbps`
-  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} Mbps`
-  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)} Kbps`
-  return `${bps.toFixed(0)} bps`
-}
-
 function formatStake(sol: number): string {
   if (sol === 0) return '—'
   if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M SOL`
   if (sol >= 1e3) return `${(sol / 1e3).toFixed(1)}K SOL`
   return `${sol.toFixed(0)} SOL`
+}
+
+function truncatePubkey(pubkey: string): string {
+  if (!pubkey || pubkey.length <= 12) return pubkey || '—'
+  return `${pubkey.slice(0, 6)}...${pubkey.slice(-4)}`
 }
 
 export function GossipNodeDetailPage() {
@@ -102,9 +98,9 @@ export function GossipNodeDetailPage() {
           <div className="border border-border rounded-lg p-4 bg-card">
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Identity</h3>
             <dl className="space-y-2">
-              <div>
+              <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Pubkey</dt>
-                <dd className="text-sm font-mono break-all">{node.pubkey}</dd>
+                <dd className="text-sm font-mono">{truncatePubkey(node.pubkey)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Version</dt>
@@ -145,7 +141,7 @@ export function GossipNodeDetailPage() {
                   <dt className="text-sm text-muted-foreground">Vote Account</dt>
                   <dd className="text-sm">
                     <Link to={`/solana/validators/${node.vote_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
-                      {node.vote_pubkey.slice(0, 6)}...{node.vote_pubkey.slice(-4)}
+                      {truncatePubkey(node.vote_pubkey)}
                     </Link>
                   </dd>
                 </div>
@@ -162,6 +158,26 @@ export function GossipNodeDetailPage() {
             <div className="border border-border rounded-lg p-4 bg-card">
               <h3 className="text-sm font-medium text-muted-foreground mb-3">DoubleZero</h3>
               <dl className="space-y-2">
+                <div className="flex justify-between">
+                  <dt className="text-sm text-muted-foreground">User</dt>
+                  <dd className="text-sm">
+                    {node.user_pk ? (
+                      <Link to={`/dz/users/${node.user_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                        {truncatePubkey(node.user_pk)}
+                      </Link>
+                    ) : '—'}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-muted-foreground">Owner</dt>
+                  <dd className="text-sm">
+                    {node.owner_pubkey ? (
+                      <Link to={`/dz/users?search=owner:${node.owner_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                        {truncatePubkey(node.owner_pubkey)}
+                      </Link>
+                    ) : '—'}
+                  </dd>
+                </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">Device</dt>
                   <dd className="text-sm">
@@ -181,14 +197,6 @@ export function GossipNodeDetailPage() {
                       </Link>
                     ) : '—'}
                   </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-sm text-muted-foreground">Inbound</dt>
-                  <dd className="text-sm">{formatBps(node.in_bps)}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-sm text-muted-foreground">Outbound</dt>
-                  <dd className="text-sm">{formatBps(node.out_bps)}</dd>
                 </div>
               </dl>
             </div>

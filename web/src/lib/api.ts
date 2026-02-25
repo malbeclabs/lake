@@ -2932,11 +2932,11 @@ export async function fetchGossipNodes(
 }
 
 export interface GossipNodeDetail extends GossipNode {
+  user_pk: string
+  owner_pubkey: string
   device_pk: string
   metro_pk: string
   vote_pubkey: string
-  in_bps: number
-  out_bps: number
 }
 
 export async function fetchGossipNode(pubkey: string): Promise<GossipNodeDetail> {
