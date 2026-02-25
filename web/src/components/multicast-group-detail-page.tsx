@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useState, useMemo, useCallback } from 'react'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, Radio, AlertCircle, ArrowLeft } from 'lucide-react'
+import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
 import { fetchMulticastGroup, fetchMulticastGroupTraffic, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { InlineFilter } from '@/components/inline-filter'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -410,10 +411,104 @@ function MulticastTrafficChart({ groupCode, members, activeTab }: {
   )
 }
 
+type MemberSortField = 'owner_pubkey' | 'node_pubkey' | 'device_code' | 'metro_name' | 'dz_ip' | 'tunnel_id' | 'stake_sol' | 'leader_schedule'
+type SortDirection = 'asc' | 'desc'
+
+const validMemberFilterFields = ['device', 'metro', 'owner']
+
+const memberFieldPrefixes = [
+  { prefix: 'device:', description: 'Filter by device code' },
+  { prefix: 'metro:', description: 'Filter by metro name' },
+  { prefix: 'owner:', description: 'Filter by owner pubkey' },
+]
+
+const memberAutocompleteFields: string[] = []
+
+function parseMemberSearchFilters(searchParam: string): string[] {
+  if (!searchParam) return []
+  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+}
+
+function parseMemberFilter(filter: string): { field: string; value: string } {
+  const colonIndex = filter.indexOf(':')
+  if (colonIndex > 0) {
+    const field = filter.slice(0, colonIndex).toLowerCase()
+    const value = filter.slice(colonIndex + 1)
+    if (validMemberFilterFields.includes(field) && value) {
+      return { field, value }
+    }
+  }
+  return { field: 'all', value: filter }
+}
+
+function getMemberSearchValue(member: MulticastMember, field: string): string {
+  switch (field) {
+    case 'device':
+      return `${member.device_code} ${member.device_pk}`
+    case 'metro':
+      return `${member.metro_name} ${member.metro_code}`
+    case 'owner':
+      return member.owner_pubkey
+    default:
+      return ''
+  }
+}
+
 export function MulticastGroupDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [activeTab, setActiveTab] = useState<'publishers' | 'subscribers'>('publishers')
+  const [sortField, setSortField] = useState<MemberSortField>('stake_sol')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [liveFilter, setLiveFilter] = useState('')
+
+  const handleSort = (field: MemberSortField) => {
+    if (sortField === field) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDirection('desc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: MemberSortField }) => {
+    if (sortField !== field) return null
+    return sortDirection === 'asc'
+      ? <ChevronUp className="h-3 w-3" />
+      : <ChevronDown className="h-3 w-3" />
+  }
+
+  const sortAria = (field: MemberSortField) => {
+    if (sortField !== field) return 'none' as const
+    return sortDirection === 'asc' ? 'ascending' as const : 'descending' as const
+  }
+
+  // Filter state from URL
+  const searchParam = searchParams.get('search') || ''
+  const searchFilters = parseMemberSearchFilters(searchParam)
+  const allFilters = liveFilter ? [...searchFilters, liveFilter] : searchFilters
+
+  const removeFilter = useCallback((filterToRemove: string) => {
+    const newFilters = searchFilters.filter(f => f !== filterToRemove)
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      if (newFilters.length === 0) {
+        newParams.delete('search')
+      } else {
+        newParams.set('search', newFilters.join(','))
+      }
+      return newParams
+    })
+  }, [searchFilters, setSearchParams])
+
+  const clearAllFilters = useCallback(() => {
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('search')
+      return newParams
+    })
+  }, [setSearchParams])
 
   const { data: group, isLoading, error } = useQuery({
     queryKey: ['multicast-group', pk],
@@ -434,7 +529,74 @@ export function MulticastGroupDetailPage() {
     [group]
   )
 
-  const activeMembers = activeTab === 'publishers' ? publishers : subscribers
+  const activeMembers = useMemo(() => {
+    const members = activeTab === 'publishers' ? publishers : subscribers
+
+    // Filter
+    const filtered = allFilters.length === 0 ? members : (() => {
+      const matchesSingleFilter = (member: MulticastMember, filterRaw: string): boolean => {
+        const filter = parseMemberFilter(filterRaw)
+        const needle = filter.value.trim().toLowerCase()
+        if (!needle) return true
+
+        if (filter.field === 'all') {
+          const textFields = ['device', 'metro', 'owner']
+          return textFields.some(f => getMemberSearchValue(member, f).toLowerCase().includes(needle))
+        }
+
+        return getMemberSearchValue(member, filter.field).toLowerCase().includes(needle)
+      }
+
+      // Group filters by field: OR within same field, AND across different fields
+      const grouped = new Map<string, string[]>()
+      for (const f of allFilters) {
+        const { field } = parseMemberFilter(f)
+        const existing = grouped.get(field) ?? []
+        existing.push(f)
+        grouped.set(field, existing)
+      }
+      return members.filter(member =>
+        Array.from(grouped.values()).every(group =>
+          group.some(f => matchesSingleFilter(member, f))
+        )
+      )
+    })()
+
+    // Sort
+    return [...filtered].sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case 'owner_pubkey':
+          cmp = (a.owner_pubkey || '').localeCompare(b.owner_pubkey || '')
+          break
+        case 'node_pubkey':
+          cmp = (a.node_pubkey || '').localeCompare(b.node_pubkey || '')
+          break
+        case 'device_code':
+          cmp = (a.device_code || a.device_pk).localeCompare(b.device_code || b.device_pk)
+          break
+        case 'metro_name':
+          cmp = (a.metro_name || a.metro_code).localeCompare(b.metro_name || b.metro_code)
+          break
+        case 'dz_ip':
+          cmp = (a.dz_ip || '').localeCompare(b.dz_ip || '')
+          break
+        case 'tunnel_id':
+          cmp = a.tunnel_id - b.tunnel_id
+          break
+        case 'stake_sol':
+          cmp = a.stake_sol - b.stake_sol
+          break
+        case 'leader_schedule': {
+          const aSlot = a.next_leader_slot ?? Infinity
+          const bSlot = b.next_leader_slot ?? Infinity
+          cmp = aSlot - bSlot
+          break
+        }
+      }
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [activeTab, publishers, subscribers, allFilters, sortField, sortDirection])
 
   if (isLoading) {
     return (
@@ -502,7 +664,7 @@ export function MulticastGroupDetailPage() {
 
         {/* Members table */}
         <div className="border border-border rounded-lg bg-card mb-6">
-          <div className="flex border-b border-border">
+          <div className="flex items-center border-b border-border">
             <button
               onClick={() => setActiveTab('publishers')}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
@@ -523,19 +685,86 @@ export function MulticastGroupDetailPage() {
             >
               Subscribers ({subscribers.length})
             </button>
+            <div className="ml-auto mr-3 flex items-center gap-2">
+              {searchFilters.map((filter, idx) => (
+                <button
+                  key={`${filter}-${idx}`}
+                  onClick={() => removeFilter(filter)}
+                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+                >
+                  {filter}
+                  <X className="h-3 w-3" />
+                </button>
+              ))}
+              {searchFilters.length > 1 && (
+                <button
+                  onClick={clearAllFilters}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
+              <InlineFilter
+                fieldPrefixes={memberFieldPrefixes}
+                entity="multicast-members"
+                autocompleteFields={memberAutocompleteFields}
+                placeholder="Filter members..."
+                onLiveFilterChange={setLiveFilter}
+              />
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">Owner</th>
-                  <th className="px-4 py-3 font-medium">Node</th>
-                  <th className="px-4 py-3 font-medium">Device</th>
-                  <th className="px-4 py-3 font-medium">Metro</th>
-                  <th className="px-4 py-3 font-medium">DZ IP</th>
-                  <th className="px-4 py-3 font-medium text-right">Tunnel</th>
-                  <th className="px-4 py-3 font-medium text-right">Stake</th>
-                  <th className="px-4 py-3 font-medium">Leader Schedule</th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('owner_pubkey')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('owner_pubkey')}>
+                      Owner
+                      <SortIcon field="owner_pubkey" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('node_pubkey')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('node_pubkey')}>
+                      Node
+                      <SortIcon field="node_pubkey" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('device_code')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('device_code')}>
+                      Device
+                      <SortIcon field="device_code" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('metro_name')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('metro_name')}>
+                      Metro
+                      <SortIcon field="metro_name" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('dz_ip')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('dz_ip')}>
+                      DZ IP
+                      <SortIcon field="dz_ip" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('tunnel_id')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('tunnel_id')}>
+                      Tunnel
+                      <SortIcon field="tunnel_id" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('stake_sol')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('stake_sol')}>
+                      Stake
+                      <SortIcon field="stake_sol" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('leader_schedule')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('leader_schedule')}>
+                      Leader Schedule
+                      <SortIcon field="leader_schedule" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
