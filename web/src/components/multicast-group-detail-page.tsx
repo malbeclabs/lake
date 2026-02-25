@@ -662,9 +662,41 @@ export function MulticastGroupDetailPage() {
           </div>
         </div>
 
+        {/* Members filter + tabs */}
+        <div className="flex items-center gap-2 mb-3">
+          {searchFilters.map((filter, idx) => (
+            <button
+              key={`${filter}-${idx}`}
+              onClick={() => removeFilter(filter)}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+            >
+              {filter}
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+          {searchFilters.length > 1 && (
+            <button
+              onClick={clearAllFilters}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+          <div className="ml-auto">
+            <InlineFilter
+              fieldPrefixes={memberFieldPrefixes}
+              entity="multicast-members"
+              autocompleteFields={memberAutocompleteFields}
+              placeholder="Filter members..."
+              onLiveFilterChange={setLiveFilter}
+              filterParams={pk ? { group: pk } : undefined}
+            />
+          </div>
+        </div>
+
         {/* Members table */}
         <div className="border border-border rounded-lg bg-card mb-6">
-          <div className="flex items-center border-b border-border">
+          <div className="flex border-b border-border">
             <button
               onClick={() => setActiveTab('publishers')}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
@@ -685,34 +717,6 @@ export function MulticastGroupDetailPage() {
             >
               Subscribers ({subscribers.length})
             </button>
-            <div className="ml-auto mr-3 flex items-center gap-2">
-              {searchFilters.map((filter, idx) => (
-                <button
-                  key={`${filter}-${idx}`}
-                  onClick={() => removeFilter(filter)}
-                  className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
-                >
-                  {filter}
-                  <X className="h-3 w-3" />
-                </button>
-              ))}
-              {searchFilters.length > 1 && (
-                <button
-                  onClick={clearAllFilters}
-                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Clear all
-                </button>
-              )}
-              <InlineFilter
-                fieldPrefixes={memberFieldPrefixes}
-                entity="multicast-members"
-                autocompleteFields={memberAutocompleteFields}
-                placeholder="Filter members..."
-                onLiveFilterChange={setLiveFilter}
-                filterParams={pk ? { group: pk } : undefined}
-              />
-            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
