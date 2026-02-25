@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/malbeclabs/lake/api/config"
@@ -703,139 +704,137 @@ func analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK s
 	item.DisconnectedCount = len(item.DisconnectedDevices)
 	item.CausesPartition = item.DisconnectedCount > 0
 
-	// Find affected paths through this device
-	pathsCypher := `
-		MATCH (offline:Device {pk: $devicePK})
-		WHERE offline.isis_system_id IS NOT NULL
-
-		// Find neighbors of the offline device
-		MATCH (offline)-[:ISIS_ADJACENT]-(neighbor:Device)
+	// Get all neighbors with their ISIS metrics and metro info
+	neighborsCypher := `
+		MATCH (d:Device {pk: $devicePK})
+		WHERE d.isis_system_id IS NOT NULL
+		MATCH (d)-[r:ISIS_ADJACENT]-(neighbor:Device)
 		WHERE neighbor.isis_system_id IS NOT NULL
-
-		WITH offline, collect(DISTINCT neighbor) AS neighbors
-
-		// For each pair of neighbors, check if shortest path goes through offline device
-		UNWIND neighbors AS n1
-		UNWIND neighbors AS n2
-		WITH offline, n1, n2
-		WHERE n1.pk < n2.pk
-
-		// Get current shortest path
-		MATCH currentPath = shortestPath((n1)-[:ISIS_ADJACENT*]-(n2))
-		WITH offline, n1, n2, currentPath,
-		     length(currentPath) AS currentHops,
-		     reduce(m = 0, r IN relationships(currentPath) | m + coalesce(r.metric, 10)) AS currentMetric,
-		     any(node IN nodes(currentPath) WHERE node.pk = offline.pk) AS goesThruOffline
-
-		WHERE goesThruOffline = true
-
-		// Get metro info
-		OPTIONAL MATCH (n1)-[:LOCATED_IN]->(m1:Metro)
-		OPTIONAL MATCH (n2)-[:LOCATED_IN]->(m2:Metro)
-
-		RETURN n1.pk AS sourcePK, n1.code AS sourceCode,
-		       n2.pk AS targetPK, n2.code AS targetCode,
-		       COALESCE(m1.code, '') AS sourceMetro,
-		       COALESCE(m2.code, '') AS targetMetro,
-		       currentHops, currentMetric
-		LIMIT $limit
+		OPTIONAL MATCH (neighbor)-[:LOCATED_IN]->(m:Metro)
+		RETURN neighbor.pk AS pk, neighbor.code AS code,
+		       min(r.metric) AS metric, COALESCE(m.code, '') AS metro
 	`
 
-	pathsResult, err := session.Run(ctx, pathsCypher, map[string]any{
-		"devicePK": devicePK,
-		"limit":    pathLimit * 2, // Get more for filtering
-	})
+	neighborsResult, err := session.Run(ctx, neighborsCypher, map[string]any{"devicePK": devicePK})
 	if err != nil {
-		log.Printf("Device removal paths query error: %v", err)
+		log.Printf("Device removal neighbors query error: %v", err)
 		return item
 	}
 
-	type pathCandidate struct {
-		sourcePK      string
-		sourceCode    string
-		targetPK      string
-		targetCode    string
-		sourceMetro   string
-		targetMetro   string
-		currentHops   int
-		currentMetric int
+	type neighborInfo struct {
+		pk     string
+		code   string
+		metric int
+		metro  string
 	}
-	candidates := []pathCandidate{}
+	var neighbors []neighborInfo
 
-	for pathsResult.Next(ctx) {
-		record := pathsResult.Record()
-		sourcePK, _ := record.Get("sourcePK")
-		sourceCode, _ := record.Get("sourceCode")
-		targetPK, _ := record.Get("targetPK")
-		targetCode, _ := record.Get("targetCode")
-		sourceMetro, _ := record.Get("sourceMetro")
-		targetMetro, _ := record.Get("targetMetro")
-		currentHops, _ := record.Get("currentHops")
-		currentMetric, _ := record.Get("currentMetric")
-
-		candidates = append(candidates, pathCandidate{
-			sourcePK:      asString(sourcePK),
-			sourceCode:    asString(sourceCode),
-			targetPK:      asString(targetPK),
-			targetCode:    asString(targetCode),
-			sourceMetro:   asString(sourceMetro),
-			targetMetro:   asString(targetMetro),
-			currentHops:   int(asInt64(currentHops)),
-			currentMetric: int(asInt64(currentMetric)),
+	for neighborsResult.Next(ctx) {
+		record := neighborsResult.Record()
+		pk, _ := record.Get("pk")
+		code, _ := record.Get("code")
+		metric, _ := record.Get("metric")
+		metro, _ := record.Get("metro")
+		neighbors = append(neighbors, neighborInfo{
+			pk:     asString(pk),
+			code:   asString(code),
+			metric: int(asInt64(metric)),
+			metro:  asString(metro),
 		})
 	}
 
-	// Find alternate paths avoiding the offline device
-	for _, c := range candidates {
-		if len(item.AffectedPaths) >= pathLimit {
-			break
+	// For each neighbor pair, check if ISIS would route through this device (concurrently)
+	type pairResult struct {
+		path     WhatIfAffectedPath
+		affected bool
+	}
+
+	type pair struct {
+		n1, n2 neighborInfo
+	}
+	var pairs []pair
+	for i := 0; i < len(neighbors); i++ {
+		for j := i + 1; j < len(neighbors); j++ {
+			pairs = append(pairs, pair{neighbors[i], neighbors[j]})
 		}
+	}
 
-		path := WhatIfAffectedPath{
-			Source:       c.sourceCode,
-			Target:       c.targetCode,
-			SourceMetro:  c.sourceMetro,
-			TargetMetro:  c.targetMetro,
-			HopsBefore:   c.currentHops,
-			MetricBefore: c.currentMetric,
-			HopsAfter:    -1,
-			MetricAfter:  -1,
-			Status:       "disconnected",
-		}
+	results := make([]pairResult, len(pairs))
+	var wg sync.WaitGroup
+	for idx, p := range pairs {
+		wg.Add(1)
+		go func(idx int, n1, n2 neighborInfo) {
+			defer wg.Done()
 
-		altCypher := `
-			MATCH (source:Device {pk: $sourcePK}), (target:Device {pk: $targetPK})
-			MATCH altPath = shortestPath((source)-[:ISIS_ADJACENT*]-(target))
-			WHERE none(n IN nodes(altPath) WHERE n.pk = $devicePK)
-			WITH altPath, length(altPath) AS altHops,
-			     reduce(m = 0, r IN relationships(altPath) | m + coalesce(r.metric, 10)) AS altMetric
-			RETURN altHops, altMetric
-			LIMIT 1
-		`
+			throughMetric := n1.metric + n2.metric
 
-		altResult, err := session.Run(ctx, altCypher, map[string]any{
-			"sourcePK": c.sourcePK,
-			"targetPK": c.targetPK,
-			"devicePK": devicePK,
-		})
-		if err == nil && altResult.Next(ctx) {
-			record := altResult.Record()
-			altHops, _ := record.Get("altHops")
-			altMetric, _ := record.Get("altMetric")
+			altCypher := `
+				MATCH (n1:Device {pk: $n1PK}), (n2:Device {pk: $n2PK})
+				MATCH altPath = (n1)-[:ISIS_ADJACENT*1..6]-(n2)
+				WHERE none(n IN nodes(altPath) WHERE n.pk = $devicePK)
+				WITH altPath, length(altPath) AS altHops,
+				     reduce(m = 0, r IN relationships(altPath) | m + coalesce(r.metric, 0)) AS altMetric
+				ORDER BY altMetric ASC
+				LIMIT 1
+				RETURN altHops, altMetric
+			`
 
-			path.HopsAfter = int(asInt64(altHops))
-			path.MetricAfter = int(asInt64(altMetric))
+			pairSession := config.Neo4jSession(ctx)
+			defer pairSession.Close(ctx)
 
-			hopIncrease := path.HopsAfter - path.HopsBefore
-			metricIncrease := path.MetricAfter - path.MetricBefore
-			if hopIncrease > 2 || metricIncrease > 50 {
-				path.Status = "degraded"
-			} else {
-				path.Status = "rerouted"
+			altResult, err := pairSession.Run(ctx, altCypher, map[string]any{
+				"n1PK":     n1.pk,
+				"n2PK":     n2.pk,
+				"devicePK": devicePK,
+			})
+
+			path := WhatIfAffectedPath{
+				Source:       n1.code,
+				Target:       n2.code,
+				SourceMetro:  n1.metro,
+				TargetMetro:  n2.metro,
+				HopsBefore:   2,
+				MetricBefore: throughMetric,
+				HopsAfter:    -1,
+				MetricAfter:  -1,
+				Status:       "disconnected",
+			}
+
+			if err == nil && altResult.Next(ctx) {
+				record := altResult.Record()
+				altHops, _ := record.Get("altHops")
+				altMetric, _ := record.Get("altMetric")
+				altMetricVal := int(asInt64(altMetric))
+
+				if throughMetric > altMetricVal {
+					results[idx] = pairResult{affected: false}
+					return
+				}
+
+				path.HopsAfter = int(asInt64(altHops))
+				path.MetricAfter = altMetricVal
+
+				metricIncrease := path.MetricAfter - path.MetricBefore
+				hopIncrease := path.HopsAfter - path.HopsBefore
+				if hopIncrease > 2 || metricIncrease > 50 {
+					path.Status = "degraded"
+				} else {
+					path.Status = "rerouted"
+				}
+			}
+
+			results[idx] = pairResult{path: path, affected: true}
+		}(idx, p.n1, p.n2)
+	}
+	wg.Wait()
+
+	for _, r := range results {
+		if r.affected {
+			item.AffectedPaths = append(item.AffectedPaths, r.path)
+			if len(item.AffectedPaths) >= pathLimit {
+				break
 			}
 		}
-
-		item.AffectedPaths = append(item.AffectedPaths, path)
 	}
 
 	item.AffectedPathCount = len(item.AffectedPaths)
@@ -918,167 +917,187 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 	item.DisconnectedCount = len(item.DisconnectedDevices)
 	item.CausesPartition = item.DisconnectedCount > 0
 
-	// Find affected paths - paths that currently use this link
-	affectedCypher := `
-		MATCH (src:Device {pk: $sourcePK}), (tgt:Device {pk: $targetPK})
-		WHERE src.isis_system_id IS NOT NULL AND tgt.isis_system_id IS NOT NULL
-
-		// Get the metric of the link being removed
-		OPTIONAL MATCH (src)-[linkRel:ISIS_ADJACENT]-(tgt)
-		WITH src, tgt, min(linkRel.metric) AS linkMetric
-
-		// Get immediate neighbors of source with their link metrics
-		OPTIONAL MATCH (src)-[srcRel:ISIS_ADJACENT]-(srcNeighbor:Device)
-		WHERE srcNeighbor.isis_system_id IS NOT NULL AND srcNeighbor.pk <> tgt.pk
-		WITH src, tgt, linkMetric, collect(DISTINCT {device: srcNeighbor, metric: srcRel.metric}) AS srcNeighborsData
-
-		// Get immediate neighbors of target with their link metrics
-		OPTIONAL MATCH (tgt)-[tgtRel:ISIS_ADJACENT]-(tgtNeighbor:Device)
-		WHERE tgtNeighbor.isis_system_id IS NOT NULL AND tgtNeighbor.pk <> src.pk
-		WITH src, tgt, linkMetric, srcNeighborsData, collect(DISTINCT {device: tgtNeighbor, metric: tgtRel.metric}) AS tgtNeighborsData
-
-		// For each source neighbor, check path to target neighbors via this link
-		UNWIND CASE WHEN size(srcNeighborsData) > 0 THEN srcNeighborsData ELSE [null] END AS srcData
-		UNWIND CASE WHEN size(tgtNeighborsData) > 0 THEN tgtNeighborsData ELSE [null] END AS tgtData
-		WITH src, tgt, linkMetric, srcData, tgtData
-		WHERE srcData IS NOT NULL AND tgtData IS NOT NULL
-		  AND srcData.device.pk <> tgtData.device.pk
-
-		WITH srcData.device AS fromDevice, tgtData.device AS toDevice, src, tgt,
-		     3 AS beforeHops,
-		     coalesce(srcData.metric, 0) + coalesce(linkMetric, 0) + coalesce(tgtData.metric, 0) AS beforeMetric
-
-		// Get metro info
-		OPTIONAL MATCH (fromDevice)-[:LOCATED_IN]->(fm:Metro)
-		OPTIONAL MATCH (toDevice)-[:LOCATED_IN]->(tm:Metro)
-
-		RETURN fromDevice.pk AS fromPK, fromDevice.code AS fromCode,
-		       toDevice.pk AS toPK, toDevice.code AS toCode,
-		       COALESCE(fm.code, '') AS fromMetro,
-		       COALESCE(tm.code, '') AS toMetro,
-		       beforeHops, beforeMetric,
-		       src.pk AS srcPK, tgt.pk AS tgtPK
-		LIMIT $limit
+	// Get the ISIS metric of the link being removed
+	linkMetricCypher := `
+		MATCH (src:Device {pk: $sourcePK})-[r:ISIS_ADJACENT]-(tgt:Device {pk: $targetPK})
+		RETURN min(r.metric) AS linkMetric
 	`
 
-	affectedResult, err := session.Run(ctx, affectedCypher, map[string]any{
+	var linkMetric int
+	linkMetricResult, err := session.Run(ctx, linkMetricCypher, map[string]any{
 		"sourcePK": sideAPK,
 		"targetPK": sideZPK,
-		"limit":    pathLimit * 2,
 	})
 	if err != nil {
-		log.Printf("Link affected paths query error: %v", err)
+		log.Printf("Link metric query error: %v", err)
+		return item
+	}
+	if linkMetricResult.Next(ctx) {
+		record := linkMetricResult.Record()
+		m, _ := record.Get("linkMetric")
+		linkMetric = int(asInt64(m))
+	}
+
+	type neighborInfo struct {
+		pk     string
+		code   string
+		metric int
+		metro  string
+	}
+
+	// Get neighbors of source endpoint with their ISIS metrics
+	srcNeighborsCypher := `
+		MATCH (src:Device {pk: $sourcePK})-[r:ISIS_ADJACENT]-(n:Device)
+		WHERE n.isis_system_id IS NOT NULL AND n.pk <> $targetPK
+		OPTIONAL MATCH (n)-[:LOCATED_IN]->(m:Metro)
+		RETURN n.pk AS pk, n.code AS code, min(r.metric) AS metric, COALESCE(m.code, '') AS metro
+	`
+	srcNResult, err := session.Run(ctx, srcNeighborsCypher, map[string]any{
+		"sourcePK": sideAPK,
+		"targetPK": sideZPK,
+	})
+	if err != nil {
+		log.Printf("Link src neighbors query error: %v", err)
 		return item
 	}
 
-	type pathCandidate struct {
-		fromPK       string
-		fromCode     string
-		toPK         string
-		toCode       string
-		fromMetro    string
-		toMetro      string
-		beforeHops   int
-		beforeMetric int
-		srcPK        string
-		tgtPK        string
-	}
-	candidates := []pathCandidate{}
-
-	for affectedResult.Next(ctx) {
-		record := affectedResult.Record()
-		fromPK, _ := record.Get("fromPK")
-		fromCode, _ := record.Get("fromCode")
-		toPK, _ := record.Get("toPK")
-		toCode, _ := record.Get("toCode")
-		fromMetro, _ := record.Get("fromMetro")
-		toMetro, _ := record.Get("toMetro")
-		beforeHops, _ := record.Get("beforeHops")
-		beforeMetric, _ := record.Get("beforeMetric")
-		srcPK, _ := record.Get("srcPK")
-		tgtPK, _ := record.Get("tgtPK")
-
-		candidates = append(candidates, pathCandidate{
-			fromPK:       asString(fromPK),
-			fromCode:     asString(fromCode),
-			toPK:         asString(toPK),
-			toCode:       asString(toCode),
-			fromMetro:    asString(fromMetro),
-			toMetro:      asString(toMetro),
-			beforeHops:   int(asInt64(beforeHops)),
-			beforeMetric: int(asInt64(beforeMetric)),
-			srcPK:        asString(srcPK),
-			tgtPK:        asString(tgtPK),
+	var srcNeighbors []neighborInfo
+	for srcNResult.Next(ctx) {
+		record := srcNResult.Record()
+		pk, _ := record.Get("pk")
+		code, _ := record.Get("code")
+		metric, _ := record.Get("metric")
+		metro, _ := record.Get("metro")
+		srcNeighbors = append(srcNeighbors, neighborInfo{
+			pk: asString(pk), code: asString(code),
+			metric: int(asInt64(metric)), metro: asString(metro),
 		})
 	}
 
-	// Find alternate paths avoiding this link
-	for _, c := range candidates {
-		if len(item.AffectedPaths) >= pathLimit {
-			break
-		}
+	// Get neighbors of target endpoint with their ISIS metrics
+	tgtNeighborsCypher := `
+		MATCH (tgt:Device {pk: $targetPK})-[r:ISIS_ADJACENT]-(n:Device)
+		WHERE n.isis_system_id IS NOT NULL AND n.pk <> $sourcePK
+		OPTIONAL MATCH (n)-[:LOCATED_IN]->(m:Metro)
+		RETURN n.pk AS pk, n.code AS code, min(r.metric) AS metric, COALESCE(m.code, '') AS metro
+	`
+	tgtNResult, err := session.Run(ctx, tgtNeighborsCypher, map[string]any{
+		"sourcePK": sideAPK,
+		"targetPK": sideZPK,
+	})
+	if err != nil {
+		log.Printf("Link tgt neighbors query error: %v", err)
+		return item
+	}
 
-		path := WhatIfAffectedPath{
-			Source:       c.fromCode,
-			Target:       c.toCode,
-			SourceMetro:  c.fromMetro,
-			TargetMetro:  c.toMetro,
-			HopsBefore:   c.beforeHops,
-			MetricBefore: c.beforeMetric,
-			HopsAfter:    -1,
-			MetricAfter:  -1,
-			Status:       "disconnected",
-		}
-
-		// Find alternate path not using this specific link
-		altCypher := `
-			MATCH (from:Device {pk: $fromPK}), (to:Device {pk: $toPK})
-			OPTIONAL MATCH altPath = shortestPath((from)-[:ISIS_ADJACENT*]-(to))
-			WHERE NONE(r IN relationships(altPath) WHERE
-			      (startNode(r).pk = $srcPK AND endNode(r).pk = $tgtPK) OR
-			      (startNode(r).pk = $tgtPK AND endNode(r).pk = $srcPK))
-			WITH altPath,
-			     CASE WHEN altPath IS NOT NULL THEN length(altPath) ELSE 0 END AS altHops,
-			     CASE WHEN altPath IS NOT NULL
-			          THEN reduce(m = 0, r IN relationships(altPath) | m + coalesce(r.metric, 10))
-			          ELSE 0 END AS altMetric
-			WHERE altPath IS NOT NULL
-			RETURN altHops, altMetric
-			LIMIT 1
-		`
-
-		altResult, err := session.Run(ctx, altCypher, map[string]any{
-			"fromPK": c.fromPK,
-			"toPK":   c.toPK,
-			"srcPK":  c.srcPK,
-			"tgtPK":  c.tgtPK,
+	var tgtNeighbors []neighborInfo
+	for tgtNResult.Next(ctx) {
+		record := tgtNResult.Record()
+		pk, _ := record.Get("pk")
+		code, _ := record.Get("code")
+		metric, _ := record.Get("metric")
+		metro, _ := record.Get("metro")
+		tgtNeighbors = append(tgtNeighbors, neighborInfo{
+			pk: asString(pk), code: asString(code),
+			metric: int(asInt64(metric)), metro: asString(metro),
 		})
-		if err == nil && altResult.Next(ctx) {
-			record := altResult.Record()
-			altHops, _ := record.Get("altHops")
-			altMetric, _ := record.Get("altMetric")
+	}
 
-			path.HopsAfter = int(asInt64(altHops))
-			path.MetricAfter = int(asInt64(altMetric))
+	// For each (srcNeighbor, tgtNeighbor) pair, check if ISIS routes through this link (concurrently)
+	type linkPair struct {
+		sn, tn neighborInfo
+	}
+	var linkPairs []linkPair
+	for _, sn := range srcNeighbors {
+		for _, tn := range tgtNeighbors {
+			if sn.pk != tn.pk {
+				linkPairs = append(linkPairs, linkPair{sn, tn})
+			}
+		}
+	}
 
-			// Only include if the path through the link was actually preferred
-			if path.MetricBefore < path.MetricAfter || path.HopsAfter == 0 {
-				hopIncrease := path.HopsAfter - path.HopsBefore
+	type linkPairResult struct {
+		path     WhatIfAffectedPath
+		affected bool
+	}
+	linkResults := make([]linkPairResult, len(linkPairs))
+	var wg sync.WaitGroup
+	for idx, lp := range linkPairs {
+		wg.Add(1)
+		go func(idx int, sn, tn neighborInfo) {
+			defer wg.Done()
+
+			throughMetric := sn.metric + linkMetric + tn.metric
+
+			altCypher := `
+				MATCH (n1:Device {pk: $n1PK}), (n2:Device {pk: $n2PK})
+				MATCH altPath = (n1)-[:ISIS_ADJACENT*1..6]-(n2)
+				WHERE NONE(r IN relationships(altPath) WHERE
+				      (startNode(r).pk = $srcPK AND endNode(r).pk = $tgtPK) OR
+				      (startNode(r).pk = $tgtPK AND endNode(r).pk = $srcPK))
+				WITH altPath, length(altPath) AS altHops,
+				     reduce(m = 0, r IN relationships(altPath) | m + coalesce(r.metric, 0)) AS altMetric
+				ORDER BY altMetric ASC
+				LIMIT 1
+				RETURN altHops, altMetric
+			`
+
+			pairSession := config.Neo4jSession(ctx)
+			defer pairSession.Close(ctx)
+
+			altResult, err := pairSession.Run(ctx, altCypher, map[string]any{
+				"n1PK":  sn.pk,
+				"n2PK":  tn.pk,
+				"srcPK": sideAPK,
+				"tgtPK": sideZPK,
+			})
+
+			path := WhatIfAffectedPath{
+				Source:       sn.code,
+				Target:       tn.code,
+				SourceMetro:  sn.metro,
+				TargetMetro:  tn.metro,
+				HopsBefore:   3,
+				MetricBefore: throughMetric,
+				HopsAfter:    -1,
+				MetricAfter:  -1,
+				Status:       "disconnected",
+			}
+
+			if err == nil && altResult.Next(ctx) {
+				record := altResult.Record()
+				altHops, _ := record.Get("altHops")
+				altMetric, _ := record.Get("altMetric")
+				altMetricVal := int(asInt64(altMetric))
+
+				if throughMetric > altMetricVal {
+					linkResults[idx] = linkPairResult{affected: false}
+					return
+				}
+
+				path.HopsAfter = int(asInt64(altHops))
+				path.MetricAfter = altMetricVal
+
 				metricIncrease := path.MetricAfter - path.MetricBefore
-				if path.HopsAfter == 0 {
-					path.Status = "disconnected"
-					path.HopsAfter = -1
-					path.MetricAfter = -1
-				} else if hopIncrease > 2 || metricIncrease > 50 {
+				hopIncrease := path.HopsAfter - path.HopsBefore
+				if hopIncrease > 2 || metricIncrease > 50 {
 					path.Status = "degraded"
 				} else {
 					path.Status = "rerouted"
 				}
-				item.AffectedPaths = append(item.AffectedPaths, path)
 			}
-		} else {
-			// No alternate path found
-			item.AffectedPaths = append(item.AffectedPaths, path)
+
+			linkResults[idx] = linkPairResult{path: path, affected: true}
+		}(idx, lp.sn, lp.tn)
+	}
+	wg.Wait()
+
+	for _, r := range linkResults {
+		if r.affected {
+			item.AffectedPaths = append(item.AffectedPaths, r.path)
+			if len(item.AffectedPaths) >= pathLimit {
+				break
+			}
 		}
 	}
 
