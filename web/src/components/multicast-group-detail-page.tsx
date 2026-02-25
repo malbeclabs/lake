@@ -224,6 +224,23 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
     return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }, [hoveredIdx, chartData])
 
+  // Compute Y-axis domain based on visible series only
+  const yDomain = useMemo((): [number, number] => {
+    if (chartData.length === 0) return [0, 0]
+    const visibleKeys = legend.selectedSeries.size === 0
+      ? seriesKeys
+      : seriesKeys.filter(k => legend.selectedSeries.has(k))
+    if (visibleKeys.length === 0) return [0, 0]
+    let max = 0
+    for (const row of chartData) {
+      for (const k of visibleKeys) {
+        const v = (row[k] as number) ?? 0
+        if (v > max) max = v
+      }
+    }
+    return [0, max || 1]
+  }, [chartData, seriesKeys, legend.selectedSeries])
+
   const fmtValue = metric === 'throughput' ? formatBps : formatPps
   const fmtAxis = (v: number) => formatAxisBps(v)
 
@@ -313,6 +330,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
                   axisLine={false}
                   tickFormatter={fmtAxis}
                   width={45}
+                  domain={yDomain}
+                  allowDataOverflow={true}
                 />
                 <RechartsTooltip
                   content={() => null}
