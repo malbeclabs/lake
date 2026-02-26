@@ -832,6 +832,41 @@ func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 		points = []MulticastMemberCountPoint{}
 	}
 
+	// Ensure the chart X-axis starts at the window start time.
+	// If the first point (baseline) is before the window, clamp it to the window start.
+	// If it's after the window start, prepend a point at the window start with the baseline values.
+	if len(points) > 0 {
+		var windowDuration time.Duration
+		switch timeRange {
+		case "1h":
+			windowDuration = time.Hour
+		case "6h":
+			windowDuration = 6 * time.Hour
+		case "12h":
+			windowDuration = 12 * time.Hour
+		case "24h":
+			windowDuration = 24 * time.Hour
+		case "7d":
+			windowDuration = 7 * 24 * time.Hour
+		case "30d":
+			windowDuration = 30 * 24 * time.Hour
+		default:
+			windowDuration = 24 * time.Hour
+		}
+		windowStart := time.Now().UTC().Add(-windowDuration).Format("2006-01-02T15:04:05")
+		if points[0].Time < windowStart {
+			// Baseline is before the window — clamp its timestamp to window start
+			points[0].Time = windowStart
+		} else if points[0].Time > windowStart {
+			// First data point is after window start — prepend a point at window start
+			points = append([]MulticastMemberCountPoint{{
+				Time:            windowStart,
+				PublisherCount:  points[0].PublisherCount,
+				SubscriberCount: points[0].SubscriberCount,
+			}}, points...)
+		}
+	}
+
 	// Append a "now" point with the last known counts so the chart extends to current time
 	if len(points) > 0 {
 		last := points[len(points)-1]
