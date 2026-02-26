@@ -707,7 +707,7 @@ func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 
 	timeRange := r.URL.Query().Get("time_range")
 	if timeRange == "" {
-		timeRange = "24h"
+		timeRange = "7d"
 	}
 
 	var lookback string

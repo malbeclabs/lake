@@ -417,7 +417,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
 const MEMBER_COUNT_TIME_RANGES = ['1h', '6h', '12h', '24h', '7d', '30d'] as const
 
 function MemberCountChart({ groupCode }: { groupCode: string }) {
-  const [timeRange, setTimeRange] = useState<string>('24h')
+  const [timeRange, setTimeRange] = useState<string>('7d')
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set())
 
   const toggleSeries = (key: string) => {
