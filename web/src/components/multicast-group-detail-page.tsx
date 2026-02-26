@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
-import { fetchMulticastGroup, fetchMulticastGroupTraffic, type MulticastMember } from '@/lib/api'
+import { fetchMulticastGroup, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { InlineFilter } from '@/components/inline-filter'
@@ -408,6 +408,139 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
               })}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const MEMBER_COUNT_TIME_RANGES = ['1h', '6h', '12h', '24h', '7d', '30d'] as const
+
+function MemberCountChart({ groupCode }: { groupCode: string }) {
+  const [timeRange, setTimeRange] = useState<string>('24h')
+
+  const { data: countData, isLoading } = useQuery({
+    queryKey: ['multicast-member-counts', groupCode, timeRange],
+    queryFn: () => fetchMulticastGroupMemberCounts(groupCode, timeRange),
+    refetchInterval: 30000,
+  })
+
+  const chartData = useMemo(() => {
+    if (!countData || countData.length === 0) return []
+    return countData.map(p => ({
+      time: p.time,
+      publishers: p.publisher_count,
+      subscribers: p.subscriber_count,
+    }))
+  }, [countData])
+
+  const yDomain = useMemo((): [number, number] => {
+    if (chartData.length === 0) return [0, 1]
+    let min = Infinity
+    let max = 0
+    for (const row of chartData) {
+      if (row.publishers > max) max = row.publishers
+      if (row.subscribers > max) max = row.subscribers
+      if (row.publishers < min) min = row.publishers
+      if (row.subscribers < min) min = row.subscribers
+    }
+    if (!isFinite(min)) min = 0
+    // Add padding so flat lines aren't hugged to the edges
+    const range = max - min
+    const pad = range > 0 ? Math.ceil(range * 0.2) : Math.max(1, Math.ceil(max * 0.1))
+    return [Math.max(0, min - pad), max + pad]
+  }, [chartData])
+
+  return (
+    <div className="border border-border rounded-lg p-4 bg-card mt-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium text-muted-foreground">Members Over Time</h3>
+        <select
+          value={timeRange}
+          onChange={e => setTimeRange(e.target.value)}
+          className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
+        >
+          {MEMBER_COUNT_TIME_RANGES.map(r => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+      </div>
+
+      {isLoading && (
+        <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+          Loading member counts...
+        </div>
+      )}
+
+      {!isLoading && chartData.length === 0 && (
+        <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+          No member count data available
+        </div>
+      )}
+
+      {!isLoading && chartData.length > 0 && (
+        <div>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 9 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={formatTime}
+              />
+              <YAxis
+                tick={{ fontSize: 9 }}
+                tickLine={false}
+                axisLine={false}
+                width={35}
+                domain={yDomain}
+                allowDecimals={false}
+              />
+              <RechartsTooltip
+                contentStyle={{
+                  backgroundColor: 'var(--card)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                }}
+                labelFormatter={(label) => {
+                  const d = new Date(label)
+                  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                }}
+              />
+              <Line
+                type="stepAfter"
+                dataKey="publishers"
+                name="Publishers"
+                stroke="#7c5cbf"
+                strokeWidth={1.5}
+                dot={false}
+                isAnimationActive={false}
+              />
+              <Line
+                type="stepAfter"
+                dataKey="subscribers"
+                name="Subscribers"
+                stroke="#4a8fe7"
+                strokeWidth={1.5}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+          <div className="flex items-center justify-center gap-4 mt-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-0.5 rounded-full" style={{ backgroundColor: '#7c5cbf' }} />
+              Publishers
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-0.5 rounded-full" style={{ backgroundColor: '#4a8fe7' }} />
+              Subscribers
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -874,6 +1007,9 @@ export function MulticastGroupDetailPage() {
             onHoverMember={setHoveredSeriesKey}
           />
         )}
+
+        {/* Member count chart */}
+        {pk && <MemberCountChart groupCode={pk} />}
       </div>
     </div>
   )

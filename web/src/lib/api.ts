@@ -1889,6 +1889,23 @@ export async function fetchMulticastGroupTraffic(pkOrCode: string, timeRange?: s
   return res.json()
 }
 
+export interface MulticastMemberCountPoint {
+  time: string
+  publisher_count: number
+  subscriber_count: number
+}
+
+export async function fetchMulticastGroupMemberCounts(pkOrCode: string, timeRange?: string): Promise<MulticastMemberCountPoint[]> {
+  const params = new URLSearchParams()
+  if (timeRange) params.set('time_range', timeRange)
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/member-counts${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group member counts')
+  }
+  return res.json()
+}
+
 // Critical links types
 export interface CriticalLink {
   sourcePK: string

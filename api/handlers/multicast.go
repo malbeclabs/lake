@@ -689,6 +689,167 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type MulticastMemberCountPoint struct {
+	Time            string `json:"time"`
+	PublisherCount  int64  `json:"publisher_count"`
+	SubscriberCount int64  `json:"subscriber_count"`
+}
+
+func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+
+	timeRange := r.URL.Query().Get("time_range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+
+	var lookback string
+	switch timeRange {
+	case "1h":
+		lookback = "1 HOUR"
+	case "6h":
+		lookback = "6 HOUR"
+	case "12h":
+		lookback = "12 HOUR"
+	case "24h":
+		lookback = "24 HOUR"
+	case "7d":
+		lookback = "7 DAY"
+	case "30d":
+		lookback = "30 DAY"
+	default:
+		lookback = "24 HOUR"
+	}
+
+	start := time.Now()
+
+	// Resolve group PK
+	var groupPK string
+	err := envDB(ctx).QueryRow(ctx,
+		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if err != nil {
+		log.Printf("MulticastGroupMemberCounts group query error: %v", err)
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
+
+	// Reconstruct member counts over time from SCD user history.
+	// 1. For each user change, compute whether they're a pub/sub of this group
+	// 2. Use lag() to compute deltas (joined/left)
+	// 3. Running sum of deltas gives the count at each point in time
+	// The running sum is computed from all history for correctness. We return
+	// the last point before the window (as a baseline) plus all points within it.
+	query := `
+		WITH
+			user_changes AS (
+				SELECT
+					snapshot_ts as ts,
+					pk as user_pk,
+					CASE WHEN status = 'activated' AND is_deleted = 0
+						THEN has(JSONExtract(publishers, 'Array(String)'), ?)
+						ELSE 0
+					END as is_pub,
+					CASE WHEN status = 'activated' AND is_deleted = 0
+						THEN has(JSONExtract(subscribers, 'Array(String)'), ?)
+						ELSE 0
+					END as is_sub,
+					lagInFrame(CASE WHEN status = 'activated' AND is_deleted = 0
+						THEN has(JSONExtract(publishers, 'Array(String)'), ?)
+						ELSE 0
+					END, 1, 0) OVER (PARTITION BY pk ORDER BY snapshot_ts, ingested_at, op_id) as prev_pub,
+					lagInFrame(CASE WHEN status = 'activated' AND is_deleted = 0
+						THEN has(JSONExtract(subscribers, 'Array(String)'), ?)
+						ELSE 0
+					END, 1, 0) OVER (PARTITION BY pk ORDER BY snapshot_ts, ingested_at, op_id) as prev_sub
+				FROM dim_dz_users_history
+				WHERE kind = 'multicast'
+			),
+			deltas AS (
+				SELECT ts, toInt32(is_pub) - toInt32(prev_pub) as pub_delta, toInt32(is_sub) - toInt32(prev_sub) as sub_delta
+				FROM user_changes
+				WHERE is_pub != prev_pub OR is_sub != prev_sub
+			),
+			agg_deltas AS (
+				SELECT ts, sum(pub_delta) as pub_delta, sum(sub_delta) as sub_delta
+				FROM deltas GROUP BY ts
+			),
+			running AS (
+				SELECT ts,
+					sum(pub_delta) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as publisher_count,
+					sum(sub_delta) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as subscriber_count
+				FROM agg_deltas
+			),
+			cutoff AS (
+				SELECT now() - INTERVAL ` + lookback + ` as t
+			),
+			-- Include the last point before the window as baseline, plus all points in the window
+			filtered AS (
+				SELECT ts, publisher_count, subscriber_count,
+					row_number() OVER (ORDER BY ts DESC) as rn_before
+				FROM running, cutoff
+				WHERE ts <= cutoff.t
+			)
+		SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
+		FROM filtered WHERE rn_before = 1
+		UNION ALL
+		SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
+		FROM running
+		WHERE ts > now() - INTERVAL ` + lookback + `
+		ORDER BY time
+	`
+
+	rows, err := envDB(ctx).Query(ctx, query, groupPK, groupPK, groupPK, groupPK)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		log.Printf("MulticastGroupMemberCounts query error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var points []MulticastMemberCountPoint
+	for rows.Next() {
+		var p MulticastMemberCountPoint
+		if err := rows.Scan(&p.Time, &p.PublisherCount, &p.SubscriberCount); err != nil {
+			log.Printf("MulticastGroupMemberCounts scan error: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		points = append(points, p)
+	}
+
+	if points == nil {
+		points = []MulticastMemberCountPoint{}
+	}
+
+	// Append a "now" point with the last known counts so the chart extends to current time
+	if len(points) > 0 {
+		last := points[len(points)-1]
+		nowStr := time.Now().UTC().Format("2006-01-02T15:04:05")
+		if last.Time != nowStr {
+			points = append(points, MulticastMemberCountPoint{
+				Time:            nowStr,
+				PublisherCount:  last.PublisherCount,
+				SubscriberCount: last.SubscriberCount,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(points); err != nil {
+		log.Printf("JSON encoding error: %v", err)
+	}
+}
+
 // MulticastTreeHop represents a single hop in a multicast tree path
 type MulticastTreeHop struct {
 	DevicePK   string `json:"devicePK"`
