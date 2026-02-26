@@ -796,13 +796,14 @@ func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 				FROM running, cutoff
 				WHERE ts <= cutoff.t
 			)
-		SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
-		FROM filtered WHERE rn_before = 1
-		UNION ALL
-		SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
-		FROM running
-		WHERE ts > now() - INTERVAL ` + lookback + `
-		ORDER BY time
+		SELECT time, publisher_count, subscriber_count FROM (
+			SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
+			FROM filtered WHERE rn_before = 1
+			UNION ALL
+			SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
+			FROM running
+			WHERE ts > now() - INTERVAL ` + lookback + `
+		) ORDER BY time
 	`
 
 	rows, err := envDB(ctx).Query(ctx, query, groupPK, groupPK, groupPK, groupPK)
