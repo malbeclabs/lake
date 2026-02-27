@@ -688,8 +688,8 @@ export function LinkStatusTimelines({
     if (linksWithHealth) {
       const health = linksWithHealth.get(link.code)
       if (health) {
-        // Map no_data to unhealthy for filter matching (no_data is a status, not a filter option)
-        const filterHealth = health === 'no_data' ? 'unhealthy' : health
+        // Map no_data and down to unhealthy for filter matching (not separate filter options)
+        const filterHealth = (health === 'no_data' || health === 'down') ? 'unhealthy' : health
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return healthFilters.includes(filterHealth as any)
       }
