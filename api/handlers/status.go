@@ -483,6 +483,8 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 
 	// Link health analysis
 	g.Go(func() error {
+		// 1000ms delay override in nanoseconds indicates soft-drained
+		const delayOverrideSoftDrainedNs = 1_000_000_000
 		query := `
 			SELECT
 				l.pk,
@@ -542,8 +544,9 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				AND traffic_parent.intf = splitByChar('.', l.side_a_iface_name)[1]
 				AND traffic_direct.link_pk IS NULL
 			WHERE l.status = 'activated'
+				AND l.isis_delay_override_ns != ?
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs)
 		if err != nil {
 			return err
 		}
@@ -1829,7 +1832,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 		sort.Strings(issueReasonsList)
 
-		isDown := downLinkPKs[pk]
+		isDown := downLinkPKs[pk] && !isCurrentlyDrained
 		if isDown {
 			issueReasons["down"] = true
 			// Rebuild issue reasons list
