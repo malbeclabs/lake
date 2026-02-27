@@ -45,7 +45,11 @@ export function useUPlotChart({
         stroke: axisStroke,
         grid: { stroke: gridStroke },
         ticks: { stroke: tickStroke },
-        size: 60,
+        size: (_u: uPlot, values: string[]) => {
+          if (!values || values.length === 0) return 80
+          const maxLen = Math.max(...values.map(v => (v || '').length))
+          return Math.max(50, maxLen * 8 + 16)
+        },
       },
     ]
 

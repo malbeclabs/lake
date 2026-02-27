@@ -56,6 +56,23 @@ function formatPps(pps: number): string {
   return pps.toFixed(0) + ' pps'
 }
 
+// Axis label formatters — whole numbers only for cleaner tick labels
+function formatBandwidthAxis(bps: number): string {
+  if (bps >= 1e12) return Math.round(bps / 1e12) + ' Tbps'
+  if (bps >= 1e9) return Math.round(bps / 1e9) + ' Gbps'
+  if (bps >= 1e6) return Math.round(bps / 1e6) + ' Mbps'
+  if (bps >= 1e3) return Math.round(bps / 1e3) + ' Kbps'
+  return Math.round(bps) + ' bps'
+}
+
+function formatPpsAxis(pps: number): string {
+  if (pps >= 1e12) return Math.round(pps / 1e12) + ' Tpps'
+  if (pps >= 1e9) return Math.round(pps / 1e9) + ' Gpps'
+  if (pps >= 1e6) return Math.round(pps / 1e6) + ' Mpps'
+  if (pps >= 1e3) return Math.round(pps / 1e3) + ' Kpps'
+  return Math.round(pps) + ' pps'
+}
+
 function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput' }: TrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
@@ -66,6 +83,9 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const fmtValue = metric === 'packets' ? formatPps : formatBandwidth
   const fmtValueRef = useRef(fmtValue)
   fmtValueRef.current = fmtValue
+  const fmtAxisValue = metric === 'packets' ? formatPpsAxis : formatBandwidthAxis
+  const fmtAxisValueRef = useRef(fmtAxisValue)
+  fmtAxisValueRef.current = fmtAxisValue
   const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
@@ -512,8 +532,12 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           stroke: axisStroke,
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
-          size: 60,
-          values: (_u, vals) => vals.map(v => fmtValueRef.current(bidirectional ? Math.abs(v) : v)),
+          size: (_u, values) => {
+            if (!values || values.length === 0) return 80
+            const maxLen = Math.max(...values.map(v => (v || '').length))
+            return Math.max(50, maxLen * 8 + 16)
+          },
+          values: (_u, vals) => vals.map(v => fmtAxisValueRef.current(bidirectional ? Math.abs(v) : v)),
         },
       ],
       cursor: {
