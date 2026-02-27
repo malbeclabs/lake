@@ -512,6 +512,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           stroke: axisStroke,
           grid: { stroke: 'rgba(128,128,128,0.06)' },
           ticks: { stroke: 'rgba(128,128,128,0.1)' },
+          size: 60,
           values: (_u, vals) => vals.map(v => fmtValueRef.current(bidirectional ? Math.abs(v) : v)),
         },
       ],

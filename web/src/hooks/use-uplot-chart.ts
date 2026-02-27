@@ -45,6 +45,7 @@ export function useUPlotChart({
         stroke: axisStroke,
         grid: { stroke: gridStroke },
         ticks: { stroke: tickStroke },
+        size: 60,
       },
     ]
 
