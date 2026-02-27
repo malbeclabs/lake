@@ -1,12 +1,13 @@
-import { useState, useMemo, useCallback, useRef } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info } from 'lucide-react'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info, Search } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
-import { fetchMulticastGroup, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, type MulticastMember } from '@/lib/api'
+import { fetchMulticastGroup, fetchMulticastGroupMembers, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { InlineFilter } from '@/components/inline-filter'
+import { Pagination } from '@/components/pagination'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -168,6 +169,46 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const legend = useChartLegend()
 
+  // Legend: resizable, searchable, sortable
+  const LEGEND_HEADER_HEIGHT = 60 // header + column headers + padding
+  const LEGEND_ROW_HEIGHT = 22
+  const LEGEND_HANDLE_HEIGHT = 12
+  const [legendMaxHeight, setLegendMaxHeight] = useState(256)
+  const legendContainerRef = useRef<HTMLDivElement>(null)
+  const [legendSearchExpanded, setLegendSearchExpanded] = useState(false)
+  const [legendSearchText, setLegendSearchText] = useState('')
+  const legendSearchInputRef = useRef<HTMLInputElement>(null)
+  const [legendSortBy, setLegendSortBy] = useState<'name' | 'value'>('value')
+  const [legendSortDir, setLegendSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const handleLegendResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = legendMaxHeight
+    const handleMouseMove = (e: MouseEvent) => {
+      const newHeight = Math.max(128, Math.min(640, startHeight + (e.clientY - startY)))
+      setLegendMaxHeight(newHeight)
+    }
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  const handleLegendResizeDoubleClick = () => {
+    if (legendMaxHeight <= 138) {
+      setLegendMaxHeight(256)
+    } else {
+      setLegendMaxHeight(128)
+    }
+  }
+
   // Notify parent of hovered member's device_pk
   const prevHoveredKey = useRef<string | null>(null)
   if (legend.hoveredSeries !== prevHoveredKey.current) {
@@ -206,17 +247,27 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
     return bestIdx
   }, [hoveredIdx, chartData, seriesKeys])
 
-  const displayValues = useMemo(() => {
+  // Latest values (last data point) — used for stable sort order
+  const latestValues = useMemo(() => {
     if (chartData.length === 0) return new Map<string, number>()
-    const row = effectiveIdx !== null && effectiveIdx < chartData.length
-      ? chartData[effectiveIdx]
-      : chartData[chartData.length - 1]
+    const row = chartData[chartData.length - 1]
     const map = new Map<string, number>()
     for (const key of seriesKeys) {
       map.set(key, (row[key] as number) ?? 0)
     }
     return map
-  }, [chartData, seriesKeys, effectiveIdx])
+  }, [chartData, seriesKeys])
+
+  // Display values (hovered or latest) — shown in legend Rate column
+  const displayValues = useMemo(() => {
+    if (effectiveIdx === null || chartData.length === 0) return latestValues
+    const row = chartData[effectiveIdx]
+    const map = new Map<string, number>()
+    for (const key of seriesKeys) {
+      map.set(key, (row[key] as number) ?? 0)
+    }
+    return map
+  }, [chartData, seriesKeys, effectiveIdx, latestValues])
 
   const hoveredTime = useMemo(() => {
     if (hoveredIdx === null || hoveredIdx >= chartData.length) return null
@@ -245,6 +296,42 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
 
   const fmtValue = metric === 'throughput' ? formatBps : formatPps
   const fmtAxis = (v: number) => formatAxisBps(v)
+
+  // Legend: filter by search text, then sort
+  const legendFilteredKeys = useMemo(() => {
+    let keys = seriesKeys
+    if (legendSearchText) {
+      const needle = legendSearchText.toLowerCase()
+      keys = keys.filter(key => {
+        const info = seriesInfo.get(key)
+        const ownerPk = info?.ownerPubkey ?? ''
+        const nodePk = info?.nodePubkey ?? ''
+        const code = info?.code ?? ''
+        return ownerPk.toLowerCase().includes(needle) ||
+          nodePk.toLowerCase().includes(needle) ||
+          code.toLowerCase().includes(needle) ||
+          key.toLowerCase().includes(needle)
+      })
+    }
+    const sorted = [...keys].sort((a, b) => {
+      if (legendSortBy === 'value') {
+        const va = latestValues.get(a) ?? 0
+        const vb = latestValues.get(b) ?? 0
+        return legendSortDir === 'desc' ? vb - va : va - vb
+      }
+      const infoA = seriesInfo.get(a)
+      const infoB = seriesInfo.get(b)
+      const labelA = infoA?.ownerPubkey ?? a
+      const labelB = infoB?.ownerPubkey ?? b
+      return legendSortDir === 'asc' ? labelA.localeCompare(labelB) : labelB.localeCompare(labelA)
+    })
+    return sorted
+  }, [seriesKeys, legendSearchText, legendSortBy, legendSortDir, seriesInfo, latestValues])
+
+  const legendHeight = useMemo(() => {
+    const contentHeight = LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
+    return Math.min(legendMaxHeight, contentHeight)
+  }, [legendMaxHeight, legendFilteredKeys.length])
 
   return (
     <div className="border border-border rounded-lg p-4 bg-card">
@@ -344,21 +431,56 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
             </ResponsiveContainer>
           </div>
           {seriesKeys.length > 0 && (
-            <div className="mt-2 text-xs">
-              <div className="flex items-center gap-4 px-1.5 py-0.5 text-muted-foreground font-medium">
-                <div className="w-2.5" />
-                <div className="flex-1 min-w-0 flex items-center gap-2">
-                  Owner
-                  <span className="font-normal flex items-center gap-1.5">
+            <div ref={legendContainerRef} className="relative mt-2" style={{ height: `${legendHeight}px` }}>
+              <div className="flex flex-col h-full text-xs">
+                {/* Sticky header */}
+                <div className="flex-none px-2 pt-2">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="text-xs font-medium whitespace-nowrap">
+                      Series ({legendFilteredKeys.length}/{seriesKeys.length})
+                    </div>
+                    {legendSearchExpanded ? (
+                      <div className="relative flex-1">
+                        <input
+                          ref={legendSearchInputRef}
+                          type="text"
+                          value={legendSearchText}
+                          onChange={(e) => setLegendSearchText(e.target.value)}
+                          onBlur={() => { if (!legendSearchText) setLegendSearchExpanded(false) }}
+                          placeholder="Filter by owner, node, device..."
+                          className="w-full px-1.5 py-0.5 pr-6 text-xs bg-transparent border-b border-border focus:outline-none focus:border-foreground placeholder:text-muted-foreground/60"
+                        />
+                        {legendSearchText && (
+                          <button
+                            onClick={() => { setLegendSearchText(''); legendSearchInputRef.current?.focus() }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
+                            aria-label="Clear search"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setLegendSearchExpanded(true); setTimeout(() => legendSearchInputRef.current?.focus(), 0) }}
+                        className="text-muted-foreground hover:text-foreground"
+                        aria-label="Search series"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <button
-                      className="hover:text-foreground transition-colors"
                       onClick={() => legend.setSelectedSeries(new Set())}
-                    >all</button>
-                    {' / '}
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      All
+                    </button>
                     <button
-                      className="hover:text-foreground transition-colors"
                       onClick={() => legend.setSelectedSeries(new Set(['__none__']))}
-                    >none</button>
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      None
+                    </button>
                     <div className="relative group flex-shrink-0">
                       <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
                       <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
@@ -368,44 +490,75 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
                         </div>
                       </div>
                     </div>
-                  </span>
-                </div>
-                <div className="w-20 text-right whitespace-nowrap">Node</div>
-                <div className="w-20 text-right">Rate</div>
-              </div>
-              {seriesKeys.map((key, i) => {
-                const info = seriesInfo.get(key)
-                const val = displayValues.get(key)
-                const opacity = legend.getOpacity(key)
-                const isSelected = legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
-                const ownerLabel = info?.ownerPubkey
-                  ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
-                  : key.split('_')[0].slice(0, 8)
-                const nodeLabel = info?.nodePubkey
-                  ? `${info.nodePubkey.slice(0, 4)}..${info.nodePubkey.slice(-4)}`
-                  : '—'
-                return (
-                  <div
-                    key={key}
-                    className="flex items-center gap-4 px-1.5 py-0.5 rounded cursor-pointer select-none transition-opacity hover:bg-muted/60"
-                    style={{ opacity: Math.max(opacity, 0.3) }}
-                    onClick={(e) => legend.handleClick(key, e)}
-                    onMouseEnter={() => legend.handleMouseEnter(key)}
-                    onMouseLeave={() => legend.handleMouseLeave()}
-                  >
-                    <div
-                      className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors"
-                      style={{ backgroundColor: isSelected ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] : 'var(--border)' }}
-                    />
-                    <div className="flex-1 min-w-0 text-foreground truncate font-mono">
-                      {ownerLabel}
-                      <span className="text-muted-foreground ml-2">{info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}</span>
-                    </div>
-                    <div className="w-20 text-right tabular-nums font-mono text-muted-foreground">{nodeLabel}</div>
-                    <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
                   </div>
-                )
-              })}
+                  {/* Column headers */}
+                  <div className="flex items-center gap-4 px-1 mb-1">
+                    <div className="w-2.5" />
+                    <button
+                      onClick={() => { setLegendSortBy('name'); setLegendSortDir(legendSortBy === 'name' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
+                      className="flex-1 min-w-0 flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
+                    >
+                      Owner
+                      {legendSortBy === 'name' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                    </button>
+                    <div className="w-20 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">Node</div>
+                    <button
+                      onClick={() => { setLegendSortBy('value'); setLegendSortDir(legendSortBy === 'value' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
+                      className="w-20 flex items-center justify-end gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
+                    >
+                      Rate
+                      {legendSortBy === 'value' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                    </button>
+                  </div>
+                </div>
+                {/* Scrollable items */}
+                <div className="flex-1 overflow-y-auto px-2 pb-2">
+                  <div className="space-y-0.5">
+                    {legendFilteredKeys.map((key) => {
+                      const i = seriesKeys.indexOf(key)
+                      const info = seriesInfo.get(key)
+                      const val = displayValues.get(key)
+                      const opacity = legend.getOpacity(key)
+                      const isSelected = legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
+                      const ownerLabel = info?.ownerPubkey
+                        ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
+                        : key.split('_')[0].slice(0, 8)
+                      const nodeLabel = info?.nodePubkey
+                        ? `${info.nodePubkey.slice(0, 4)}..${info.nodePubkey.slice(-4)}`
+                        : '—'
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center gap-4 px-1 py-0.5 rounded cursor-pointer select-none transition-opacity hover:bg-muted/60"
+                          style={{ opacity: Math.max(opacity, 0.3) }}
+                          onClick={(e) => legend.handleClick(key, e)}
+                          onMouseEnter={() => legend.handleMouseEnter(key)}
+                          onMouseLeave={() => legend.handleMouseLeave()}
+                        >
+                          <div
+                            className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors"
+                            style={{ backgroundColor: isSelected ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] : 'var(--border)' }}
+                          />
+                          <div className="flex-1 min-w-0 text-foreground truncate font-mono">
+                            {ownerLabel}
+                            <span className="text-muted-foreground ml-2">{info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}</span>
+                          </div>
+                          <div className="w-20 text-right tabular-nums font-mono text-muted-foreground">{nodeLabel}</div>
+                          <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              {/* Resize handle */}
+              <div
+                onMouseDown={handleLegendResizeStart}
+                onDoubleClick={handleLegendResizeDoubleClick}
+                className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-muted transition-colors flex items-center justify-center"
+              >
+                <div className="w-12 h-1 bg-border rounded-full" />
+              </div>
             </div>
           )}
         </div>
@@ -608,6 +761,9 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
 type MemberSortField = 'owner_pubkey' | 'node_pubkey' | 'device_code' | 'metro_name' | 'dz_ip' | 'tunnel_id' | 'stake_sol' | 'leader_schedule'
 type SortDirection = 'asc' | 'desc'
 
+const DEFAULT_PAGE_SIZE = 10
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+
 const validMemberFilterFields = ['device', 'metro', 'owner']
 
 const memberFieldPrefixes = [
@@ -655,6 +811,10 @@ export function MulticastGroupDetailPage() {
   const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as 'publishers' | 'subscribers'
   const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
+  const page = parseInt(searchParams.get('page') || '1')
+  const pageSizeParam = parseInt(searchParams.get('limit') || '0')
+  const pageSize = PAGE_SIZE_OPTIONS.includes(pageSizeParam) ? pageSizeParam : DEFAULT_PAGE_SIZE
+  const offset = (page - 1) * pageSize
   const [liveFilter, setLiveFilter] = useState('')
   const [hoveredSeriesKey, setHoveredSeriesKey] = useState<string | null>(null)
 
@@ -662,6 +822,35 @@ export function MulticastGroupDetailPage() {
     setSearchParams(prev => {
       const p = new URLSearchParams(prev)
       if (tab === 'publishers') { p.delete('tab') } else { p.set('tab', tab) }
+      p.delete('page') // Reset to page 1
+      return p
+    })
+  }, [setSearchParams])
+
+  const setOffset = useCallback((newOffset: number) => {
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      const curSize = parseInt(newParams.get('limit') || '0')
+      const effectiveSize = PAGE_SIZE_OPTIONS.includes(curSize) ? curSize : DEFAULT_PAGE_SIZE
+      const newPage = Math.floor(newOffset / effectiveSize) + 1
+      if (newPage <= 1) {
+        newParams.delete('page')
+      } else {
+        newParams.set('page', String(newPage))
+      }
+      return newParams
+    })
+  }, [setSearchParams])
+
+  const setPageSize = useCallback((size: number) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (size === DEFAULT_PAGE_SIZE) {
+        p.delete('limit')
+      } else {
+        p.set('limit', String(size))
+      }
+      p.delete('page') // Reset to page 1
       return p
     })
   }, [setSearchParams])
@@ -687,6 +876,7 @@ export function MulticastGroupDetailPage() {
         p.set('sort', newField)
         p.set('dir', newDir)
       }
+      p.delete('page') // Reset to page 1
       return p
     })
   }
@@ -708,6 +898,11 @@ export function MulticastGroupDetailPage() {
   const searchFilters = parseMemberSearchFilters(searchParam)
   const allFilters = liveFilter ? [...searchFilters, liveFilter] : searchFilters
 
+  // First filter is sent server-side, rest applied client-side
+  const serverFilterRaw = allFilters[0] || ''
+  const serverFilter = serverFilterRaw ? parseMemberFilter(serverFilterRaw) : null
+  const clientFilters = allFilters.slice(1)
+
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
     setSearchParams(prev => {
@@ -717,6 +912,7 @@ export function MulticastGroupDetailPage() {
       } else {
         newParams.set('search', newFilters.join(','))
       }
+      newParams.delete('page') // Reset to page 1
       return newParams
     })
   }, [searchFilters, setSearchParams])
@@ -725,99 +921,89 @@ export function MulticastGroupDetailPage() {
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('search')
+      newParams.delete('page')
       return newParams
     })
   }, [setSearchParams])
 
-  const { data: group, isLoading, error } = useQuery({
+  // Reset page when filters change
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
+  useEffect(() => {
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
+    setSearchParams(prev => {
+      const newParams = new URLSearchParams(prev)
+      newParams.delete('page')
+      return newParams
+    })
+  }, [allFilters, setSearchParams])
+
+  // Group metadata query
+  const { data: group, isLoading: groupLoading, error: groupError } = useQuery({
     queryKey: ['multicast-group', pk],
     queryFn: () => fetchMulticastGroup(pk!),
     enabled: !!pk,
     refetchInterval: 30000,
   })
 
+  // Members query (server-side pagination)
+  const { data: membersResponse, isLoading: membersLoading, isFetching: membersFetching } = useQuery({
+    queryKey: ['multicast-group-members', pk, activeTab, offset, pageSize, sortField, sortDirection, serverFilterRaw],
+    queryFn: () => fetchMulticastGroupMembers(
+      pk!,
+      pageSize,
+      offset,
+      sortField,
+      sortDirection,
+      activeTab,
+      serverFilter?.field,
+      serverFilter?.value
+    ),
+    enabled: !!pk,
+    refetchInterval: 30000,
+    placeholderData: keepPreviousData,
+  })
+
   useDocumentTitle(group?.code || 'Multicast Group')
 
-  const publishers = useMemo(() =>
-    group?.members.filter(m => m.mode === 'P' || m.mode === 'P+S') ?? [],
-    [group]
-  )
+  const publisherCount = membersResponse?.publisher_count ?? 0
+  const subscriberCount = membersResponse?.subscriber_count ?? 0
 
-  const subscribers = useMemo(() =>
-    group?.members.filter(m => m.mode === 'S' || m.mode === 'P+S') ?? [],
-    [group]
-  )
-
+  // Apply client-side filters (filters beyond the first)
   const activeMembers = useMemo(() => {
-    const members = activeTab === 'publishers' ? publishers : subscribers
+    const members = membersResponse?.items ?? []
+    if (clientFilters.length === 0) return members
 
-    // Filter
-    const filtered = allFilters.length === 0 ? members : (() => {
-      const matchesSingleFilter = (member: MulticastMember, filterRaw: string): boolean => {
-        const filter = parseMemberFilter(filterRaw)
-        const needle = filter.value.trim().toLowerCase()
-        if (!needle) return true
+    const matchesSingleFilter = (member: MulticastMember, filterRaw: string): boolean => {
+      const filter = parseMemberFilter(filterRaw)
+      const needle = filter.value.trim().toLowerCase()
+      if (!needle) return true
 
-        if (filter.field === 'all') {
-          const textFields = ['device', 'metro', 'owner']
-          return textFields.some(f => getMemberSearchValue(member, f).toLowerCase().includes(needle))
-        }
-
-        return getMemberSearchValue(member, filter.field).toLowerCase().includes(needle)
+      if (filter.field === 'all') {
+        const textFields = ['device', 'metro', 'owner']
+        return textFields.some(f => getMemberSearchValue(member, f).toLowerCase().includes(needle))
       }
 
-      // Group filters by field: OR within same field, AND across different fields
-      const grouped = new Map<string, string[]>()
-      for (const f of allFilters) {
-        const { field } = parseMemberFilter(f)
-        const existing = grouped.get(field) ?? []
-        existing.push(f)
-        grouped.set(field, existing)
-      }
-      return members.filter(member =>
-        Array.from(grouped.values()).every(group =>
-          group.some(f => matchesSingleFilter(member, f))
-        )
+      return getMemberSearchValue(member, filter.field).toLowerCase().includes(needle)
+    }
+
+    // Group filters by field: OR within same field, AND across different fields
+    const grouped = new Map<string, string[]>()
+    for (const f of clientFilters) {
+      const { field } = parseMemberFilter(f)
+      const existing = grouped.get(field) ?? []
+      existing.push(f)
+      grouped.set(field, existing)
+    }
+    return members.filter(member =>
+      Array.from(grouped.values()).every(group =>
+        group.some(f => matchesSingleFilter(member, f))
       )
-    })()
+    )
+  }, [membersResponse, clientFilters])
 
-    // Sort
-    return [...filtered].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'owner_pubkey':
-          cmp = (a.owner_pubkey || '').localeCompare(b.owner_pubkey || '')
-          break
-        case 'node_pubkey':
-          cmp = (a.node_pubkey || '').localeCompare(b.node_pubkey || '')
-          break
-        case 'device_code':
-          cmp = (a.device_code || a.device_pk).localeCompare(b.device_code || b.device_pk)
-          break
-        case 'metro_name':
-          cmp = (a.metro_name || a.metro_code).localeCompare(b.metro_name || b.metro_code)
-          break
-        case 'dz_ip':
-          cmp = (a.dz_ip || '').localeCompare(b.dz_ip || '')
-          break
-        case 'tunnel_id':
-          cmp = a.tunnel_id - b.tunnel_id
-          break
-        case 'stake_sol':
-          cmp = a.stake_sol - b.stake_sol
-          break
-        case 'leader_schedule': {
-          const aSlot = a.next_leader_slot ?? Infinity
-          const bSlot = b.next_leader_slot ?? Infinity
-          cmp = aSlot - bSlot
-          break
-        }
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-  }, [activeTab, publishers, subscribers, allFilters, sortField, sortDirection])
-
-  if (isLoading) {
+  if (groupLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -825,7 +1011,7 @@ export function MulticastGroupDetailPage() {
     )
   }
 
-  if (error || !group) {
+  if (groupError || !group) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
@@ -904,7 +1090,7 @@ export function MulticastGroupDetailPage() {
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
-              Publishers ({publishers.length})
+              Publishers ({publisherCount})
             </button>
             <button
               onClick={() => setActiveTab('subscribers')}
@@ -914,8 +1100,13 @@ export function MulticastGroupDetailPage() {
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
-              Subscribers ({subscribers.length})
+              Subscribers ({subscriberCount})
             </button>
+            {membersFetching && (
+              <div className="flex items-center ml-2">
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              </div>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -972,6 +1163,13 @@ export function MulticastGroupDetailPage() {
                 </tr>
               </thead>
               <tbody>
+                {membersLoading && !membersResponse && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                      <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+                    </td>
+                  </tr>
+                )}
                 {activeMembers.map((member) => (
                   <tr
                     key={member.user_pk}
@@ -1044,7 +1242,7 @@ export function MulticastGroupDetailPage() {
                     </td>
                   </tr>
                 ))}
-                {activeMembers.length === 0 && (
+                {!membersLoading && activeMembers.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                       No {activeTab} found
@@ -1054,13 +1252,23 @@ export function MulticastGroupDetailPage() {
               </tbody>
             </table>
           </div>
+          {membersResponse && (
+            <Pagination
+              total={membersResponse.total}
+              limit={pageSize}
+              offset={offset}
+              onOffsetChange={setOffset}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageSizeChange={setPageSize}
+            />
+          )}
         </div>
 
-        {/* Traffic chart */}
-        {pk && group.members.length > 0 && (
+        {/* Traffic chart — uses all members (not just current page) for series labels */}
+        {pk && group && group.members.length > 0 && (
           <MulticastTrafficChart
             groupCode={pk}
-            members={activeMembers}
+            members={group.members}
             activeTab={activeTab}
             onHoverMember={setHoveredSeriesKey}
           />

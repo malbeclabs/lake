@@ -168,14 +168,13 @@ type MulticastMember struct {
 }
 
 type MulticastGroupDetail struct {
-	PK              string            `json:"pk"`
-	Code            string            `json:"code"`
-	MulticastIP     string            `json:"multicast_ip"`
-	MaxBandwidth    uint64            `json:"max_bandwidth"`
-	Status          string            `json:"status"`
-	PublisherCount  uint32            `json:"publisher_count"`
-	SubscriberCount uint32            `json:"subscriber_count"`
-	Members         []MulticastMember `json:"members"`
+	PK              string `json:"pk"`
+	Code            string `json:"code"`
+	MulticastIP     string `json:"multicast_ip"`
+	MaxBandwidth    uint64 `json:"max_bandwidth"`
+	Status          string `json:"status"`
+	PublisherCount  uint32 `json:"publisher_count"`
+	SubscriberCount uint32 `json:"subscriber_count"`
 }
 
 func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +189,6 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// First get the group details (accept pk or code)
 	groupQuery := `
 		SELECT
 			pk,
@@ -214,50 +212,204 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		&group.PublisherCount,
 		&group.SubscriberCount,
 	)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
 	if err != nil {
 		log.Printf("MulticastGroup query error: %v", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
 
-	// Now get all members (users who publish or subscribe to this group)
-	// Users have publishers and subscribers columns as JSON arrays of group PKs
-	membersQuery := `
-		SELECT
-			u.pk as user_pk,
-			CASE
-				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) AND has(JSONExtract(u.subscribers, 'Array(String)'), ?) THEN 'P+S'
-				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) THEN 'P'
-				ELSE 'S'
-			END as mode,
-			COALESCE(u.device_pk, '') as device_pk,
-			COALESCE(d.code, '') as device_code,
-			COALESCE(d.metro_pk, '') as metro_pk,
-			COALESCE(m.code, '') as metro_code,
-			COALESCE(m.name, '') as metro_name,
-			COALESCE(u.client_ip, '') as client_ip,
-			COALESCE(u.dz_ip, '') as dz_ip,
-			u.status,
-			COALESCE(u.owner_pubkey, '') as owner_pubkey,
-			COALESCE(u.tunnel_id, 0) as tunnel_id
-		FROM dz_users_current u
-		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
-		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		WHERE u.status = 'activated'
-			AND u.kind = 'multicast'
-			AND (
-				has(JSONExtract(u.publishers, 'Array(String)'), ?)
-				OR has(JSONExtract(u.subscribers, 'Array(String)'), ?)
-			)
-		ORDER BY mode DESC, d.code
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(group); err != nil {
+		log.Printf("JSON encoding error: %v", err)
+	}
+}
+
+// MulticastMembersResponse is the paginated response for multicast group members
+type MulticastMembersResponse struct {
+	Items           []MulticastMember `json:"items"`
+	Total           int               `json:"total"`
+	PublisherCount  int               `json:"publisher_count"`
+	SubscriberCount int               `json:"subscriber_count"`
+	Limit           int               `json:"limit"`
+	Offset          int               `json:"offset"`
+}
+
+var multicastMemberSortFields = map[string]string{
+	"owner_pubkey":    "owner_pubkey",
+	"node_pubkey":     "node_pubkey",
+	"device_code":     "device_code",
+	"metro_name":      "metro_name",
+	"dz_ip":           "dz_ip",
+	"tunnel_id":       "tunnel_id",
+	"stake_sol":       "stake_sol",
+	"leader_schedule": "next_leader_slot",
+}
+
+var multicastMemberFilterFields = map[string]FilterFieldConfig{
+	"device": {Column: "device_code", Type: FieldTypeText},
+	"metro":  {Column: "metro_name", Type: FieldTypeText},
+	"owner":  {Column: "owner_pubkey", Type: FieldTypeText},
+	"all":    {Column: "", Type: FieldTypeText}, // handled specially in BuildFilterClause
+}
+
+func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+
+	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "stake_sol", multicastMemberSortFields)
+	filter := ParseFilter(r)
+	tab := r.URL.Query().Get("tab")
+	if tab != "publishers" && tab != "subscribers" {
+		tab = "publishers"
+	}
+
+	start := time.Now()
+
+	// Resolve group PK
+	var groupPK string
+	err := envDB(ctx).QueryRow(ctx,
+		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if err != nil {
+		log.Printf("MulticastGroupMembers group query error: %v", err)
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
+
+	// Build base CTE with all joins integrated
+	baseCTE := `
+		WITH current_slot_info AS (
+			SELECT max(cluster_slot) as slot
+			FROM fact_solana_vote_account_activity
+			WHERE event_ts >= now() - INTERVAL 2 MINUTE
+		),
+		epoch_info AS (
+			SELECT
+				toUInt64(cs.slot) as abs_slot,
+				ls.epoch as epoch,
+				toUInt64(ls.epoch) * 432000 as epoch_start,
+				toUInt64(cs.slot) - (toUInt64(ls.epoch) * 432000) as slot_in_epoch
+			FROM solana_leader_schedule_current ls
+			CROSS JOIN current_slot_info cs
+			LIMIT 1
+		),
+		members_base AS (
+			SELECT
+				u.pk as user_pk,
+				CASE
+					WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) AND has(JSONExtract(u.subscribers, 'Array(String)'), ?) THEN 'P+S'
+					WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) THEN 'P'
+					ELSE 'S'
+				END as mode,
+				has(JSONExtract(u.publishers, 'Array(String)'), ?) as is_publisher,
+				has(JSONExtract(u.subscribers, 'Array(String)'), ?) as is_subscriber,
+				COALESCE(u.device_pk, '') as device_pk,
+				COALESCE(d.code, '') as device_code,
+				COALESCE(d.metro_pk, '') as metro_pk,
+				COALESCE(m.code, '') as metro_code,
+				COALESCE(m.name, '') as metro_name,
+				COALESCE(u.client_ip, '') as client_ip,
+				COALESCE(u.dz_ip, '') as dz_ip,
+				u.status as status,
+				COALESCE(u.owner_pubkey, '') as owner_pubkey,
+				COALESCE(u.tunnel_id, 0) as tunnel_id,
+				COALESCE(g.pubkey, '') as node_pubkey,
+				COALESCE(v.vote_pubkey, '') as vote_pubkey,
+				COALESCE(v.activated_stake_lamports, 0) / 1e9 as stake_sol,
+				COALESCE(ls.next_slot, 0) as next_leader_slot
+			FROM dz_users_current u
+			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
+			LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
+			LEFT JOIN (
+				SELECT
+					node_pubkey,
+					if(empty(arrayFilter(x -> x > ei.slot_in_epoch, JSONExtract(slots, 'Array(UInt64)'))), 0,
+						ei.epoch_start + arrayMin(arrayFilter(x -> x > ei.slot_in_epoch, JSONExtract(slots, 'Array(UInt64)'))
+					)) as next_slot
+				FROM solana_leader_schedule_current
+				CROSS JOIN epoch_info ei
+			) ls ON g.pubkey = ls.node_pubkey
+			WHERE u.status = 'activated'
+				AND u.kind = 'multicast'
+				AND (
+					has(JSONExtract(u.publishers, 'Array(String)'), ?)
+					OR has(JSONExtract(u.subscribers, 'Array(String)'), ?)
+				)
+		)
 	`
 
-	rows, err := envDB(ctx).Query(ctx, membersQuery, group.PK, group.PK, group.PK, group.PK, group.PK)
+	// Group PK appears 7 times in the base CTE
+	baseArgs := []any{groupPK, groupPK, groupPK, groupPK, groupPK, groupPK, groupPK}
+
+	// Tab filter: publishers tab shows P and P+S, subscribers tab shows S and P+S
+	tabFilter := ""
+	if tab == "publishers" {
+		tabFilter = " AND is_publisher = 1"
+	} else {
+		tabFilter = " AND is_subscriber = 1"
+	}
+
+	// Build filter clause
+	filterClause, filterArgs := filter.BuildFilterClause(multicastMemberFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
+	}
+
+	// Count queries: total for current tab+filter, and counts for both tabs
+	countQuery := baseCTE + `SELECT count(*) FROM members_base WHERE 1=1` + tabFilter + whereFilter
+	countArgs := append(append([]any{}, baseArgs...), filterArgs...)
+
+	pubCountQuery := baseCTE + `SELECT count(*) FROM members_base WHERE is_publisher = 1` + whereFilter
+	pubCountArgs := append(append([]any{}, baseArgs...), filterArgs...)
+
+	subCountQuery := baseCTE + `SELECT count(*) FROM members_base WHERE is_subscriber = 1` + whereFilter
+	subCountArgs := append(append([]any{}, baseArgs...), filterArgs...)
+
+	var total, pubCount, subCount uint64
+	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+		log.Printf("MulticastGroupMembers count error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := envDB(ctx).QueryRow(ctx, pubCountQuery, pubCountArgs...).Scan(&pubCount); err != nil {
+		log.Printf("MulticastGroupMembers pub count error (non-fatal): %v", err)
+	}
+	if err := envDB(ctx).QueryRow(ctx, subCountQuery, subCountArgs...).Scan(&subCount); err != nil {
+		log.Printf("MulticastGroupMembers sub count error (non-fatal): %v", err)
+	}
+
+	// Main data query with sorting and pagination
+	orderBy := sort.OrderByClause(multicastMemberSortFields)
+	dataQuery := baseCTE + `
+		SELECT user_pk, mode, device_pk, device_code, metro_pk, metro_code, metro_name,
+			client_ip, dz_ip, status, owner_pubkey, tunnel_id, node_pubkey, vote_pubkey, stake_sol, next_leader_slot
+		FROM members_base
+		WHERE 1=1` + tabFilter + whereFilter + `
+		` + orderBy + `
+		LIMIT ? OFFSET ?
+	`
+
+	dataArgs := append(append([]any{}, baseArgs...), filterArgs...)
+	dataArgs = append(dataArgs, pagination.Limit, pagination.Offset)
+
+	rows, err := envDB(ctx).Query(ctx, dataQuery, dataArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("MulticastGroup members query error: %v", err)
+		log.Printf("MulticastGroupMembers data query error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -266,41 +418,37 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	var members []MulticastMember
 	for rows.Next() {
 		var m MulticastMember
+		var nextLeaderSlot uint64
 		if err := rows.Scan(
-			&m.UserPK,
-			&m.Mode,
-			&m.DevicePK,
-			&m.DeviceCode,
-			&m.MetroPK,
-			&m.MetroCode,
-			&m.MetroName,
-			&m.ClientIP,
-			&m.DZIP,
-			&m.Status,
-			&m.OwnerPubkey,
-			&m.TunnelID,
+			&m.UserPK, &m.Mode, &m.DevicePK, &m.DeviceCode,
+			&m.MetroPK, &m.MetroCode, &m.MetroName,
+			&m.ClientIP, &m.DZIP, &m.Status, &m.OwnerPubkey,
+			&m.TunnelID, &m.NodePubkey, &m.VotePubkey, &m.StakeSol,
+			&nextLeaderSlot,
 		); err != nil {
-			log.Printf("MulticastGroup members scan error: %v", err)
+			log.Printf("MulticastGroupMembers scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		if nextLeaderSlot > 0 {
+			s := int64(nextLeaderSlot)
+			m.NextLeaderSlot = &s
 		}
 		members = append(members, m)
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("MulticastGroup members rows error: %v", err)
+		log.Printf("MulticastGroupMembers rows error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Return empty array instead of null
 	if members == nil {
 		members = []MulticastMember{}
 	}
 
-	// Enrich members with traffic rates from interface counters
+	// Enrich paginated members with traffic rates
 	if len(members) > 0 {
-		// Build a map of (device_pk, tunnel_id) -> member index for matching
 		type tunnelKey struct {
 			devicePK string
 			tunnelID int64
@@ -313,9 +461,6 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Get latest traffic rate per user tunnel from the last 5 minutes
-		// Return in/out separately so we can show the relevant direction per member mode:
-		// Publishers send into the device (in_octets), subscribers receive from the device (out_octets)
 		trafficQuery := `
 			SELECT
 				device_pk,
@@ -333,7 +478,7 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 
 		trafficRows, err := envDB(ctx).Query(ctx, trafficQuery)
 		if err != nil {
-			log.Printf("MulticastGroup traffic query error (non-fatal): %v", err)
+			log.Printf("MulticastGroupMembers traffic query error (non-fatal): %v", err)
 		} else {
 			defer trafficRows.Close()
 			for trafficRows.Next() {
@@ -341,14 +486,12 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 				var tunnelID int64
 				var inBps, outBps, inPps, outPps float64
 				if err := trafficRows.Scan(&devicePK, &tunnelID, &inBps, &outBps, &inPps, &outPps); err != nil {
-					log.Printf("MulticastGroup traffic scan error: %v", err)
+					log.Printf("MulticastGroupMembers traffic scan error: %v", err)
 					continue
 				}
 				key := tunnelKey{devicePK, tunnelID}
 				if indices, ok := tunnelToMembers[key]; ok {
 					for _, idx := range indices {
-						// Publishers: traffic into the device (in = validator sending shreds)
-						// Subscribers: traffic out of the device (out = device forwarding to subscriber)
 						if members[idx].Mode == "P" || members[idx].Mode == "P+S" {
 							members[idx].TrafficBps = inBps
 							members[idx].TrafficPps = inPps
@@ -362,9 +505,8 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Enrich publishers with validator identity and leader schedule data
+	// Enrich publishers with leader schedule timing (last_leader_slot, is_leader, current_slot)
 	if len(members) > 0 {
-		// Collect client IPs of publishers (gossip_ip matches client_ip, not dz_ip)
 		clientIPToMembers := make(map[string][]int)
 		for i, m := range members {
 			if (m.Mode == "P" || m.Mode == "P+S") && m.ClientIP != "" {
@@ -378,41 +520,6 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 				clientIPs = append(clientIPs, ip)
 			}
 
-			// First, resolve node_pubkey + vote/stake for all publishers via gossip + vote accounts
-			// This works even for validators without leader slots in the current epoch
-			gossipQuery := `
-				SELECT
-					g.gossip_ip,
-					g.pubkey,
-					COALESCE(v.vote_pubkey, '') as vote_pubkey,
-					COALESCE(v.activated_stake_lamports, 0) / 1e9 as stake_sol
-				FROM solana_gossip_nodes_current g
-				LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-				WHERE g.gossip_ip IN (?)
-			`
-			gossipRows, err := envDB(ctx).Query(ctx, gossipQuery, clientIPs)
-			if err != nil {
-				log.Printf("MulticastGroup gossip query error (non-fatal): %v", err)
-			} else {
-				defer gossipRows.Close()
-				for gossipRows.Next() {
-					var gossipIP, pubkey, votePubkey string
-					var stakeSol float64
-					if err := gossipRows.Scan(&gossipIP, &pubkey, &votePubkey, &stakeSol); err != nil {
-						log.Printf("MulticastGroup gossip scan error: %v", err)
-						continue
-					}
-					if indices, ok := clientIPToMembers[gossipIP]; ok {
-						for _, idx := range indices {
-							members[idx].NodePubkey = pubkey
-							members[idx].VotePubkey = votePubkey
-							members[idx].StakeSol = stakeSol
-						}
-					}
-				}
-			}
-
-			// Then layer on leader schedule timing for those with leader slots
 			leaderQuery := `
 				WITH current AS (
 					SELECT max(cluster_slot) as slot
@@ -431,13 +538,10 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 				)
 				SELECT
 					g.gossip_ip as client_ip,
-					ls.node_pubkey,
 					ei.abs_slot as current_slot,
 					has(JSONExtract(ls.slots, 'Array(UInt64)'), ei.slot_in_epoch) as is_leader,
 					if(empty(arrayFilter(x -> x <= ei.slot_in_epoch, JSONExtract(ls.slots, 'Array(UInt64)'))), 0,
-						ei.epoch_start + arrayMax(arrayFilter(x -> x <= ei.slot_in_epoch, JSONExtract(ls.slots, 'Array(UInt64)')))) as last_leader_slot,
-					if(empty(arrayFilter(x -> x > ei.slot_in_epoch, JSONExtract(ls.slots, 'Array(UInt64)'))), 0,
-						ei.epoch_start + arrayMin(arrayFilter(x -> x > ei.slot_in_epoch, JSONExtract(ls.slots, 'Array(UInt64)')))) as next_leader_slot
+						ei.epoch_start + arrayMax(arrayFilter(x -> x <= ei.slot_in_epoch, JSONExtract(ls.slots, 'Array(UInt64)')))) as last_leader_slot
 				FROM solana_leader_schedule_current ls
 				JOIN solana_gossip_nodes_current g ON g.pubkey = ls.node_pubkey
 				CROSS JOIN epoch_info ei
@@ -446,16 +550,16 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 
 			leaderRows, err := envDB(ctx).Query(ctx, leaderQuery, clientIPs)
 			if err != nil {
-				log.Printf("MulticastGroup leader query error (non-fatal): %v", err)
+				log.Printf("MulticastGroupMembers leader query error (non-fatal): %v", err)
 			} else {
 				defer leaderRows.Close()
 				for leaderRows.Next() {
-					var clientIP, nodePubkey string
+					var clientIP string
 					var currentSlot uint64
 					var isLeader uint8
-					var lastSlot, nextSlot uint64
-					if err := leaderRows.Scan(&clientIP, &nodePubkey, &currentSlot, &isLeader, &lastSlot, &nextSlot); err != nil {
-						log.Printf("MulticastGroup leader scan error: %v", err)
+					var lastSlot uint64
+					if err := leaderRows.Scan(&clientIP, &currentSlot, &isLeader, &lastSlot); err != nil {
+						log.Printf("MulticastGroupMembers leader scan error: %v", err)
 						continue
 					}
 					if indices, ok := clientIPToMembers[clientIP]; ok {
@@ -466,10 +570,6 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 								s := int64(lastSlot)
 								members[idx].LastLeaderSlot = &s
 							}
-							if nextSlot > 0 {
-								s := int64(nextSlot)
-								members[idx].NextLeaderSlot = &s
-							}
 						}
 					}
 				}
@@ -477,10 +577,17 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	group.Members = members
+	response := MulticastMembersResponse{
+		Items:           members,
+		Total:           int(total),
+		PublisherCount:  int(pubCount),
+		SubscriberCount: int(subCount),
+		Limit:           pagination.Limit,
+		Offset:          pagination.Offset,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(group); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("JSON encoding error: %v", err)
 	}
 }

@@ -5,9 +5,11 @@ interface PaginationProps {
   limit: number
   offset: number
   onOffsetChange: (offset: number) => void
+  pageSizeOptions?: number[]
+  onPageSizeChange?: (size: number) => void
 }
 
-export function Pagination({ total, limit, offset, onOffsetChange }: PaginationProps) {
+export function Pagination({ total, limit, offset, onOffsetChange, pageSizeOptions, onPageSizeChange }: PaginationProps) {
   const currentPage = Math.floor(offset / limit) + 1
   const totalPages = Math.ceil(total / limit)
   const startItem = offset + 1
@@ -25,8 +27,19 @@ export function Pagination({ total, limit, offset, onOffsetChange }: PaginationP
 
   return (
     <div className="flex items-center justify-between px-4 py-3 border-t border-border">
-      <div className="text-sm text-muted-foreground">
-        Showing {startItem.toLocaleString()} - {endItem.toLocaleString()} of {total.toLocaleString()}
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <span>Showing {startItem.toLocaleString()} - {endItem.toLocaleString()} of {total.toLocaleString()}</span>
+        {pageSizeOptions && onPageSizeChange && (
+          <select
+            value={limit}
+            onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            className="bg-background border border-border rounded px-1.5 py-0.5 text-sm text-foreground"
+          >
+            {pageSizeOptions.map(size => (
+              <option key={size} value={size}>{size} / page</option>
+            ))}
+          </select>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <button

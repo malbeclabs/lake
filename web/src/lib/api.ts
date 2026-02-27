@@ -1814,6 +1814,11 @@ export interface MulticastGroupDetail extends MulticastGroupListItem {
   members: MulticastMember[]
 }
 
+export interface MulticastMembersResponse extends PaginatedResponse<MulticastMember> {
+  publisher_count: number
+  subscriber_count: number
+}
+
 export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> {
   const res = await apiFetch('/api/dz/multicast-groups')
   if (!res.ok) {
@@ -1823,9 +1828,55 @@ export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> 
 }
 
 export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGroupDetail> {
-  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}`)
-  if (!res.ok) {
+  const encoded = encodeURIComponent(pkOrCode)
+  const [groupRes, pubRes, subRes] = await Promise.all([
+    apiFetch(`/api/dz/multicast-groups/${encoded}`),
+    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=publishers&limit=1000`),
+    apiFetch(`/api/dz/multicast-groups/${encoded}/members?tab=subscribers&limit=1000`),
+  ])
+  if (!groupRes.ok) {
     throw new Error('Failed to fetch multicast group')
+  }
+  const group = await groupRes.json() as MulticastGroupListItem
+  let members: MulticastMember[] = []
+  if (pubRes.ok) {
+    const pubData = await pubRes.json() as MulticastMembersResponse
+    members = pubData.items
+  }
+  if (subRes.ok) {
+    const subData = await subRes.json() as MulticastMembersResponse
+    // Add subscribers that aren't already in the list (P+S members appear in both)
+    const existingPKs = new Set(members.map(m => m.user_pk))
+    for (const m of subData.items) {
+      if (!existingPKs.has(m.user_pk)) {
+        members.push(m)
+      }
+    }
+  }
+  return { ...group, members }
+}
+
+export async function fetchMulticastGroupMembers(
+  pkOrCode: string,
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  tab?: string,
+  filterField?: string,
+  filterValue?: string
+): Promise<MulticastMembersResponse> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (tab) params.set('tab', tab)
+  if (filterValue) {
+    params.set('filter_field', filterField || 'all')
+    params.set('filter_value', filterValue)
+  }
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/members?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group members')
   }
   return res.json()
 }

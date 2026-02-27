@@ -112,7 +112,7 @@ func TestGetMulticastGroup_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
-func TestGetMulticastGroup_ReturnsMembers(t *testing.T) {
+func TestGetMulticastGroup_ReturnsMetadataOnly(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertMulticastTestData(t)
 
@@ -132,33 +132,62 @@ func TestGetMulticastGroup_ReturnsMembers(t *testing.T) {
 
 	assert.Equal(t, "test-group", detail.Code)
 	assert.Equal(t, "233.0.0.1", detail.MulticastIP)
-	require.Len(t, detail.Members, 2)
+}
 
-	// Find publisher and subscriber
-	var pub, sub *handlers.MulticastMember
-	for i := range detail.Members {
-		switch detail.Members[i].Mode {
-		case "P":
-			pub = &detail.Members[i]
-		case "S":
-			sub = &detail.Members[i]
-		}
-	}
+func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	insertMulticastTestData(t)
 
-	require.NotNil(t, pub, "should have a publisher member")
+	// Fetch publishers tab
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=publishers", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "test-group")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	handlers.GetMulticastGroupMembers(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.MulticastMembersResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, resp.PublisherCount)
+	assert.Equal(t, 1, resp.SubscriberCount)
+	require.Len(t, resp.Items, 1)
+
+	pub := resp.Items[0]
 	assert.Equal(t, "user-pub", pub.UserPK)
+	assert.Equal(t, "P", pub.Mode)
 	assert.Equal(t, "ams001-dz001", pub.DeviceCode)
 	assert.Equal(t, "ams", pub.MetroCode)
 	assert.Equal(t, int32(501), pub.TunnelID)
 
-	require.NotNil(t, sub, "should have a subscriber member")
+	// Fetch subscribers tab
+	req = httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=subscribers", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "test-group")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr = httptest.NewRecorder()
+	handlers.GetMulticastGroupMembers(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	err = json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+
+	sub := resp.Items[0]
 	assert.Equal(t, "user-sub", sub.UserPK)
+	assert.Equal(t, "S", sub.Mode)
 	assert.Equal(t, "nyc001-dz001", sub.DeviceCode)
 	assert.Equal(t, "nyc", sub.MetroCode)
 	assert.Equal(t, int32(502), sub.TunnelID)
 }
 
-func TestGetMulticastGroup_TrafficBps(t *testing.T) {
+func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertMulticastTestData(t)
 
@@ -175,63 +204,61 @@ func TestGetMulticastGroup_TrafficBps(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
+	// Check publisher traffic
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=publishers", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	handlers.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var detail handlers.MulticastGroupDetail
-	err = json.NewDecoder(rr.Body).Decode(&detail)
+	var resp handlers.MulticastMembersResponse
+	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	require.Len(t, detail.Members, 2)
+	require.Len(t, resp.Items, 1)
+	assert.Greater(t, resp.Items[0].TrafficBps, float64(0), "publisher should have traffic rate")
 
-	// Find publisher and subscriber
-	var pub, sub *handlers.MulticastMember
-	for i := range detail.Members {
-		switch detail.Members[i].Mode {
-		case "P":
-			pub = &detail.Members[i]
-		case "S":
-			sub = &detail.Members[i]
-		}
-	}
+	// Check subscriber traffic
+	req = httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=subscribers", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "test-group")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	require.NotNil(t, pub)
-	require.NotNil(t, sub)
+	rr = httptest.NewRecorder()
+	handlers.GetMulticastGroupMembers(rr, req)
 
-	assert.Greater(t, pub.TrafficBps, float64(0), "publisher should have traffic rate")
-	assert.Greater(t, sub.TrafficBps, float64(0), "subscriber should have traffic rate")
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	err = json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+	assert.Greater(t, resp.Items[0].TrafficBps, float64(0), "subscriber should have traffic rate")
 }
 
-func TestGetMulticastGroup_TrafficBps_NoCounters(t *testing.T) {
+func TestGetMulticastGroupMembers_TrafficBps_NoCounters(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertMulticastTestData(t)
 
 	// Don't insert any traffic counters — traffic_bps should be 0
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=publishers", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	handlers.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var detail handlers.MulticastGroupDetail
-	err := json.NewDecoder(rr.Body).Decode(&detail)
+	var resp handlers.MulticastMembersResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	require.Len(t, detail.Members, 2)
-
-	for _, m := range detail.Members {
-		assert.Equal(t, float64(0), m.TrafficBps, "traffic_bps should be 0 when no counters exist")
-	}
+	require.Len(t, resp.Items, 1)
+	assert.Equal(t, float64(0), resp.Items[0].TrafficBps, "traffic_bps should be 0 when no counters exist")
 }
 
 func TestGetMulticastGroup_MissingCode(t *testing.T) {
@@ -247,7 +274,7 @@ func TestGetMulticastGroup_MissingCode(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-func TestGetMulticastGroup_LeaderEnrichment(t *testing.T) {
+func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertMulticastTestData(t)
 
@@ -279,32 +306,22 @@ func TestGetMulticastGroup_LeaderEnrichment(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=publishers", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	handlers.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var detail handlers.MulticastGroupDetail
-	err = json.NewDecoder(rr.Body).Decode(&detail)
+	var resp handlers.MulticastMembersResponse
+	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	require.Len(t, detail.Members, 2)
+	require.Len(t, resp.Items, 1)
 
-	var pub, sub *handlers.MulticastMember
-	for i := range detail.Members {
-		switch detail.Members[i].Mode {
-		case "P":
-			pub = &detail.Members[i]
-		case "S":
-			sub = &detail.Members[i]
-		}
-	}
-
-	require.NotNil(t, pub)
+	pub := resp.Items[0]
 	assert.True(t, pub.IsLeader, "publisher should be the current leader")
 	assert.Equal(t, "node-pubkey-pub", pub.NodePubkey)
 	assert.Equal(t, int64(100), pub.CurrentSlot)
@@ -313,8 +330,22 @@ func TestGetMulticastGroup_LeaderEnrichment(t *testing.T) {
 	require.NotNil(t, pub.NextLeaderSlot)
 	assert.Equal(t, int64(110), *pub.NextLeaderSlot)
 
-	// Subscriber should not have leader data
-	require.NotNil(t, sub)
+	// Check subscriber has no leader data
+	req = httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=subscribers", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "test-group")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr = httptest.NewRecorder()
+	handlers.GetMulticastGroupMembers(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	err = json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 1)
+
+	sub := resp.Items[0]
 	assert.False(t, sub.IsLeader)
 	assert.Empty(t, sub.NodePubkey)
 }
@@ -396,7 +427,7 @@ func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
 	assert.Empty(t, points, "should return empty array when no counters exist")
 }
 
-func TestGetMulticastGroup_NoLeader(t *testing.T) {
+func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertMulticastTestData(t)
 
@@ -427,29 +458,22 @@ func TestGetMulticastGroup_NoLeader(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=publishers", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	handlers.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var detail handlers.MulticastGroupDetail
-	err = json.NewDecoder(rr.Body).Decode(&detail)
+	var resp handlers.MulticastMembersResponse
+	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	require.Len(t, detail.Members, 2)
+	require.Len(t, resp.Items, 1)
 
-	var pub *handlers.MulticastMember
-	for i := range detail.Members {
-		if detail.Members[i].Mode == "P" {
-			pub = &detail.Members[i]
-		}
-	}
-
-	require.NotNil(t, pub)
+	pub := resp.Items[0]
 	assert.False(t, pub.IsLeader, "publisher should not be the leader")
 	assert.Equal(t, "node-pubkey-pub", pub.NodePubkey)
 	assert.Equal(t, int64(100), pub.CurrentSlot)
@@ -459,7 +483,7 @@ func TestGetMulticastGroup_NoLeader(t *testing.T) {
 	assert.Equal(t, int64(110), *pub.NextLeaderSlot)
 }
 
-func TestGetMulticastGroup_ValidatorEnrichment(t *testing.T) {
+func TestGetMulticastGroupMembers_ValidatorEnrichment(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertMulticastTestData(t)
 
@@ -485,29 +509,22 @@ func TestGetMulticastGroup_ValidatorEnrichment(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/members?tab=publishers", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("pk", "test-group")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	handlers.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var detail handlers.MulticastGroupDetail
-	err = json.NewDecoder(rr.Body).Decode(&detail)
+	var resp handlers.MulticastMembersResponse
+	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	require.Len(t, detail.Members, 2)
+	require.Len(t, resp.Items, 1)
 
-	var pub *handlers.MulticastMember
-	for i := range detail.Members {
-		if detail.Members[i].Mode == "P" {
-			pub = &detail.Members[i]
-		}
-	}
-
-	require.NotNil(t, pub)
+	pub := resp.Items[0]
 	assert.Equal(t, "node-pub-1", pub.NodePubkey, "should resolve node_pubkey from gossip")
 	assert.Equal(t, "vote-pub-1", pub.VotePubkey, "should resolve vote_pubkey from vote accounts")
 	assert.Equal(t, float64(5000), pub.StakeSol, "should resolve stake from vote accounts")
