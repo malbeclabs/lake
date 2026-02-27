@@ -23,13 +23,14 @@ export function Pagination({ total, limit, offset, onOffsetChange, pageSizeOptio
     onOffsetChange(Math.max(0, Math.min(newOffset, (totalPages - 1) * limit)))
   }
 
-  if (totalPages <= 1) return null
+  const hasPageSizeSelector = pageSizeOptions && onPageSizeChange
+  if (totalPages <= 1 && !hasPageSizeSelector) return null
 
   return (
     <div className="flex items-center justify-between px-4 py-3 border-t border-border">
       <div className="flex items-center gap-3 text-sm text-muted-foreground">
         <span>Showing {startItem.toLocaleString()} - {endItem.toLocaleString()} of {total.toLocaleString()}</span>
-        {pageSizeOptions && onPageSizeChange && (
+        {hasPageSizeSelector && (
           <select
             value={limit}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
@@ -41,43 +42,45 @@ export function Pagination({ total, limit, offset, onOffsetChange, pageSizeOptio
           </select>
         )}
       </div>
-      <div className="flex items-center gap-1">
-        <button
-          onClick={() => goToPage(1)}
-          disabled={!canGoPrev}
-          className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          title="First page"
-        >
-          <ChevronsLeft className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => goToPage(currentPage - 1)}
-          disabled={!canGoPrev}
-          className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          title="Previous page"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <span className="px-3 text-sm">
-          Page {currentPage} of {totalPages}
-        </span>
-        <button
-          onClick={() => goToPage(currentPage + 1)}
-          disabled={!canGoNext}
-          className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          title="Next page"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => goToPage(totalPages)}
-          disabled={!canGoNext}
-          className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          title="Last page"
-        >
-          <ChevronsRight className="h-4 w-4" />
-        </button>
-      </div>
+      {totalPages > 1 && (
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => goToPage(1)}
+            disabled={!canGoPrev}
+            className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="First page"
+          >
+            <ChevronsLeft className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => goToPage(currentPage - 1)}
+            disabled={!canGoPrev}
+            className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Previous page"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <span className="px-3 text-sm">
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            onClick={() => goToPage(currentPage + 1)}
+            disabled={!canGoNext}
+            className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Next page"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => goToPage(totalPages)}
+            disabled={!canGoNext}
+            className="p-1.5 rounded-md hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Last page"
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
