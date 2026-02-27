@@ -285,8 +285,59 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build base CTE with all joins integrated
-	baseCTE := `
+	// Tab filter: publishers tab shows P and P+S, subscribers tab shows S and P+S
+	tabFilter := ""
+	if tab == "publishers" {
+		tabFilter = " AND is_publisher = 1"
+	} else {
+		tabFilter = " AND is_subscriber = 1"
+	}
+
+	// Build filter clause
+	filterClause, filterArgs := filter.BuildFilterClause(multicastMemberFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
+	}
+
+	// Lightweight CTE for counts — no gossip/vote/leader joins needed
+	countCTE := `
+		WITH members_base AS (
+			SELECT
+				has(JSONExtract(u.publishers, 'Array(String)'), ?) as is_publisher,
+				has(JSONExtract(u.subscribers, 'Array(String)'), ?) as is_subscriber,
+				COALESCE(d.code, '') as device_code,
+				COALESCE(m.name, '') as metro_name,
+				COALESCE(u.owner_pubkey, '') as owner_pubkey
+			FROM dz_users_current u
+			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			WHERE u.status = 'activated'
+				AND u.kind = 'multicast'
+				AND (
+					has(JSONExtract(u.publishers, 'Array(String)'), ?)
+					OR has(JSONExtract(u.subscribers, 'Array(String)'), ?)
+				)
+		)
+	`
+	countBaseArgs := []any{groupPK, groupPK, groupPK, groupPK}
+
+	// Single count query returning all three counts
+	countQuery := countCTE + `
+		SELECT
+			countIf(1=1` + tabFilter + whereFilter + `) as total,
+			countIf(is_publisher = 1` + whereFilter + `) as pub_count,
+			countIf(is_subscriber = 1` + whereFilter + `) as sub_count
+		FROM members_base WHERE 1=1
+	`
+	// Filter args appear 3 times in the count query (once per countIf)
+	countArgs := append([]any{}, countBaseArgs...)
+	countArgs = append(countArgs, filterArgs...)
+	countArgs = append(countArgs, filterArgs...)
+	countArgs = append(countArgs, filterArgs...)
+
+	// Full CTE for data query — includes gossip/vote/leader joins for sorting
+	dataCTE := `
 		WITH current_slot_info AS (
 			SELECT max(cluster_slot) as slot
 			FROM fact_solana_vote_account_activity
@@ -348,51 +399,10 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 				)
 		)
 	`
+	dataBaseArgs := []any{groupPK, groupPK, groupPK, groupPK, groupPK, groupPK, groupPK}
 
-	// Group PK appears 7 times in the base CTE
-	baseArgs := []any{groupPK, groupPK, groupPK, groupPK, groupPK, groupPK, groupPK}
-
-	// Tab filter: publishers tab shows P and P+S, subscribers tab shows S and P+S
-	tabFilter := ""
-	if tab == "publishers" {
-		tabFilter = " AND is_publisher = 1"
-	} else {
-		tabFilter = " AND is_subscriber = 1"
-	}
-
-	// Build filter clause
-	filterClause, filterArgs := filter.BuildFilterClause(multicastMemberFilterFields)
-	whereFilter := ""
-	if filterClause != "" {
-		whereFilter = " AND " + filterClause
-	}
-
-	// Count queries: total for current tab+filter, and counts for both tabs
-	countQuery := baseCTE + `SELECT count(*) FROM members_base WHERE 1=1` + tabFilter + whereFilter
-	countArgs := append(append([]any{}, baseArgs...), filterArgs...)
-
-	pubCountQuery := baseCTE + `SELECT count(*) FROM members_base WHERE is_publisher = 1` + whereFilter
-	pubCountArgs := append(append([]any{}, baseArgs...), filterArgs...)
-
-	subCountQuery := baseCTE + `SELECT count(*) FROM members_base WHERE is_subscriber = 1` + whereFilter
-	subCountArgs := append(append([]any{}, baseArgs...), filterArgs...)
-
-	var total, pubCount, subCount uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		log.Printf("MulticastGroupMembers count error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := envDB(ctx).QueryRow(ctx, pubCountQuery, pubCountArgs...).Scan(&pubCount); err != nil {
-		log.Printf("MulticastGroupMembers pub count error (non-fatal): %v", err)
-	}
-	if err := envDB(ctx).QueryRow(ctx, subCountQuery, subCountArgs...).Scan(&subCount); err != nil {
-		log.Printf("MulticastGroupMembers sub count error (non-fatal): %v", err)
-	}
-
-	// Main data query with sorting and pagination
 	orderBy := sort.OrderByClause(multicastMemberSortFields)
-	dataQuery := baseCTE + `
+	dataQuery := dataCTE + `
 		SELECT user_pk, mode, device_pk, device_code, metro_pk, metro_code, metro_name,
 			client_ip, dz_ip, status, owner_pubkey, tunnel_id, node_pubkey, vote_pubkey, stake_sol, next_leader_slot
 		FROM members_base
@@ -400,54 +410,85 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 		` + orderBy + `
 		LIMIT ? OFFSET ?
 	`
-
-	dataArgs := append(append([]any{}, baseArgs...), filterArgs...)
+	dataArgs := append(append([]any{}, dataBaseArgs...), filterArgs...)
 	dataArgs = append(dataArgs, pagination.Limit, pagination.Offset)
 
-	rows, err := envDB(ctx).Query(ctx, dataQuery, dataArgs...)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
-
-	if err != nil {
-		log.Printf("MulticastGroupMembers data query error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	// Run count query and data query in parallel
+	type countResult struct {
+		total, pubCount, subCount uint64
+		err                       error
 	}
-	defer rows.Close()
+	type dataResult struct {
+		members []MulticastMember
+		err     error
+	}
 
-	var members []MulticastMember
-	for rows.Next() {
-		var m MulticastMember
-		var nextLeaderSlot uint64
-		if err := rows.Scan(
-			&m.UserPK, &m.Mode, &m.DevicePK, &m.DeviceCode,
-			&m.MetroPK, &m.MetroCode, &m.MetroName,
-			&m.ClientIP, &m.DZIP, &m.Status, &m.OwnerPubkey,
-			&m.TunnelID, &m.NodePubkey, &m.VotePubkey, &m.StakeSol,
-			&nextLeaderSlot,
-		); err != nil {
-			log.Printf("MulticastGroupMembers scan error: %v", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+	countCh := make(chan countResult, 1)
+	dataCh := make(chan dataResult, 1)
+
+	go func() {
+		var r countResult
+		r.err = envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&r.total, &r.pubCount, &r.subCount)
+		countCh <- r
+	}()
+
+	go func() {
+		rows, err := envDB(ctx).Query(ctx, dataQuery, dataArgs...)
+		if err != nil {
+			dataCh <- dataResult{err: err}
 			return
 		}
-		if nextLeaderSlot > 0 {
-			s := int64(nextLeaderSlot)
-			m.NextLeaderSlot = &s
-		}
-		members = append(members, m)
-	}
+		defer rows.Close()
 
-	if err := rows.Err(); err != nil {
-		log.Printf("MulticastGroupMembers rows error: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		var members []MulticastMember
+		for rows.Next() {
+			var m MulticastMember
+			var nextLeaderSlot uint64
+			if err := rows.Scan(
+				&m.UserPK, &m.Mode, &m.DevicePK, &m.DeviceCode,
+				&m.MetroPK, &m.MetroCode, &m.MetroName,
+				&m.ClientIP, &m.DZIP, &m.Status, &m.OwnerPubkey,
+				&m.TunnelID, &m.NodePubkey, &m.VotePubkey, &m.StakeSol,
+				&nextLeaderSlot,
+			); err != nil {
+				dataCh <- dataResult{err: err}
+				return
+			}
+			if nextLeaderSlot > 0 {
+				s := int64(nextLeaderSlot)
+				m.NextLeaderSlot = &s
+			}
+			members = append(members, m)
+		}
+		if err := rows.Err(); err != nil {
+			dataCh <- dataResult{err: err}
+			return
+		}
+		dataCh <- dataResult{members: members}
+	}()
+
+	cr := <-countCh
+	dr := <-dataCh
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, cr.err)
+
+	if cr.err != nil {
+		log.Printf("MulticastGroupMembers count error: %v", cr.err)
+		http.Error(w, cr.err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if dr.err != nil {
+		log.Printf("MulticastGroupMembers data error: %v", dr.err)
+		http.Error(w, dr.err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	members := dr.members
 	if members == nil {
 		members = []MulticastMember{}
 	}
 
-	// Enrich paginated members with traffic rates
+	// Enrich paginated members with traffic rates and leader schedule in parallel
 	if len(members) > 0 {
 		type tunnelKey struct {
 			devicePK string
@@ -461,52 +502,6 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		trafficQuery := `
-			SELECT
-				device_pk,
-				user_tunnel_id,
-				(sum(coalesce(in_octets_delta, 0)) * 8.0) / sum(delta_duration) as in_bps,
-				(sum(coalesce(out_octets_delta, 0)) * 8.0) / sum(delta_duration) as out_bps,
-				sum(coalesce(in_pkts_delta, 0)) / sum(delta_duration) as in_pps,
-				sum(coalesce(out_pkts_delta, 0)) / sum(delta_duration) as out_pps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts >= now() - INTERVAL 5 MINUTE
-				AND user_tunnel_id > 0
-				AND delta_duration > 0
-			GROUP BY device_pk, user_tunnel_id
-		`
-
-		trafficRows, err := envDB(ctx).Query(ctx, trafficQuery)
-		if err != nil {
-			log.Printf("MulticastGroupMembers traffic query error (non-fatal): %v", err)
-		} else {
-			defer trafficRows.Close()
-			for trafficRows.Next() {
-				var devicePK string
-				var tunnelID int64
-				var inBps, outBps, inPps, outPps float64
-				if err := trafficRows.Scan(&devicePK, &tunnelID, &inBps, &outBps, &inPps, &outPps); err != nil {
-					log.Printf("MulticastGroupMembers traffic scan error: %v", err)
-					continue
-				}
-				key := tunnelKey{devicePK, tunnelID}
-				if indices, ok := tunnelToMembers[key]; ok {
-					for _, idx := range indices {
-						if members[idx].Mode == "P" || members[idx].Mode == "P+S" {
-							members[idx].TrafficBps = inBps
-							members[idx].TrafficPps = inPps
-						} else {
-							members[idx].TrafficBps = outBps
-							members[idx].TrafficPps = outPps
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Enrich publishers with leader schedule timing (last_leader_slot, is_leader, current_slot)
-	if len(members) > 0 {
 		clientIPToMembers := make(map[string][]int)
 		for i, m := range members {
 			if (m.Mode == "P" || m.Mode == "P+S") && m.ClientIP != "" {
@@ -514,12 +509,72 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if len(clientIPToMembers) > 0 {
+		type trafficResult struct {
+			data map[tunnelKey]struct{ inBps, outBps, inPps, outPps float64 }
+			err  error
+		}
+		type leaderResult struct {
+			data map[string]struct {
+				currentSlot uint64
+				isLeader    bool
+				lastSlot    uint64
+			}
+			err error
+		}
+
+		trafficCh := make(chan trafficResult, 1)
+		leaderCh := make(chan leaderResult, 1)
+
+		go func() {
+			tr := trafficResult{data: make(map[tunnelKey]struct{ inBps, outBps, inPps, outPps float64 })}
+			trafficQuery := `
+				SELECT
+					device_pk,
+					user_tunnel_id,
+					(sum(coalesce(in_octets_delta, 0)) * 8.0) / sum(delta_duration) as in_bps,
+					(sum(coalesce(out_octets_delta, 0)) * 8.0) / sum(delta_duration) as out_bps,
+					sum(coalesce(in_pkts_delta, 0)) / sum(delta_duration) as in_pps,
+					sum(coalesce(out_pkts_delta, 0)) / sum(delta_duration) as out_pps
+				FROM fact_dz_device_interface_counters
+				WHERE event_ts >= now() - INTERVAL 5 MINUTE
+					AND user_tunnel_id > 0
+					AND delta_duration > 0
+				GROUP BY device_pk, user_tunnel_id
+			`
+			rows, err := envDB(ctx).Query(ctx, trafficQuery)
+			if err != nil {
+				tr.err = err
+				trafficCh <- tr
+				return
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var devicePK string
+				var tunnelID int64
+				var inBps, outBps, inPps, outPps float64
+				if err := rows.Scan(&devicePK, &tunnelID, &inBps, &outBps, &inPps, &outPps); err != nil {
+					continue
+				}
+				key := tunnelKey{devicePK, tunnelID}
+				tr.data[key] = struct{ inBps, outBps, inPps, outPps float64 }{inBps, outBps, inPps, outPps}
+			}
+			trafficCh <- tr
+		}()
+
+		go func() {
+			lr := leaderResult{data: make(map[string]struct {
+				currentSlot uint64
+				isLeader    bool
+				lastSlot    uint64
+			})}
+			if len(clientIPToMembers) == 0 {
+				leaderCh <- lr
+				return
+			}
 			clientIPs := make([]string, 0, len(clientIPToMembers))
 			for ip := range clientIPToMembers {
 				clientIPs = append(clientIPs, ip)
 			}
-
 			leaderQuery := `
 				WITH current AS (
 					SELECT max(cluster_slot) as slot
@@ -547,29 +602,62 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 				CROSS JOIN epoch_info ei
 				WHERE g.gossip_ip IN (?)
 			`
-
-			leaderRows, err := envDB(ctx).Query(ctx, leaderQuery, clientIPs)
+			rows, err := envDB(ctx).Query(ctx, leaderQuery, clientIPs)
 			if err != nil {
-				log.Printf("MulticastGroupMembers leader query error (non-fatal): %v", err)
-			} else {
-				defer leaderRows.Close()
-				for leaderRows.Next() {
-					var clientIP string
-					var currentSlot uint64
-					var isLeader uint8
-					var lastSlot uint64
-					if err := leaderRows.Scan(&clientIP, &currentSlot, &isLeader, &lastSlot); err != nil {
-						log.Printf("MulticastGroupMembers leader scan error: %v", err)
-						continue
+				lr.err = err
+				leaderCh <- lr
+				return
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var clientIP string
+				var currentSlot uint64
+				var isLeader uint8
+				var lastSlot uint64
+				if err := rows.Scan(&clientIP, &currentSlot, &isLeader, &lastSlot); err != nil {
+					continue
+				}
+				lr.data[clientIP] = struct {
+					currentSlot uint64
+					isLeader    bool
+					lastSlot    uint64
+				}{currentSlot, isLeader != 0, lastSlot}
+			}
+			leaderCh <- lr
+		}()
+
+		tr := <-trafficCh
+		lr := <-leaderCh
+
+		if tr.err != nil {
+			log.Printf("MulticastGroupMembers traffic query error (non-fatal): %v", tr.err)
+		} else {
+			for key, vals := range tr.data {
+				if indices, ok := tunnelToMembers[key]; ok {
+					for _, idx := range indices {
+						if members[idx].Mode == "P" || members[idx].Mode == "P+S" {
+							members[idx].TrafficBps = vals.inBps
+							members[idx].TrafficPps = vals.inPps
+						} else {
+							members[idx].TrafficBps = vals.outBps
+							members[idx].TrafficPps = vals.outPps
+						}
 					}
-					if indices, ok := clientIPToMembers[clientIP]; ok {
-						for _, idx := range indices {
-							members[idx].IsLeader = isLeader != 0
-							members[idx].CurrentSlot = int64(currentSlot)
-							if lastSlot > 0 {
-								s := int64(lastSlot)
-								members[idx].LastLeaderSlot = &s
-							}
+				}
+			}
+		}
+
+		if lr.err != nil {
+			log.Printf("MulticastGroupMembers leader query error (non-fatal): %v", lr.err)
+		} else {
+			for clientIP, vals := range lr.data {
+				if indices, ok := clientIPToMembers[clientIP]; ok {
+					for _, idx := range indices {
+						members[idx].IsLeader = vals.isLeader
+						members[idx].CurrentSlot = int64(vals.currentSlot)
+						if vals.lastSlot > 0 {
+							s := int64(vals.lastSlot)
+							members[idx].LastLeaderSlot = &s
 						}
 					}
 				}
@@ -579,9 +667,9 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 
 	response := MulticastMembersResponse{
 		Items:           members,
-		Total:           int(total),
-		PublisherCount:  int(pubCount),
-		SubscriberCount: int(subCount),
+		Total:           int(cr.total),
+		PublisherCount:  int(cr.pubCount),
+		SubscriberCount: int(cr.subCount),
 		Limit:           pagination.Limit,
 		Offset:          pagination.Offset,
 	}
