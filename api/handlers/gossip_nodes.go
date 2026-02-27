@@ -108,7 +108,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 				COALESCE(dz.device_code, '') as device_code,
 				COALESCE(dz.metro_code, '') as metro_code,
 				COALESCE(vs.stake_sol, 0) as stake_sol,
-				vs.node_pubkey IS NOT NULL as is_validator
+				vs.node_pubkey != '' as is_validator
 			FROM solana_gossip_nodes_current g
 			LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 			LEFT JOIN dz_nodes dz ON g.gossip_ip = dz.client_ip
@@ -283,7 +283,7 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 			COALESCE(dz.metro_pk, '') as metro_pk,
 			COALESCE(dz.metro_code, '') as metro_code,
 			COALESCE(vs.stake_sol, 0) as stake_sol,
-			vs.node_pubkey IS NOT NULL as is_validator,
+			vs.node_pubkey != '' as is_validator,
 			COALESCE(vs.vote_pubkey, '') as vote_pubkey
 		FROM solana_gossip_nodes_current g
 		LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
