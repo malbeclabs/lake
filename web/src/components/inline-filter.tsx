@@ -116,24 +116,24 @@ export function InlineFilter({
 
   // Helper to commit a filter (persist to URL)
   const commitFilter = useCallback((filterValue: string) => {
-    const currentSearch = searchParams.get('search') || ''
-    const currentFilters = currentSearch ? currentSearch.split(',').map(f => f.trim()).filter(Boolean) : []
-
-    // Add the committed filter if not already present
-    if (!currentFilters.includes(filterValue)) {
-      currentFilters.push(filterValue)
-    }
-
     setSearchParams(prev => {
-      prev.set('search', currentFilters.join(','))
-      prev.delete('offset')
-      return prev
+      const newParams = new URLSearchParams(prev)
+      const currentSearch = newParams.get('search') || ''
+      const currentFilters = currentSearch ? currentSearch.split(',').map(f => f.trim()).filter(Boolean) : []
+
+      // Add the committed filter if not already present
+      if (!currentFilters.includes(filterValue)) {
+        currentFilters.push(filterValue)
+      }
+
+      newParams.set('search', currentFilters.join(','))
+      newParams.delete('offset')
+      newParams.delete('page')
+      return newParams
     })
     setQuery('')
-    // Notify parent that live filter is cleared
-    onLiveFilterChange?.('')
     inputRef.current?.focus()
-  }, [searchParams, setSearchParams, onLiveFilterChange])
+  }, [setSearchParams])
 
   // Helper to clear the live filter without committing
   const clearLiveFilter = useCallback(() => {
