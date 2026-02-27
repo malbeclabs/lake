@@ -30,7 +30,7 @@ export function InlineFilter({
   onLiveFilterChange,
   filterParams,
 }: InlineFilterProps) {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [isFocused, setIsFocused] = useState(false)
