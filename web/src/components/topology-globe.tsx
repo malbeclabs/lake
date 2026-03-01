@@ -4,9 +4,9 @@ import { useTheme } from '@/hooks/use-theme'
 import Globe from 'react-globe.gl'
 import type { GlobeInstance } from 'react-globe.gl'
 import { useQuery } from '@tanstack/react-query'
-import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse, MulticastGroupDetail, MulticastTreeResponse } from '@/lib/api'
-import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths, fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import { useTopology, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
+import type { TopologyMetro, TopologyDevice, TopologyLink, TopologyValidator, MultiPathResponse, SimulateLinkRemovalResponse, SimulateLinkAdditionResponse, WhatIfRemovalResponse, MetroDevicePathsResponse } from '@/lib/api'
+import { fetchISISPaths, fetchISISTopology, fetchCriticalLinks, fetchSimulateLinkRemoval, fetchSimulateLinkAddition, fetchWhatIfRemoval, fetchLinkHealth, fetchTopologyCompare, fetchMetroDevicePaths } from '@/lib/api'
+import { useTopology, useMulticastState, TopologyControlBar, TopologyPanel, DeviceDetails, LinkDetails, MetroDetails, ValidatorDetails, EntityLink as TopologyEntityLink, PathModePanel, MetroPathModePanel, CriticalityPanel, WhatIfRemovalPanel, WhatIfAdditionPanel, ImpactPanel, ComparePanel, StakeOverlayPanel, LinkHealthOverlayPanel, TrafficFlowOverlayPanel, MetroClusteringOverlayPanel, ContributorsOverlayPanel, ValidatorsOverlayPanel, DeviceTypeOverlayPanel, LinkTypeOverlayPanel, MulticastTreesOverlayPanel, LINK_TYPE_COLORS, MULTICAST_PUBLISHER_COLORS, type DeviceOption, type MetroOption } from '@/components/topology'
 import type { LinkInfo, SelectedItemData } from '@/components/topology'
 import { formatBandwidth, formatTrafficRate } from '@/components/topology'
 
@@ -183,7 +183,7 @@ interface GlobeArcInterMetro {
 
 interface GlobeArcMulticastTree {
   entityType: 'multicast-tree'
-  publisherPK: string
+  publisherPKs: string[]
   colorIndex: number
   startLat: number
   startLng: number
@@ -194,15 +194,12 @@ interface GlobeArcMulticastTree {
 
 type GlobeArcEntity = GlobeArcLink | GlobeArcValidatorLink | GlobeArcInterMetro | GlobeArcMulticastTree
 
-// Get per-publisher arc altitude for parallel multicast tree arcs.
+// Get arc altitude for aggregated multicast tree segments.
 // Scales with great-circle distance so long arcs don't clip through the globe.
-function getPublisherAltitude(
-  publisherIndex: number,
-  totalPublishers: number,
+function getSegmentAltitude(
   startLat: number, startLng: number,
   endLat: number, endLng: number,
 ): number {
-  // Great-circle angular distance (radians)
   const toRad = Math.PI / 180
   const lat1 = startLat * toRad, lat2 = endLat * toRad
   const dLng = (endLng - startLng) * toRad
@@ -211,12 +208,7 @@ function getPublisherAltitude(
       Math.sin(lat1) * Math.sin(lat2) + Math.cos(lat1) * Math.cos(lat2) * Math.cos(dLng)
     ))
   )
-  // Scale with distance, with a minimum for short arcs
-  const base = Math.max(0.06, angularDist * 0.15)
-  if (totalPublishers === 1) return base
-  const spread = 0.04
-  const start = base - (spread * (totalPublishers - 1)) / 2
-  return start + spread * publisherIndex
+  return Math.max(0.06, angularDist * 0.15)
 }
 
 // Get link weight based on bandwidth capacity
@@ -369,134 +361,24 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const anyOverlayActive = Object.entries(overlays).some(([key, value]) => key !== 'bandwidth' && value)
   const isAnalysisActive = anyOverlayActive || mode !== 'explore' || !!selectedItem
 
-  // Multicast trees operational state (local)
-  const [selectedMulticastGroup, setSelectedMulticastGroup] = useState<string | null>(null)
-  const [multicastGroupDetails, setMulticastGroupDetails] = useState<Map<string, MulticastGroupDetail>>(new Map())
-  const [multicastTreePaths, setMulticastTreePaths] = useState<Map<string, MulticastTreeResponse>>(new Map())
-  const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
-  const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
-  const [dimOtherLinks, setDimOtherLinks] = useState(true)
-  const [animateFlow, setAnimateFlow] = useState(true)
-  const [showTreeValidators, setShowTreeValidators] = useState(true)
-  const [hoveredMemberDevicePK, setHoveredMemberDevicePK] = useState<string | null>(null)
-  // PKs to skip during auto-enable (restored from URL on initial load)
-  const initialDisabledPubsRef = useRef<Set<string> | null>(null)
-  const initialDisabledSubsRef = useRef<Set<string> | null>(null)
-
-
-  // Multicast handlers
-  const handleSelectMulticastGroup = useCallback((code: string | null) => {
-    setSelectedMulticastGroup(code)
-  }, [])
-
-  const handleSetEnabledPublishers = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
-    if (typeof updater === 'function') setEnabledPublishers(updater)
-    else setEnabledPublishers(updater)
-  }, [])
-
-  const handleSetEnabledSubscribers = useCallback((updater: Set<string> | ((prev: Set<string>) => Set<string>)) => {
-    if (typeof updater === 'function') setEnabledSubscribers(updater)
-    else setEnabledSubscribers(updater)
-  }, [])
-
-  // Fetch multicast tree paths when group is selected
-  useEffect(() => {
-    if (!multicastTreesMode || !selectedMulticastGroup) return
-    if (multicastTreePaths.has(selectedMulticastGroup)) return
-    const code = selectedMulticastGroup
-    fetchMulticastTreePaths(code)
-      .then(result => setMulticastTreePaths(prev => new Map(prev).set(code, result)))
-      .catch(err => console.error(`Failed to fetch multicast tree paths for ${code}:`, err))
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths])
-
-  // Auto-load group details when group is selected, and refresh periodically
-  useEffect(() => {
-    if (!multicastTreesMode || !selectedMulticastGroup) return
-    const code = selectedMulticastGroup
-    const load = () => {
-      fetchMulticastGroup(code)
-        .then(detail => setMulticastGroupDetails(prev => new Map(prev).set(code, detail)))
-        .catch(err => console.error('Failed to fetch multicast group:', err))
-    }
-    if (!multicastGroupDetails.has(code)) load()
-    const interval = setInterval(load, 30000)
-    return () => clearInterval(interval)
-  }, [multicastTreesMode, selectedMulticastGroup]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Set enabled publishers/subscribers when group details load
-  useEffect(() => {
-    if (!multicastTreesMode || !selectedMulticastGroup) return
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return
-
-    // On first load, skip PKs that were disabled in the URL
-    const skipPubs = initialDisabledPubsRef.current
-    const skipSubs = initialDisabledSubsRef.current
-    initialDisabledPubsRef.current = null
-    initialDisabledSubsRef.current = null
-
-    const pubs = new Set<string>()
-    const subs = new Set<string>()
-    detail.members.forEach(m => {
-      if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.user_pk)) {
-        pubs.add(m.user_pk)
-      }
-      if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.user_pk)) {
-        subs.add(m.user_pk)
-      }
-    })
-    setEnabledPublishers(pubs)
-    setEnabledSubscribers(subs)
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
-
-  // Derive device-level enabled sets from user_pk-keyed enabled sets
-  const enabledPublisherDevicePKs = useMemo(() => {
-    const set = new Set<string>()
-    if (!selectedMulticastGroup) return set
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return set
-    for (const m of detail.members) {
-      if ((m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.user_pk)) {
-        set.add(m.device_pk)
-      }
-    }
-    return set
-  }, [selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
-
-  const enabledSubscriberDevicePKs = useMemo(() => {
-    const set = new Set<string>()
-    if (!selectedMulticastGroup) return set
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return set
-    for (const m of detail.members) {
-      if ((m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.user_pk)) {
-        set.add(m.device_pk)
-      }
-    }
-    return set
-  }, [selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
-
-  // When a member is hovered, determine which publisher device PKs should be highlighted
-  const hoveredHighlightPublisherPKs = useMemo(() => {
-    if (!hoveredMemberDevicePK || !multicastTreesMode || !selectedMulticastGroup) return null
-    if (enabledPublisherDevicePKs.has(hoveredMemberDevicePK)) {
-      return new Set([hoveredMemberDevicePK])
-    }
-    if (enabledSubscriberDevicePKs.has(hoveredMemberDevicePK)) {
-      const pubs = new Set<string>()
-      const treeData = multicastTreePaths.get(selectedMulticastGroup)
-      if (treeData?.paths) {
-        for (const treePath of treeData.paths) {
-          if (treePath.subscriberDevicePK === hoveredMemberDevicePK &&
-              enabledPublisherDevicePKs.has(treePath.publisherDevicePK)) {
-            pubs.add(treePath.publisherDevicePK)
-          }
-        }
-      }
-      return pubs.size > 0 ? pubs : null
-    }
-    return null
-  }, [hoveredMemberDevicePK, multicastTreesMode, selectedMulticastGroup, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, multicastTreePaths])
+  // Multicast trees state (shared hook)
+  const mc = useMulticastState({ enabled: multicastTreesMode, isDark })
+  const {
+    selectedMulticastGroup, multicastGroupDetails,
+    enabledPublishers, enabledSubscribers,
+    dimOtherLinks, setDimOtherLinks, animateFlow, setAnimateFlow,
+    showTreeValidators, setShowTreeValidators,
+    combineSegments, setCombineSegments,
+    setHoveredMemberDevicePK,
+    enabledPublisherDevicePKs, enabledSubscriberDevicePKs,
+    hoveredHighlightPublisherPKs, multicastPublisherColorMap, multicastDeviceRoleColorMap,
+    multicastAggregatedSegments, multicastPublisherPaths, multicastSegmentPublishers,
+    multicastTreeDevicePKs,
+    handleSelectMulticastGroup, handleSetEnabledPublishers, handleSetEnabledSubscribers,
+    restoreFromParams: restoreMulticastParams, getDisabledParams: getMulticastDisabledParams,
+  } = mc
+  const multicastPublisherDevices = enabledPublisherDevicePKs
+  const multicastSubscriberDevices = enabledSubscriberDevicePKs
 
   // Path finding operational state (local)
   const [pathSource, setPathSource] = useState<string | null>(null)
@@ -835,152 +717,6 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   }, [metroPathsResult, links])
 
   // ─── Multicast path maps ─────────────────────────────────────────────
-
-  // Set of device PKs in any multicast tree path (for device coloring)
-  const multicastTreeDevicePKs = useMemo(() => {
-    const set = new Set<string>()
-    if (!multicastTreesMode || !selectedMulticastGroup) return set
-    const treeData = multicastTreePaths.get(selectedMulticastGroup)
-    if (treeData?.paths?.length) {
-      treeData.paths.forEach(treePath => {
-        if (!treePath.path?.length) return
-        if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK) || !enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) return
-        treePath.path.forEach(hop => set.add(hop.devicePK))
-      })
-    }
-    return set
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs])
-
-  // Per-publisher tree segments with device PKs and positions (for multicast-tree arcs)
-  const multicastPublisherPaths = useMemo(() => {
-    const result: Array<{ publisherPK: string; segments: Array<{ fromPK: string; toPK: string; fromLat: number; fromLng: number; toLat: number; toLng: number }> }> = []
-    if (!multicastTreesMode || !selectedMulticastGroup) return result
-
-    const publisherSegments = new Map<string, Map<string, { fromPK: string; toPK: string; fromLat: number; fromLng: number; toLat: number; toLng: number }>>()
-
-    const treeData = multicastTreePaths.get(selectedMulticastGroup)
-    if (treeData?.paths?.length) {
-      treeData.paths.forEach(treePath => {
-        const path = treePath.path
-        const publisherPK = treePath.publisherDevicePK
-        const subscriberPK = treePath.subscriberDevicePK
-        if (!path?.length) return
-        if (!enabledPublisherDevicePKs.has(publisherPK) || !enabledSubscriberDevicePKs.has(subscriberPK)) return
-
-        if (!publisherSegments.has(publisherPK)) publisherSegments.set(publisherPK, new Map())
-        const segs = publisherSegments.get(publisherPK)!
-
-        for (let i = 0; i < path.length - 1; i++) {
-          const fromPK = path[i].devicePK
-          const toPK = path[i + 1].devicePK
-          const key = `${fromPK}|${toPK}`
-          if (segs.has(key)) continue
-
-          const fromPos = devicePositions.get(fromPK)
-          const toPos = devicePositions.get(toPK)
-          if (fromPos && toPos) {
-            segs.set(key, { fromPK, toPK, fromLat: fromPos.lat, fromLng: fromPos.lng, toLat: toPos.lat, toLng: toPos.lng })
-          }
-        }
-      })
-    }
-
-    for (const [publisherPK, segs] of publisherSegments) {
-      const segments = Array.from(segs.values())
-      if (segments.length > 0) result.push({ publisherPK, segments })
-    }
-    return result
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, devicePositions])
-
-  // Map from canonical segment key -> ordered publisher PKs (for altitude offset calculation)
-  const multicastSegmentPublishers = useMemo(() => {
-    const map = new Map<string, string[]>()
-    if (!multicastTreesMode || !selectedMulticastGroup) return map
-
-    const treeData = multicastTreePaths.get(selectedMulticastGroup)
-    if (treeData?.paths?.length) {
-      treeData.paths.forEach(treePath => {
-        const path = treePath.path
-        if (!path?.length) return
-        if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK) || !enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) return
-
-        for (let i = 0; i < path.length - 1; i++) {
-          const canonicalKey = [path[i].devicePK, path[i + 1].devicePK].sort().join('|')
-          if (!map.has(canonicalKey)) map.set(canonicalKey, [])
-          const pubs = map.get(canonicalKey)!
-          if (!pubs.includes(treePath.publisherDevicePK)) pubs.push(treePath.publisherDevicePK)
-        }
-      })
-    }
-    return map
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs])
-
-  const multicastPublisherColorMap = useMemo(() => {
-    const map = new Map<string, number>()
-    if (!multicastTreesMode || !selectedMulticastGroup) return map
-    let colorIndex = 0
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const detail = multicastGroupDetails.get(code)
-      if (detail?.members) {
-        detail.members
-          .filter(m => m.mode === 'P' || m.mode === 'P+S')
-          .forEach(m => {
-            if (!map.has(m.device_pk)) {
-              map.set(m.device_pk, colorIndex++)
-            }
-          })
-      }
-    }
-    return map
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails])
-
-  const multicastPublisherDevices = useMemo(() => {
-    const set = new Set<string>()
-    if (!multicastTreesMode) return set
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const detail = multicastGroupDetails.get(code)
-      if (detail?.members) {
-        detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').filter(m => enabledPublishers.has(m.user_pk)).forEach(m => set.add(m.device_pk))
-      }
-    }
-    return set
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers])
-
-  const multicastSubscriberDevices = useMemo(() => {
-    const set = new Set<string>()
-    if (!multicastTreesMode) return set
-    if (selectedMulticastGroup) {
-      const code = selectedMulticastGroup
-      const detail = multicastGroupDetails.get(code)
-      if (detail?.members) {
-        detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').filter(m => enabledSubscribers.has(m.user_pk)).forEach(m => set.add(m.device_pk))
-      }
-    }
-    return set
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
-
-  // Map device_pk -> role color for validators on multicast member devices
-  // Respects enabled state: P+S devices only get publisher color when enabled as publisher
-  const multicastDeviceRoleColorMap = useMemo(() => {
-    const map = new Map<string, string>()
-    if (!multicastTreesMode || !selectedMulticastGroup) return map
-    const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return map
-    for (const m of detail.members) {
-      const isPub = (m.mode === 'P' || m.mode === 'P+S') && enabledPublishers.has(m.user_pk)
-      const isSub = (m.mode === 'S' || m.mode === 'P+S') && enabledSubscribers.has(m.user_pk)
-      if (isPub) {
-        const colorIndex = multicastPublisherColorMap.get(m.device_pk) ?? 0
-        const c = MULTICAST_PUBLISHER_COLORS[colorIndex % MULTICAST_PUBLISHER_COLORS.length]
-        map.set(m.device_pk, isDark ? c.dark : c.light)
-      } else if (isSub) {
-        map.set(m.device_pk, '#14b8a6') // teal for subscriber
-      }
-    }
-    return map
-  }, [multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, multicastPublisherColorMap, enabledPublishers, enabledSubscribers, isDark])
 
   // Validators on multicast publisher/subscriber devices (auto-shown when tree is active)
   // Deduplicated to 1 per device — avoids showing many markers for multi-validator devices
@@ -1323,27 +1059,16 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setParam('addition_target', whatifAdditionMode ? additionTarget : null)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
     setParam('multicast', multicastTreesMode && !!selectedMulticastGroup ? selectedMulticastGroup : null)
+    const mcParams = getMulticastDisabledParams()
     if (multicastTreesMode && selectedMulticastGroup) {
-      const detail = multicastGroupDetails.get(selectedMulticastGroup)
-      if (detail?.members) {
-        const disabledPubs = detail.members
-          .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.user_pk))
-          .map(m => m.user_pk)
-        const disabledSubs = detail.members
-          .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.user_pk))
-          .map(m => m.user_pk)
-        setParam('mc_pub_off', disabledPubs.length > 0 ? disabledPubs.join(',') : null)
-        setParam('mc_sub_off', disabledSubs.length > 0 ? disabledSubs.join(',') : null)
-      } else {
-        setParam('mc_pub_off', null)
-        setParam('mc_sub_off', null)
-      }
+      setParam('mc_pub_off', mcParams.disabledPubs ? mcParams.disabledPubs.join(',') : null)
+      setParam('mc_sub_off', mcParams.disabledSubs ? mcParams.disabledSubs.join(',') : null)
     } else {
       setParam('mc_pub_off', null)
       setParam('mc_sub_off', null)
     }
     if (changed) setSearchParams(params, { replace: true })
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, multicastGroupDetails, enabledPublishers, enabledSubscribers])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, getMulticastDisabledParams])
 
   // Restore mode from URL on initial load
   useEffect(() => {
@@ -1398,17 +1123,13 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (multicastParam) {
       const codes = multicastParam.split(',').filter(Boolean)
       if (codes.length > 0) {
-        setSelectedMulticastGroup(codes[0] ?? null)
+        restoreMulticastParams({
+          groupCode: codes[0] ?? null,
+          disabledPubs: searchParams.get('mc_pub_off') ? new Set(searchParams.get('mc_pub_off')!.split(',').filter(Boolean)) : null,
+          disabledSubs: searchParams.get('mc_sub_off') ? new Set(searchParams.get('mc_sub_off')!.split(',').filter(Boolean)) : null,
+        })
         if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
         openPanel('overlay')
-      }
-      const pubOffParam = searchParams.get('mc_pub_off')
-      const subOffParam = searchParams.get('mc_sub_off')
-      if (pubOffParam) {
-        initialDisabledPubsRef.current = new Set(pubOffParam.split(',').filter(Boolean))
-      }
-      if (subOffParam) {
-        initialDisabledSubsRef.current = new Set(subOffParam.split(',').filter(Boolean))
       }
     }
 
@@ -1719,30 +1440,60 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }
     }
 
-    // Add per-publisher multicast tree arcs (separate from regular link arcs)
-    if (multicastTreesMode && selectedMulticastGroup && multicastPublisherPaths.length > 0) {
-      for (const { publisherPK, segments } of multicastPublisherPaths) {
-        const colorIndex = multicastPublisherColorMap.get(publisherPK) ?? 0
-        for (const seg of segments) {
-          const canonicalKey = [seg.fromPK, seg.toPK].sort().join('|')
-          const pubs = multicastSegmentPublishers.get(canonicalKey) ?? [publisherPK]
-          const pubIndex = pubs.indexOf(publisherPK)
-          const altitude = getPublisherAltitude(pubIndex, pubs.length, seg.fromLat, seg.fromLng, seg.toLat, seg.toLng)
+    // Add multicast tree arcs
+    if (multicastTreesMode && selectedMulticastGroup) {
+      if (combineSegments) {
+        // Aggregated: one arc per unique segment
+        for (const seg of multicastAggregatedSegments) {
+          const fromPos = devicePositions.get(seg.fromPK)
+          const toPos = devicePositions.get(seg.toPK)
+          if (!fromPos || !toPos) continue
+
+          const colorIndex = seg.publisherPKs.length === 1 ? seg.publisherColorIndices[0] : -1
+          const altitude = getSegmentAltitude(fromPos.lat, fromPos.lng, toPos.lat, toPos.lng)
 
           arcs.push({
             entityType: 'multicast-tree',
-            publisherPK,
+            publisherPKs: seg.publisherPKs,
             colorIndex,
-            startLat: seg.fromLat, startLng: seg.fromLng,
-            endLat: seg.toLat, endLng: seg.toLng,
+            startLat: fromPos.lat, startLng: fromPos.lng,
+            endLat: toPos.lat, endLng: toPos.lng,
             altitude,
           })
+        }
+      } else {
+        // Per-publisher: separate arcs with altitude offsets
+        for (const [pubPK, segments] of multicastPublisherPaths) {
+          const colorIndex = multicastPublisherColorMap.get(pubPK) ?? 0
+          const key = (fromPK: string, toPK: string) => [fromPK, toPK].sort().join('|')
+          for (const seg of segments) {
+            const fromPos = devicePositions.get(seg.fromPK)
+            const toPos = devicePositions.get(seg.toPK)
+            if (!fromPos || !toPos) continue
+
+            const baseAltitude = getSegmentAltitude(fromPos.lat, fromPos.lng, toPos.lat, toPos.lng)
+            // Offset altitude per publisher for visual separation
+            const segKey = key(seg.fromPK, seg.toPK)
+            const pubs = multicastSegmentPublishers.get(segKey) ?? [pubPK]
+            const idx = pubs.indexOf(pubPK)
+            const total = pubs.length
+            const altitudeOffset = total > 1 ? (idx - (total - 1) / 2) * 0.02 : 0
+
+            arcs.push({
+              entityType: 'multicast-tree',
+              publisherPKs: [pubPK],
+              colorIndex,
+              startLat: fromPos.lat, startLng: fromPos.lng,
+              endLat: toPos.lat, endLng: toPos.lng,
+              altitude: baseAltitude + altitudeOffset,
+            })
+          }
         }
       }
     }
 
     return arcs
-  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, visibleValidators, multicastTreesMode, selectedMulticastGroup, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, multicastPublisherDevices, multicastSubscriberDevices])
+  }, [links, devicePositions, metroClusteringMode, deviceMap, collapsedMetros, metroMap, visibleValidators, multicastTreesMode, selectedMulticastGroup, combineSegments, multicastAggregatedSegments, multicastPublisherPaths, multicastSegmentPublishers, multicastPublisherColorMap, multicastPublisherDevices, multicastSubscriberDevices])
 
   // Stabilize arcsData — return previous reference if content unchanged
   // to prevent react-globe.gl from re-animating on data refetch.
@@ -1752,7 +1503,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     const key = arcsDataRaw.map(a => {
       if (a.entityType === 'link') return `l:${a.pk}`
       if (a.entityType === 'inter-metro') return `im:${(a as GlobeArcInterMetro).metroAPk}-${(a as GlobeArcInterMetro).metroZPk}`
-      if (a.entityType === 'multicast-tree') return `mt:${(a as GlobeArcMulticastTree).publisherPK}-${a.startLat}-${a.endLat}`
+      if (a.entityType === 'multicast-tree') return `mt:${(a as GlobeArcMulticastTree).publisherPKs.join('+')}-${a.startLat}-${a.endLat}`
       return `vl:${(a as GlobeArcValidatorLink).votePubkey}`
     }).join(',')
     if (key === prevArcsKeyRef.current) return prevArcsRef.current
@@ -1817,9 +1568,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (multicastTreesMode && isMulticastPublisher) { const mc = MULTICAST_PUBLISHER_COLORS[(multicastPublisherColorMap.get(d.pk) ?? 0) % MULTICAST_PUBLISHER_COLORS.length]; return isDark ? mc.dark : mc.light }
     if (multicastTreesMode && isMulticastSubscriber) return '#14b8a6'
     if (multicastTreesMode && isInAnyMulticastTree) {
-      // Find the first publisher that routes through this device
-      const firstPub = multicastPublisherPaths.find(pp => pp.segments.some(s => s.fromPK === d.pk || s.toPK === d.pk))
-      const firstPubPK = firstPub?.publisherPK
+      // Find the first aggregated segment that routes through this device
+      const firstSeg = multicastAggregatedSegments.find(s => s.fromPK === d.pk || s.toPK === d.pk)
+      const firstPubPK = firstSeg?.publisherPKs[0]
       const cIdx = firstPubPK ? (multicastPublisherColorMap.get(firstPubPK) ?? 0) : 0
       const mc = MULTICAST_PUBLISHER_COLORS[cIdx % MULTICAST_PUBLISHER_COLORS.length]
       return isDark ? mc.dark : mc.light
@@ -1838,7 +1589,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     // Vibrant default for the "living demo" aesthetic
     return '#00ffcc'
-  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastTreeDevicePKs, multicastPublisherPaths, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, multicastDeviceRoleColorMap])
+  }, [selectedItem, pathSource, pathTarget, devicePathMap, selectedPathIndex, metroDevicePathMap, metroPathSelectedPairs, multicastTreeDevicePKs, multicastAggregatedSegments, multicastPublisherDevices, multicastSubscriberDevices, isisDevicePKs, pathModeEnabled, additionSource, additionTarget, disconnectedDevicePKs, impactMode, impactDevices, whatifRemovalMode, stakeOverlayMode, contributorDevicesMode, contributorIndexMap, metroClusteringMode, metroIndexMap, deviceTypeMode, metroPathModeEnabled, multicastTreesMode, multicastPublisherColorMap, multicastDeviceRoleColorMap])
 
   const getPointRadius = useCallback((point: object) => {
     const p = point as GlobePointEntity
@@ -1908,9 +1659,16 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     if (a.entityType === 'multicast-tree') {
       const mt = a as GlobeArcMulticastTree
-      const mc = MULTICAST_PUBLISHER_COLORS[mt.colorIndex % MULTICAST_PUBLISHER_COLORS.length]
-      const color = isDark ? mc.dark : mc.light
-      if (hoveredHighlightPublisherPKs && !hoveredHighlightPublisherPKs.has(mt.publisherPK)) {
+      let color: string
+      if (mt.colorIndex >= 0) {
+        // Single publisher — use that publisher's color
+        const mc = MULTICAST_PUBLISHER_COLORS[mt.colorIndex % MULTICAST_PUBLISHER_COLORS.length]
+        color = isDark ? mc.dark : mc.light
+      } else {
+        // Multi-publisher segment — neutral color
+        color = isDark ? '#a78bda' : '#7c5cbf'
+      }
+      if (hoveredHighlightPublisherPKs && !mt.publisherPKs.some(pk => hoveredHighlightPublisherPKs.has(pk))) {
         return color + '4d' // ~0.3 opacity via hex alpha
       }
       return color
@@ -2483,6 +2241,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               validators={validators}
               showTreeValidators={showTreeValidators}
               onToggleShowTreeValidators={() => setShowTreeValidators(prev => !prev)}
+              combineSegments={combineSegments}
+              onToggleCombineSegments={() => setCombineSegments(prev => !prev)}
               onHoverMember={setHoveredMemberDevicePK}
             />
           )}

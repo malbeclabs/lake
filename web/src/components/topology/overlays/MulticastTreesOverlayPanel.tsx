@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3, Info } from 'lucide-react'
+import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3, Info, Search } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
@@ -49,6 +49,9 @@ interface MulticastTreesOverlayPanelProps {
   validators: TopologyValidator[]
   showTreeValidators: boolean
   onToggleShowTreeValidators: () => void
+  // Combine segments toggle
+  combineSegments: boolean
+  onToggleCombineSegments: () => void
   // Hover coordination with map/globe/graph
   onHoverMember: (devicePK: string | null) => void
 }
@@ -207,6 +210,8 @@ export function MulticastTreesOverlayPanel({
   validators: _validators, // eslint-disable-line @typescript-eslint/no-unused-vars
   showTreeValidators,
   onToggleShowTreeValidators,
+  combineSegments,
+  onToggleCombineSegments,
   onHoverMember,
 }: MulticastTreesOverlayPanelProps) {
   const { toggleOverlay } = useTopology()
@@ -214,6 +219,8 @@ export function MulticastTreesOverlayPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'publishers' | 'subscribers'>('publishers')
+  const [publisherSearch, setPublisherSearch] = useState('')
+  const [subscriberSearch, setSubscriberSearch] = useState('')
   const [groupsOpen, setGroupsOpen] = useState(true)
   const [membersOpen, setMembersOpen] = useState(true)
   const [optionsOpen, setOptionsOpen] = useState(true)
@@ -263,6 +270,19 @@ export function MulticastTreesOverlayPanel({
     [selectedDetail]
   )
 
+  // Filter members by search query (matches shortened pubkey, device_code, metro_code)
+  const filterMembers = useCallback((members: MulticastMember[], query: string) => {
+    if (!query) return members
+    const q = query.toLowerCase()
+    return members.filter(m => {
+      const shortKey = shortenPubkey(m.user_pk).toLowerCase()
+      const fullKey = m.user_pk.toLowerCase()
+      const device = (m.device_code || '').toLowerCase()
+      const metro = (m.metro_code || '').toLowerCase()
+      return shortKey.includes(q) || fullKey.includes(q) || device.includes(q) || metro.includes(q)
+    })
+  }, [])
+
   // Group members by metro
   const groupByMetro = (members: MulticastMember[]) => {
     const map = new Map<string, MulticastMember[]>()
@@ -275,8 +295,8 @@ export function MulticastTreesOverlayPanel({
     return [...map.entries()].sort((a, b) => b[1].length - a[1].length)
   }
 
-  const publishersByMetro = useMemo(() => groupByMetro(publishers), [publishers])
-  const subscribersByMetro = useMemo(() => groupByMetro(subscribers), [subscribers])
+  const publishersByMetro = useMemo(() => groupByMetro(filterMembers(publishers, publisherSearch)), [publishers, publisherSearch, filterMembers])
+  const subscribersByMetro = useMemo(() => groupByMetro(filterMembers(subscribers, subscriberSearch)), [subscribers, subscriberSearch, filterMembers])
 
   // Build ordered user_pk arrays from metro-grouped render order (for shift-click range selection)
   const orderedPublisherUserPKs = useMemo(() =>
@@ -436,6 +456,8 @@ export function MulticastTreesOverlayPanel({
                         const nextSelected = isSelected ? null : group.code
                         onSelectGroup(nextSelected)
                         setGroupsOpen(!nextSelected)
+                        setPublisherSearch('')
+                        setSubscriberSearch('')
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
                         isSelected ? 'bg-purple-500/20 text-purple-500' : 'hover:bg-[var(--muted)]'
@@ -487,7 +509,7 @@ export function MulticastTreesOverlayPanel({
                         {/* Tabs */}
                         <div className="flex border-b border-[var(--border)] mb-2">
                           <button
-                            onClick={() => setActiveTab('publishers')}
+                            onClick={() => { setActiveTab('publishers'); setPublisherSearch(''); setSubscriberSearch('') }}
                             className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
                               activeTab === 'publishers'
                                 ? 'border-purple-500 text-purple-500'
@@ -497,7 +519,7 @@ export function MulticastTreesOverlayPanel({
                             Publishers ({publishers.length})
                           </button>
                           <button
-                            onClick={() => setActiveTab('subscribers')}
+                            onClick={() => { setActiveTab('subscribers'); setPublisherSearch(''); setSubscriberSearch('') }}
                             className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors -mb-px ${
                               activeTab === 'subscribers'
                                 ? 'border-purple-500 text-purple-500'
@@ -511,6 +533,26 @@ export function MulticastTreesOverlayPanel({
                         {/* Publishers tab */}
                         {activeTab === 'publishers' && (
                           <div className="space-y-2">
+                            {publishers.length > 1 && (
+                              <div className="relative">
+                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                                <input
+                                  type="text"
+                                  value={publisherSearch}
+                                  onChange={e => setPublisherSearch(e.target.value)}
+                                  placeholder="Search publishers..."
+                                  className="w-full text-[10px] bg-[var(--muted)] border border-[var(--border)] rounded-md pl-6 pr-6 py-1 text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-purple-500/50"
+                                />
+                                {publisherSearch && (
+                                  <button
+                                    onClick={() => setPublisherSearch('')}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 hover:bg-[var(--border)] rounded"
+                                  >
+                                    <X className="h-2.5 w-2.5 text-muted-foreground" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             {publishers.length > 1 && (
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                 <button
@@ -532,33 +574,55 @@ export function MulticastTreesOverlayPanel({
                             {publishers.length === 0 && (
                               <div className="text-muted-foreground text-[10px] py-2">No publishers</div>
                             )}
-                            {publishersByMetro.map(([metro, members]) => (
-                              <MetroGroup
-                                key={metro}
-                                metro={metro}
-                                members={members}
+                            <div className="max-h-[300px] overflow-y-auto space-y-2">
+                              {publishersByMetro.map(([metro, members]) => (
+                                <MetroGroup
+                                  key={metro}
+                                  metro={metro}
+                                  members={members}
 
-                                enabledMembers={enabledPublishers}
-                                onMemberClick={handlePublisherClick}
-                                orderedUserPKs={orderedPublisherUserPKs}
+                                  enabledMembers={enabledPublishers}
+                                  onMemberClick={handlePublisherClick}
+                                  orderedUserPKs={orderedPublisherUserPKs}
 
-                                hoveredUserPK={hoveredUserPK}
-                                onHoverUserPK={setHoveredUserPK}
+                                  hoveredUserPK={hoveredUserPK}
+                                  onHoverUserPK={setHoveredUserPK}
 
-                                keySuffix="-pub"
-                                accentColorForMember={(m) => {
-                                  const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
-                                  const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
-                                  return isDark ? pubColor.dark : pubColor.light
-                                }}
-                              />
-                            ))}
+                                  keySuffix="-pub"
+                                  accentColorForMember={(m) => {
+                                    const pubColorIndex = publisherColorMap.get(m.device_pk) ?? 0
+                                    const pubColor = MULTICAST_PUBLISHER_COLORS[pubColorIndex % MULTICAST_PUBLISHER_COLORS.length]
+                                    return isDark ? pubColor.dark : pubColor.light
+                                  }}
+                                />
+                              ))}
+                            </div>
                           </div>
                         )}
 
                         {/* Subscribers tab */}
                         {activeTab === 'subscribers' && (
                           <div className="space-y-2">
+                            {subscribers.length > 1 && (
+                              <div className="relative">
+                                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                                <input
+                                  type="text"
+                                  value={subscriberSearch}
+                                  onChange={e => setSubscriberSearch(e.target.value)}
+                                  placeholder="Search subscribers..."
+                                  className="w-full text-[10px] bg-[var(--muted)] border border-[var(--border)] rounded-md pl-6 pr-6 py-1 text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-purple-500/50"
+                                />
+                                {subscriberSearch && (
+                                  <button
+                                    onClick={() => setSubscriberSearch('')}
+                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 hover:bg-[var(--border)] rounded"
+                                  >
+                                    <X className="h-2.5 w-2.5 text-muted-foreground" />
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             {subscribers.length > 1 && (
                               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                                 <button
@@ -580,23 +644,25 @@ export function MulticastTreesOverlayPanel({
                             {subscribers.length === 0 && (
                               <div className="text-muted-foreground text-[10px] py-2">No subscribers</div>
                             )}
-                            {subscribersByMetro.map(([metro, members]) => (
-                              <MetroGroup
-                                key={metro}
-                                metro={metro}
-                                members={members}
+                            <div className="max-h-[300px] overflow-y-auto space-y-2">
+                              {subscribersByMetro.map(([metro, members]) => (
+                                <MetroGroup
+                                  key={metro}
+                                  metro={metro}
+                                  members={members}
 
-                                enabledMembers={enabledSubscribers}
-                                onMemberClick={handleSubscriberClick}
-                                orderedUserPKs={orderedSubscriberUserPKs}
+                                  enabledMembers={enabledSubscribers}
+                                  onMemberClick={handleSubscriberClick}
+                                  orderedUserPKs={orderedSubscriberUserPKs}
 
-                                hoveredUserPK={hoveredUserPK}
-                                onHoverUserPK={setHoveredUserPK}
+                                  hoveredUserPK={hoveredUserPK}
+                                  onHoverUserPK={setHoveredUserPK}
 
-                                keySuffix="-sub"
-                                accentColorForMember={() => '#14b8a6'}
-                              />
-                            ))}
+                                  keySuffix="-sub"
+                                  accentColorForMember={() => '#14b8a6'}
+                                />
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -646,6 +712,10 @@ export function MulticastTreesOverlayPanel({
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground">Animate flow</span>
                   <Toggle enabled={animateFlow} onToggle={onToggleAnimateFlow} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Combine segments</span>
+                  <Toggle enabled={combineSegments} onToggle={onToggleCombineSegments} />
                 </div>
               </div>
             )}
@@ -984,6 +1054,7 @@ function MulticastTrafficChartSection({
                   <div className="text-right">↓ In</div>
                   <div className="text-right">↑ Out</div>
                 </div>
+                <div className="max-h-[200px] overflow-y-auto">
                 {tunnelIds.map((tid) => {
                   const info = tunnelInfo.get(tid)
                   const vals = displayValues.get(tid)
@@ -1021,6 +1092,7 @@ function MulticastTrafficChartSection({
                     </div>
                   )
                 })}
+                </div>
               </div>
             </div>
           )}
