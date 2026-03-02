@@ -184,14 +184,12 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
       return
     }
 
-    // Default: enable only first publisher + all subscribers
+    // Default: enable all publishers + all subscribers
     const pubs = new Set<string>()
     const subs = new Set<string>()
-    let firstPubAdded = false
     detail.members.forEach(m => {
-      if ((m.mode === 'P' || m.mode === 'P+S') && !firstPubAdded) {
+      if (m.mode === 'P' || m.mode === 'P+S') {
         pubs.add(m.user_pk)
-        firstPubAdded = true
       }
       if (m.mode === 'S' || m.mode === 'P+S') {
         subs.add(m.user_pk)
