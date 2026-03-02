@@ -1958,6 +1958,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
 
+  // Multicast flow dots — refs for the persistent rAF loop below.
+  // Declared before the effect so the closure captures the ref objects.
+  const multicastAnimatedRef = useRef(multicastAnimatedGeoJson)
+  multicastAnimatedRef.current = multicastAnimatedGeoJson
+  const multicastTreesModeRef = useRef(multicastTreesMode)
+  multicastTreesModeRef.current = multicastTreesMode
+  const animateFlowRef = useRef(animateFlow)
+  animateFlowRef.current = animateFlow
+
   // Animate flowing dots along links and multicast tree paths.
   // Persistent rAF loop reads refs for latest state; manages two imperative layers:
   //   1. link-flow-dots — dots along regular links
@@ -1988,17 +1997,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     // --- Multicast flow dots ---
     const mcSrcId = 'multicast-flow-dots'
-    const mcLayerId = 'multicast-flow-dots-layer'
     const MC_DOTS = 3
     const MC_SPEED = 0.0003
-
-    const mcPaint = {
-      'circle-radius': 4,
-      'circle-color': ['get', 'color'],
-      'circle-opacity': 0.95,
-      'circle-stroke-width': 1,
-      'circle-stroke-color': 'rgba(0,0,0,0.3)',
-    }
 
     // Generic helpers
     const ensureLayer = (srcId: string, layerId: string, paint: Record<string, unknown>) => {
@@ -2058,9 +2058,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       }
 
       // --- Multicast dots (throttled to ~30fps) ---
+      // Source+layer managed declaratively by react-map-gl; we just update data here.
       if (!multicastTreesModeRef.current || !animateFlowRef.current) {
         setSourceData(mcSrcId, EMPTY)
-      } else if (timestamp - mcLastUpdate >= 33 && ensureLayer(mcSrcId, mcLayerId, mcPaint)) {
+      } else if (timestamp - mcLastUpdate >= 33) {
         mcLastUpdate = timestamp
 
         const features = multicastAnimatedRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
@@ -2099,19 +2100,10 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       try {
         if (map.getLayer(linkLayerId)) map.removeLayer(linkLayerId)
         if (map.getSource(linkSrcId)) map.removeSource(linkSrcId)
-        if (map.getLayer(mcLayerId)) map.removeLayer(mcLayerId)
-        if (map.getSource(mcSrcId)) map.removeSource(mcSrcId)
+        // multicast-flow-dots source+layer managed declaratively by react-map-gl
       } catch { /* noop */ }
     }
   }, [mapReady])
-
-  // Multicast flow dots — refs for the persistent rAF loop below
-  const multicastAnimatedRef = useRef(multicastAnimatedGeoJson)
-  multicastAnimatedRef.current = multicastAnimatedGeoJson
-  const multicastTreesModeRef = useRef(multicastTreesMode)
-  multicastTreesModeRef.current = multicastTreesMode
-  const animateFlowRef = useRef(animateFlow)
-  animateFlowRef.current = animateFlow
 
   // Colors
   const deviceColor = '#00ffcc' // vibrant cyan - matches globe view, overlays will override
@@ -2793,7 +2785,22 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           </Source>
         )}
 
-        {/* Multicast flow dots are managed imperatively in the rAF loop above. */}
+        {/* Multicast flow dots — source+layer always mounted, data updated by rAF loop */}
+        {multicastTreesMode && (
+          <Source id="multicast-flow-dots" type="geojson" data={{ type: 'FeatureCollection', features: [] }}>
+            <Layer
+              id="multicast-flow-dots-layer"
+              type="circle"
+              paint={{
+                'circle-radius': 4,
+                'circle-color': ['get', 'color'],
+                'circle-opacity': 0.95,
+                'circle-stroke-width': 1,
+                'circle-stroke-color': 'rgba(0,0,0,0.3)',
+              }}
+            />
+          </Source>
+        )}
 
         {/* Link flow dots are managed imperatively in a persistent rAF loop. */}
 
