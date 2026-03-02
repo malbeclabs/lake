@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -1203,6 +1204,26 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	response.PublisherCount = len(publishers)
 	response.SubscriberCount = len(subscribers)
 
+	// Optional publisher filter: ?publishers=devicePK1,devicePK2
+	if publishersParam := r.URL.Query().Get("publishers"); publishersParam != "" {
+		allowedPKs := make(map[string]bool)
+		for _, pk := range strings.Split(publishersParam, ",") {
+			pk = strings.TrimSpace(pk)
+			if pk != "" {
+				allowedPKs[pk] = true
+			}
+		}
+		if len(allowedPKs) > 0 {
+			filtered := publishers[:0]
+			for _, pub := range publishers {
+				if allowedPKs[pub.PK] {
+					filtered = append(filtered, pub)
+				}
+			}
+			publishers = filtered
+		}
+	}
+
 	if len(publishers) == 0 || len(subscribers) == 0 {
 		response.Error = "no publishers or subscribers found with device assignments"
 		writeJSON(w, response)
@@ -1332,5 +1353,255 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("MulticastTreePaths: %d paths found in %v", len(response.Paths), time.Since(start))
+	writeJSON(w, response)
+}
+
+// MulticastAggSegment represents a unique link segment used by one or more publishers
+type MulticastAggSegment struct {
+	FromPK       string   `json:"fromPK"`
+	ToPK         string   `json:"toPK"`
+	PublisherPKs []string `json:"publisherPKs"`
+}
+
+// MulticastTreeSegmentsResponse is the response for the aggregated tree segments endpoint
+type MulticastTreeSegmentsResponse struct {
+	GroupCode       string                `json:"groupCode"`
+	GroupPK         string                `json:"groupPK"`
+	PublisherCount  int                   `json:"publisherCount"`
+	SubscriberCount int                   `json:"subscriberCount"`
+	Segments        []MulticastAggSegment `json:"segments"`
+	Error           string                `json:"error,omitempty"`
+}
+
+// GetMulticastTreeSegments computes aggregated segments from publisher→subscriber paths.
+// Instead of returning full hop-by-hop paths, it returns unique (fromPK, toPK) pairs
+// with the set of publishers that traverse each segment. Uses batched Dijkstra queries
+// (one per publisher) instead of one per (publisher, subscriber) pair.
+func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		writeJSON(w, MulticastTreeSegmentsResponse{
+			Segments: []MulticastAggSegment{},
+			Error:    "missing multicast group pk",
+		})
+		return
+	}
+
+	start := time.Now()
+	response := MulticastTreeSegmentsResponse{
+		Segments: []MulticastAggSegment{},
+	}
+
+	// Resolve group info
+	groupQuery := `
+		SELECT pk, COALESCE(code, '') FROM dz_multicast_groups_current WHERE pk = ? OR code = ?
+	`
+	err := envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
+	if err != nil {
+		log.Printf("MulticastTreeSegments group query error: %v", err)
+		response.Error = "multicast group not found"
+		writeJSON(w, response)
+		return
+	}
+
+	// Get publishers and subscribers
+	membersQuery := `
+		SELECT
+			CASE
+				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) AND has(JSONExtract(u.subscribers, 'Array(String)'), ?) THEN 'P+S'
+				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) THEN 'P'
+				ELSE 'S'
+			END as mode,
+			COALESCE(u.device_pk, '') as device_pk
+		FROM dz_users_current u
+		WHERE u.status = 'activated'
+			AND u.kind = 'multicast'
+			AND (
+				has(JSONExtract(u.publishers, 'Array(String)'), ?)
+				OR has(JSONExtract(u.subscribers, 'Array(String)'), ?)
+			)
+	`
+
+	rows, err := envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		log.Printf("MulticastTreeSegments members query error: %v", err)
+		response.Error = err.Error()
+		writeJSON(w, response)
+		return
+	}
+	defer rows.Close()
+
+	publisherSet := make(map[string]bool)
+	subscriberSet := make(map[string]bool)
+	var publisherPKs, subscriberPKs []string
+
+	for rows.Next() {
+		var mode, devicePK string
+		if err := rows.Scan(&mode, &devicePK); err != nil {
+			log.Printf("MulticastTreeSegments members scan error: %v", err)
+			continue
+		}
+		if devicePK == "" {
+			continue
+		}
+		if (mode == "P" || mode == "P+S") && !publisherSet[devicePK] {
+			publisherPKs = append(publisherPKs, devicePK)
+			publisherSet[devicePK] = true
+		}
+		if (mode == "S" || mode == "P+S") && !subscriberSet[devicePK] {
+			subscriberPKs = append(subscriberPKs, devicePK)
+			subscriberSet[devicePK] = true
+		}
+	}
+
+	response.PublisherCount = len(publisherPKs)
+	response.SubscriberCount = len(subscriberPKs)
+
+	// Optional publisher filter
+	if publishersParam := r.URL.Query().Get("publishers"); publishersParam != "" {
+		allowedPKs := make(map[string]bool)
+		for _, pk := range strings.Split(publishersParam, ",") {
+			pk = strings.TrimSpace(pk)
+			if pk != "" {
+				allowedPKs[pk] = true
+			}
+		}
+		if len(allowedPKs) > 0 {
+			filtered := publisherPKs[:0]
+			for _, pk := range publisherPKs {
+				if allowedPKs[pk] {
+					filtered = append(filtered, pk)
+				}
+			}
+			publisherPKs = filtered
+		}
+	}
+
+	if len(publisherPKs) == 0 || len(subscriberPKs) == 0 {
+		response.Error = "no publishers or subscribers found with device assignments"
+		writeJSON(w, response)
+		return
+	}
+
+	// For each publisher, run one batched Dijkstra query that UNWINDs all subscriber PKs.
+	// This is P queries instead of P×S.
+	type publisherResult struct {
+		publisherPK string
+		// segment key (canonical) -> true
+		segments map[string]bool
+		err      error
+	}
+
+	var wg sync.WaitGroup
+	resultChan := make(chan publisherResult, len(publisherPKs))
+	sem := make(chan struct{}, 10)
+
+	for _, pubPK := range publisherPKs {
+		wg.Add(1)
+		go func(pubPK string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			queryCtx, queryCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer queryCancel()
+
+			session := config.Neo4jSession(queryCtx)
+			defer session.Close(queryCtx)
+
+			cypher := `
+				MATCH (src:Device {pk: $from_pk})
+				UNWIND $to_pks AS to_pk
+				MATCH (dst:Device {pk: to_pk})
+				CALL apoc.algo.dijkstra(src, dst, 'ISIS_ADJACENT>', 'metric') YIELD path
+				RETURN to_pk, [n IN nodes(path) | n.pk] AS devicePKs
+			`
+
+			result, err := session.Run(queryCtx, cypher, map[string]any{
+				"from_pk": pubPK,
+				"to_pks":  subscriberPKs,
+			})
+			if err != nil {
+				resultChan <- publisherResult{publisherPK: pubPK, err: err}
+				return
+			}
+
+			segments := make(map[string]bool)
+			records, err := result.Collect(queryCtx)
+			if err != nil {
+				resultChan <- publisherResult{publisherPK: pubPK, err: err}
+				return
+			}
+
+			for _, record := range records {
+				devicePKsVal, _ := record.Get("devicePKs")
+				devicePKsList, ok := devicePKsVal.([]any)
+				if !ok || len(devicePKsList) < 2 {
+					continue
+				}
+				for i := 0; i < len(devicePKsList)-1; i++ {
+					fromPK := asString(devicePKsList[i])
+					toPK := asString(devicePKsList[i+1])
+					if fromPK == "" || toPK == "" {
+						continue
+					}
+					// Canonical key: sorted to merge both directions
+					key := fromPK + "|" + toPK
+					if fromPK > toPK {
+						key = toPK + "|" + fromPK
+					}
+					segments[key] = true
+				}
+			}
+
+			resultChan <- publisherResult{publisherPK: pubPK, segments: segments}
+		}(pubPK)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Aggregate: canonical segment key -> set of publisher PKs
+	segmentPublishers := make(map[string]map[string]bool)
+	segmentEndpoints := make(map[string][2]string) // canonical key -> [fromPK, toPK]
+
+	for result := range resultChan {
+		if result.err != nil {
+			log.Printf("MulticastTreeSegments path query error for publisher %s: %v", result.publisherPK, result.err)
+			continue
+		}
+		for key := range result.segments {
+			if segmentPublishers[key] == nil {
+				segmentPublishers[key] = make(map[string]bool)
+				parts := strings.SplitN(key, "|", 2)
+				segmentEndpoints[key] = [2]string{parts[0], parts[1]}
+			}
+			segmentPublishers[key][result.publisherPK] = true
+		}
+	}
+
+	// Build response segments
+	for key, pubSet := range segmentPublishers {
+		endpoints := segmentEndpoints[key]
+		pubs := make([]string, 0, len(pubSet))
+		for pk := range pubSet {
+			pubs = append(pubs, pk)
+		}
+		response.Segments = append(response.Segments, MulticastAggSegment{
+			FromPK:       endpoints[0],
+			ToPK:         endpoints[1],
+			PublisherPKs: pubs,
+		})
+	}
+
+	log.Printf("MulticastTreeSegments: %d segments from %d publishers in %v", len(response.Segments), len(publisherPKs), time.Since(start))
 	writeJSON(w, response)
 }

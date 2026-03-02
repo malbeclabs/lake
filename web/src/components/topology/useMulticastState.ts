@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { fetchMulticastGroup, fetchMulticastTreePaths } from '@/lib/api'
-import type { MulticastGroupDetail, MulticastTreeResponse, MulticastTreePath } from '@/lib/api'
+import { fetchMulticastGroup, fetchMulticastTreeSegments } from '@/lib/api'
+import type { MulticastGroupDetail, MulticastTreeSegmentsResponse } from '@/lib/api'
 import { MULTICAST_PUBLISHER_COLORS } from './overlays/MulticastTreesOverlayPanel'
 
 export interface UseMulticastStateOptions {
@@ -14,13 +14,13 @@ export interface MulticastParamState {
   disabledSubs: Set<string> | null
 }
 
-// Per-publisher cache: groupCode -> (publisherDevicePK -> paths[])
-type PublisherPathCache = Map<string, Map<string, MulticastTreePath[]>>
+// Cache key: sorted publisher device PKs joined by comma
+type SegmentCacheKey = string
 
 export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions) {
   const [selectedMulticastGroup, setSelectedMulticastGroup] = useState<string | null>(null)
   const [multicastGroupDetails, setMulticastGroupDetails] = useState<Map<string, MulticastGroupDetail>>(new Map())
-  const [publisherPathCache, setPublisherPathCache] = useState<PublisherPathCache>(new Map())
+  const [segmentCache, setSegmentCache] = useState<Map<string, Map<SegmentCacheKey, MulticastTreeSegmentsResponse>>>(new Map())
   const [enabledPublishers, setEnabledPublishers] = useState<Set<string>>(new Set())
   const [enabledSubscribers, setEnabledSubscribers] = useState<Set<string>>(new Set())
   const [dimOtherLinks, setDimOtherLinks] = useState(true)
@@ -34,8 +34,8 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
   const initialDisabledSubsRef = useRef<Set<string> | null>(null)
   // Track which group we've already initialized publishers/subscribers for
   const initializedGroupRef = useRef<string | null>(null)
-  // Track in-flight fetch requests to avoid duplicates
-  const fetchingPublishersRef = useRef<Set<string>>(new Set())
+  // Track in-flight fetch to avoid duplicates
+  const fetchingSegmentsRef = useRef<string | null>(null)
 
   // Handler to select multicast group
   const handleSelectMulticastGroup = useCallback((code: string | null) => {
@@ -83,83 +83,58 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
     return set
   }, [selectedMulticastGroup, multicastGroupDetails, enabledSubscribers])
 
-  // Lazy fetch tree paths per publisher when enabled publishers change
+  // Stable cache key for the current set of enabled publisher device PKs
+  const segmentCacheKey = useMemo(() => {
+    return Array.from(enabledPublisherDevicePKs).sort().join(',')
+  }, [enabledPublisherDevicePKs])
+
+  // Current segments response from cache (if available)
+  const currentSegmentsResponse = useMemo((): MulticastTreeSegmentsResponse | undefined => {
+    if (!selectedMulticastGroup || !segmentCacheKey) return undefined
+    return segmentCache.get(selectedMulticastGroup)?.get(segmentCacheKey)
+  }, [selectedMulticastGroup, segmentCacheKey, segmentCache])
+
+  // Fetch segments when enabled publishers change (debounced)
   useEffect(() => {
     if (!enabled || !selectedMulticastGroup) return
     if (enabledPublisherDevicePKs.size === 0) return
 
     const code = selectedMulticastGroup
-    const groupCache = publisherPathCache.get(code)
+    const cacheKey = segmentCacheKey
 
-    // Find publishers that are enabled but not yet cached and not in-flight
-    const uncachedPKs: string[] = []
-    for (const pk of enabledPublisherDevicePKs) {
-      if (!groupCache?.has(pk) && !fetchingPublishersRef.current.has(`${code}:${pk}`)) {
-        uncachedPKs.push(pk)
-      }
-    }
-    if (uncachedPKs.length === 0) return
+    // Already cached?
+    if (segmentCache.get(code)?.has(cacheKey)) return
 
-    // Batch up to 5 publishers per request
-    const batchSize = 5
-    for (let i = 0; i < uncachedPKs.length; i += batchSize) {
-      const batch = uncachedPKs.slice(i, i + batchSize)
-      // Mark as in-flight
-      for (const pk of batch) {
-        fetchingPublishersRef.current.add(`${code}:${pk}`)
-      }
+    // Already fetching this exact set?
+    const fetchKey = `${code}:${cacheKey}`
+    if (fetchingSegmentsRef.current === fetchKey) return
 
-      fetchMulticastTreePaths(code, batch)
+    // Debounce: wait 50ms before fetching to batch rapid toggling
+    const timer = setTimeout(() => {
+      fetchingSegmentsRef.current = fetchKey
+      const publisherPKs = Array.from(enabledPublisherDevicePKs)
+
+      fetchMulticastTreeSegments(code, publisherPKs)
         .then(result => {
-          setPublisherPathCache(prev => {
+          setSegmentCache(prev => {
             const next = new Map(prev)
-            const existing = next.get(code) ?? new Map<string, MulticastTreePath[]>()
-            const updated = new Map(existing)
-            // Group returned paths by publisher device PK
-            for (const pk of batch) {
-              updated.set(pk, [])
-            }
-            if (result.paths) {
-              for (const path of result.paths) {
-                const pubPaths = updated.get(path.publisherDevicePK) ?? []
-                pubPaths.push(path)
-                updated.set(path.publisherDevicePK, pubPaths)
-              }
-            }
+            const groupCache = next.get(code) ?? new Map<SegmentCacheKey, MulticastTreeSegmentsResponse>()
+            const updated = new Map(groupCache)
+            updated.set(cacheKey, result)
             next.set(code, updated)
             return next
           })
         })
-        .catch(err => console.error(`Failed to fetch multicast tree paths for ${code} publishers ${batch.join(',')}:`, err))
+        .catch(err => console.error(`Failed to fetch multicast tree segments for ${code}:`, err))
         .finally(() => {
-          for (const pk of batch) {
-            fetchingPublishersRef.current.delete(`${code}:${pk}`)
+          if (fetchingSegmentsRef.current === fetchKey) {
+            fetchingSegmentsRef.current = null
           }
         })
-    }
-  }, [enabled, selectedMulticastGroup, enabledPublisherDevicePKs, publisherPathCache])
+    }, 50)
 
-  // Assemble multicastTreePaths from the per-publisher cache for backward compatibility
-  // This produces the same shape the views consume (Map<groupCode, MulticastTreeResponse>)
-  const multicastTreePaths = useMemo(() => {
-    const map = new Map<string, MulticastTreeResponse>()
-    if (!selectedMulticastGroup) return map
-    const groupCache = publisherPathCache.get(selectedMulticastGroup)
-    if (!groupCache) return map
-
-    const allPaths: MulticastTreePath[] = []
-    for (const paths of groupCache.values()) {
-      allPaths.push(...paths)
-    }
-    map.set(selectedMulticastGroup, {
-      groupCode: selectedMulticastGroup,
-      groupPK: '',
-      publisherCount: groupCache.size,
-      subscriberCount: 0,
-      paths: allPaths,
-    })
-    return map
-  }, [selectedMulticastGroup, publisherPathCache])
+    return () => clearTimeout(timer)
+  }, [enabled, selectedMulticastGroup, enabledPublisherDevicePKs, segmentCacheKey, segmentCache])
 
   // Auto-load group details when group is selected, and refresh periodically
   useEffect(() => {
@@ -250,6 +225,7 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
 
   // Aggregate segments across all publishers: one entry per unique (fromPK, toPK) pair.
   // Each segment carries the set of publishers that use it and a weight for rendering.
+  // Now derived directly from the server response instead of client-side dedup.
   const multicastAggregatedSegments = useMemo(() => {
     const result: Array<{
       fromPK: string
@@ -258,80 +234,37 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
       publisherColorIndices: number[]
       weight: number
     }> = []
-    if (!enabled || !selectedMulticastGroup) return result
+    if (!enabled || !selectedMulticastGroup || !currentSegmentsResponse) return result
 
-    const treeData = multicastTreePaths.get(selectedMulticastGroup)
-    if (!treeData?.paths?.length) return result
-
-    // Collect unique segments with their publisher sets
-    // Use canonical key (sorted) to merge both directions
-    const segmentMap = new Map<string, { fromPK: string; toPK: string; publishers: Set<string> }>()
-
-    for (const treePath of treeData.paths) {
-      const path = treePath.path
-      if (!path?.length) continue
-      if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK)) continue
-      if (!enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) continue
-
-      for (let i = 0; i < path.length - 1; i++) {
-        const fromPK = path[i].devicePK
-        const toPK = path[i + 1].devicePK
-        const canonicalKey = [fromPK, toPK].sort().join('|')
-
-        let entry = segmentMap.get(canonicalKey)
-        if (!entry) {
-          entry = { fromPK, toPK, publishers: new Set() }
-          segmentMap.set(canonicalKey, entry)
-        }
-        entry.publishers.add(treePath.publisherDevicePK)
-      }
-    }
-
-    for (const entry of segmentMap.values()) {
-      const publisherPKs = Array.from(entry.publishers)
+    for (const seg of currentSegmentsResponse.segments) {
       result.push({
-        fromPK: entry.fromPK,
-        toPK: entry.toPK,
-        publisherPKs,
-        publisherColorIndices: publisherPKs.map(pk => multicastPublisherColorMap.get(pk) ?? 0),
-        weight: Math.min(2 + publisherPKs.length * 1.5, 8),
+        fromPK: seg.fromPK,
+        toPK: seg.toPK,
+        publisherPKs: seg.publisherPKs,
+        publisherColorIndices: seg.publisherPKs.map(pk => multicastPublisherColorMap.get(pk) ?? 0),
+        weight: Math.min(2 + seg.publisherPKs.length * 1.5, 8),
       })
     }
 
     return result
-  }, [enabled, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, multicastPublisherColorMap])
+  }, [enabled, selectedMulticastGroup, currentSegmentsResponse, multicastPublisherColorMap])
 
   // Per-publisher segment paths — only computed when combineSegments is off.
   // Each entry is one publisher's list of segments (fromPK, toPK pairs).
+  // Derived from server segments by filtering each segment's publisherPKs.
   const multicastPublisherPaths = useMemo(() => {
     const result = new Map<string, Array<{ fromPK: string; toPK: string }>>()
-    if (combineSegments || !enabled || !selectedMulticastGroup) return result
+    if (combineSegments || !enabled || !selectedMulticastGroup || !currentSegmentsResponse) return result
 
-    const treeData = multicastTreePaths.get(selectedMulticastGroup)
-    if (!treeData?.paths?.length) return result
-
-    for (const treePath of treeData.paths) {
-      const path = treePath.path
-      if (!path?.length) continue
-      if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK)) continue
-      if (!enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) continue
-
-      const pubPK = treePath.publisherDevicePK
-      if (!result.has(pubPK)) result.set(pubPK, [])
-      const segments = result.get(pubPK)!
-
-      for (let i = 0; i < path.length - 1; i++) {
-        const fromPK = path[i].devicePK
-        const toPK = path[i + 1].devicePK
-        // Deduplicate within this publisher
-        const canonicalKey = [fromPK, toPK].sort().join('|')
-        if (!segments.some(s => [s.fromPK, s.toPK].sort().join('|') === canonicalKey)) {
-          segments.push({ fromPK, toPK })
-        }
+    for (const seg of currentSegmentsResponse.segments) {
+      for (const pubPK of seg.publisherPKs) {
+        if (!enabledPublisherDevicePKs.has(pubPK)) continue
+        if (!result.has(pubPK)) result.set(pubPK, [])
+        result.get(pubPK)!.push({ fromPK: seg.fromPK, toPK: seg.toPK })
       }
     }
     return result
-  }, [combineSegments, enabled, selectedMulticastGroup, multicastTreePaths, enabledPublisherDevicePKs, enabledSubscriberDevicePKs])
+  }, [combineSegments, enabled, selectedMulticastGroup, currentSegmentsResponse, enabledPublisherDevicePKs])
 
   // Canonical segment key -> list of publisher PKs that use this segment.
   // Used for per-publisher offset calculation when combineSegments is off.
@@ -374,21 +307,22 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
     if (enabledPublisherDevicePKs.has(hoveredMemberDevicePK)) {
       return new Set([hoveredMemberDevicePK])
     }
-    if (enabledSubscriberDevicePKs.has(hoveredMemberDevicePK)) {
+    // For a hovered subscriber, find publishers whose segments reach it
+    if (enabledSubscriberDevicePKs.has(hoveredMemberDevicePK) && currentSegmentsResponse) {
       const pubs = new Set<string>()
-      const treeData = multicastTreePaths.get(selectedMulticastGroup)
-      if (treeData?.paths) {
-        for (const treePath of treeData.paths) {
-          if (treePath.subscriberDevicePK === hoveredMemberDevicePK &&
-              enabledPublisherDevicePKs.has(treePath.publisherDevicePK)) {
-            pubs.add(treePath.publisherDevicePK)
+      for (const seg of currentSegmentsResponse.segments) {
+        if (seg.fromPK === hoveredMemberDevicePK || seg.toPK === hoveredMemberDevicePK) {
+          for (const pubPK of seg.publisherPKs) {
+            if (enabledPublisherDevicePKs.has(pubPK)) {
+              pubs.add(pubPK)
+            }
           }
         }
       }
       return pubs.size > 0 ? pubs : null
     }
     return null
-  }, [hoveredMemberDevicePK, enabled, selectedMulticastGroup, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, multicastTreePaths])
+  }, [hoveredMemberDevicePK, enabled, selectedMulticastGroup, enabledPublisherDevicePKs, enabledSubscriberDevicePKs, currentSegmentsResponse])
 
   // Map device_pk -> role color for validators on multicast member devices
   const multicastDeviceRoleColorMap = useMemo(() => {
@@ -445,7 +379,6 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
     // State
     selectedMulticastGroup,
     multicastGroupDetails,
-    multicastTreePaths,
     enabledPublishers,
     enabledSubscribers,
     dimOtherLinks,

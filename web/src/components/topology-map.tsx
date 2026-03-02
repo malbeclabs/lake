@@ -367,7 +367,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   // Multicast trees operational state (shared hook)
   const mc = useMulticastState({ enabled: multicastTreesMode, isDark })
   const {
-    selectedMulticastGroup, multicastGroupDetails, multicastTreePaths,
+    selectedMulticastGroup, multicastGroupDetails,
     enabledPublishers, enabledSubscribers,
     dimOtherLinks, setDimOtherLinks, animateFlow, setAnimateFlow,
     showTreeValidators, setShowTreeValidators,
@@ -758,6 +758,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const map = new Map<string, TopologyLink>()
     for (const link of links) {
       map.set(link.pk, link)
+    }
+    return map
+  }, [links])
+
+  // Device-pair → link PK lookup for O(1) segment-to-link matching
+  const linkByDevicePair = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const link of links) {
+      // Store both directions for canonical lookup
+      map.set(`${link.side_a_pk}|${link.side_z_pk}`, link.pk)
+      map.set(`${link.side_z_pk}|${link.side_a_pk}`, link.pk)
     }
     return map
   }, [links])
@@ -1322,31 +1333,23 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
 
 
-  // Set of link PKs that are in any multicast tree (for dimming)
+  // Set of link PKs that are in any multicast tree (for hover filtering)
   const multicastTreeLinkPKs = useMemo(() => {
     const set = new Set<string>()
     if (!multicastTreesMode || !selectedMulticastGroup) return set
-    const treeData = multicastTreePaths.get(selectedMulticastGroup)
-    if (treeData?.paths?.length) {
-      treeData.paths.forEach(treePath => {
-        const path = treePath.path
-        if (!path?.length) return
-        if (!enabledPublisherDevicePKs.has(treePath.publisherDevicePK) || !enabledSubscriberDevicePKs.has(treePath.subscriberDevicePK)) return
-        for (let i = 0; i < path.length - 1; i++) {
-          const fromPK = path[i].devicePK
-          const toPK = path[i + 1].devicePK
-          for (const link of links) {
-            if ((link.side_a_pk === fromPK && link.side_z_pk === toPK) ||
-                (link.side_a_pk === toPK && link.side_z_pk === fromPK)) {
-              set.add(link.pk)
-              break
-            }
-          }
-        }
-      })
+
+    // Collect unique segment device pairs from whichever mode is active
+    const segmentPairs: Array<{ fromPK: string; toPK: string }> = combineSegments
+      ? multicastAggregatedSegments
+      : Array.from(multicastPublisherPaths.values()).flat()
+
+    // O(S) lookups via device-pair map instead of O(S×L) scanning all links
+    for (const { fromPK, toPK } of segmentPairs) {
+      const linkPK = linkByDevicePair.get(`${fromPK}|${toPK}`)
+      if (linkPK) set.add(linkPK)
     }
     return set
-  }, [multicastTreesMode, selectedMulticastGroup, multicastTreePaths, links, enabledPublisherDevicePKs, enabledSubscriberDevicePKs])
+  }, [multicastTreesMode, selectedMulticastGroup, combineSegments, multicastAggregatedSegments, multicastPublisherPaths, linkByDevicePair])
 
   // Alias hook's device PK sets for rendering code (hook returns empty sets when disabled)
   const multicastPublisherDevices = enabledPublisherDevicePKs
@@ -1505,8 +1508,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       const metroLinkPathIndices = metroLinkPathMap.get(link.pk)
       const isInAnyMetroPath = metroLinkPathIndices && metroLinkPathIndices.length > 0
       const isInSelectedMetroPath = metroPathSelectedPairs.length > 0 && metroLinkPathIndices?.some(idx => metroPathSelectedPairs.includes(idx))
-      // Multicast tree mode - check if link is in any tree path (for dimming only)
-      const isInAnyMulticastTree = multicastTreeLinkPKs.has(link.pk)
+      // Multicast tree mode - dimming handled globally (tree segments render via overlay layer)
       const criticality = linkCriticalityMap.get(link.pk)
       const isRemovedLink = removalLink?.linkPK === link.pk
 
@@ -1647,8 +1649,8 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayOpacity = 1
       }
 
-      // Dim non-highlighted links when multicast overlay is active and dimming enabled
-      if (multicastTreesMode && dimOtherLinks && !isInAnyMulticastTree && !isSelected && !isHovered) {
+      // Dim all base links when multicast overlay is active (tree segments render on separate layer)
+      if (multicastTreesMode && dimOtherLinks && !isSelected && !isHovered) {
         displayOpacity = 0.08
       }
 
@@ -1716,7 +1718,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       features,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, multicastTreeLinkPKs, dimOtherLinks])
+  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks])
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {
@@ -2048,12 +2050,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     }
   }, [mapReady])
 
-  // Multicast flow dots — declarative Source/Layer driven by state updated from rAF.
+  // Multicast flow dots animation — rAF loop updates React state at throttled ~30fps.
+  // Reads geometry from a ref so the effect doesn't restart on geometry changes.
   const [multicastDotsGeoJson, setMulticastDotsGeoJson] = useState<GeoJSON.FeatureCollection>({ type: 'FeatureCollection', features: [] })
+  const multicastAnimatedRef = useRef(multicastAnimatedGeoJson)
+  multicastAnimatedRef.current = multicastAnimatedGeoJson
 
   useEffect(() => {
-    if (!multicastTreesMode || !animateFlow || multicastAnimatedGeoJson.features.length === 0) {
-      setMulticastDotsGeoJson({ type: 'FeatureCollection', features: [] })
+    if (!multicastTreesMode || !animateFlow) {
+      setMulticastDotsGeoJson(prev => prev.features.length === 0 ? prev : { type: 'FeatureCollection', features: [] })
       return
     }
 
@@ -2061,16 +2066,28 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     const MC_SPEED = 0.0003
     let frameId: number
     let lastUpdate = 0
+    let lastFeatureCount = -1
 
     const tick = (timestamp: number) => {
-      // Throttle state updates to ~30fps to avoid excessive renders
+      // Throttle state updates to ~30fps
       if (timestamp - lastUpdate < 33) {
         frameId = requestAnimationFrame(tick)
         return
       }
       lastUpdate = timestamp
 
-      const features = multicastAnimatedGeoJson.features as GeoJSON.Feature<GeoJSON.LineString>[]
+      const features = multicastAnimatedRef.current.features as GeoJSON.Feature<GeoJSON.LineString>[]
+      if (features.length === 0) {
+        // Only update state if we previously had features
+        if (lastFeatureCount !== 0) {
+          lastFeatureCount = 0
+          setMulticastDotsGeoJson({ type: 'FeatureCollection', features: [] })
+        }
+        frameId = requestAnimationFrame(tick)
+        return
+      }
+      lastFeatureCount = features.length
+
       const t = (timestamp * MC_SPEED) % 1
       const points: GeoJSON.Feature<GeoJSON.Point>[] = []
 
@@ -2097,7 +2114,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
 
     frameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frameId)
-  }, [multicastTreesMode, animateFlow, multicastAnimatedGeoJson])
+  }, [multicastTreesMode, animateFlow])
 
   // Colors
   const deviceColor = '#00ffcc' // vibrant cyan - matches globe view, overlays will override
@@ -2779,7 +2796,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           </Source>
         )}
 
-        {/* Multicast flow dots (animated dots along tree paths, declarative layer) */}
+        {/* Multicast flow dots (animated dots along tree paths) */}
         {multicastDotsGeoJson.features.length > 0 && (
           <Source id="multicast-flow-dots" type="geojson" data={multicastDotsGeoJson}>
             <Layer

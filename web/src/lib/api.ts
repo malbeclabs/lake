@@ -1908,10 +1908,44 @@ export interface MulticastTreeResponse {
   error?: string
 }
 
-export async function fetchMulticastTreePaths(pkOrCode: string): Promise<MulticastTreeResponse> {
-  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/tree-paths`)
+export async function fetchMulticastTreePaths(pkOrCode: string, publisherDevicePKs?: string[]): Promise<MulticastTreeResponse> {
+  const params = new URLSearchParams()
+  if (publisherDevicePKs && publisherDevicePKs.length > 0) {
+    params.set('publishers', publisherDevicePKs.join(','))
+  }
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/tree-paths${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast tree paths')
+  }
+  return res.json()
+}
+
+// Multicast tree segment types (aggregated server-side)
+export interface MulticastAggSegment {
+  fromPK: string
+  toPK: string
+  publisherPKs: string[]
+}
+
+export interface MulticastTreeSegmentsResponse {
+  groupCode: string
+  groupPK: string
+  publisherCount: number
+  subscriberCount: number
+  segments: MulticastAggSegment[]
+  error?: string
+}
+
+export async function fetchMulticastTreeSegments(pkOrCode: string, publisherDevicePKs?: string[]): Promise<MulticastTreeSegmentsResponse> {
+  const params = new URLSearchParams()
+  if (publisherDevicePKs && publisherDevicePKs.length > 0) {
+    params.set('publishers', publisherDevicePKs.join(','))
+  }
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/tree-segments${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast tree segments')
   }
   return res.json()
 }
