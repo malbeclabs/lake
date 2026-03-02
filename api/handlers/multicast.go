@@ -1491,14 +1491,10 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 
 	// For each publisher, run one batched Dijkstra query that UNWINDs all subscriber PKs.
 	// This is P queries instead of P×S.
-	type directedSegment struct {
-		fromPK string
-		toPK   string
-	}
 	type publisherResult struct {
 		publisherPK string
-		// canonical key -> directed segment (preserving path order)
-		segments map[string]directedSegment
+		// directed key (fromPK|toPK) -> true
+		segments map[string]bool
 		err      error
 	}
 
@@ -1536,7 +1532,7 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			segments := make(map[string]directedSegment)
+			segments := make(map[string]bool)
 			records, err := result.Collect(queryCtx)
 			if err != nil {
 				resultChan <- publisherResult{publisherPK: pubPK, err: err}
@@ -1555,14 +1551,10 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 					if fromPK == "" || toPK == "" {
 						continue
 					}
-					// Canonical key for dedup; preserve path direction (publisher→subscriber)
+					// Directed key: preserves path direction (publisher→subscriber).
+					// A link traversed in both directions gets two separate segments.
 					key := fromPK + "|" + toPK
-					if fromPK > toPK {
-						key = toPK + "|" + fromPK
-					}
-					if _, exists := segments[key]; !exists {
-						segments[key] = directedSegment{fromPK: fromPK, toPK: toPK}
-					}
+					segments[key] = true
 				}
 			}
 
@@ -1575,19 +1567,18 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 		close(resultChan)
 	}()
 
-	// Aggregate: canonical segment key -> set of publisher PKs
+	// Aggregate: directed segment key (fromPK|toPK) -> set of publisher PKs.
+	// A link traversed in both directions produces two separate entries.
 	segmentPublishers := make(map[string]map[string]bool)
-	segmentDirection := make(map[string]directedSegment) // canonical key -> directed (from first path seen)
 
 	for result := range resultChan {
 		if result.err != nil {
 			log.Printf("MulticastTreeSegments path query error for publisher %s: %v", result.publisherPK, result.err)
 			continue
 		}
-		for key, directed := range result.segments {
+		for key := range result.segments {
 			if segmentPublishers[key] == nil {
 				segmentPublishers[key] = make(map[string]bool)
-				segmentDirection[key] = directed
 			}
 			segmentPublishers[key][result.publisherPK] = true
 		}
@@ -1595,14 +1586,14 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 
 	// Build response segments
 	for key, pubSet := range segmentPublishers {
-		directed := segmentDirection[key]
+		parts := strings.SplitN(key, "|", 2)
 		pubs := make([]string, 0, len(pubSet))
 		for pk := range pubSet {
 			pubs = append(pubs, pk)
 		}
 		response.Segments = append(response.Segments, MulticastAggSegment{
-			FromPK:       directed.fromPK,
-			ToPK:         directed.toPK,
+			FromPK:       parts[0],
+			ToPK:         parts[1],
 			PublisherPKs: pubs,
 		})
 	}
