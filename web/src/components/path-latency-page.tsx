@@ -1,12 +1,135 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, Route, Download, ArrowRight, ChevronDown, X } from 'lucide-react'
-import { fetchMetroConnectivity, fetchMetroPathLatency, fetchMetroPathDetail } from '@/lib/api'
+import { Loader2, Route, Download, ArrowRight, ChevronDown, X, Search, MapPin, Filter } from 'lucide-react'
+import { fetchMetroConnectivity, fetchMetroPathLatency, fetchMetroPathDetail, fetchFieldValues } from '@/lib/api'
 import type { MetroPathLatency, MetroPathDetailResponse, PathOptimizeMode } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from '@/components/page-header'
+import { cn } from '@/lib/utils'
+
+const DEBOUNCE_MS = 150
+
+// Parse metro filters from URL
+function parseMetroFilters(searchParam: string): string[] {
+  if (!searchParam) return []
+  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+}
+
+function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [isFocused, setIsFocused] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState(-1)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  const { data: metroValues, isLoading } = useQuery({
+    queryKey: ['field-values', 'devices', 'metro'],
+    queryFn: () => fetchFieldValues('devices', 'metro'),
+    staleTime: 60000,
+  })
+
+  const filteredValues = useMemo(() => {
+    if (!metroValues) return []
+    if (!query) return metroValues
+    return metroValues.filter(v => v.toLowerCase().includes(query.toLowerCase()))
+  }, [metroValues, query])
+
+  const items = isFocused ? filteredValues : []
+
+  useEffect(() => {
+    setSelectedIndex(-1)
+  }, [debouncedQuery])
+
+  const commit = useCallback((value: string) => {
+    onCommit(value)
+    setQuery('')
+    inputRef.current?.focus()
+  }, [onCommit])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const isDropdownOpen = isFocused && items.length > 0
+    switch (e.key) {
+      case 'ArrowDown':
+        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, items.length - 1)) }
+        break
+      case 'ArrowUp':
+        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)) }
+        break
+      case 'Enter': {
+        e.preventDefault()
+        const idx = selectedIndex >= 0 ? selectedIndex : 0
+        if (idx < items.length) commit(items[idx])
+        break
+      }
+      case 'Escape':
+        e.preventDefault()
+        setQuery('')
+        inputRef.current?.blur()
+        break
+    }
+  }, [items, selectedIndex, commit, isFocused])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsFocused(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const showDropdown = isFocused && items.length > 0
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="flex items-center gap-1.5 px-2 py-1 text-xs border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
+        <Search className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          placeholder="Filter by metro..."
+          className="w-28 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-xs"
+        />
+        {isLoading && <Loader2 className="h-3 w-3 text-muted-foreground animate-spin" />}
+      </div>
+
+      {showDropdown && (
+        <div className="absolute top-full left-0 mt-1 w-48 max-h-64 overflow-y-auto bg-card border border-border rounded-lg shadow-lg z-40">
+          {!query && (
+            <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border flex items-center gap-1">
+              <Filter className="h-3 w-3" />
+              Select metro
+            </div>
+          )}
+          {items.map((value, index) => (
+            <button
+              key={value}
+              onClick={() => commit(value)}
+              className={cn(
+                'w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted transition-colors',
+                index === selectedIndex && 'bg-muted'
+              )}
+            >
+              <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+              <span className="truncate">{value}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // Color classes for improvement
 const STRENGTH_COLORS = {
@@ -179,6 +302,44 @@ export function PathLatencyPage() {
   const fromCodeParam = searchParams.get('from')
   const toCodeParam = searchParams.get('to')
 
+  // Get metro filters from URL
+  const metroFilters = useMemo(() => {
+    return parseMetroFilters(searchParams.get('metros') || '')
+  }, [searchParams])
+
+  // Add a metro filter
+  const addMetroFilter = useCallback((metro: string) => {
+    setSearchParams(prev => {
+      const current = parseMetroFilters(prev.get('metros') || '')
+      if (!current.includes(metro)) {
+        prev.set('metros', [...current, metro].join(','))
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  // Remove a metro filter
+  const removeMetroFilter = useCallback((metro: string) => {
+    setSearchParams(prev => {
+      const current = parseMetroFilters(prev.get('metros') || '')
+      const newFilters = current.filter(m => m !== metro)
+      if (newFilters.length === 0) {
+        prev.delete('metros')
+      } else {
+        prev.set('metros', newFilters.join(','))
+      }
+      return prev
+    })
+  }, [setSearchParams])
+
+  // Clear all metro filters
+  const clearAllFilters = useCallback(() => {
+    setSearchParams(prev => {
+      prev.delete('metros')
+      return prev
+    })
+  }, [setSearchParams])
+
   const queryClient = useQueryClient()
 
   // Fetch metro connectivity for the matrix structure (metros list)
@@ -252,6 +413,15 @@ export function PathLatencyPage() {
     enabled: selectedPathLatency !== null,
   })
 
+  // Filter metros based on metro filters (must be before early returns to preserve hook order)
+  const metros = useMemo(() => {
+    if (!connectivityData) return []
+    if (metroFilters.length === 0) return connectivityData.metros
+    return connectivityData.metros.filter(m =>
+      metroFilters.some(f => m.code.toLowerCase() === f.toLowerCase())
+    )
+  }, [connectivityData, metroFilters])
+
   // Export to CSV
   const handleExport = () => {
     if (!pathLatencyData) return
@@ -311,8 +481,6 @@ export function PathLatencyPage() {
     )
   }
 
-  const metros = connectivityData.metros
-
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
@@ -351,6 +519,32 @@ export function PathLatencyPage() {
         <p className="mt-3 text-sm text-muted-foreground">
           Compares end-to-end path latency across the DZ network against public internet latency.
         </p>
+
+        {/* Filter bar */}
+        <div className="flex items-center gap-2 flex-wrap mt-4">
+          <MetroInlineFilter onCommit={addMetroFilter} />
+
+          {metroFilters.map((metro) => (
+            <button
+              key={metro}
+              onClick={() => removeMetroFilter(metro)}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+            >
+              <MapPin className="h-3 w-3" />
+              {metro}
+              <X className="h-3 w-3" />
+            </button>
+          ))}
+
+          {metroFilters.length > 1 && (
+            <button
+              onClick={clearAllFilters}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
 
         {/* Summary stats */}
         {pathLatencyData && (
