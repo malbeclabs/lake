@@ -116,6 +116,9 @@ export function TopologyGraph({
   const bandwidthEnabled = overlays.bandwidth
   const multicastTreesEnabled = overlays.multicastTrees
 
+  // Whether any overlay with panel content is active (bandwidth has no panel)
+  const hasOverlayPanelContent = deviceTypeEnabled || linkTypeEnabled || stakeOverlayEnabled || linkHealthOverlayEnabled || trafficFlowEnabled || metroClusteringEnabled || contributorDevicesEnabled || contributorLinksEnabled || overlays.criticality || overlays.isisHealth || multicastTreesEnabled
+
   // Multicast trees state (shared hook)
   const mc = useMulticastState({ enabled: multicastTreesEnabled, isDark })
   const {
@@ -3537,7 +3540,7 @@ export function TopologyGraph({
       )}
 
       {/* Overlay panels (right panel) - ISIS and Criticality */}
-      {panel.isOpen && panel.content === 'overlay' && (isisHealthEnabled || criticalityEnabled) && (
+      {panel.isOpen && panel.content === 'overlay' && hasOverlayPanelContent && (isisHealthEnabled || criticalityEnabled) && (
         <TopologyPanel
           title={
             isisHealthEnabled ? 'ISIS' :
@@ -3581,7 +3584,7 @@ export function TopologyGraph({
       )}
 
       {/* Overlay panel (right panel) - other overlays (not ISIS/Criticality) */}
-      {panel.isOpen && panel.content === 'overlay' && !isisHealthEnabled && !criticalityEnabled && (
+      {panel.isOpen && panel.content === 'overlay' && hasOverlayPanelContent && !isisHealthEnabled && !criticalityEnabled && (
         <TopologyPanel
           title={
             deviceTypeEnabled ? 'Device Types' :

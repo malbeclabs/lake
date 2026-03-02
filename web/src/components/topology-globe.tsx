@@ -355,6 +355,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const isisHealthMode = overlays.isisHealth
   const multicastTreesMode = overlays.multicastTrees
 
+  // Whether any overlay with panel content is active (bandwidth has no panel)
+  const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || showValidators || multicastTreesMode
+
   // True when user is actively analyzing — any overlay, mode, or selection active.
   // Used to stop arc animation and show solid lines for clarity.
   // Bandwidth is excluded because it's always-on sizing, not an analytical overlay.
@@ -2137,7 +2140,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       )}
 
       {/* Overlay panel - shown when overlay is active */}
-      {panel.isOpen && panel.content === 'overlay' && (
+      {panel.isOpen && panel.content === 'overlay' && hasOverlayPanelContent && (
         <TopologyPanel
           title={
             deviceTypeMode ? 'Device Types' :

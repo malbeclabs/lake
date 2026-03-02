@@ -364,6 +364,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const isisHealthMode = overlays.isisHealth
   const multicastTreesMode = overlays.multicastTrees
 
+  // Whether any overlay with panel content is active (bandwidth has no panel)
+  const hasOverlayPanelContent = deviceTypeMode || linkTypeMode || stakeOverlayMode || linkHealthMode || trafficFlowMode || metroClusteringMode || contributorDevicesMode || contributorLinksMode || criticalityOverlayEnabled || isisHealthMode || showValidators || multicastTreesMode
+
   // Multicast trees operational state (shared hook)
   const mc = useMulticastState({ enabled: multicastTreesMode, isDark })
   const {
@@ -3500,7 +3503,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       )}
 
       {/* Overlay panel (right side) - shown when overlay is active */}
-      {panel.isOpen && panel.content === 'overlay' && (
+      {panel.isOpen && panel.content === 'overlay' && hasOverlayPanelContent && (
         <TopologyPanel
           title={
             deviceTypeMode ? 'Device Types' :
