@@ -18,7 +18,7 @@ import (
 type HTTPInfluxDBClient struct {
 	host     string
 	token    string
-	database string
+	database string // reserved for /api/v3/query_sql if endpoint is changed
 	client   *http.Client
 }
 
@@ -36,15 +36,14 @@ func NewHTTPInfluxDBClient(host, token, database string) *HTTPInfluxDBClient {
 // and returning the results as parsed CSV rows.
 func (c *HTTPInfluxDBClient) QuerySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
 	body, err := json.Marshal(map[string]string{
-		"q":      sqlQuery,
-		"db":     c.database,
+		"query":  sqlQuery,
 		"format": "csv",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v3/query_sql", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v2/query", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -70,15 +69,14 @@ func (c *HTTPInfluxDBClient) QuerySQL(ctx context.Context, sqlQuery string) ([]m
 // This is useful for streaming chunked exports where only the first chunk should include headers.
 func (c *HTTPInfluxDBClient) QueryRawCSV(ctx context.Context, sqlQuery string, w io.Writer, skipHeader bool) error {
 	body, err := json.Marshal(map[string]string{
-		"q":      sqlQuery,
-		"db":     c.database,
+		"query":  sqlQuery,
 		"format": "csv",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v3/query_sql", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.host+"/api/v2/query", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -147,6 +145,8 @@ func ParseInfluxCSV(r io.Reader) ([]map[string]any, error) {
 				} else {
 					row[h] = record[i]
 				}
+			} else {
+				row[h] = nil
 			}
 		}
 		results = append(results, row)
