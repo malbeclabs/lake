@@ -115,8 +115,8 @@ func run() error {
 
 	// Admin: export InfluxDB interface counters to CSV
 	exportInfluxCSVFlag := flag.Bool("export-influx-csv", false, "Export intfCounters from InfluxDB to a CSV file and exit")
-	exportStartTimeFlag := flag.String("export-start-time", "", "Start time for CSV export (RFC3339, e.g. 2024-01-01T00:00:00Z)")
-	exportEndTimeFlag := flag.String("export-end-time", "", "End time for CSV export (RFC3339, e.g. 2024-01-02T00:00:00Z)")
+	exportStartTimeFlag := flag.String("start-time", "", "Start time for CSV export (RFC3339, e.g. 2024-01-01T00:00:00Z)")
+	exportEndTimeFlag := flag.String("end-time", "", "End time for CSV export (RFC3339, e.g. 2024-01-02T00:00:00Z)")
 	exportOutputFlag := flag.String("export-output", "influx-export.csv", "Output file path for CSV export")
 	exportChunkSizeFlag := flag.Duration("export-chunk-size", time.Hour, "Time window per InfluxDB request during export (default: 1h)")
 
@@ -397,10 +397,7 @@ func run() error {
 		})
 		influxBucket = "mock-bucket"
 	} else if influxURL != "" && influxToken != "" && influxBucket != "" {
-		influxDBClient, err = dztelemusage.NewSDKInfluxDBClient(influxURL, influxToken, influxBucket)
-		if err != nil {
-			return fmt.Errorf("failed to create InfluxDB client: %w", err)
-		}
+		influxDBClient = dztelemusage.NewHTTPInfluxDBClient(influxURL, influxToken, influxBucket)
 		defer func() {
 			if influxDBClient != nil {
 				if closeErr := influxDBClient.Close(); closeErr != nil {
