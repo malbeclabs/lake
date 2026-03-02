@@ -154,13 +154,9 @@ func (c *RewardsCache) refresh(epoch int64) {
 		return
 	}
 
-	// Collapse small operators to keep coalition count tractable (2^n).
-	const collapseThreshold = 5
-	network := CollapseSmallOperators(liveNet.Network, collapseThreshold)
-
-	results, err := Simulate(ctx, network)
+	results, err := SimulatePerCity(ctx, liveNet.Network, liveNet.CityDemands, liveNet.TotalSlots, 4)
 	if err != nil {
-		log.Printf("Rewards cache: simulation failed: %v", err)
+		log.Printf("Rewards cache: per-city simulation failed: %v", err)
 		return
 	}
 
@@ -168,7 +164,6 @@ func (c *RewardsCache) refresh(epoch int64) {
 	for _, r := range results {
 		total += r.Value
 	}
-
 	c.mu.Lock()
 	c.results = results
 	c.totalValue = total

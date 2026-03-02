@@ -74,20 +74,18 @@ func PostRewardsCompare(w http.ResponseWriter, r *http.Request) {
 			baselineResults = cachedResults
 			return nil
 		}
-		const collapseThreshold = 5
-		baseline := rewards.CollapseSmallOperators(req.Baseline, collapseThreshold)
+		cityDemands := rewards.GroupDemandsByCity(req.Baseline)
 		var err error
-		baselineResults, err = rewards.Simulate(gctx, baseline)
+		baselineResults, err = rewards.SimulatePerCity(gctx, req.Baseline, cityDemands, sumSlots(cityDemands), 4)
 		if err != nil {
 			return fmt.Errorf("baseline simulation: %w", err)
 		}
 		return nil
 	})
 	g.Go(func() error {
-		const collapseThreshold = 5
-		modified := rewards.CollapseSmallOperators(req.Modified, collapseThreshold)
+		cityDemands := rewards.GroupDemandsByCity(req.Modified)
 		var err error
-		modifiedResults, err = rewards.Simulate(gctx, modified)
+		modifiedResults, err = rewards.SimulatePerCity(gctx, req.Modified, cityDemands, sumSlots(cityDemands), 4)
 		if err != nil {
 			return fmt.Errorf("modified simulation: %w", err)
 		}
@@ -173,4 +171,12 @@ func GetRewardsLiveNetwork(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(liveNet)
+}
+
+func sumSlots(groups []rewards.CityDemandGroup) int64 {
+	var total int64
+	for _, cg := range groups {
+		total += cg.TotalSlots
+	}
+	return total
 }

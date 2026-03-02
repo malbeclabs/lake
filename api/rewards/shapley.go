@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // PrivateLink represents a direct connection between two devices.
@@ -178,23 +181,142 @@ func Simulate(ctx context.Context, input ShapleyInput) ([]OperatorValue, error) 
 	return results, nil
 }
 
-// BuildCompareResult computes deltas between baseline and modified simulation results.
-func BuildCompareResult(baselineResults, modifiedResults []OperatorValue) *CompareResult {
-	baseMap := make(map[string]OperatorValue)
-	for _, r := range baselineResults {
-		baseMap[r.Operator] = r
-	}
-	modMap := make(map[string]OperatorValue)
-	for _, r := range modifiedResults {
-		modMap[r.Operator] = r
+// SimulatePerCity runs per-source-city Shapley computations and aggregates with
+// stake-weighted city weights, matching the official doublezero-offchain system.
+func SimulatePerCity(ctx context.Context, baseNetwork ShapleyInput, cityDemands []CityDemandGroup, totalSlots int64, maxConcurrency int) ([]OperatorValue, error) {
+	if len(cityDemands) == 0 || totalSlots == 0 {
+		return nil, fmt.Errorf("no city demands or zero total slots")
 	}
 
-	allOps := make(map[string]bool)
-	for _, r := range baselineResults {
-		allOps[r.Operator] = true
+	type cityResult struct {
+		results []OperatorValue
+		weight  float64
 	}
-	for _, r := range modifiedResults {
+
+	total := len(cityDemands)
+	var done int32
+	log.Printf("rewards: starting per-city Shapley for %d cities (concurrency=%d)", total, maxConcurrency)
+
+	results := make([]cityResult, total)
+	var mu sync.Mutex
+	sem := make(chan struct{}, maxConcurrency)
+	var wg sync.WaitGroup
+	var firstErr error
+
+	for i, cg := range cityDemands {
+		wg.Add(1)
+		go func(idx int, group CityDemandGroup) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Build input with full topology but only this city's demands.
+			cityInput := ShapleyInput{
+				PrivateLinks:     baseNetwork.PrivateLinks,
+				Devices:          baseNetwork.Devices,
+				Demands:          group.Demands,
+				PublicLinks:      baseNetwork.PublicLinks,
+				OperatorUptime:   baseNetwork.OperatorUptime,
+				ContiguityBonus:  baseNetwork.ContiguityBonus,
+				DemandMultiplier: baseNetwork.DemandMultiplier,
+			}
+
+			res, err := Simulate(ctx, cityInput)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("city %s: %w", group.SourceCity, err)
+				}
+				mu.Unlock()
+				return
+			}
+
+			weight := float64(group.TotalSlots) / float64(totalSlots)
+			mu.Lock()
+			n := int(atomic.AddInt32(&done, 1))
+			results[idx] = cityResult{results: res, weight: weight}
+			mu.Unlock()
+
+			log.Printf("rewards: per-city Shapley [%d/%d] done: %s (weight=%.4f)", n, total, group.SourceCity, weight)
+		}(i, cg)
+	}
+
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	// Aggregate: final[op] = sum(per_city_value[op] * city_weight)
+	aggregated := make(map[string]float64)
+	for _, cr := range results {
+		for _, ov := range cr.results {
+			aggregated[ov.Operator] += ov.Value * cr.weight
+		}
+	}
+
+	// Normalize to proportions.
+	var totalValue float64
+	for _, v := range aggregated {
+		totalValue += v
+	}
+
+	var out []OperatorValue
+	for op, val := range aggregated {
+		prop := 0.0
+		if totalValue > 0 {
+			prop = val / totalValue
+		}
+		out = append(out, OperatorValue{
+			Operator:   op,
+			Value:      val,
+			Proportion: prop,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Value > out[j].Value
+	})
+
+	return out, nil
+}
+
+// GroupDemandsByCity groups demands by their Start (source city) field.
+// Used by the Compare endpoint to build CityDemandGroups from a ShapleyInput.
+func GroupDemandsByCity(input ShapleyInput) []CityDemandGroup {
+	cityMap := make(map[string][]Demand)
+	for _, d := range input.Demands {
+		cityMap[d.Start] = append(cityMap[d.Start], d)
+	}
+
+	var groups []CityDemandGroup
+	for city, demands := range cityMap {
+		groups = append(groups, CityDemandGroup{
+			SourceCity: city,
+			Demands:    demands,
+			TotalSlots: 1, // equal weight when slot data is unavailable
+		})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].SourceCity < groups[j].SourceCity
+	})
+	return groups
+}
+
+// BuildCompareResult computes deltas between baseline and modified simulation results.
+func BuildCompareResult(baselineResults, modifiedResults []OperatorValue) *CompareResult {
+	allOps := make(map[string]bool)
+	baseMap := make(map[string]OperatorValue)
+	var baseTotal float64
+	for _, r := range baselineResults {
+		baseMap[r.Operator] = r
 		allOps[r.Operator] = true
+		baseTotal += r.Value
+	}
+	modMap := make(map[string]OperatorValue)
+	var modTotal float64
+	for _, r := range modifiedResults {
+		modMap[r.Operator] = r
+		allOps[r.Operator] = true
+		modTotal += r.Value
 	}
 
 	sortedOps := make([]string, 0, len(allOps))
@@ -204,14 +326,6 @@ func BuildCompareResult(baselineResults, modifiedResults []OperatorValue) *Compa
 	sort.Strings(sortedOps)
 
 	var deltas []OperatorDelta
-	var baseTotal, modTotal float64
-	for _, r := range baselineResults {
-		baseTotal += r.Value
-	}
-	for _, r := range modifiedResults {
-		modTotal += r.Value
-	}
-
 	for _, op := range sortedOps {
 		bl := baseMap[op]
 		md := modMap[op]
@@ -245,23 +359,8 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 		deviceOperator[d.Device] = d.Operator
 	}
 
-	// Count links for the focus operator
-	opLinkCount := 0
-	for _, link := range input.PrivateLinks {
-		op1 := deviceOperator[link.Device1]
-		op2 := deviceOperator[link.Device2]
-		if op1 == operatorFocus || op2 == operatorFocus {
-			opLinkCount++
-		}
-	}
-	if opLinkCount > 15 {
-		return linkEstimateApprox(ctx, operatorFocus, input, deviceOperator, cachedBaselineResults)
-	}
-
-	// Retag links: each link of the focus operator becomes a pseudo-operator (numbered "1", "2", ...),
-	// non-focus operators are collapsed, and we set operator_uptime=1.0.
-
-	// First, build the consolidated link table with operator info
+	// Build consolidated link table with operator info, collapsing non-focus operators,
+	// and count focus operator links — all in one pass.
 	type taggedLink struct {
 		Device1   string
 		Device2   string
@@ -274,10 +373,20 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 		Tagged    bool
 	}
 
+	opLinkCount := 0
 	var links []taggedLink
 	for _, pl := range input.PrivateLinks {
 		op1 := deviceOperator[pl.Device1]
 		op2 := deviceOperator[pl.Device2]
+		if op1 == operatorFocus || op2 == operatorFocus {
+			opLinkCount++
+		}
+		if op1 != operatorFocus && op1 != operatorPublic {
+			op1 = operatorOthers
+		}
+		if op2 != operatorFocus && op2 != operatorPublic {
+			op2 = operatorOthers
+		}
 		links = append(links, taggedLink{
 			Device1:   pl.Device1,
 			Device2:   pl.Device2,
@@ -287,18 +396,13 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 			Shared:    pl.Shared,
 			Operator1: op1,
 			Operator2: op2,
-			Tagged:    false,
 		})
 	}
 
-	// Collapse non-focus operators to a single bucket
-	for i := range links {
-		if links[i].Operator1 != operatorFocus && links[i].Operator1 != operatorPublic {
-			links[i].Operator1 = operatorOthers
-		}
-		if links[i].Operator2 != operatorFocus && links[i].Operator2 != operatorPublic {
-			links[i].Operator2 = operatorOthers
-		}
+	// Retag links: each link of the focus operator becomes a pseudo-operator (numbered "1", "2", ...),
+	// non-focus operators are collapsed, and we set operator_uptime=1.0.
+	if opLinkCount > 15 {
+		return linkEstimateApprox(ctx, operatorFocus, input, deviceOperator, cachedBaselineResults)
 	}
 
 	// isRealDevice: excludes metro aggregate devices, which end with "00".
@@ -307,54 +411,48 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 		return !strings.HasSuffix(code, "00")
 	}
 
+	// Build index for O(1) symmetric link lookup: (d2,d1,bw,latency) -> index
+	type linkKey struct {
+		d1, d2        string
+		bw, latency   float64
+	}
+	symIndex := make(map[linkKey]int, len(links))
+	for i, l := range links {
+		symIndex[linkKey{l.Device1, l.Device2, l.Bandwidth, l.Latency}] = i
+	}
+
 	// Tag focus operator links as pseudo-operators
 	counter := 0
-	for {
-		// Find first untagged link that involves the focus operator
-		idx := -1
-		for i, l := range links {
-			if !l.Tagged && (l.Operator1 == operatorFocus || l.Operator2 == operatorFocus) {
-				idx = i
-				break
-			}
-		}
-		if idx == -1 {
-			break
+	for idx := range links {
+		if links[idx].Tagged || (links[idx].Operator1 != operatorFocus && links[idx].Operator2 != operatorFocus) {
+			continue
 		}
 
 		d1 := links[idx].Device1
 		d2 := links[idx].Device2
 
 		if isRealDevice(d1) && isRealDevice(d2) {
-			// Find symmetric link
-			symIdx := -1
-			for j, l := range links {
-				if l.Device1 == d2 && l.Device2 == d1 &&
-					l.Bandwidth == links[idx].Bandwidth &&
-					l.Latency == links[idx].Latency {
-					symIdx = j
-					break
-				}
-			}
+			// Find symmetric link via index
+			symIdx, hasSym := symIndex[linkKey{d2, d1, links[idx].Bandwidth, links[idx].Latency}]
 
 			counter++
 			tag := fmt.Sprintf("%d", counter)
 
 			if links[idx].Operator1 == operatorFocus {
 				links[idx].Operator1 = tag
-				if symIdx >= 0 {
+				if hasSym {
 					links[symIdx].Operator2 = tag
 				}
 			}
 			if links[idx].Operator2 == operatorFocus {
 				links[idx].Operator2 = tag
-				if symIdx >= 0 {
+				if hasSym {
 					links[symIdx].Operator1 = tag
 				}
 			}
 
 			links[idx].Tagged = true
-			if symIdx >= 0 {
+			if hasSym {
 				links[symIdx].Tagged = true
 			}
 		} else {
@@ -375,7 +473,7 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 			newDeviceSet[l.Device1] = true
 			newDevices = append(newDevices, Device{
 				Device:   l.Device1,
-				Edge:     10,
+				Edge:     100,
 				Operator: l.Operator1,
 			})
 		}
@@ -384,7 +482,7 @@ func LinkEstimate(ctx context.Context, operatorFocus string, input ShapleyInput,
 			op := l.Operator2
 			newDevices = append(newDevices, Device{
 				Device:   l.Device2,
-				Edge:     10,
+				Edge:     100,
 				Operator: op,
 			})
 		}

@@ -16,25 +16,29 @@ import (
 // Cache for validator demand results to avoid re-querying ClickHouse on every poll.
 var demandCache struct {
 	sync.Mutex
-	demands []Demand
-	fetched time.Time
+	demands     []Demand
+	cityDemands []CityDemandGroup
+	totalSlots  int64
+	fetched     time.Time
 }
 
 const demandCacheTTL = 5 * time.Minute
 
-func getCachedDemand() []Demand {
+func getCachedDemand() ([]Demand, []CityDemandGroup, int64) {
 	demandCache.Lock()
 	defer demandCache.Unlock()
 	if time.Since(demandCache.fetched) < demandCacheTTL && len(demandCache.demands) > 0 {
-		return demandCache.demands
+		return demandCache.demands, demandCache.cityDemands, demandCache.totalSlots
 	}
-	return nil
+	return nil, nil, 0
 }
 
-func setCachedDemand(d []Demand) {
+func setCachedDemand(d []Demand, cd []CityDemandGroup, ts int64) {
 	demandCache.Lock()
 	defer demandCache.Unlock()
 	demandCache.demands = d
+	demandCache.cityDemands = cd
+	demandCache.totalSlots = ts
 	demandCache.fetched = time.Now()
 }
 
@@ -49,11 +53,8 @@ const (
 const (
 	DefaultOperatorUptime   = 0.98
 	DefaultContiguityBonus  = 5.0
-	DefaultDemandMultiplier = 1.0
+	DefaultDemandMultiplier = 1.2
 	defaultLinkUptime       = 0.99
-	maxSyntheticDemands     = 10 // cap synthetic demands for tractability
-	maxDemandMetros         = 10 // cap validator demand metros for shapley-cli tractability
-
 	// Constants matching doublezero-offchain/crates/contributor-rewards/src/calculator/constants.rs
 	slotsInEpoch  = 432000.0
 	demandTraffic = 0.05
@@ -68,6 +69,14 @@ const (
 	latencyFallback = 100.0
 )
 
+// CityDemandGroup holds the demands originating from a single source city
+// along with total leader-schedule slots for that city's validators.
+type CityDemandGroup struct {
+	SourceCity string
+	Demands    []Demand
+	TotalSlots int64
+}
+
 // LiveNetworkResponse is the response from FetchLiveNetwork.
 type LiveNetworkResponse struct {
 	Network       ShapleyInput `json:"network"`
@@ -75,6 +84,10 @@ type LiveNetworkResponse struct {
 	LinkCount     int          `json:"link_count"`
 	OperatorCount int          `json:"operator_count"`
 	MetroCount    int          `json:"metro_count"`
+
+	// Per-city demand data for per-city Shapley aggregation (not sent to frontend).
+	CityDemands []CityDemandGroup `json:"-"`
+	TotalSlots  int64             `json:"-"`
 }
 
 // estimatePublicLatency estimates public internet latency between two cities using haversine.
@@ -209,7 +222,7 @@ func FetchLiveNetwork(ctx context.Context, db driver.Conn) (*LiveNetworkResponse
 
 			devices = append(devices, Device{
 				Device:       rawCode,
-				Edge:         10,
+				Edge:         100,
 				Operator:     devInfo.ContributorCode,
 				OperatorPk:   devInfo.ContributorPk,
 				City:         city,
@@ -262,38 +275,17 @@ func FetchLiveNetwork(ctx context.Context, db driver.Conn) (*LiveNetworkResponse
 
 	// Build demand from validator leader-schedule slots, matching the offchain reward calculator.
 	// Cache the result to avoid re-querying ClickHouse on every frontend poll.
-	demands := getCachedDemand()
+	demands, cityDemands, totalSlots := getCachedDemand()
 	if demands == nil {
 		var demandErr error
-		demands, demandErr = fetchValidatorDemand(ctx, db, cities)
+		demands, cityDemands, totalSlots, demandErr = fetchValidatorDemand(ctx, db, cities)
 		if demandErr != nil {
-			log.Printf("rewards: fetch validator demand failed (falling back to synthetic): %v", demandErr)
+			return nil, fmt.Errorf("fetch validator demand: %w", demandErr)
 		}
-		if len(demands) > 0 {
-			setCachedDemand(demands)
+		if len(demands) == 0 {
+			return nil, fmt.Errorf("no validator demand data available")
 		}
-	}
-	if len(demands) == 0 {
-		log.Printf("rewards: 0 metros with validator slots found, using synthetic demand for %d cities", len(cities))
-		// Generate synthetic demands so the LP has flow requirements.
-		typeCounter := 1
-		for i, c1 := range cityList {
-			for _, c2 := range cityList[i+1:] {
-				if typeCounter > maxSyntheticDemands {
-					break
-				}
-				demands = append(demands, Demand{
-					Start: c1, End: c2,
-					Receivers: 100, Traffic: 100.0,
-					Priority: 1.0, Type: typeCounter,
-					Multicast: "FALSE",
-				})
-				typeCounter++
-			}
-			if typeCounter > maxSyntheticDemands {
-				break
-			}
-		}
+		setCachedDemand(demands, cityDemands, totalSlots)
 	}
 
 	// Count distinct operators from devices.
@@ -316,6 +308,8 @@ func FetchLiveNetwork(ctx context.Context, db driver.Conn) (*LiveNetworkResponse
 		LinkCount:     len(privateLinks),
 		OperatorCount: len(operators),
 		MetroCount:    len(cities),
+		CityDemands:   cityDemands,
+		TotalSlots:    totalSlots,
 	}, nil
 }
 
@@ -364,7 +358,7 @@ func fetchMetroLatencies(ctx context.Context, db driver.Conn) (map[string]float6
 // via their device, and weights city-to-city demand pairs by leader schedule slots.
 // This matches the demand model used by the production offchain reward calculator
 // (doublezero-offchain/crates/contributor-rewards/src/ingestor/demand.rs).
-func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[string]bool) ([]Demand, error) {
+func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[string]bool) ([]Demand, []CityDemandGroup, int64, error) {
 	// Step 1: Get metro → pubkeys mapping from DZ validators.
 	metroQuery := `
 		SELECT upper(m.code) AS metro, g.pubkey
@@ -378,7 +372,7 @@ func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[
 	`
 	metroRows, err := db.Query(ctx, metroQuery)
 	if err != nil {
-		return nil, fmt.Errorf("query metro pubkeys: %w", err)
+		return nil, nil, 0, fmt.Errorf("query metro pubkeys: %w", err)
 	}
 	type pubkeyInfo struct {
 		metro  string
@@ -390,7 +384,6 @@ func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[
 		if err := metroRows.Scan(&pi.metro, &pi.pubkey); err != nil {
 			continue
 		}
-		pi.metro = strings.ToUpper(pi.metro)
 		pubkeys = append(pubkeys, pi)
 	}
 	metroRows.Close() // Must close before next query on same connection.
@@ -406,7 +399,7 @@ func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[
 	`
 	slotsRows, err := db.Query(ctx, slotsQuery)
 	if err != nil {
-		return nil, fmt.Errorf("query block production slots: %w", err)
+		return nil, nil, 0, fmt.Errorf("query block production slots: %w", err)
 	}
 	slotsByPubkey := make(map[string]int64)
 	for slotsRows.Next() {
@@ -450,24 +443,21 @@ func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[
 		metros = append(metros, *ms)
 	}
 
-	// Sort by total slots descending and optionally cap to top metros for shapley-cli tractability.
+	// Sort by total slots descending.
 	sort.Slice(metros, func(i, j int) bool {
 		return metros[i].totalSlots > metros[j].totalSlots
 	})
-	if len(metros) > maxDemandMetros {
-		metros = metros[:maxDemandMetros]
-	}
 
 	var totalSlotsAll int64
 	for _, ms := range metros {
 		totalSlotsAll += ms.totalSlots
 	}
 
-	log.Printf("rewards: validator demand: %d metros (capped from %d), %d validators matched, %d total slots",
-		len(metros), len(metroMap), matched, totalSlotsAll)
+	log.Printf("rewards: validator demand: %d metros, %d validators matched, %d total slots",
+		len(metros), matched, totalSlotsAll)
 
 	if len(metros) < 2 || totalSlotsAll == 0 {
-		return nil, nil
+		return nil, nil, 0, nil
 	}
 
 	// Generate city-to-city demand pairs matching the offchain calculator:
@@ -476,15 +466,17 @@ func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[
 	// Traffic = constant 0.05
 	// Multicast = false
 	var demands []Demand
+	var cityDemands []CityDemandGroup
 	typeCounter := 1
 	for _, src := range metros {
+		var cityGroup []Demand
 		for _, dst := range metros {
 			if dst.metro == src.metro {
 				continue
 			}
 			slotsPerValidator := float64(dst.totalSlots) / float64(dst.validatorCount)
 			priority := (1.0 / slotsInEpoch) * slotsPerValidator
-			demands = append(demands, Demand{
+			d := Demand{
 				Start:     src.metro,
 				End:       dst.metro,
 				Receivers: int(dst.validatorCount),
@@ -492,10 +484,19 @@ func fetchValidatorDemand(ctx context.Context, db driver.Conn, activeCities map[
 				Priority:  priority,
 				Type:      typeCounter,
 				Multicast: "FALSE",
-			})
+			}
+			demands = append(demands, d)
+			cityGroup = append(cityGroup, d)
 			typeCounter++
+		}
+		if len(cityGroup) > 0 {
+			cityDemands = append(cityDemands, CityDemandGroup{
+				SourceCity: src.metro,
+				Demands:    cityGroup,
+				TotalSlots: src.totalSlots,
+			})
 		}
 	}
 
-	return demands, nil
+	return demands, cityDemands, totalSlotsAll, nil
 }

@@ -33,6 +33,17 @@ function formatValue(value: number): string {
   return value.toExponential(2)
 }
 
+function formatRelativeTime(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
 // Operator color palette
 const COLORS = [
   '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6',
@@ -368,7 +379,7 @@ function QuickAddLink({
   const [city2, setCity2] = useState('')
   const [operator, setOperator] = useState('')
   const [latency, setLatency] = useState('10')
-  const bandwidth = '10'
+  const bandwidth = '100'
 
   const handleAdd = () => {
     if (!city1 || !city2 || !operator || city1 === city2) return
@@ -396,8 +407,8 @@ function QuickAddLink({
       ],
       devices: [
         ...network.devices,
-        { device: dev1, edge: 10, operator, city: city1, city_name: cityNames.get(city1) || city1, operator_name: operatorNames.get(operator) || operator },
-        { device: dev2, edge: 10, operator, city: city2, city_name: cityNames.get(city2) || city2, operator_name: operatorNames.get(operator) || operator },
+        { device: dev1, edge: 100, operator, city: city1, city_name: cityNames.get(city1) || city1, operator_name: operatorNames.get(operator) || operator },
+        { device: dev2, edge: 100, operator, city: city2, city_name: cityNames.get(city2) || city2, operator_name: operatorNames.get(operator) || operator },
       ],
     }
 
@@ -611,12 +622,13 @@ export function RewardsPage() {
     refetchOnWindowFocus: false,
   })
 
-  // Simulate query (auto-fetch, results come from background cache)
+  // Simulate query — manual trigger only, does not run on page load
+  const [simEnabled, setSimEnabled] = useState(false)
   const simulateQuery = useQuery({
     queryKey: ['rewardsSimulate'],
     queryFn: () => fetchRewardsSimulate(),
+    enabled: simEnabled,
     retry: (failureCount, error) => {
-      // Keep retrying 503 (computing) with longer intervals
       if (error instanceof Error && error.message === 'computing') return failureCount < 30
       return failureCount < 3
     },
@@ -630,6 +642,7 @@ export function RewardsPage() {
 
   const simResults = simulateQuery.data?.results ?? null
   const simComputing = simulateQuery.error instanceof Error && simulateQuery.error.message === 'computing'
+  const simRunning = simEnabled && (simulateQuery.isLoading || simComputing)
 
   // Update state when live network loads
   useEffect(() => {
@@ -713,6 +726,7 @@ export function RewardsPage() {
 
   const compareElapsed = useElapsed(compareMutation.isPending)
   const linkElapsed = useElapsed(linkEstimateMutation.isPending)
+  const simElapsed = useElapsed(simRunning)
 
   const networkLoading = liveNetworkQuery.isFetching
   const isLoading = networkLoading || compareMutation.isPending || linkEstimateMutation.isPending
@@ -762,28 +776,35 @@ export function RewardsPage() {
         />
 
         {/* Mode selector */}
-        <div className="flex rounded-lg border border-border overflow-hidden w-fit">
-          <button
-            onClick={() => setMode('simulate')}
-            className={`px-3 py-1.5 text-sm transition-colors ${mode === 'simulate' ? 'bg-blue-600 text-white' : 'bg-card hover:bg-muted/50'}`}
-          >
-            <Play className="h-3.5 w-3.5 inline mr-1" />
-            Simulate
-          </button>
-          <button
-            onClick={() => setMode('compare')}
-            className={`px-3 py-1.5 text-sm border-l border-border transition-colors ${mode === 'compare' ? 'bg-blue-600 text-white' : 'bg-card hover:bg-muted/50'}`}
-          >
-            <GitCompare className="h-3.5 w-3.5 inline mr-1" />
-            Compare
-          </button>
-          <button
-            onClick={() => setMode('link-estimate')}
-            className={`px-3 py-1.5 text-sm border-l border-border transition-colors ${mode === 'link-estimate' ? 'bg-blue-600 text-white' : 'bg-card hover:bg-muted/50'}`}
-          >
-            <Unlink className="h-3.5 w-3.5 inline mr-1" />
-            Link Value
-          </button>
+        <div className="space-y-2">
+          <div className="flex rounded-lg border border-border overflow-hidden w-fit">
+            <button
+              onClick={() => setMode('simulate')}
+              className={`px-3 py-1.5 text-sm transition-colors ${mode === 'simulate' ? 'bg-blue-600 text-white' : 'bg-card hover:bg-muted/50'}`}
+            >
+              <Play className="h-3.5 w-3.5 inline mr-1" />
+              Simulate
+            </button>
+            <button
+              onClick={() => setMode('compare')}
+              className={`px-3 py-1.5 text-sm border-l border-border transition-colors ${mode === 'compare' ? 'bg-blue-600 text-white' : 'bg-card hover:bg-muted/50'}`}
+            >
+              <GitCompare className="h-3.5 w-3.5 inline mr-1" />
+              Compare
+            </button>
+            <button
+              onClick={() => setMode('link-estimate')}
+              className={`px-3 py-1.5 text-sm border-l border-border transition-colors ${mode === 'link-estimate' ? 'bg-blue-600 text-white' : 'bg-card hover:bg-muted/50'}`}
+            >
+              <Unlink className="h-3.5 w-3.5 inline mr-1" />
+              Link Value
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {mode === 'simulate' && 'Reward share breakdown across contributors based on Shapley value computation. Results are cached and refreshed automatically each epoch.'}
+            {mode === 'compare' && 'Add a proposed link and see how reward shares shift for every contributor. Computation is heavy and may take 1-2 minutes per run.'}
+            {mode === 'link-estimate' && 'For a given contributor, see which of their existing links contributes most to their reward share. Computation is heavy and may take several minutes depending on link count.'}
+          </p>
         </div>
 
         {/* Error */}
@@ -800,35 +821,60 @@ export function RewardsPage() {
               <ContributorSummary network={baselineNetwork} operatorNames={operatorNames} operatorPks={operatorPks} />
             )}
 
+            <div className="flex items-center gap-2">
+              {!simRunning ? (
+                <button
+                  onClick={() => setSimEnabled(true)}
+                  disabled={networkLoading}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  <Play className="h-4 w-4" />
+                  {simResults ? 'Refresh Simulation' : 'Run Simulation'}
+                </button>
+              ) : (
+                <>
+                  <button disabled className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg opacity-70 cursor-not-allowed">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {simComputing ? 'Server computing...' : 'Loading...'}{simElapsed > 0 ? ` ${formatElapsed(simElapsed)}` : ''}
+                  </button>
+                  <button
+                    onClick={() => setSimEnabled(false)}
+                    className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-muted/50 transition-colors"
+                  >
+                    <X className="h-3 w-3" /> Cancel
+                  </button>
+                </>
+              )}
+            </div>
+
             {simComputing && (
               <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 flex items-center gap-3">
                 <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
                 <div>
-                  <p className="text-sm font-medium">Computing Shapley values...</p>
-                  <p className="text-xs text-muted-foreground">First run takes 1–2 minutes. Results will appear automatically.</p>
+                  <p className="text-sm font-medium">Computing Shapley values on the server...</p>
+                  <p className="text-xs text-muted-foreground">This can take several minutes. Results will appear automatically when ready.</p>
                 </div>
-              </div>
-            )}
-
-            {simulateQuery.isLoading && !simComputing && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading simulation results...
               </div>
             )}
 
             {simResults && simResults.length > 0 ? (
               <>
                 <OperatorTable results={simResults} title="Shapley Reward Shares" operatorNames={operatorNames} operatorPks={operatorPks} />
-                {simulateQuery.data?.computed_at && (
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>
-                      Last computed {new Date(simulateQuery.data.computed_at).toLocaleString()}
-                      {simulateQuery.data.epoch ? ` · Epoch ${simulateQuery.data.epoch}` : ''}
-                    </span>
-                    <span>Refreshes automatically each epoch (~2–3 days)</span>
-                  </div>
-                )}
+                {simulateQuery.data?.computed_at && (() => {
+                  const computedAt = new Date(simulateQuery.data.computed_at)
+                  const ageHours = (Date.now() - computedAt.getTime()) / 3600000
+                  const stale = ageHours > 24
+                  return (
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className={stale ? 'text-amber-500' : ''}>
+                        Last computed {formatRelativeTime(computedAt)} ({computedAt.toLocaleString()})
+                        {simulateQuery.data.epoch ? ` · Epoch ${simulateQuery.data.epoch}` : ''}
+                        {stale ? ' · may be stale' : ''}
+                      </span>
+                      <span>Refreshes automatically each epoch (~2–3 days)</span>
+                    </div>
+                  )
+                })()}
               </>
             ) : simResults ? (
               <div className="text-center text-muted-foreground py-8">
@@ -911,8 +957,32 @@ export function RewardsPage() {
               <p className="text-sm text-muted-foreground">Load a network first to compare configurations.</p>
             )}
 
+            {baselineNetwork && addedLinks.length === 0 && !compareResults && (
+              <div className="text-center text-muted-foreground py-10 space-y-1">
+                <p className="text-sm">Add one or more links above to run a comparison.</p>
+                <p className="text-xs">The simulation will show how the added links shift reward shares across contributors.</p>
+              </div>
+            )}
+
             {compareResults && compareResults.deltas.length > 0 ? (
               <>
+                {addedLinks.length > 0 && modifiedNetwork && (
+                  <div className="text-xs text-muted-foreground bg-muted/30 border border-border rounded-lg px-3 py-2 flex flex-wrap gap-x-4 gap-y-1">
+                    {addedLinks.map((l, i) => {
+                      const d1 = modifiedNetwork.devices.find(d => d.device === l.device1)
+                      const d2 = modifiedNetwork.devices.find(d => d.device === l.device2)
+                      const op = d1?.operator_name || d1?.operator || ''
+                      const city1Label = d1?.city_name || d1?.city || l.device1
+                      const city2Label = d2?.city_name || d2?.city || l.device2
+                      return (
+                        <span key={i}>
+                          {op && <span className="font-medium">{op} · </span>}
+                          {city1Label} ↔ {city2Label} · {l.bandwidth} Gbps, {l.latency} ms
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
                 <DeltaTable deltas={compareResults.deltas} operatorNames={operatorNames} operatorPks={operatorPks} />
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <OperatorTable results={compareResults.baseline_results} title="Baseline" operatorNames={operatorNames} operatorPks={operatorPks} />
