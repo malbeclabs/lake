@@ -671,8 +671,6 @@ func runBackfillFromCSV(ctx context.Context, log *slog.Logger, clickhouseDB clic
 	view, err := dztelemusage.NewView(dztelemusage.ViewConfig{
 		Logger:          log,
 		ClickHouse:      clickhouseDB,
-		InfluxDB:        dztelemusage.NewHTTPInfluxDBClient("http://placeholder", "placeholder", "placeholder"),
-		Bucket:          "placeholder",
 		RefreshInterval: time.Hour,
 	})
 	if err != nil {
