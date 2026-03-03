@@ -103,12 +103,6 @@ func (cfg *ViewConfig) Validate() error {
 	if cfg.ClickHouse == nil {
 		return errors.New("clickhouse connection is required")
 	}
-	if cfg.InfluxDB == nil {
-		return errors.New("influxdb client is required")
-	}
-	if cfg.Bucket == "" {
-		return errors.New("influxdb bucket is required")
-	}
 	if cfg.RefreshInterval <= 0 {
 		return errors.New("refresh interval must be greater than 0")
 	}
@@ -190,6 +184,10 @@ func (v *View) safeRefresh(ctx context.Context) {
 }
 
 func (v *View) Refresh(ctx context.Context) error {
+	if v.cfg.InfluxDB == nil {
+		return errors.New("cannot run Refresh: InfluxDB client not configured")
+	}
+
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
 

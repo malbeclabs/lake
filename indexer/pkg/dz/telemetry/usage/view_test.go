@@ -64,34 +64,33 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		require.Contains(t, err.Error(), "clickhouse connection is required")
 	})
 
-	t.Run("returns error when influxdb client is missing", func(t *testing.T) {
+	t.Run("influxdb client is optional at construction", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
 		cfg := ViewConfig{
 			Logger:          laketesting.NewLogger(),
 			ClickHouse:      mockDB,
-			Bucket:          "test-bucket",
 			RefreshInterval: time.Second,
 		}
 		err := cfg.Validate()
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "influxdb client is required")
+		require.NoError(t, err)
 	})
 
-	t.Run("returns error when bucket is empty", func(t *testing.T) {
+	t.Run("refresh returns error when influxdb client is not configured", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
-		cfg := ViewConfig{
+		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
 			ClickHouse:      mockDB,
-			InfluxDB:        &mockInfluxDBClient{},
 			RefreshInterval: time.Second,
-		}
-		err := cfg.Validate()
+		})
+		require.NoError(t, err)
+
+		err = view.Refresh(context.Background())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "influxdb bucket is required")
+		require.Contains(t, err.Error(), "InfluxDB client not configured")
 	})
 
 	t.Run("returns error when refresh interval is zero", func(t *testing.T) {
