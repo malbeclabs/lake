@@ -12,18 +12,20 @@ import (
 )
 
 type UserListItem struct {
-	PK          string  `json:"pk"`
-	OwnerPubkey string  `json:"owner_pubkey"`
-	Status      string  `json:"status"`
-	Kind        string  `json:"kind"`
-	DzIP        string  `json:"dz_ip"`
-	ClientIP    string  `json:"client_ip"`
-	DevicePK    string  `json:"device_pk"`
-	DeviceCode  string  `json:"device_code"`
-	MetroCode   string  `json:"metro_code"`
-	MetroName   string  `json:"metro_name"`
-	InBps       float64 `json:"in_bps"`
-	OutBps      float64 `json:"out_bps"`
+	PK           string  `json:"pk"`
+	OwnerPubkey  string  `json:"owner_pubkey"`
+	Status       string  `json:"status"`
+	Kind         string  `json:"kind"`
+	DzIP         string  `json:"dz_ip"`
+	ClientIP     string  `json:"client_ip"`
+	DevicePK     string  `json:"device_pk"`
+	DeviceCode   string  `json:"device_code"`
+	MetroCode    string  `json:"metro_code"`
+	MetroName    string  `json:"metro_name"`
+	TenantPK     string  `json:"tenant_pk"`
+	TenantCode   string  `json:"tenant_code"`
+	InBps        float64 `json:"in_bps"`
+	OutBps       float64 `json:"out_bps"`
 }
 
 func GetUsers(w http.ResponseWriter, r *http.Request) {
@@ -73,11 +75,14 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 			COALESCE(d.code, '') as device_code,
 			COALESCE(m.code, '') as metro_code,
 			COALESCE(m.name, '') as metro_name,
+			COALESCE(u.tenant_pk, '') as tenant_pk,
+			COALESCE(t.code, '') as tenant_code,
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps
 		FROM dz_users_current u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 		LEFT JOIN traffic_rates tr ON u.tunnel_id = tr.user_tunnel_id AND u.device_pk = tr.device_pk
 		ORDER BY u.owner_pubkey
 		LIMIT ? OFFSET ?
@@ -108,6 +113,8 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 			&u.DeviceCode,
 			&u.MetroCode,
 			&u.MetroName,
+			&u.TenantPK,
+			&u.TenantCode,
 			&u.InBps,
 			&u.OutBps,
 		); err != nil {
@@ -157,6 +164,8 @@ type UserDetail struct {
 	MetroName       string  `json:"metro_name"`
 	ContributorPK   string  `json:"contributor_pk"`
 	ContributorCode string  `json:"contributor_code"`
+	TenantPK        string  `json:"tenant_pk"`
+	TenantCode      string  `json:"tenant_code"`
 	InBps           float64 `json:"in_bps"`
 	OutBps          float64 `json:"out_bps"`
 	IsValidator     bool    `json:"is_validator"`
@@ -227,6 +236,8 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 			COALESCE(m.name, '') as metro_name,
 			COALESCE(d.contributor_pk, '') as contributor_pk,
 			COALESCE(c.code, '') as contributor_code,
+			COALESCE(u.tenant_pk, '') as tenant_pk,
+			COALESCE(t.code, '') as tenant_code,
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps,
 			si.vote_pubkey IS NOT NULL AND si.vote_pubkey != '' as is_validator,
@@ -238,6 +249,7 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
+		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
 		LEFT JOIN traffic_rates tr ON u.tunnel_id = tr.user_tunnel_id AND u.device_pk = tr.device_pk
 		LEFT JOIN solana_info si ON u.client_ip = si.gossip_ip
 		CROSS JOIN total_stake ts
@@ -260,6 +272,8 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 		&user.MetroName,
 		&user.ContributorPK,
 		&user.ContributorCode,
+		&user.TenantPK,
+		&user.TenantCode,
 		&user.InBps,
 		&user.OutBps,
 		&user.IsValidator,

@@ -92,6 +92,7 @@ type User struct {
 	ClientIP    net.IP
 	DZIP        net.IP
 	DevicePK    string
+	TenantPK    string
 	TunnelID    uint16
 	Publishers  []string // multicast group PKs this user publishes to
 	Subscribers []string // multicast group PKs this user subscribes to
@@ -407,6 +408,7 @@ func convertUsers(onchain []serviceability.User) []User {
 			ClientIP:    net.IP(user.ClientIp[:]),
 			DZIP:        net.IP(user.DzIp[:]),
 			DevicePK:    solana.PublicKeyFromBytes(user.DevicePubKey[:]).String(),
+			TenantPK:    solana.PublicKeyFromBytes(user.TenantPubKey[:]).String(),
 			TunnelID:    user.TunnelId,
 			Publishers:  publishers,
 			Subscribers: subscribers,

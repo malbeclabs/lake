@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Users, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { fetchAllPaginated, fetchUsers } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
@@ -40,6 +41,7 @@ type SortField =
   | 'clientIp'
   | 'device'
   | 'metro'
+  | 'tenant'
   | 'status'
   | 'in'
   | 'out'
@@ -99,7 +101,7 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for users
-const validFilterFields = ['owner', 'kind', 'ip', 'dzIp', 'clientIp', 'device', 'metro', 'status', 'in', 'out']
+const validFilterFields = ['owner', 'kind', 'ip', 'dzIp', 'clientIp', 'device', 'metro', 'tenant', 'status', 'in', 'out']
 
 // Field prefixes for inline filter
 const userFieldPrefixes = [
@@ -109,6 +111,7 @@ const userFieldPrefixes = [
   { prefix: 'dzip:', description: 'Filter by DZ IP' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro' },
+  { prefix: 'tenant:', description: 'Filter by tenant code' },
   { prefix: 'status:', description: 'Filter by status' },
   { prefix: 'in:', description: 'Filter by inbound traffic (e.g., >1gbps)' },
   { prefix: 'out:', description: 'Filter by outbound traffic (e.g., >1gbps)' },
@@ -238,6 +241,8 @@ export function UsersPage() {
           return user.device_code || ''
         case 'metro':
           return `${user.metro_name || ''} ${user.metro_code || ''}`.trim()
+        case 'tenant':
+          return user.tenant_code || ''
         case 'status':
           return user.status
         default:
@@ -248,7 +253,7 @@ export function UsersPage() {
     if (searchField === 'all') {
       // Search across all text fields
       return users.filter(user => {
-        const textFields = ['owner', 'kind', 'ip', 'device', 'metro', 'status']
+        const textFields = ['owner', 'kind', 'ip', 'device', 'metro', 'tenant', 'status']
         return textFields.some(field => getSearchValue(user, field).toLowerCase().includes(needle))
       })
     }
@@ -288,6 +293,9 @@ export function UsersPage() {
           cmp = aMetro.localeCompare(bMetro)
           break
         }
+        case 'tenant':
+          cmp = (a.tenant_code || '').localeCompare(b.tenant_code || '')
+          break
         case 'status':
           cmp = a.status.localeCompare(b.status)
           break
@@ -443,6 +451,12 @@ export function UsersPage() {
                       <SortIcon field="metro" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('tenant')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('tenant')}>
+                      Tenant
+                      <SortIcon field="tenant" />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
                     <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('status')}>
                       Status
@@ -490,6 +504,12 @@ export function UsersPage() {
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {user.metro_name || user.metro_code || '—'}
                     </td>
+                    <td className="px-4 py-3 text-sm">
+                      {user.tenant_code
+                        ? <Link to={`/dz/tenants/${user.tenant_pk}`} className="font-mono hover:underline" onClick={e => e.stopPropagation()}>{user.tenant_code}</Link>
+                        : <span className="text-muted-foreground">—</span>
+                      }
+                    </td>
                     <td className={`px-4 py-3 text-sm capitalize ${statusColors[user.status] || ''}`}>
                       {user.status}
                     </td>
@@ -503,7 +523,7 @@ export function UsersPage() {
                 ))}
                 {sortedUsers.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
                       No users found
                     </td>
                   </tr>

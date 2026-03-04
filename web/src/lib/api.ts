@@ -2858,6 +2858,8 @@ export interface User {
   device_code: string
   metro_code: string
   metro_name: string
+  tenant_pk: string
+  tenant_code: string
   in_bps: number
   out_bps: number
 }
