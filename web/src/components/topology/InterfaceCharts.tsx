@@ -40,6 +40,7 @@ function HealthLegendTable({
   legend,
   visibleSeries,
   interfaceLabels,
+  bidirectional,
 }: {
   interfaces: string[]
   colors: string[]
@@ -48,28 +49,50 @@ function HealthLegendTable({
   legend: UseChartLegendReturn
   visibleSeries: Set<string>
   interfaceLabels?: Map<string, string>
+  bidirectional?: boolean
 }) {
-  // Show hovered or latest values
+  // Show hovered or latest values (non-bidirectional)
   const values = useMemo(() => {
     const map = new Map<string, number>()
-    if (data[0].length === 0) return map
+    if (bidirectional || data[0].length === 0) return map
     const idx = hoveredIdx != null && hoveredIdx < data[0].length ? hoveredIdx : data[0].length - 1
     for (let i = 0; i < interfaces.length; i++) {
       const val = (data[i + 1] as (number | null)[])?.[idx]
       map.set(interfaces[i], val ?? 0)
     }
     return map
-  }, [data, interfaces, hoveredIdx])
+  }, [data, interfaces, hoveredIdx, bidirectional])
+
+  // Show hovered or latest values (bidirectional: in/out per interface)
+  const biValues = useMemo(() => {
+    const map = new Map<string, { in: number; out: number }>()
+    if (!bidirectional || data[0].length === 0) return map
+    const idx = hoveredIdx != null && hoveredIdx < data[0].length ? hoveredIdx : data[0].length - 1
+    for (let i = 0; i < interfaces.length; i++) {
+      const inVal = (data[i * 2 + 1] as (number | null)[])?.[idx]
+      const outVal = (data[i * 2 + 2] as (number | null)[])?.[idx]
+      map.set(interfaces[i], { in: inVal ?? 0, out: outVal ?? 0 })
+    }
+    return map
+  }, [data, interfaces, hoveredIdx, bidirectional])
 
   // Only show interfaces that have any non-zero value across the entire dataset
-  const activeInterfaces = useMemo(
-    () => interfaces.filter((_, i) => {
+  const activeInterfaces = useMemo(() => {
+    if (bidirectional) {
+      return interfaces.filter((_, i) => {
+        const inSeries = data[i * 2 + 1] as (number | null)[]
+        const outSeries = data[i * 2 + 2] as (number | null)[]
+        if (!inSeries && !outSeries) return false
+        return (inSeries?.some((v) => v != null && v > 0) ?? false) ||
+               (outSeries?.some((v) => v != null && v > 0) ?? false)
+      })
+    }
+    return interfaces.filter((_, i) => {
       const series = data[i + 1] as (number | null)[]
       if (!series) return false
       return series.some((v) => v != null && v > 0)
-    }),
-    [interfaces, data]
-  )
+    })
+  }, [interfaces, data, bidirectional])
 
   if (activeInterfaces.length === 0) return null
 
@@ -77,13 +100,19 @@ function HealthLegendTable({
     <div className="flex flex-col text-xs px-2 pt-1 pb-2">
       <div className="flex items-center px-1 mb-1">
         <span className="text-xs text-muted-foreground flex-1 min-w-0">Name</span>
-        <span className="text-xs text-muted-foreground w-24 text-right">Value</span>
+        {bidirectional ? (
+          <>
+            <span className="text-xs text-muted-foreground w-16 text-right">In</span>
+            <span className="text-xs text-muted-foreground w-16 text-right">Out</span>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground w-24 text-right">Value</span>
+        )}
       </div>
       <div className="max-h-32 overflow-y-auto space-y-0.5">
         {activeInterfaces.map((intf) => {
           const colorIndex = interfaces.indexOf(intf)
           const color = colors[colorIndex % colors.length]
-          const val = values.get(intf) ?? 0
           const isVisible = visibleSeries.has(intf)
           return (
             <div
@@ -102,9 +131,20 @@ function HealthLegendTable({
                 />
                 <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf}</span>
               </div>
-              <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
-                {formatCount(val)}
-              </span>
+              {bidirectional ? (
+                <>
+                  <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
+                    {formatCount((biValues.get(intf) ?? { in: 0, out: 0 }).in)}
+                  </span>
+                  <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
+                    {formatCount((biValues.get(intf) ?? { in: 0, out: 0 }).out)}
+                  </span>
+                </>
+              ) : (
+                <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
+                  {formatCount(values.get(intf) ?? 0)}
+                </span>
+              )}
             </div>
           )
         })}
@@ -181,7 +221,8 @@ interface HealthColumnar {
 function buildHealthColumnar(
   historyData: Awaited<ReturnType<typeof fetchDeviceInterfaceHistory>>,
   interfaces: string[],
-  field: 'errors' | 'discards' | 'transitions'
+  field: 'errors' | 'discards' | 'transitions',
+  bidirectional?: boolean
 ): HealthColumnar {
   const allTimes = new Set<string>()
   for (const iface of historyData.interfaces) {
@@ -191,8 +232,51 @@ function buildHealthColumnar(
   // Use real Unix timestamps (seconds) for x-axis
   const timestamps = sortedTimes.map((t) => new Date(t).getTime() / 1000)
 
-  const lookup = new Map<string, Map<string, number>>()
   let hasData = false
+
+  // Bidirectional mode: produce two columns per interface (in + out)
+  if (bidirectional && (field === 'errors' || field === 'discards')) {
+    const lookup = new Map<string, Map<string, { in: number; out: number }>>()
+    const activeInterfaces = new Set<string>()
+
+    for (const iface of historyData.interfaces) {
+      const name = iface.interface_name
+      if (!interfaces.includes(name)) continue
+      for (const h of iface.hours) {
+        const inVal = field === 'errors' ? (h.in_errors || 0) : (h.in_discards || 0)
+        const outVal = field === 'errors' ? (h.out_errors || 0) : (h.out_discards || 0)
+        if (inVal > 0 || outVal > 0) {
+          hasData = true
+          activeInterfaces.add(name)
+          let byIntf = lookup.get(h.hour)
+          if (!byIntf) {
+            byIntf = new Map()
+            lookup.set(h.hour, byIntf)
+          }
+          byIntf.set(name, { in: inVal, out: outVal })
+        }
+      }
+    }
+
+    const arrays: (number | null)[][] = [timestamps]
+    for (const intf of interfaces) {
+      const isActive = activeInterfaces.has(intf)
+      const inVals: (number | null)[] = []
+      const outVals: (number | null)[] = []
+      for (const t of sortedTimes) {
+        const v = lookup.get(t)?.get(intf)
+        inVals.push(v ? v.in : (isActive ? 0 : null))
+        outVals.push(v ? v.out : (isActive ? 0 : null))
+      }
+      arrays.push(inVals)
+      arrays.push(outVals)
+    }
+
+    return { data: arrays as uPlot.AlignedData, hasData }
+  }
+
+  // Non-bidirectional: single column per interface (summed or transitions)
+  const lookup = new Map<string, Map<string, number>>()
 
   for (const iface of historyData.interfaces) {
     const name = iface.interface_name
@@ -349,12 +433,12 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   // Health data
   const errorHealth = useMemo(() => {
     if (!historyData?.interfaces || interfaces.length === 0) return null
-    return buildHealthColumnar(historyData, interfaces, 'errors')
+    return buildHealthColumnar(historyData, interfaces, 'errors', true)
   }, [historyData, interfaces])
 
   const discardHealth = useMemo(() => {
     if (!historyData?.interfaces || interfaces.length === 0) return null
-    return buildHealthColumnar(historyData, interfaces, 'discards')
+    return buildHealthColumnar(historyData, interfaces, 'discards', true)
   }, [historyData, interfaces])
 
   const transitionHealth = useMemo(() => {
@@ -374,6 +458,38 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       })
     }
     return s
+  }, [interfaces])
+
+  // Bidirectional health series: two series per interface (in solid, out dashed)
+  const healthBidirectionalSeries = useMemo((): uPlot.Series[] => {
+    const s: uPlot.Series[] = [{}] // x-axis
+    for (let i = 0; i < interfaces.length; i++) {
+      const color = COLORS[i % COLORS.length]
+      s.push({
+        label: `${interfaces[i]}:in`,
+        stroke: color,
+        width: 1.5,
+        points: { show: false },
+      })
+      s.push({
+        label: `${interfaces[i]}:out`,
+        stroke: color,
+        width: 1.5,
+        dash: [4, 2],
+        points: { show: false },
+      })
+    }
+    return s
+  }, [interfaces])
+
+  // Series keys for bidirectional health legend sync: both in/out map to same interface
+  const healthBidirectionalSeriesKeys = useMemo(() => {
+    const keys: string[] = []
+    for (const intf of interfaces) {
+      keys.push(intf) // in
+      keys.push(intf) // out (same legend key)
+    }
+    return keys
   }, [interfaces])
 
   const healthAxes = useMemo((): uPlot.Axis[] => [
@@ -423,7 +539,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const { plotRef: errorPlotRef} = useUPlotChart({
     containerRef: errorChartRef,
     data: errorHealth?.data ?? ([[]] as uPlot.AlignedData),
-    series: healthSeries,
+    series: healthBidirectionalSeries,
     height: 144,
     axes: healthAxes,
     onCursorIdx: handleErrorCursorIdx,
@@ -432,7 +548,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const { plotRef: discardPlotRef} = useUPlotChart({
     containerRef: discardChartRef,
     data: discardHealth?.data ?? ([[]] as uPlot.AlignedData),
-    series: healthSeries,
+    series: healthBidirectionalSeries,
     height: 144,
     axes: healthAxes,
     onCursorIdx: handleDiscardCursorIdx,
@@ -450,10 +566,10 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   // Sync legend visibility to traffic chart
   useUPlotLegendSync(trafficPlotRef, legend, trafficSeriesKeys)
 
-  // Sync legend visibility to health charts (1 series per interface)
+  // Sync legend visibility to health charts
   const healthSeriesKeys = useMemo(() => [...interfaces], [interfaces])
-  useUPlotLegendSync(errorPlotRef, legend, healthSeriesKeys)
-  useUPlotLegendSync(discardPlotRef, legend, healthSeriesKeys)
+  useUPlotLegendSync(errorPlotRef, legend, healthBidirectionalSeriesKeys)
+  useUPlotLegendSync(discardPlotRef, legend, healthBidirectionalSeriesKeys)
   useUPlotLegendSync(transitionPlotRef, legend, healthSeriesKeys)
 
   // Values shown in legend: hovered time point or latest
@@ -518,6 +634,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
             legend={legend}
             visibleSeries={visibleSeries}
             interfaceLabels={interfaceLabels}
+            bidirectional
           />
         </div>
       )}
@@ -535,6 +652,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
             legend={legend}
             visibleSeries={visibleSeries}
             interfaceLabels={interfaceLabels}
+            bidirectional
           />
         </div>
       )}
