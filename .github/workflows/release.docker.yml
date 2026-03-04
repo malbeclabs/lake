@@ -151,7 +151,14 @@ jobs:
           ARGOCD="https://argocd.malbeclabs.com"
           AUTH="Authorization: Bearer ${{ secrets.ARGOCD_PR_DEPLOYER_TOKEN }}"
 
-          # Trigger rollout restart
+          # Trigger rollout restart for both API and indexer
+          # Indexer must restart first to run ClickHouse migrations before the API starts serving
+          curl -sf -X POST \
+            "$ARGOCD/api/v1/applications/$APP/resource/actions?namespace=$APP&resourceName=lake-indexer&group=apps&version=v1&kind=Deployment" \
+            -H "$AUTH" \
+            -H "Content-Type: application/json" \
+            -d '"restart"'
+
           curl -sf -X POST \
             "$ARGOCD/api/v1/applications/$APP/resource/actions?namespace=$APP&resourceName=lake-api&group=apps&version=v1&kind=Deployment" \
             -H "$AUTH" \
