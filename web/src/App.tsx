@@ -43,6 +43,7 @@ import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
 import { MetrosPage } from '@/components/metros-page'
 import { ContributorsPage } from '@/components/contributors-page'
+import { TenantsPage } from '@/components/tenants-page'
 import { UsersPage } from '@/components/users-page'
 import { ValidatorsPage } from '@/components/validators-page'
 import { GossipNodesPage } from '@/components/gossip-nodes-page'
@@ -681,6 +682,7 @@ function AppContent() {
             <Route path="/dz/metros/:pk" element={<MetroDetailPage />} />
             <Route path="/dz/contributors" element={<ContributorsPage />} />
             <Route path="/dz/contributors/:pk" element={<ContributorDetailPage />} />
+            <Route path="/dz/tenants" element={<TenantsPage />} />
             <Route path="/dz/users" element={<UsersPage />} />
             <Route path="/dz/users/:pk" element={<UserDetailPage />} />
             <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />

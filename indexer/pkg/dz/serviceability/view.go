@@ -108,6 +108,17 @@ type MulticastGroup struct {
 	SubscriberCount uint32
 }
 
+type Tenant struct {
+	PK            string
+	OwnerPubkey   string
+	Code          string
+	PaymentStatus string
+	VrfID         uint16
+	MetroRouting  bool
+	RouteLiveness bool
+	BillingRate   uint64
+}
+
 type ServiceabilityRPC interface {
 	GetProgramData(ctx context.Context) (*serviceability.ProgramData, error)
 }
@@ -262,7 +273,8 @@ func (v *View) Refresh(ctx context.Context) error {
 		"users", len(pd.Users),
 		"links", len(pd.Links),
 		"metros", len(pd.Exchanges),
-		"multicast_groups", len(pd.MulticastGroups))
+		"multicast_groups", len(pd.MulticastGroups),
+		"tenants", len(pd.Tenants))
 
 	// Validate that we received data for each entity type - empty responses would tombstone all existing entities.
 	// Check each independently since they're written separately with MissingMeansDeleted=true.
@@ -285,6 +297,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	links := convertLinks(pd.Links, pd.Devices)
 	metros := convertMetros(pd.Exchanges)
 	multicastGroups := convertMulticastGroups(pd.MulticastGroups)
+	tenants := convertTenants(pd.Tenants)
 
 	fetchedAt := time.Now().UTC()
 
@@ -310,6 +323,10 @@ func (v *View) Refresh(ctx context.Context) error {
 
 	if err := v.store.ReplaceMulticastGroups(ctx, multicastGroups); err != nil {
 		return fmt.Errorf("failed to replace multicast groups: %w", err)
+	}
+
+	if err := v.store.ReplaceTenants(ctx, tenants); err != nil {
+		return fmt.Errorf("failed to replace tenants: %w", err)
 	}
 
 	v.fetchedAt = fetchedAt
@@ -462,6 +479,23 @@ func convertMetros(onchain []serviceability.Exchange) []Metro {
 			Name:      exchange.Name,
 			Longitude: float64(exchange.Lng),
 			Latitude:  float64(exchange.Lat),
+		}
+	}
+	return result
+}
+
+func convertTenants(onchain []serviceability.Tenant) []Tenant {
+	result := make([]Tenant, len(onchain))
+	for i, t := range onchain {
+		result[i] = Tenant{
+			PK:            solana.PublicKeyFromBytes(t.PubKey[:]).String(),
+			OwnerPubkey:   solana.PublicKeyFromBytes(t.Owner[:]).String(),
+			Code:          t.Code,
+			PaymentStatus: t.PaymentStatus.String(),
+			VrfID:         t.VrfId,
+			MetroRouting:  t.MetroRouting,
+			RouteLiveness: t.RouteLiveness,
+			BillingRate:   t.BillingRate,
 		}
 	}
 	return result

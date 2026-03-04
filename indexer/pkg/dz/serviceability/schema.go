@@ -249,6 +249,46 @@ func (s *MulticastGroupSchema) GetPrimaryKey(m MulticastGroup) string {
 	return m.PK
 }
 
+// TenantSchema defines the schema for tenants
+type TenantSchema struct{}
+
+func (s *TenantSchema) Name() string {
+	return "dz_tenants"
+}
+
+func (s *TenantSchema) PrimaryKeyColumns() []string {
+	return []string{"pk:VARCHAR"}
+}
+
+func (s *TenantSchema) PayloadColumns() []string {
+	return []string{
+		"owner_pubkey:VARCHAR",
+		"code:VARCHAR",
+		"payment_status:VARCHAR",
+		"vrf_id:INTEGER",
+		"metro_routing:BOOLEAN",
+		"route_liveness:BOOLEAN",
+		"billing_rate:BIGINT",
+	}
+}
+
+func (s *TenantSchema) ToRow(t Tenant) []any {
+	return []any{
+		t.PK,
+		t.OwnerPubkey,
+		t.Code,
+		t.PaymentStatus,
+		t.VrfID,
+		t.MetroRouting,
+		t.RouteLiveness,
+		t.BillingRate,
+	}
+}
+
+func (s *TenantSchema) GetPrimaryKey(t Tenant) string {
+	return t.PK
+}
+
 var (
 	contributorSchema    = &ContributorSchema{}
 	deviceSchema         = &DeviceSchema{}
@@ -256,6 +296,7 @@ var (
 	metroSchema          = &MetroSchema{}
 	linkSchema           = &LinkSchema{}
 	multicastGroupSchema = &MulticastGroupSchema{}
+	tenantSchema         = &TenantSchema{}
 )
 
 func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -280,4 +321,8 @@ func NewLinkDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 
 func NewMulticastGroupDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, multicastGroupSchema)
+}
+
+func NewTenantDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, tenantSchema)
 }

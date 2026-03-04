@@ -4382,3 +4382,30 @@ export async function fetchFieldValues(entity: string, field: string, filters?: 
   const data: FieldValuesResponse = await res.json()
   return data.values
 }
+
+export interface Tenant {
+  pk: string
+  owner_pubkey: string
+  code: string
+  payment_status: string
+  vrf_id: number
+  metro_routing: boolean
+  route_liveness: boolean
+  billing_rate: number
+}
+
+export async function fetchTenants(limit = 100, offset = 0): Promise<PaginatedResponse<Tenant>> {
+  const res = await fetchWithRetry(`/api/dz/tenants?limit=${limit}&offset=${offset}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch tenants')
+  }
+  return res.json()
+}
+
+export async function fetchTenant(pk: string): Promise<Tenant> {
+  const res = await fetchWithRetry(`/api/dz/tenants/${encodeURIComponent(pk)}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch tenant')
+  }
+  return res.json()
+}
