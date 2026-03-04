@@ -76,15 +76,27 @@ function HealthLegendTable({
     return map
   }, [data, interfaces, hoveredIdx, bidirectional])
 
+  // Track which directions have data per interface (bidirectional only)
+  const directionActivity = useMemo(() => {
+    if (!bidirectional) return new Map<string, { hasIn: boolean; hasOut: boolean }>()
+    const map = new Map<string, { hasIn: boolean; hasOut: boolean }>()
+    for (let i = 0; i < interfaces.length; i++) {
+      const inSeries = data[i * 2 + 1] as (number | null)[]
+      const outSeries = data[i * 2 + 2] as (number | null)[]
+      map.set(interfaces[i], {
+        hasIn: inSeries?.some((v) => v != null && v > 0) ?? false,
+        hasOut: outSeries?.some((v) => v != null && v > 0) ?? false,
+      })
+    }
+    return map
+  }, [interfaces, data, bidirectional])
+
   // Only show interfaces that have any non-zero value across the entire dataset
   const activeInterfaces = useMemo(() => {
     if (bidirectional) {
-      return interfaces.filter((_, i) => {
-        const inSeries = data[i * 2 + 1] as (number | null)[]
-        const outSeries = data[i * 2 + 2] as (number | null)[]
-        if (!inSeries && !outSeries) return false
-        return (inSeries?.some((v) => v != null && v > 0) ?? false) ||
-               (outSeries?.some((v) => v != null && v > 0) ?? false)
+      return interfaces.filter((intf) => {
+        const activity = directionActivity.get(intf)
+        return activity ? (activity.hasIn || activity.hasOut) : false
       })
     }
     return interfaces.filter((_, i) => {
@@ -92,7 +104,7 @@ function HealthLegendTable({
       if (!series) return false
       return series.some((v) => v != null && v > 0)
     })
-  }, [interfaces, data, bidirectional])
+  }, [interfaces, data, bidirectional, directionActivity])
 
   if (activeInterfaces.length === 0) return null
 
@@ -131,16 +143,20 @@ function HealthLegendTable({
                 />
                 <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf}</span>
               </div>
-              {bidirectional ? (
-                <>
-                  <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
-                    {formatCount((biValues.get(intf) ?? { in: 0, out: 0 }).in)}
-                  </span>
-                  <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
-                    {formatCount((biValues.get(intf) ?? { in: 0, out: 0 }).out)}
-                  </span>
-                </>
-              ) : (
+              {bidirectional ? (() => {
+                const activity = directionActivity.get(intf)
+                const vals = biValues.get(intf) ?? { in: 0, out: 0 }
+                return (
+                  <>
+                    <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
+                      {activity?.hasIn ? formatCount(vals.in) : '-'}
+                    </span>
+                    <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
+                      {activity?.hasOut ? formatCount(vals.out) : '-'}
+                    </span>
+                  </>
+                )
+              })() : (
                 <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
                   {formatCount(values.get(intf) ?? 0)}
                 </span>
@@ -237,7 +253,8 @@ function buildHealthColumnar(
   // Bidirectional mode: produce two columns per interface (in + out)
   if (bidirectional && (field === 'errors' || field === 'discards')) {
     const lookup = new Map<string, Map<string, { in: number; out: number }>>()
-    const activeInterfaces = new Set<string>()
+    const activeIn = new Set<string>()
+    const activeOut = new Set<string>()
 
     for (const iface of historyData.interfaces) {
       const name = iface.interface_name
@@ -247,7 +264,8 @@ function buildHealthColumnar(
         const outVal = field === 'errors' ? (h.out_errors || 0) : (h.out_discards || 0)
         if (inVal > 0 || outVal > 0) {
           hasData = true
-          activeInterfaces.add(name)
+          if (inVal > 0) activeIn.add(name)
+          if (outVal > 0) activeOut.add(name)
           let byIntf = lookup.get(h.hour)
           if (!byIntf) {
             byIntf = new Map()
@@ -260,13 +278,12 @@ function buildHealthColumnar(
 
     const arrays: (number | null)[][] = [timestamps]
     for (const intf of interfaces) {
-      const isActive = activeInterfaces.has(intf)
       const inVals: (number | null)[] = []
       const outVals: (number | null)[] = []
       for (const t of sortedTimes) {
         const v = lookup.get(t)?.get(intf)
-        inVals.push(v ? v.in : (isActive ? 0 : null))
-        outVals.push(v ? v.out : (isActive ? 0 : null))
+        inVals.push(v ? v.in : (activeIn.has(intf) ? 0 : null))
+        outVals.push(v ? v.out : (activeOut.has(intf) ? 0 : null))
       }
       arrays.push(inVals)
       arrays.push(outVals)
