@@ -108,59 +108,77 @@ function HealthLegendTable({
 
   if (activeInterfaces.length === 0) return null
 
+  // Build legend rows: for bidirectional, one row per active direction per interface
+  const legendRows = useMemo(() => {
+    if (!bidirectional) {
+      return activeInterfaces.map((intf) => ({
+        key: intf,
+        intf,
+        label: interfaceLabels?.get(intf) ?? intf,
+        direction: null as null,
+      }))
+    }
+    const rows: { key: string; intf: string; label: string; direction: 'in' | 'out' }[] = []
+    for (const intf of activeInterfaces) {
+      const activity = directionActivity.get(intf)
+      const label = interfaceLabels?.get(intf) ?? intf
+      if (activity?.hasIn) {
+        rows.push({ key: `${intf}:in`, intf, label: `${label}:In`, direction: 'in' })
+      }
+      if (activity?.hasOut) {
+        rows.push({ key: `${intf}:out`, intf, label: `${label}:Out`, direction: 'out' })
+      }
+    }
+    return rows
+  }, [activeInterfaces, bidirectional, directionActivity, interfaceLabels])
+
   return (
     <div className="flex flex-col text-xs px-2 pt-1 pb-2">
       <div className="flex items-center px-1 mb-1">
         <span className="text-xs text-muted-foreground flex-1 min-w-0">Name</span>
-        {bidirectional ? (
-          <>
-            <span className="text-xs text-muted-foreground w-16 text-right">In</span>
-            <span className="text-xs text-muted-foreground w-16 text-right">Out</span>
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground w-24 text-right">Value</span>
-        )}
+        <span className="text-xs text-muted-foreground w-24 text-right">Value</span>
       </div>
       <div className="max-h-32 overflow-y-auto space-y-0.5">
-        {activeInterfaces.map((intf) => {
-          const colorIndex = interfaces.indexOf(intf)
+        {legendRows.map((row) => {
+          const colorIndex = interfaces.indexOf(row.intf)
           const color = colors[colorIndex % colors.length]
-          const isVisible = visibleSeries.has(intf)
+          const isVisible = visibleSeries.has(row.intf)
+          const isDashed = row.direction === 'out'
+
+          let displayValue: number
+          if (bidirectional) {
+            const vals = biValues.get(row.intf) ?? { in: 0, out: 0 }
+            displayValue = row.direction === 'out' ? vals.out : vals.in
+          } else {
+            displayValue = values.get(row.intf) ?? 0
+          }
+
           return (
             <div
-              key={intf}
+              key={row.key}
               className={`flex items-center px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50 transition-colors ${
                 isVisible ? '' : 'opacity-40'
               }`}
-              onClick={(e) => legend.handleClick(intf, e)}
-              onMouseEnter={() => legend.handleMouseEnter(intf)}
+              onClick={(e) => legend.handleClick(row.intf, e)}
+              onMouseEnter={() => legend.handleMouseEnter(row.intf)}
               onMouseLeave={legend.handleMouseLeave}
             >
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <span
-                  className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                  style={{ backgroundColor: color }}
-                />
-                <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf}</span>
+                {isDashed ? (
+                  <svg className="w-2.5 h-2.5 flex-shrink-0" viewBox="0 0 10 10">
+                    <line x1="0" y1="5" x2="10" y2="5" stroke={color} strokeWidth="3" strokeDasharray="3 2" />
+                  </svg>
+                ) : (
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                )}
+                <span className="font-mono text-foreground truncate">{row.label}</span>
               </div>
-              {bidirectional ? (() => {
-                const activity = directionActivity.get(intf)
-                const vals = biValues.get(intf) ?? { in: 0, out: 0 }
-                return (
-                  <>
-                    <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
-                      {activity?.hasIn ? formatCount(vals.in) : '-'}
-                    </span>
-                    <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
-                      {activity?.hasOut ? formatCount(vals.out) : '-'}
-                    </span>
-                  </>
-                )
-              })() : (
-                <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
-                  {formatCount(values.get(intf) ?? 0)}
-                </span>
-              )}
+              <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
+                {formatCount(displayValue)}
+              </span>
             </div>
           )
         })}
