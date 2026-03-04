@@ -106,8 +106,6 @@ function HealthLegendTable({
     })
   }, [interfaces, data, bidirectional, directionActivity])
 
-  if (activeInterfaces.length === 0) return null
-
   // Build legend rows: for bidirectional, one row per active direction per interface
   const legendRows = useMemo(() => {
     if (!bidirectional) {
@@ -131,6 +129,8 @@ function HealthLegendTable({
     }
     return rows
   }, [activeInterfaces, bidirectional, directionActivity, interfaceLabels])
+
+  if (activeInterfaces.length === 0) return null
 
   return (
     <div className="flex flex-col text-xs px-2 pt-1 pb-2">
