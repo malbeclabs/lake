@@ -85,18 +85,6 @@ export function TenantDetailPage() {
             <h3 className="text-sm font-medium text-muted-foreground mb-3">Billing</h3>
             <dl className="space-y-2">
               <div className="flex justify-between gap-4">
-                <dt className="text-sm text-muted-foreground shrink-0">Payment Status</dt>
-                <dd className="text-sm">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                    tenant.payment_status === 'paid'
-                      ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
-                      : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
-                  }`}>
-                    {tenant.payment_status}
-                  </span>
-                </dd>
-              </div>
-              <div className="flex justify-between gap-4">
                 <dt className="text-sm text-muted-foreground shrink-0">Billing Rate</dt>
                 <dd className="text-sm tabular-nums">{tenant.billing_rate.toLocaleString()}</dd>
               </div>

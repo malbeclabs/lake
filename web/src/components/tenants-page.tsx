@@ -10,7 +10,7 @@ import { PageHeader } from './page-header'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'payment_status' | 'vrf_id'
+type SortField = 'code' | 'vrf_id'
 type SortDirection = 'asc' | 'desc'
 
 function parseSearchFilters(searchParam: string): string[] {
@@ -18,11 +18,10 @@ function parseSearchFilters(searchParam: string): string[] {
   return searchParam.split(',').map(f => f.trim()).filter(Boolean)
 }
 
-const validFilterFields = ['code', 'status']
+const validFilterFields = ['code']
 
 const tenantFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by tenant code' },
-  { prefix: 'status:', description: 'Filter by payment status (paid, delinquent)' },
 ]
 
 const tenantAutocompleteFields: string[] = []
@@ -37,19 +36,6 @@ function parseFilter(filter: string): { field: string; value: string } {
     }
   }
   return { field: 'all', value: filter }
-}
-
-function PaymentStatusBadge({ status }: { status: string }) {
-  const isPaid = status === 'paid'
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-      isPaid
-        ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
-        : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
-    }`}>
-      {status}
-    </span>
-  )
 }
 
 function BoolBadge({ value }: { value: boolean }) {
@@ -127,13 +113,9 @@ export function TenantsPage() {
     if (filter.field === 'code') {
       return tenants.filter(t => t.code.toLowerCase().includes(needle))
     }
-    if (filter.field === 'status') {
-      return tenants.filter(t => t.payment_status.toLowerCase().includes(needle))
-    }
     // all fields
     return tenants.filter(t =>
       t.code.toLowerCase().includes(needle) ||
-      t.payment_status.toLowerCase().includes(needle) ||
       t.pk.toLowerCase().includes(needle)
     )
   }, [tenants, activeFilterRaw])
@@ -151,9 +133,6 @@ export function TenantsPage() {
       switch (sortField) {
         case 'code':
           cmp = a.code.localeCompare(b.code)
-          break
-        case 'payment_status':
-          cmp = a.payment_status.localeCompare(b.payment_status)
           break
         case 'vrf_id':
           cmp = a.vrf_id - b.vrf_id
@@ -275,12 +254,6 @@ export function TenantsPage() {
                   </th>
                   <th className="px-4 py-3 font-medium">PK</th>
                   <th className="px-4 py-3 font-medium">Owner</th>
-                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('payment_status')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('payment_status')}>
-                      Payment Status
-                      <SortIcon field="payment_status" />
-                    </button>
-                  </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('vrf_id')}>
                     <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('vrf_id')}>
                       VRF ID
@@ -311,9 +284,6 @@ export function TenantsPage() {
                         {truncatePk(tenant.owner_pubkey)}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <PaymentStatusBadge status={tenant.payment_status} />
-                    </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {tenant.vrf_id}
                     </td>
@@ -327,7 +297,7 @@ export function TenantsPage() {
                 ))}
                 {sortedTenants.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                       No tenants found
                     </td>
                   </tr>
