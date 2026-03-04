@@ -193,7 +193,7 @@ function IssueDetails({
   nonActivatedLinks: NonActivatedLink[]
   deviceIssues: InterfaceIssue[]
   nonActivatedDevices: NonActivatedDevice[]
-  onIssueClick: () => void
+  onIssueClick: (linkCode: string) => void
   onNonActivatedClick: () => void
   onDeviceIssueClick: (devicePk: string) => void
 }) {
@@ -246,7 +246,7 @@ function IssueDetails({
               {sectionIssues.map((issue, idx) => (
                 <button
                   key={idx}
-                  onClick={onIssueClick}
+                  onClick={() => onIssueClick(issue.code)}
                   className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
                 >
                   <div className="flex items-center gap-3">
@@ -431,35 +431,53 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
     return () => clearInterval(interval)
   }, [])
 
-  const scrollToLinkHistory = () => {
+  const flashHighlight = (el: Element) => {
+    el.classList.remove('scroll-highlight')
+    // Force reflow so re-adding the class restarts the animation
+    void (el as HTMLElement).offsetWidth
+    el.classList.add('scroll-highlight')
+  }
+
+  const scrollAndHighlight = (id: string, block: ScrollLogicalPosition = 'start') => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block })
+      flashHighlight(el)
+    }
+    return el
+  }
+
+  const scrollToLinkHistory = (linkCode: string) => {
+    const scrollToLink = () => {
+      const el = scrollAndHighlight(`link-row-${linkCode}`, 'center')
+      if (!el) {
+        scrollAndHighlight('link-status-history')
+      }
+    }
     // If not on links tab, navigate there first
     if (!location.pathname.includes('/status/links')) {
       navigate('/status/links')
       // Wait for navigation then scroll
-      setTimeout(() => {
-        document.getElementById('link-status-history')?.scrollIntoView({ behavior: 'smooth' })
-      }, 100)
+      setTimeout(scrollToLink, 100)
     } else {
-      document.getElementById('link-status-history')?.scrollIntoView({ behavior: 'smooth' })
+      scrollToLink()
     }
   }
   const scrollToDisabledLinks = () => {
     if (!location.pathname.includes('/status/links')) {
       navigate('/status/links')
       setTimeout(() => {
-        document.getElementById('disabled-links')?.scrollIntoView({ behavior: 'smooth' })
+        scrollAndHighlight('disabled-links')
       }, 100)
     } else {
-      document.getElementById('disabled-links')?.scrollIntoView({ behavior: 'smooth' })
+      scrollAndHighlight('disabled-links')
     }
   }
   const scrollToDeviceHistory = (devicePk: string) => {
     const scrollToDevice = () => {
-      const deviceRow = document.getElementById(`device-row-${devicePk}`)
-      if (deviceRow) {
-        deviceRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      } else {
-        document.getElementById('device-status-history')?.scrollIntoView({ behavior: 'smooth' })
+      const el = scrollAndHighlight(`device-row-${devicePk}`, 'center')
+      if (!el) {
+        scrollAndHighlight('device-status-history')
       }
     }
     if (!location.pathname.includes('/status/devices')) {

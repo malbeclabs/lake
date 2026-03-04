@@ -545,7 +545,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
   const hasExpandableContent = showInterfaceChart || showPacketLossChart
 
   return (
-    <div className="border-b border-border last:border-b-0">
+    <div id={`link-row-${link.code}`} className="border-b border-border last:border-b-0">
       <div
         className={`px-4 py-3 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30' : ''}`}
         onClick={hasExpandableContent ? () => setExpanded(!expanded) : undefined}

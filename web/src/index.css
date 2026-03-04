@@ -367,3 +367,19 @@ table {
 .animate-slide-in {
   animation: slideIn 0.4s ease-out;
 }
+
+/* Scroll-to highlight flash */
+@keyframes scrollHighlight {
+  0% {
+    background-color: oklch(from var(--muted-foreground) l c h / 12%);
+    box-shadow: inset 0 0 0 2px oklch(from var(--muted-foreground) l c h / 60%);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}
+
+.scroll-highlight {
+  animation: scrollHighlight 3.5s ease-out;
+}
