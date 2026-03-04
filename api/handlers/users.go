@@ -12,20 +12,20 @@ import (
 )
 
 type UserListItem struct {
-	PK           string  `json:"pk"`
-	OwnerPubkey  string  `json:"owner_pubkey"`
-	Status       string  `json:"status"`
-	Kind         string  `json:"kind"`
-	DzIP         string  `json:"dz_ip"`
-	ClientIP     string  `json:"client_ip"`
-	DevicePK     string  `json:"device_pk"`
-	DeviceCode   string  `json:"device_code"`
-	MetroCode    string  `json:"metro_code"`
-	MetroName    string  `json:"metro_name"`
-	TenantPK     string  `json:"tenant_pk"`
-	TenantCode   string  `json:"tenant_code"`
-	InBps        float64 `json:"in_bps"`
-	OutBps       float64 `json:"out_bps"`
+	PK          string  `json:"pk"`
+	OwnerPubkey string  `json:"owner_pubkey"`
+	Status      string  `json:"status"`
+	Kind        string  `json:"kind"`
+	DzIP        string  `json:"dz_ip"`
+	ClientIP    string  `json:"client_ip"`
+	DevicePK    string  `json:"device_pk"`
+	DeviceCode  string  `json:"device_code"`
+	MetroCode   string  `json:"metro_code"`
+	MetroName   string  `json:"metro_name"`
+	TenantPK    string  `json:"tenant_pk"`
+	TenantCode  string  `json:"tenant_code"`
+	InBps       float64 `json:"in_bps"`
+	OutBps      float64 `json:"out_bps"`
 }
 
 func GetUsers(w http.ResponseWriter, r *http.Request) {

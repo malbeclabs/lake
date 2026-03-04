@@ -2,12 +2,12 @@
 
 -- +goose StatementBegin
 ALTER TABLE dim_dz_users_history
-    ADD COLUMN IF NOT EXISTS tenant_pk String DEFAULT '';
+    ADD COLUMN IF NOT EXISTS tenant_pk String DEFAULT '' AFTER device_pk;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
 ALTER TABLE stg_dim_dz_users_snapshot
-    ADD COLUMN IF NOT EXISTS tenant_pk String DEFAULT '';
+    ADD COLUMN IF NOT EXISTS tenant_pk String DEFAULT '' AFTER device_pk;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
