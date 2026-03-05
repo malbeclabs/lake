@@ -824,19 +824,19 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 				// First row has both non-sparse (octets) and sparse (errors) counters.
 				// The first row is skipped for storage (used as baseline for non-sparse).
 				// Sparse counter values must also be saved as baselines.
-				"time":       now.Format(time.RFC3339Nano),
-				"dzd_pubkey": "device1",
-				"intf":       "eth0",
-				"in-octets":  int64(1000),
-				"in-errors":  int64(50),
+				"time":        now.Format(time.RFC3339Nano),
+				"dzd_pubkey":  "device1",
+				"intf":        "eth0",
+				"in-octets":   int64(1000),
+				"in-errors":   int64(50),
 				"in-discards": int64(10),
 			},
 			{
-				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
-				"dzd_pubkey": "device1",
-				"intf":       "eth0",
-				"in-octets":  int64(2000),
-				"in-errors":  int64(55),
+				"time":        now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey":  "device1",
+				"intf":        "eth0",
+				"in-octets":   int64(2000),
+				"in-errors":   int64(55),
 				"in-discards": int64(12),
 			},
 		}
