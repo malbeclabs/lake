@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // Client defines the interface for fetching validator data from validators.app.
@@ -90,7 +91,7 @@ func NewHTTPClient(baseURL, apiKey string) *HTTPClient {
 	return &HTTPClient{
 		baseURL:    baseURL,
 		apiKey:     apiKey,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -111,7 +112,7 @@ func (c *HTTPClient) GetValidators(ctx context.Context) ([]Validator, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
 	}
 

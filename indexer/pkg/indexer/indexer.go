@@ -188,16 +188,12 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 	// Initialize validators.app view (optional)
 	var validatorsAppView *validatorsapp.View
 	if cfg.ValidatorsAppClient != nil {
-		refreshInterval := cfg.ValidatorsAppRefreshInterval
-		if refreshInterval <= 0 {
-			refreshInterval = 5 * time.Minute
-		}
 		validatorsAppView, err = validatorsapp.NewView(validatorsapp.ViewConfig{
 			Logger:          cfg.Logger,
 			Clock:           cfg.Clock,
 			Client:          cfg.ValidatorsAppClient,
 			ClickHouse:      cfg.ClickHouse,
-			RefreshInterval: refreshInterval,
+			RefreshInterval: cfg.ValidatorsAppRefreshInterval,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create validatorsapp view: %w", err)
