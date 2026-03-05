@@ -20,6 +20,7 @@ Each View operates independently with its own refresh interval and can depend on
 | **Telemetry Usage** | InfluxDB | Device interface counters (bandwidth utilization) |
 | **Solana** | Solana (mainnet) | Validator stakes, vote accounts, leader slots |
 | **GeoIP** | MaxMind + other Views | IP geolocation enrichment for devices and validators |
+| **validators.app** | validators.app API | Validator client types, versions, stake (mainnet-beta only) |
 
 ### Stores vs Views
 
@@ -88,6 +89,8 @@ Solana RPC ──────────────► Solana ─────�
 
 MaxMind DB ──────────────► GeoIP ───────────────► dim_ip_geo
                                                   (enriches other dims)
+
+validators.app API ─────► validators.app ──────► dim_validatorsapp_validators_*
 ```
 
 ## Package Structure
@@ -107,6 +110,7 @@ lake/indexer/
     │       └── usage/        # Interface counters view
     ├── geoip/            # IP geolocation view
     ├── sol/              # Solana validator view
+    ├── validatorsapp/    # validators.app validator client data view
     ├── indexer/          # View orchestration
     ├── server/           # HTTP server (health, metrics)
     └── metrics/          # Prometheus metrics
@@ -127,6 +131,8 @@ lake/indexer/
 | `--clickhouse-secure` | Enable TLS for ClickHouse Cloud |
 | `--geoip-city-db-path` | Path to MaxMind GeoIP2 City database |
 | `--geoip-asn-db-path` | Path to MaxMind GeoIP2 ASN database |
+| `--validatorsapp-api-key` | validators.app API key (mainnet-beta only) |
+| `--validatorsapp-refresh-interval` | validators.app refresh interval (default: 5m) |
 
 ### Environment Variables
 
@@ -144,6 +150,8 @@ lake/indexer/
 | `INFLUX_URL` | InfluxDB server URL (optional, enables usage view) |
 | `INFLUX_TOKEN` | InfluxDB auth token |
 | `INFLUX_BUCKET` | InfluxDB bucket name |
+| `VALIDATORSAPP_API_KEY` | validators.app API key (overrides flag) |
+| `VALIDATORSAPP_REFRESH_INTERVAL` | validators.app refresh interval, e.g. "5m" (overrides flag) |
 
 ## Migrations
 
@@ -155,7 +163,7 @@ Migrations live in `migrations/` and follow the naming convention `YYYYMMDDHHMMS
 
 The indexer supports running against different DZ network environments (devnet, testnet, mainnet-beta). The `--dz-env` flag controls:
 
-- **Subsystem gating**: Solana, GeoIP, Neo4j, and ISIS are only enabled on mainnet-beta. On devnet/testnet, only network topology (serviceability) and telemetry views run.
+- **Subsystem gating**: Solana, GeoIP, Neo4j, ISIS, and validators.app are only enabled on mainnet-beta. On devnet/testnet, only network topology (serviceability) and telemetry views run.
 - **Environment lock**: On first startup, the indexer writes the configured environment to an `_env_lock` table in ClickHouse (and an `_EnvLock` node in Neo4j when enabled). Subsequent startups verify the lock matches, preventing accidental cross-env writes to the same database.
 
 Each environment should use a separate ClickHouse database (e.g., `lake_mainnet`, `lake_devnet`).
