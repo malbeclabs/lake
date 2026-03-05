@@ -831,7 +831,7 @@ func TestLake_Clickhouse_Dataset_DimensionType2_WriteBatch(t *testing.T) {
 			LIMIT 1
 		`, d.HistoryTableName())
 
-		rows, err := conn.Query(ctx, query, string(entityID), t2)
+		rows, err := conn.Query(ctx, query, string(entityID), formatDateTime64(t2))
 		require.NoError(t, err)
 		defer rows.Close()
 
@@ -841,7 +841,7 @@ func TestLake_Clickhouse_Dataset_DimensionType2_WriteBatch(t *testing.T) {
 		err = rows.Scan(&isDeleted, &snapshotTS)
 		require.NoError(t, err)
 		require.Equal(t, uint8(1), isDeleted, "is_deleted should be 1")
-		require.Equal(t, t2.Truncate(time.Second), snapshotTS.Truncate(time.Second), "snapshot_ts should be t2")
+		require.Equal(t, t2.Truncate(time.Millisecond), snapshotTS.Truncate(time.Millisecond), "snapshot_ts should be t2")
 
 		// Step 5: Verify entity is not in current view
 		current2, err := d.GetCurrentRow(ctx, conn, entityID)

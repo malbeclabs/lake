@@ -10,6 +10,14 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 )
 
+// formatDateTime64 formats a time.Time as a string with millisecond precision
+// for use as a ClickHouse query parameter bound to toDateTime64(?, 3).
+// The Go ClickHouse driver truncates time.Time to seconds in parameter binding,
+// so we must pass a pre-formatted string to preserve millisecond precision.
+func formatDateTime64(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05.000")
+}
+
 type DimensionType2DatasetWriteConfig struct {
 	OpID                uuid.UUID
 	SnapshotTS          time.Time
@@ -304,7 +312,7 @@ func (d *DimensionType2Dataset) WriteBatch(
 	// Use sync context to ensure we see the staging data we just inserted
 	d.log.Debug("executing delta insert query", "dataset", d.schema.Name(), "snapshot_ts", cfg.SnapshotTS, "op_id", cfg.OpID, "ingested_at", cfg.IngestedAt)
 
-	if err := conn.Exec(deltaSyncCtx, insertQuery, cfg.OpID.String(), cfg.SnapshotTS, cfg.IngestedAt); err != nil {
+	if err := conn.Exec(deltaSyncCtx, insertQuery, cfg.OpID.String(), formatDateTime64(cfg.SnapshotTS), formatDateTime64(cfg.IngestedAt)); err != nil {
 		return fmt.Errorf("failed to compute and write delta: %w", err)
 	}
 
@@ -440,7 +448,7 @@ func (d *DimensionType2Dataset) countDeltaRows(ctx context.Context, conn clickho
 			(SELECT count() FROM deleted) AS deleted_count
 	`, d.StagingTableName(), d.HistoryTableName())
 
-	rows, err := conn.Query(ctx, countQuery, opID.String(), snapshotTS)
+	rows, err := conn.Query(ctx, countQuery, opID.String(), formatDateTime64(snapshotTS))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -642,7 +650,7 @@ func (d *DimensionType2Dataset) processEmptySnapshot(
 	)
 
 	d.log.Debug("inserting tombstones for empty snapshot", "dataset", d.schema.Name(), "query", insertQuery)
-	if err := conn.Exec(ctx, insertQuery, snapshotTS, ingestedAt, opID.String()); err != nil {
+	if err := conn.Exec(ctx, insertQuery, formatDateTime64(snapshotTS), formatDateTime64(ingestedAt), opID.String()); err != nil {
 		return fmt.Errorf("failed to insert tombstones: %w", err)
 	}
 

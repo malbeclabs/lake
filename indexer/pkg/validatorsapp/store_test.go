@@ -199,15 +199,16 @@ func TestStore(t *testing.T) {
 			StakePoolsList:  []string{},
 		}
 
-		// Write both validators
+		// Write both validators. Capture the second so we can ensure the next
+		// write lands in a different second (the delta query's toDateTime64(?, 3)
+		// parameter binding truncates to second precision).
+		firstWriteSec := time.Now().Truncate(time.Second)
 		err = store.ReplaceValidators(context.Background(), []Validator{v1, v2})
 		require.NoError(t, err)
 
-		// Ensure distinct snapshot_ts between writes (DateTime64(3) has ms precision).
-		// Under load (many parallel tests), the ClickHouse ALTER TABLE DELETE mutation
-		// from the first write's staging cleanup may still be pending, so we wait enough
-		// for the mutation to complete and for timestamps to be distinct.
-		time.Sleep(500 * time.Millisecond)
+		require.Eventually(t, func() bool {
+			return time.Now().Truncate(time.Second).After(firstWriteSec)
+		}, 2*time.Second, 50*time.Millisecond, "clock should advance to next second")
 
 		// Write only v1 (v2 should be soft-deleted via MissingMeansDeleted)
 		err = store.ReplaceValidators(context.Background(), []Validator{v1})
