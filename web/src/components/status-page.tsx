@@ -187,6 +187,7 @@ function IssueDetails({
   nonActivatedDevices,
   onIssueClick,
   onNonActivatedClick,
+  onNonActivatedDeviceClick,
   onDeviceIssueClick,
 }: {
   issues: LinkIssue[]
@@ -194,7 +195,8 @@ function IssueDetails({
   deviceIssues: InterfaceIssue[]
   nonActivatedDevices: NonActivatedDevice[]
   onIssueClick: (linkCode: string) => void
-  onNonActivatedClick: () => void
+  onNonActivatedClick: (linkCode: string) => void
+  onNonActivatedDeviceClick: (deviceCode: string) => void
   onDeviceIssueClick: (devicePk: string) => void
 }) {
   const grouped = issues.reduce(
@@ -347,7 +349,7 @@ function IssueDetails({
             {nonActivatedLinks.map((link, idx) => (
               <button
                 key={`${link.code}-${idx}`}
-                onClick={onNonActivatedClick}
+                onClick={() => onNonActivatedClick(link.code)}
                 className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
               >
                 <div className="flex items-center gap-3">
@@ -384,7 +386,7 @@ function IssueDetails({
             {nonActivatedDevices.map((device, idx) => (
               <button
                 key={`${device.code}-${idx}`}
-                onClick={() => onDeviceIssueClick(device.pk)}
+                onClick={() => onNonActivatedDeviceClick(device.code)}
                 className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
               >
                 <div className="flex items-center gap-3">
@@ -463,14 +465,32 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
       scrollToLink()
     }
   }
-  const scrollToDisabledLinks = () => {
+  const scrollToDisabledLinks = (linkCode: string) => {
+    const scrollToLink = () => {
+      const el = scrollAndHighlight(`disabled-link-${linkCode}`, 'center')
+      if (!el) {
+        scrollAndHighlight('disabled-links')
+      }
+    }
     if (!location.pathname.includes('/status/links')) {
       navigate('/status/links')
-      setTimeout(() => {
-        scrollAndHighlight('disabled-links')
-      }, 100)
+      setTimeout(scrollToLink, 100)
     } else {
-      scrollAndHighlight('disabled-links')
+      scrollToLink()
+    }
+  }
+  const scrollToDisabledDevices = (deviceCode: string) => {
+    const scrollToDevice = () => {
+      const el = scrollAndHighlight(`disabled-device-${deviceCode}`, 'center')
+      if (!el) {
+        scrollAndHighlight('disabled-devices')
+      }
+    }
+    if (!location.pathname.includes('/status/devices')) {
+      navigate('/status/devices')
+      setTimeout(scrollToDevice, 100)
+    } else {
+      scrollToDevice()
     }
   }
   const scrollToDeviceHistory = (devicePk: string) => {
@@ -551,6 +571,7 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
           nonActivatedDevices={nonActivatedDevices}
           onIssueClick={scrollToLinkHistory}
           onNonActivatedClick={scrollToDisabledLinks}
+          onNonActivatedDeviceClick={scrollToDisabledDevices}
           onDeviceIssueClick={scrollToDeviceHistory}
         />
       )}
@@ -1222,7 +1243,7 @@ function DisabledLinksTable({
           </thead>
           <tbody>
             {allLinks.map((link, idx) => (
-              <tr key={`${link.code}-${idx}`} className="border-b border-border last:border-b-0">
+              <tr key={`${link.code}-${idx}`} id={`disabled-link-${link.code}`} className="border-b border-border last:border-b-0">
                 <td className="px-4 py-2.5">
                   <Link to={`/dz/links/${link.pk}`} className="font-mono text-sm hover:underline">{link.code}</Link>
                   <span className="text-xs text-muted-foreground ml-2">{link.link_type}</span>
@@ -1271,7 +1292,7 @@ function DisabledDevicesTable({ devices }: { devices: StatusResponse['alerts']['
           </thead>
           <tbody>
             {devices.map((device, idx) => (
-              <tr key={`${device.code}-${idx}`} className="border-b border-border last:border-b-0">
+              <tr key={`${device.code}-${idx}`} id={`disabled-device-${device.code}`} className="border-b border-border last:border-b-0">
                 <td className="px-4 py-2.5">
                   <Link to={`/dz/devices/${device.pk}`} className="font-mono text-sm hover:underline">{device.code}</Link>
                   <span className="text-xs text-muted-foreground ml-2">{device.device_type}</span>
