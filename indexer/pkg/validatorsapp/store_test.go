@@ -203,8 +203,11 @@ func TestStore(t *testing.T) {
 		err = store.ReplaceValidators(context.Background(), []Validator{v1, v2})
 		require.NoError(t, err)
 
-		// Ensure distinct snapshot_ts between writes (DateTime64(3) has ms precision)
-		time.Sleep(50 * time.Millisecond)
+		// Ensure distinct snapshot_ts between writes (DateTime64(3) has ms precision).
+		// Under load (many parallel tests), the ClickHouse ALTER TABLE DELETE mutation
+		// from the first write's staging cleanup may still be pending, so we wait enough
+		// for the mutation to complete and for timestamps to be distinct.
+		time.Sleep(500 * time.Millisecond)
 
 		// Write only v1 (v2 should be soft-deleted via MissingMeansDeleted)
 		err = store.ReplaceValidators(context.Background(), []Validator{v1})
