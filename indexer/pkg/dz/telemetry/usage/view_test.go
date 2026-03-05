@@ -739,4 +739,313 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		// Verify we got only the third row
 		require.Equal(t, now.Add(2*time.Minute), usage[0].Time)
 	})
+
+	t.Run("already-written rows update lastKnownValues for subsequent delta calculations", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		rows := []map[string]any{
+			{
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				"in-errors":  int64(10),
+			},
+			{
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+				"in-errors":  int64(15),
+			},
+			{
+				"time":       now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+				"in-errors":  int64(20),
+			},
+		}
+
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		// Mark first two rows as already written
+		alreadyWritten := MaxTimestampsByKey{
+			"device1:eth0": now.Add(time.Minute),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		require.NoError(t, err)
+		require.Len(t, usage, 1)
+
+		// The third row should have deltas computed against the second row's values
+		// (which were in the already-written overlap window)
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[0].InOctetsDelta) // 3000 - 2000
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(5), *usage[0].InErrorsDelta) // 20 - 15
+	})
+
+	t.Run("first row skip preserves sparse counter values for baseline", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		rows := []map[string]any{
+			{
+				// First row has both non-sparse (octets) and sparse (errors) counters.
+				// The first row is skipped for storage (used as baseline for non-sparse).
+				// Sparse counter values must also be saved as baselines.
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				"in-errors":  int64(50),
+				"in-discards": int64(10),
+			},
+			{
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+				"in-errors":  int64(55),
+				"in-discards": int64(12),
+			},
+		}
+
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		require.NoError(t, err)
+		// First row is skipped (baseline for non-sparse), only second row stored
+		require.Len(t, usage, 1)
+
+		// Second row should have correct deltas for BOTH non-sparse and sparse counters
+		// Non-sparse: 2000 - 1000 = 1000
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[0].InOctetsDelta)
+
+		// Sparse: 55 - 50 = 5 (sparse values from first row were preserved as baseline)
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(5), *usage[0].InErrorsDelta)
+
+		// Sparse: 12 - 10 = 2
+		require.NotNil(t, usage[0].InDiscardsDelta)
+		require.Equal(t, int64(2), *usage[0].InDiscardsDelta)
+	})
+
+	t.Run("extractInt64FromRow handles uint64 values", func(t *testing.T) {
+		t.Parallel()
+
+		row := map[string]any{
+			"signed":   int64(42),
+			"unsigned": uint64(76),
+			"float":    float64(99.0),
+			"str":      "123",
+			"nil_val":  nil,
+		}
+
+		signed := extractInt64FromRow(row, "signed")
+		require.NotNil(t, signed)
+		require.Equal(t, int64(42), *signed)
+
+		unsigned := extractInt64FromRow(row, "unsigned")
+		require.NotNil(t, unsigned)
+		require.Equal(t, int64(76), *unsigned)
+
+		floatVal := extractInt64FromRow(row, "float")
+		require.NotNil(t, floatVal)
+		require.Equal(t, int64(99), *floatVal)
+
+		strVal := extractInt64FromRow(row, "str")
+		require.NotNil(t, strVal)
+		require.Equal(t, int64(123), *strVal)
+
+		nilVal := extractInt64FromRow(row, "nil_val")
+		require.Nil(t, nilVal)
+
+		missing := extractInt64FromRow(row, "nonexistent")
+		require.Nil(t, missing)
+	})
+
+	t.Run("already-written skip with sparse counters propagates baselines across overlap boundary", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		// Simulate an overlap scenario: rows 1-3 are already written,
+		// row 4 is new. Sparse counters (errors) are only present in some rows.
+		rows := []map[string]any{
+			{
+				// Already written - has non-sparse and sparse counters
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				"in-errors":  int64(30),
+			},
+			{
+				// Already written - sparse counter changed
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+				"in-errors":  int64(35),
+			},
+			{
+				// Already written - latest overlap row with errors
+				"time":       now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+				"in-errors":  int64(40),
+			},
+			{
+				// New row - should compute delta against row 3's values
+				"time":       now.Add(3 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(4000),
+				"in-errors":  int64(45),
+			},
+		}
+
+		// No ClickHouse baselines — the overlap rows are the only source of baseline values
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		alreadyWritten := MaxTimestampsByKey{
+			"device1:eth0": now.Add(2 * time.Minute),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		require.NoError(t, err)
+		require.Len(t, usage, 1)
+
+		// The new row should have deltas against the last overlap row's values
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[0].InOctetsDelta) // 4000 - 3000
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(5), *usage[0].InErrorsDelta) // 45 - 40
+	})
+
+	t.Run("sparse counters with no baseline and no overlap still capture first change", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		rows := []map[string]any{
+			{
+				// First row with both octets and errors — first row is skipped but
+				// sparse counter values should be preserved as baselines
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				"in-errors":  int64(0),
+			},
+			{
+				// Second row — errors changed from 0 to 5
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+				"in-errors":  int64(5),
+			},
+			{
+				// Third row — errors changed from 5 to 8
+				"time":       now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+				"in-errors":  int64(8),
+			},
+		}
+
+		// No baselines at all — simulates first-ever indexer run
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		require.NoError(t, err)
+		// First row skipped (baseline), rows 2 and 3 stored
+		require.Len(t, usage, 2)
+
+		// Second row: errors delta = 5 - 0 = 5 (baseline from first row preserved)
+		require.NotNil(t, usage[0].InErrors)
+		require.Equal(t, int64(5), *usage[0].InErrors)
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(5), *usage[0].InErrorsDelta)
+
+		// Third row: errors delta = 8 - 5 = 3
+		require.NotNil(t, usage[1].InErrors)
+		require.Equal(t, int64(8), *usage[1].InErrors)
+		require.NotNil(t, usage[1].InErrorsDelta)
+		require.Equal(t, int64(3), *usage[1].InErrorsDelta)
+	})
 }

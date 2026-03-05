@@ -540,6 +540,14 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 	// Track last time per device/interface for computing delta_duration
 	lastTime := make(map[string]time.Time)
 
+	// All counter field names for updating lastKnownValues on skipped rows
+	counterFieldNames := []string{
+		"carrier-transitions", "in-broadcast-pkts", "in-discards", "in-errors",
+		"in-fcs-errors", "in-multicast-pkts", "in-octets", "in-pkts", "in-unicast-pkts",
+		"out-broadcast-pkts", "out-discards", "out-errors", "out-multicast-pkts",
+		"out-octets", "out-pkts", "out-unicast-pkts",
+	}
+
 	var usage []InterfaceUsage
 	totalRows := len(rows)
 	logInterval := totalRows / 10 // Log every 10% progress
@@ -623,6 +631,17 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 				if !t.After(maxTS) {
 					// This row has already been written, skip it
 					// But still update lastKnownValues for delta calculations of subsequent rows
+					if lastKnownValues[key] == nil {
+						lastKnownValues[key] = make(map[string]*int64)
+					}
+					for _, field := range counterFieldNames {
+						value := extractInt64FromRow(row, field)
+						if value != nil {
+							lastKnownValues[key][field] = value
+						}
+					}
+					lastTime[key] = t
+					firstRowSeen[key] = true
 					continue
 				}
 			}
@@ -703,13 +722,11 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 			}
 
 			if hasNonSparseValues {
-				// Extract all non-sparse counter values and store as baselines
+				// Extract all counter values and store as baselines
 				for _, cf := range allCounterFields {
-					if !cf.isSparse {
-						value := extractInt64FromRow(row, cf.field)
-						if value != nil && key != "" {
-							lastKnownValues[key][cf.field] = value
-						}
+					value := extractInt64FromRow(row, cf.field)
+					if value != nil && key != "" {
+						lastKnownValues[key][cf.field] = value
 					}
 				}
 				lastTime[key] = t
@@ -1000,6 +1017,9 @@ func extractInt64FromRow(row map[string]any, key string) *int64 {
 		return nil
 	case int64:
 		return &v
+	case uint64:
+		i := int64(v)
+		return &i
 	case int:
 		i := int64(v)
 		return &i
