@@ -12,20 +12,21 @@ import (
 )
 
 type ValidatorListItem struct {
-	VotePubkey string  `json:"vote_pubkey"`
-	NodePubkey string  `json:"node_pubkey"`
-	StakeSol   float64 `json:"stake_sol"`
-	StakeShare float64 `json:"stake_share"`
-	Commission int64   `json:"commission"`
-	OnDZ       bool    `json:"on_dz"`
-	DeviceCode string  `json:"device_code"`
-	MetroCode  string  `json:"metro_code"`
-	City       string  `json:"city"`
-	Country    string  `json:"country"`
-	InBps      float64 `json:"in_bps"`
-	OutBps     float64 `json:"out_bps"`
-	SkipRate   float64 `json:"skip_rate"`
-	Version    string  `json:"version"`
+	VotePubkey     string  `json:"vote_pubkey"`
+	NodePubkey     string  `json:"node_pubkey"`
+	StakeSol       float64 `json:"stake_sol"`
+	StakeShare     float64 `json:"stake_share"`
+	Commission     int64   `json:"commission"`
+	OnDZ           bool    `json:"on_dz"`
+	DeviceCode     string  `json:"device_code"`
+	MetroCode      string  `json:"metro_code"`
+	City           string  `json:"city"`
+	Country        string  `json:"country"`
+	InBps          float64 `json:"in_bps"`
+	OutBps         float64 `json:"out_bps"`
+	SkipRate       float64 `json:"skip_rate"`
+	Version        string  `json:"version"`
+	SoftwareClient string  `json:"software_client"`
 }
 
 type ValidatorListResponse struct {
@@ -50,6 +51,7 @@ var validatorSortFields = map[string]string{
 	"out":        "out_bps",
 	"skip":       "skip_rate",
 	"version":    "version",
+	"client":     "software_client",
 }
 
 var validatorFilterFields = map[string]FilterFieldConfig{
@@ -66,6 +68,7 @@ var validatorFilterFields = map[string]FilterFieldConfig{
 	"out":        {Column: "out_bps", Type: FieldTypeBandwidth},
 	"skip":       {Column: "skip_rate", Type: FieldTypeNumeric},
 	"version":    {Column: "version", Type: FieldTypeText},
+	"client":     {Column: "software_client", Type: FieldTypeText},
 }
 
 func GetValidators(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +147,12 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 				GROUP BY leader_identity_pubkey
 			)
 		),
+		validatorsapp_data AS (
+			SELECT
+				vote_account,
+				software_client
+			FROM validatorsapp_validators_current
+		),
 		validators_with_gossip AS (
 			SELECT
 				v.vote_pubkey,
@@ -160,12 +169,14 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 				COALESCE(geo.city, '') as city,
 				COALESCE(geo.country, '') as country,
 				COALESCE(sr.skip_rate, 0) as skip_rate,
-				COALESCE(g.version, '') as version
+				COALESCE(g.version, '') as version,
+				COALESCE(va.software_client, '') as software_client
 			FROM solana_vote_accounts_current v
 			CROSS JOIN total_stake ts
 			LEFT JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey
 			LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 			LEFT JOIN skip_rates sr ON v.node_pubkey = sr.leader_identity_pubkey
+			LEFT JOIN validatorsapp_data va ON v.vote_pubkey = va.vote_account
 			WHERE v.epoch_vote_account = 'true'
 				AND v.activated_stake_lamports > 0
 		),
@@ -185,7 +196,8 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 				COALESCE(tr.in_bps, 0) as in_bps,
 				COALESCE(tr.out_bps, 0) as out_bps,
 				vg.skip_rate,
-				vg.version
+				vg.version,
+				vg.software_client
 			FROM validators_with_gossip vg
 			LEFT JOIN dz_ip_info di ON vg.gossip_ip = di.client_ip
 			LEFT JOIN traffic_rates tr ON di.tunnel_id = tr.user_tunnel_id
@@ -224,13 +236,15 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 		"out":        "out_bps",
 		"skip":       "skip_rate",
 		"version":    "version",
+		"client":     "software_client",
 	}
 	orderBy := sort.OrderByClause(sortFieldsForQuery)
 
 	// Main query
 	query := baseQuery + `
 		SELECT vote_pubkey, node_pubkey, stake_sol, stake_share, commission,
-			on_dz, device_code, metro_code, city, country, in_bps, out_bps, skip_rate, version
+			on_dz, device_code, metro_code, city, country, in_bps, out_bps, skip_rate, version,
+			software_client
 		FROM validators_data
 		WHERE 1=1` + whereFilter + `
 		` + orderBy + `
@@ -267,6 +281,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 			&v.OutBps,
 			&v.SkipRate,
 			&v.Version,
+			&v.SoftwareClient,
 		); err != nil {
 			log.Printf("Validators scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -301,24 +316,26 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 }
 
 type ValidatorDetail struct {
-	VotePubkey string  `json:"vote_pubkey"`
-	NodePubkey string  `json:"node_pubkey"`
-	StakeSol   float64 `json:"stake_sol"`
-	StakeShare float64 `json:"stake_share"`
-	Commission int64   `json:"commission"`
-	OnDZ       bool    `json:"on_dz"`
-	DevicePK   string  `json:"device_pk"`
-	DeviceCode string  `json:"device_code"`
-	MetroPK    string  `json:"metro_pk"`
-	MetroCode  string  `json:"metro_code"`
-	City       string  `json:"city"`
-	Country    string  `json:"country"`
-	GossipIP   string  `json:"gossip_ip"`
-	GossipPort int32   `json:"gossip_port"`
-	InBps      float64 `json:"in_bps"`
-	OutBps     float64 `json:"out_bps"`
-	SkipRate   float64 `json:"skip_rate"`
-	Version    string  `json:"version"`
+	VotePubkey      string  `json:"vote_pubkey"`
+	NodePubkey      string  `json:"node_pubkey"`
+	StakeSol        float64 `json:"stake_sol"`
+	StakeShare      float64 `json:"stake_share"`
+	Commission      int64   `json:"commission"`
+	OnDZ            bool    `json:"on_dz"`
+	DevicePK        string  `json:"device_pk"`
+	DeviceCode      string  `json:"device_code"`
+	MetroPK         string  `json:"metro_pk"`
+	MetroCode       string  `json:"metro_code"`
+	City            string  `json:"city"`
+	Country         string  `json:"country"`
+	GossipIP        string  `json:"gossip_ip"`
+	GossipPort      int32   `json:"gossip_port"`
+	InBps           float64 `json:"in_bps"`
+	OutBps          float64 `json:"out_bps"`
+	SkipRate        float64 `json:"skip_rate"`
+	Version         string  `json:"version"`
+	SoftwareClient  string  `json:"software_client"`
+	SoftwareVersion string  `json:"software_version"`
 }
 
 func GetValidator(w http.ResponseWriter, r *http.Request) {
@@ -388,6 +405,13 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 				WHERE event_ts >= now() - INTERVAL 1 DAY
 				GROUP BY leader_identity_pubkey
 			)
+		),
+		validatorsapp_data AS (
+			SELECT
+				vote_account,
+				software_client,
+				software_version
+			FROM validatorsapp_validators_current
 		)
 		SELECT
 			v.vote_pubkey,
@@ -410,7 +434,9 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 			COALESCE(tr.in_bps, 0) as in_bps,
 			COALESCE(tr.out_bps, 0) as out_bps,
 			COALESCE(sr.skip_rate, 0) as skip_rate,
-			COALESCE(g.version, '') as version
+			COALESCE(g.version, '') as version,
+			COALESCE(va.software_client, '') as software_client,
+			COALESCE(va.software_version, '') as software_version
 		FROM solana_vote_accounts_current v
 		CROSS JOIN total_stake ts
 		LEFT JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey
@@ -418,6 +444,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_ip_info di ON g.gossip_ip = di.client_ip
 		LEFT JOIN traffic_rates tr ON di.tunnel_id = tr.user_tunnel_id
 		LEFT JOIN skip_rates sr ON v.node_pubkey = sr.leader_identity_pubkey
+		LEFT JOIN validatorsapp_data va ON v.vote_pubkey = va.vote_account
 		WHERE v.vote_pubkey = ?
 	`
 
@@ -441,6 +468,8 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		&validator.OutBps,
 		&validator.SkipRate,
 		&validator.Version,
+		&validator.SoftwareClient,
+		&validator.SoftwareVersion,
 	)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)

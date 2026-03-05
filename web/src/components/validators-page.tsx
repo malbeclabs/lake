@@ -51,6 +51,7 @@ type SortField =
   | 'out'
   | 'skip'
   | 'version'
+  | 'client'
 
 type SortDirection = 'asc' | 'desc'
 
@@ -61,7 +62,7 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for validators
-const validFilterFields = ['vote', 'node', 'stake', 'share', 'commission', 'dz', 'device', 'city', 'country', 'in', 'out', 'skip', 'version']
+const validFilterFields = ['vote', 'node', 'stake', 'share', 'commission', 'dz', 'device', 'city', 'country', 'in', 'out', 'skip', 'version', 'client']
 
 // Field prefixes for inline filter
 const validatorFieldPrefixes = [
@@ -75,10 +76,11 @@ const validatorFieldPrefixes = [
   { prefix: 'dz:', description: 'Filter by DZ status (yes/no)' },
   { prefix: 'commission:', description: 'Filter by commission % (e.g., >5)' },
   { prefix: 'skip:', description: 'Filter by skip rate % (e.g., >1)' },
+  { prefix: 'client:', description: 'Filter by client (e.g., Jito, Agave, Firedancer)' },
 ]
 
 // Fields that support autocomplete
-const validatorAutocompleteFields: (string | { field: string; minChars: number })[] = ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }]
+const validatorAutocompleteFields: (string | { field: string; minChars: number })[] = ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'client', minChars: 2 }]
 
 // Parse a filter string into field and value
 // Supports "field:value" syntax or plain "value" for keyword search
@@ -169,6 +171,8 @@ export function ValidatorsPage() {
           return (validator.device_code || '').toLowerCase().includes(needle)
         case 'version':
           return (validator.version || '').toLowerCase().includes(needle)
+        case 'client':
+          return (validator.software_client || '').toLowerCase().includes(needle)
         case 'dz': {
           const isDZ = validator.on_dz
           return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
@@ -181,6 +185,7 @@ export function ValidatorsPage() {
             validator.country || '',
             validator.device_code || '',
             validator.version || '',
+            validator.software_client || '',
           ]
           return textFields.some(v => v.toLowerCase().includes(needle))
         }
@@ -409,6 +414,12 @@ export function ValidatorsPage() {
                       <SortIcon field="version" />
                     </button>
                   </th>
+                  <th className="px-4 py-3 font-medium" aria-sort={sortAria('client')}>
+                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('client')}>
+                      Client
+                      <SortIcon field="client" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -472,11 +483,14 @@ export function ValidatorsPage() {
                     <td className="px-4 py-3 text-sm text-muted-foreground font-mono">
                       {validator.version || '—'}
                     </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                      {validator.software_client || '—'}
+                    </td>
                   </tr>
                 ))}
                 {validators.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={14} className="px-4 py-8 text-center text-muted-foreground">
                       No validators found
                     </td>
                   </tr>

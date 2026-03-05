@@ -110,6 +110,14 @@ export function ValidatorDetailPage() {
                 <dt className="text-sm text-muted-foreground">Version</dt>
                 <dd className="text-sm font-mono">{validator.version || '—'}</dd>
               </div>
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">Client</dt>
+                <dd className="text-sm">{validator.software_client || '—'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-sm text-muted-foreground">Client Version</dt>
+                <dd className="text-sm font-mono">{validator.software_version || '—'}</dd>
+              </div>
             </dl>
           </div>
 

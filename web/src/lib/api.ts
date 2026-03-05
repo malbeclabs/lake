@@ -2927,6 +2927,7 @@ export interface Validator {
   out_bps: number
   skip_rate: number
   version: string
+  software_client: string
 }
 
 export interface ValidatorsResponse extends PaginatedResponse<Validator> {
@@ -2961,6 +2962,7 @@ export interface ValidatorDetail extends Validator {
   metro_pk: string
   gossip_ip: string
   gossip_port: number
+  software_version: string
 }
 
 export async function fetchValidator(votePubkey: string): Promise<ValidatorDetail> {
