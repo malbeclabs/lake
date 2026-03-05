@@ -16,19 +16,21 @@ import (
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
+	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
 )
 
 type Indexer struct {
 	log *slog.Logger
 	cfg Config
 
-	svc          *dzsvc.View
-	graphStore   *dzgraph.Store
-	telemLatency *dztelemlatency.View
-	telemUsage   *dztelemusage.View
-	sol          *sol.View
-	geoip        *mcpgeoip.View
-	isisSource   isis.Source
+	svc           *dzsvc.View
+	graphStore    *dzgraph.Store
+	telemLatency  *dztelemlatency.View
+	telemUsage    *dztelemusage.View
+	sol           *sol.View
+	geoip         *mcpgeoip.View
+	isisSource    isis.Source
+	validatorsApp *validatorsapp.View
 
 	startedAt time.Time
 }
@@ -183,17 +185,37 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			"region", cfg.ISISS3Region)
 	}
 
+	// Initialize validators.app view (optional)
+	var validatorsAppView *validatorsapp.View
+	if cfg.ValidatorsAppClient != nil {
+		refreshInterval := cfg.ValidatorsAppRefreshInterval
+		if refreshInterval <= 0 {
+			refreshInterval = 5 * time.Minute
+		}
+		validatorsAppView, err = validatorsapp.NewView(validatorsapp.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			Client:          cfg.ValidatorsAppClient,
+			ClickHouse:      cfg.ClickHouse,
+			RefreshInterval: refreshInterval,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create validatorsapp view: %w", err)
+		}
+	}
+
 	i := &Indexer{
 		log: cfg.Logger,
 		cfg: cfg,
 
-		svc:          svcView,
-		graphStore:   graphStore,
-		telemLatency: telemView,
-		telemUsage:   telemetryUsageView,
-		sol:          solanaView,
-		geoip:        geoipView,
-		isisSource:   isisSource,
+		svc:           svcView,
+		graphStore:    graphStore,
+		telemLatency:  telemView,
+		telemUsage:    telemetryUsageView,
+		sol:           solanaView,
+		geoip:         geoipView,
+		isisSource:    isisSource,
+		validatorsApp: validatorsAppView,
 	}
 
 	return i, nil
@@ -234,6 +256,10 @@ func (i *Indexer) Start(ctx context.Context) {
 	// Start ISIS sync loop if enabled
 	if i.isisSource != nil {
 		go i.startISISSync(ctx)
+	}
+
+	if i.validatorsApp != nil {
+		i.validatorsApp.Start(ctx)
 	}
 }
 

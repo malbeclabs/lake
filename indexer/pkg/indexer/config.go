@@ -15,6 +15,7 @@ import (
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
+	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
 )
 
 type Config struct {
@@ -62,6 +63,10 @@ type Config struct {
 	ISISS3Region        string        // AWS region (default: us-east-1)
 	ISISS3EndpointURL   string        // Custom S3 endpoint URL (for testing)
 	ISISRefreshInterval time.Duration // Refresh interval for IS-IS sync (default: 30s)
+
+	// validators.app configuration (optional, mainnet-beta only).
+	ValidatorsAppClient          validatorsapp.Client
+	ValidatorsAppRefreshInterval time.Duration
 
 	// SkipReadyWait makes the Ready() method return true immediately without waiting
 	// for views to be populated. Useful for preview/dev environments where fast startup

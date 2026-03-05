@@ -32,6 +32,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/indexer/pkg/server"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
+	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/oschwald/geoip2-golang"
 )
@@ -105,6 +106,10 @@ func run() error {
 	isisS3RegionFlag := flag.String("isis-s3-region", "us-east-1", "AWS region for IS-IS S3 bucket (or set ISIS_S3_REGION env var)")
 	isisRefreshIntervalFlag := flag.Duration("isis-refresh-interval", 30*time.Second, "Refresh interval for IS-IS sync (or set ISIS_REFRESH_INTERVAL env var)")
 
+	// validators.app configuration
+	validatorsAppAPIKeyFlag := flag.String("validatorsapp-api-key", "", "validators.app API key (or set VALIDATORSAPP_API_KEY env var)")
+	validatorsAppRefreshIntervalFlag := flag.Duration("validatorsapp-refresh-interval", 5*time.Minute, "validators.app refresh interval (or set VALIDATORSAPP_REFRESH_INTERVAL env var)")
+
 	// Readiness configuration
 	skipReadyWaitFlag := flag.Bool("skip-ready-wait", false, "Skip waiting for views to be ready (for preview/dev environments)")
 
@@ -161,6 +166,16 @@ func run() error {
 	if envISISRefreshInterval := os.Getenv("ISIS_REFRESH_INTERVAL"); envISISRefreshInterval != "" {
 		if d, err := time.ParseDuration(envISISRefreshInterval); err == nil {
 			*isisRefreshIntervalFlag = d
+		}
+	}
+
+	// Override validators.app flags with environment variables
+	if envKey := os.Getenv("VALIDATORSAPP_API_KEY"); envKey != "" {
+		*validatorsAppAPIKeyFlag = envKey
+	}
+	if envInterval := os.Getenv("VALIDATORSAPP_REFRESH_INTERVAL"); envInterval != "" {
+		if d, err := time.ParseDuration(envInterval); err == nil {
+			*validatorsAppRefreshIntervalFlag = d
 		}
 	}
 
@@ -389,6 +404,15 @@ func run() error {
 		log.Info("Neo4j disabled", "neo4j_enabled", neo4jEnabled, "neo4j_uri_set", *neo4jURIFlag != "")
 	}
 
+	// Initialize validators.app client (optional, mainnet-beta only)
+	var validatorsAppClient validatorsapp.Client
+	if *dzEnvFlag == config.EnvMainnetBeta && *validatorsAppAPIKeyFlag != "" {
+		validatorsAppClient = validatorsapp.NewHTTPClient("https://www.validators.app", *validatorsAppAPIKeyFlag)
+		log.Info("validators.app client initialized")
+	} else if *validatorsAppAPIKeyFlag != "" {
+		log.Info("validators.app disabled (mainnet-beta only)", "dz_env", *dzEnvFlag)
+	}
+
 	// Initialize server
 	server, err := server.New(ctx, server.Config{
 		ListenAddr:        *listenAddrFlag,
@@ -452,6 +476,10 @@ func run() error {
 			ISISS3Bucket:        *isisS3BucketFlag,
 			ISISS3Region:        *isisS3RegionFlag,
 			ISISRefreshInterval: *isisRefreshIntervalFlag,
+
+			// validators.app configuration
+			ValidatorsAppClient:          validatorsAppClient,
+			ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
 
 			// Readiness configuration
 			SkipReadyWait: *skipReadyWaitFlag,
