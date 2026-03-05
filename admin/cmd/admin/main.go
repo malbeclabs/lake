@@ -62,6 +62,7 @@ func run() error {
 	backfillDeviceLinkLatencyFlag := flag.Bool("backfill-device-link-latency", false, "Backfill device link latency fact table from on-chain data")
 	backfillInternetMetroLatencyFlag := flag.Bool("backfill-internet-metro-latency", false, "Backfill internet metro latency fact table from on-chain data")
 	backfillDeviceInterfaceCountersFlag := flag.Bool("backfill-device-interface-counters", false, "Backfill device interface counters fact table from InfluxDB")
+	recomputeSparseDeltasFlag := flag.Bool("recompute-sparse-deltas", false, "Recompute sparse counter deltas (errors/discards) from absolute values in ClickHouse")
 
 	// Backfill options (latency - epoch-based)
 	dzEnvFlag := flag.String("dz-env", config.EnvMainnetBeta, "DZ ledger environment (devnet, testnet, mainnet-beta)")
@@ -70,8 +71,10 @@ func run() error {
 	maxConcurrencyFlag := flag.Int("max-concurrency", 32, "Maximum concurrent RPC requests during backfill")
 
 	// Backfill options (usage - time-based)
-	startTimeFlag := flag.String("start-time", "", "Start time for usage backfill (RFC3339 format, e.g. 2024-01-01T00:00:00Z)")
-	endTimeFlag := flag.String("end-time", "", "End time for usage backfill (RFC3339 format, empty = now)")
+	startTimeFlag := flag.String("start-time", "", "Start time (RFC3339 format, e.g. 2024-01-01T00:00:00Z)")
+	endTimeFlag := flag.String("end-time", "", "End time (RFC3339 format, empty = now)")
+	startTimeAgoFlag := flag.Duration("start-time-ago", 0, "Start time as duration ago from now (e.g. 48h, 7d is not supported, use 168h)")
+	endTimeAgoFlag := flag.Duration("end-time-ago", 0, "End time as duration ago from now (e.g. 1h)")
 	chunkIntervalFlag := flag.Duration("chunk-interval", 1*time.Hour, "Chunk interval for usage backfill")
 	queryDelayFlag := flag.Duration("query-delay", 5*time.Second, "Delay between InfluxDB queries to avoid rate limits")
 
@@ -135,6 +138,12 @@ func run() error {
 	}
 	if envDZEnv := os.Getenv("DZ_ENV"); envDZEnv != "" {
 		*dzEnvFlag = envDZEnv
+	}
+
+	// Resolve start/end time from absolute or relative flags
+	startTime, endTime, err := resolveTimeFlags(*startTimeFlag, *endTimeFlag, *startTimeAgoFlag, *endTimeAgoFlag)
+	if err != nil {
+		return err
 	}
 
 	// ClickHouse migration config helper
@@ -308,22 +317,6 @@ func run() error {
 			return fmt.Errorf("--influx-bucket is required for --backfill-device-interface-counters")
 		}
 
-		var startTime, endTime time.Time
-		if *startTimeFlag != "" {
-			var err error
-			startTime, err = time.Parse(time.RFC3339, *startTimeFlag)
-			if err != nil {
-				return fmt.Errorf("invalid start-time format (use RFC3339, e.g. 2024-01-01T00:00:00Z): %w", err)
-			}
-		}
-		if *endTimeFlag != "" {
-			var err error
-			endTime, err = time.Parse(time.RFC3339, *endTimeFlag)
-			if err != nil {
-				return fmt.Errorf("invalid end-time format (use RFC3339, e.g. 2024-01-01T00:00:00Z): %w", err)
-			}
-		}
-
 		return admin.BackfillDeviceInterfaceCounters(
 			log,
 			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
@@ -334,6 +327,30 @@ func run() error {
 				EndTime:       endTime,
 				ChunkInterval: *chunkIntervalFlag,
 				QueryDelay:    *queryDelayFlag,
+				DryRun:        *dryRunFlag,
+			},
+		)
+	}
+
+	if *recomputeSparseDeltasFlag {
+		if *clickhouseAddrFlag == "" {
+			return fmt.Errorf("--clickhouse-addr is required for --recompute-sparse-deltas")
+		}
+		if startTime.IsZero() {
+			return fmt.Errorf("--start-time or --start-time-ago is required for --recompute-sparse-deltas")
+		}
+		if endTime.IsZero() {
+			return fmt.Errorf("--end-time or --end-time-ago is required for --recompute-sparse-deltas")
+		}
+
+		return admin.RecomputeSparseCounterDeltas(
+			log,
+			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
+			*clickhouseSecureFlag,
+			admin.RecomputeSparseCounterDeltasConfig{
+				StartTime:     startTime,
+				EndTime:       endTime,
+				ChunkInterval: *chunkIntervalFlag,
 				DryRun:        *dryRunFlag,
 			},
 		)
@@ -371,4 +388,44 @@ func run() error {
 	}
 
 	return nil
+}
+
+// resolveTimeFlags resolves start/end times from either absolute (RFC3339) or relative (duration ago) flags.
+// Returns zero time if neither is specified. Errors if both absolute and relative are specified for the same field.
+func resolveTimeFlags(startTimeStr, endTimeStr string, startTimeAgo, endTimeAgo time.Duration) (time.Time, time.Time, error) {
+	now := time.Now().UTC()
+	var startTime, endTime time.Time
+
+	// Resolve start time
+	if startTimeStr != "" && startTimeAgo > 0 {
+		return time.Time{}, time.Time{}, fmt.Errorf("cannot specify both --start-time and --start-time-ago")
+	}
+	if startTimeStr != "" {
+		var err error
+		startTime, err = time.Parse(time.RFC3339, startTimeStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start-time format (use RFC3339, e.g. 2024-01-01T00:00:00Z): %w", err)
+		}
+	} else if startTimeAgo > 0 {
+		startTime = now.Add(-startTimeAgo)
+	}
+
+	// Resolve end time
+	if endTimeStr != "" && endTimeAgo > 0 {
+		return time.Time{}, time.Time{}, fmt.Errorf("cannot specify both --end-time and --end-time-ago")
+	}
+	if endTimeStr != "" {
+		var err error
+		endTime, err = time.Parse(time.RFC3339, endTimeStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end-time format (use RFC3339, e.g. 2024-01-01T00:00:00Z): %w", err)
+		}
+	} else if endTimeAgo > 0 {
+		endTime = now.Add(-endTimeAgo)
+	} else if !startTime.IsZero() {
+		// Default end time to now when start time is specified but end time is not
+		endTime = now
+	}
+
+	return startTime, endTime, nil
 }
