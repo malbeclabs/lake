@@ -103,6 +103,9 @@ func (cfg *ViewConfig) Validate() error {
 	if cfg.ClickHouse == nil {
 		return errors.New("clickhouse connection is required")
 	}
+	if cfg.InfluxDB == nil {
+		return errors.New("influxdb client is required")
+	}
 	if cfg.RefreshInterval <= 0 {
 		return errors.New("refresh interval must be greater than 0")
 	}
@@ -184,9 +187,6 @@ func (v *View) safeRefresh(ctx context.Context) {
 }
 
 func (v *View) Refresh(ctx context.Context) error {
-	if v.cfg.InfluxDB == nil {
-		return errors.New("cannot run Refresh: InfluxDB client not configured")
-	}
 
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
@@ -246,7 +246,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	var baselines *CounterBaselines
 	v.log.Debug("telemetry/usage: querying baselines from clickhouse")
 	chStart := time.Now()
-	chBaselines, err := v.queryBaselineCountersFromClickHouse(ctx, queryStart)
+	chBaselines, err := v.store.queryBaselineCountersFromClickHouse(ctx, queryStart)
 	chDuration := time.Since(chStart)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to query baseline counters from clickhouse", "error", err, "duration", chDuration.String())
@@ -442,7 +442,7 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	v.log.Debug("telemetry/usage: sorted rows", "rows", len(rows), "duration", sortDuration.String())
 
 	// Build link lookup map from dz_links_current table
-	linkLookup, err := v.buildLinkLookup(ctx)
+	linkLookup, err := v.store.buildLinkLookup(ctx)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to build link lookup map, proceeding without link information", "error", err)
 		linkLookup = make(map[string]LinkInfo)
@@ -453,7 +453,7 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	// Convert rows to InterfaceUsage, tracking last known values per device/interface
 	// We need to process in time order to properly forward-fill nulls
 	convertStart := time.Now()
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, alreadyWritten)
+	usage, err := v.store.convertRowsToUsage(rows, baselines, linkLookup, alreadyWritten)
 	convertDuration := time.Since(convertStart)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert rows: %w", err)
@@ -461,413 +461,6 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	v.log.Debug("telemetry/usage: converted rows to usage data", "usage_records", len(usage), "duration", convertDuration.String())
 
 	return usage, nil
-}
-
-// buildLinkLookup builds a map from "device_pk:intf" to LinkInfo by querying the dz_links_history table
-func (v *View) buildLinkLookup(ctx context.Context) (map[string]LinkInfo, error) {
-	lookup := make(map[string]LinkInfo)
-
-	conn, err := v.cfg.ClickHouse.Conn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
-	}
-
-	// Query current links from history table using ROW_NUMBER for latest row per entity
-	query := `
-		WITH ranked AS (
-			SELECT
-				*,
-				ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY snapshot_ts DESC, ingested_at DESC, op_id DESC) AS rn
-			FROM dim_dz_links_history
-		)
-		SELECT
-			pk,
-			side_a_pk,
-			side_a_iface_name,
-			side_z_pk,
-			side_z_iface_name
-		FROM ranked
-		WHERE rn = 1 AND is_deleted = 0`
-	rows, err := conn.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query links: %w", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var linkPK, sideAPK, sideAIface, sideZPK, sideZIface *string
-		if err := rows.Scan(&linkPK, &sideAPK, &sideAIface, &sideZPK, &sideZIface); err != nil {
-			return nil, fmt.Errorf("failed to scan link row: %w", err)
-		}
-
-		// Add side A mapping
-		if sideAPK != nil && sideAIface != nil && *sideAPK != "" && *sideAIface != "" {
-			key := fmt.Sprintf("%s:%s", *sideAPK, *sideAIface)
-			linkPKVal := ""
-			if linkPK != nil {
-				linkPKVal = *linkPK
-			}
-			lookup[key] = LinkInfo{LinkPK: linkPKVal, LinkSide: "A"}
-		}
-
-		// Add side Z mapping
-		if sideZPK != nil && sideZIface != nil && *sideZPK != "" && *sideZIface != "" {
-			key := fmt.Sprintf("%s:%s", *sideZPK, *sideZIface)
-			linkPKVal := ""
-			if linkPK != nil {
-				linkPKVal = *linkPK
-			}
-			lookup[key] = LinkInfo{LinkPK: linkPKVal, LinkSide: "Z"}
-		}
-	}
-
-	return lookup, nil
-}
-
-// convertRowsToUsage converts rows to InterfaceUsage, using baselines only for the first null
-// and forward-filling with the last known value for subsequent nulls
-// For non-sparse counters, the first row per device/interface is used as baseline and not stored
-// If alreadyWritten is provided, rows with timestamps <= the max already written for that key are skipped
-func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBaselines, linkLookup map[string]LinkInfo, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, error) {
-	// Track last known values per device/interface for each counter
-	// Key: "device_pk:intf", Value: map of counter name to last value
-	lastKnownValues := make(map[string]map[string]*int64)
-	// Track whether we've seen the first row for each device/interface
-	// For non-sparse counters, we skip storing the first row and use it as baseline
-	firstRowSeen := make(map[string]bool)
-	// Track last time per device/interface for computing delta_duration
-	lastTime := make(map[string]time.Time)
-
-	// All counter field names for updating lastKnownValues on skipped rows
-	counterFieldNames := []string{
-		"carrier-transitions", "in-broadcast-pkts", "in-discards", "in-errors",
-		"in-fcs-errors", "in-multicast-pkts", "in-octets", "in-pkts", "in-unicast-pkts",
-		"out-broadcast-pkts", "out-discards", "out-errors", "out-multicast-pkts",
-		"out-octets", "out-pkts", "out-unicast-pkts",
-	}
-
-	var usage []InterfaceUsage
-	totalRows := len(rows)
-	logInterval := totalRows / 10 // Log every 10% progress
-	if logInterval < 100 {
-		logInterval = 100 // But at least every 100 rows
-	}
-
-	for i, row := range rows {
-		// Log progress periodically
-		if i > 0 && i%logInterval == 0 {
-			v.log.Debug("telemetry/usage: converting rows", "progress", fmt.Sprintf("%d/%d (%.1f%%)", i, totalRows, float64(i)/float64(totalRows)*100))
-		}
-		u := &InterfaceUsage{}
-
-		// Extract time (required)
-		timeStr := extractStringFromRow(row, "time")
-		if timeStr == nil {
-			continue // Skip rows without time
-		}
-
-		// Try multiple time formats that InfluxDB might return
-		// InfluxDB SDK returns time in format: "2006-01-02 15:04:05.999999999 +0000 UTC"
-		var t time.Time
-		var err error
-		timeFormats := []string{
-			time.RFC3339Nano,
-			time.RFC3339,
-			"2006-01-02 15:04:05.999999999 -0700 UTC", // InfluxDB format with timezone
-			"2006-01-02 15:04:05.999999999 +0700 UTC",
-			"2006-01-02 15:04:05.999999999 +0000 UTC",
-			"2006-01-02 15:04:05.999999 -0700 UTC",
-			"2006-01-02 15:04:05.999999 +0700 UTC",
-			"2006-01-02 15:04:05.999999 +0000 UTC",
-			"2006-01-02 15:04:05.999 -0700 UTC",
-			"2006-01-02 15:04:05.999 +0700 UTC",
-			"2006-01-02 15:04:05.999 +0000 UTC",
-			"2006-01-02 15:04:05 -0700 UTC",
-			"2006-01-02 15:04:05 +0700 UTC",
-			"2006-01-02 15:04:05 +0000 UTC",
-		}
-
-		parsed := false
-		for _, format := range timeFormats {
-			t, err = time.Parse(format, *timeStr)
-			if err == nil {
-				parsed = true
-				break
-			}
-		}
-
-		if !parsed {
-			continue // Skip rows with invalid time
-		}
-		u.Time = t
-
-		// Extract string fields
-		u.DevicePK = extractStringFromRow(row, "dzd_pubkey")
-		u.Host = extractStringFromRow(row, "host")
-		u.Intf = extractStringFromRow(row, "intf")
-		u.ModelName = extractStringFromRow(row, "model_name")
-		u.SerialNumber = extractStringFromRow(row, "serial_number")
-
-		// Extract tunnel ID from interface name if it starts with "Tunnel"
-		if u.Intf != nil {
-			u.UserTunnelID = extractTunnelIDFromInterface(*u.Intf)
-		}
-
-		// Build key for tracking
-		var key string
-		if u.DevicePK != nil && u.Intf != nil {
-			key = fmt.Sprintf("%s:%s", *u.DevicePK, *u.Intf)
-		} else {
-			// Can't track without key, just extract what we can
-			key = ""
-		}
-
-		// Initialize lastKnownValues and pre-populate sparse counter baselines.
-		// This must happen before the alreadyWritten skip below, otherwise
-		// baselines for sparse counters (errors/discards) are never loaded
-		// and those counters stay NULL in all subsequent rows.
-		if key != "" && lastKnownValues[key] == nil {
-			lastKnownValues[key] = make(map[string]*int64)
-			if baselines != nil {
-				if val := baselines.InDiscards[key]; val != nil {
-					lastKnownValues[key]["in-discards"] = val
-				}
-				if val := baselines.InErrors[key]; val != nil {
-					lastKnownValues[key]["in-errors"] = val
-				}
-				if val := baselines.InFCSErrors[key]; val != nil {
-					lastKnownValues[key]["in-fcs-errors"] = val
-				}
-				if val := baselines.OutDiscards[key]; val != nil {
-					lastKnownValues[key]["out-discards"] = val
-				}
-				if val := baselines.OutErrors[key]; val != nil {
-					lastKnownValues[key]["out-errors"] = val
-				}
-			}
-		}
-
-		// Skip rows that have already been written to avoid duplicates
-		// This is important because we use an overlap window when refreshing
-		if key != "" && alreadyWritten != nil {
-			if maxTS, exists := alreadyWritten[key]; exists {
-				if !t.After(maxTS) {
-					// This row has already been written, skip it
-					// But still update lastKnownValues for delta calculations of subsequent rows
-					for _, field := range counterFieldNames {
-						value := extractInt64FromRow(row, field)
-						if value != nil {
-							lastKnownValues[key][field] = value
-						}
-					}
-					lastTime[key] = t
-					firstRowSeen[key] = true
-					continue
-				}
-			}
-		}
-
-		if key != "" {
-			if linkInfo, ok := linkLookup[key]; ok {
-				u.LinkPK = &linkInfo.LinkPK
-				u.LinkSide = &linkInfo.LinkSide
-			}
-		}
-
-		isFirstRow := key != "" && !firstRowSeen[key]
-
-		// For all counter fields: use value if present, otherwise forward-fill with last known
-		// Sparse counters (errors/discards) have baselines from 10-year query
-		// Non-sparse counters: first row is used as baseline, not stored
-		allCounterFields := []struct {
-			field     string
-			dest      **int64
-			deltaDest **int64
-			baseline  map[string]*int64
-			isSparse  bool
-		}{
-			{"carrier-transitions", &u.CarrierTransitions, &u.CarrierTransitionsDelta, nil, false},
-			{"in-broadcast-pkts", &u.InBroadcastPkts, &u.InBroadcastPktsDelta, nil, false},
-			{"in-discards", &u.InDiscards, &u.InDiscardsDelta, baselines.InDiscards, true},
-			{"in-errors", &u.InErrors, &u.InErrorsDelta, baselines.InErrors, true},
-			{"in-fcs-errors", &u.InFCSErrors, &u.InFCSErrorsDelta, baselines.InFCSErrors, true},
-			{"in-multicast-pkts", &u.InMulticastPkts, &u.InMulticastPktsDelta, nil, false},
-			{"in-octets", &u.InOctets, &u.InOctetsDelta, nil, false},
-			{"in-pkts", &u.InPkts, &u.InPktsDelta, nil, false},
-			{"in-unicast-pkts", &u.InUnicastPkts, &u.InUnicastPktsDelta, nil, false},
-			{"out-broadcast-pkts", &u.OutBroadcastPkts, &u.OutBroadcastPktsDelta, nil, false},
-			{"out-discards", &u.OutDiscards, &u.OutDiscardsDelta, baselines.OutDiscards, true},
-			{"out-errors", &u.OutErrors, &u.OutErrorsDelta, baselines.OutErrors, true},
-			{"out-multicast-pkts", &u.OutMulticastPkts, &u.OutMulticastPktsDelta, nil, false},
-			{"out-octets", &u.OutOctets, &u.OutOctetsDelta, nil, false},
-			{"out-pkts", &u.OutPkts, &u.OutPktsDelta, nil, false},
-			{"out-unicast-pkts", &u.OutUnicastPkts, &u.OutUnicastPktsDelta, nil, false},
-		}
-
-		// For non-sparse counters on first row: extract values and use as baseline, skip storing the row
-		// For sparse counters, we still process and store the first row (they have baselines from 10-year query)
-		if isFirstRow {
-			// Check if we have any non-sparse counter values
-			hasNonSparseValues := false
-			for _, cf := range allCounterFields {
-				if !cf.isSparse {
-					value := extractInt64FromRow(row, cf.field)
-					if value != nil {
-						hasNonSparseValues = true
-						break
-					}
-				}
-			}
-
-			if hasNonSparseValues {
-				// Extract all counter values and store as baselines
-				for _, cf := range allCounterFields {
-					value := extractInt64FromRow(row, cf.field)
-					if value != nil && key != "" {
-						lastKnownValues[key][cf.field] = value
-					}
-				}
-				lastTime[key] = t
-				firstRowSeen[key] = true
-				continue
-			}
-			// If no non-sparse values, continue processing normally (sparse counters will be stored)
-			firstRowSeen[key] = true
-		}
-
-		// Process all counters
-		for _, cf := range allCounterFields {
-			var currentValue *int64
-			value := extractInt64FromRow(row, cf.field)
-			if value != nil {
-				currentValue = value
-			} else if key != "" {
-				// Forward-fill with last known value (includes pre-populated baselines)
-				if lastKnown, ok := lastKnownValues[key][cf.field]; ok && lastKnown != nil {
-					currentValue = lastKnown
-				}
-			}
-
-			*cf.dest = currentValue
-
-			// Compute delta against last-known value
-			if currentValue != nil && key != "" {
-				var previousValue *int64
-				if lastKnown, ok := lastKnownValues[key][cf.field]; ok && lastKnown != nil {
-					previousValue = lastKnown
-				}
-
-				if previousValue != nil {
-					delta := *currentValue - *previousValue
-					*cf.deltaDest = &delta
-				}
-
-				lastKnownValues[key][cf.field] = currentValue
-			}
-		}
-
-		// Compute delta_duration: time difference from previous measurement
-		if key != "" {
-			if lastT, ok := lastTime[key]; ok {
-				duration := t.Sub(lastT).Seconds()
-				u.DeltaDuration = &duration
-			}
-			// Update last time for next iteration
-			lastTime[key] = t
-		}
-
-		usage = append(usage, *u)
-	}
-
-	return usage, nil
-}
-
-// queryBaselineCountersFromClickHouse queries ClickHouse for the last non-null counter values before the window start
-// for each device/interface combination. Returns error if ClickHouse doesn't have data or query fails.
-func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
-	// Query recent data before the window start to find the last non-null values.
-	// Use a 7-day lookback — the indexer writes every few minutes, so the last
-	// non-null value for any sparse counter should be well within this window.
-	// A shorter window is critical because the table has billions of rows and the
-	// global max_execution_time (60s) can cause longer lookbacks to time out,
-	// leaving baselines empty and breaking forward-fill.
-	lookbackStart := windowStart.Add(-7 * 24 * time.Hour)
-
-	baselines := &CounterBaselines{
-		InDiscards:  make(map[string]*int64),
-		InErrors:    make(map[string]*int64),
-		InFCSErrors: make(map[string]*int64),
-		OutDiscards: make(map[string]*int64),
-		OutErrors:   make(map[string]*int64),
-	}
-
-	conn, err := v.cfg.ClickHouse.Conn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
-	}
-	defer conn.Close()
-
-	// Use a single query to fetch all sparse counter baselines at once.
-	// This is faster than 5 separate queries and avoids hitting the global
-	// max_execution_time limit.
-	sqlQuery := `
-		SELECT
-			device_pk,
-			intf,
-			argMaxIf(in_discards, event_ts, in_discards IS NOT NULL) as in_discards_val,
-			argMaxIf(in_errors, event_ts, in_errors IS NOT NULL) as in_errors_val,
-			argMaxIf(in_fcs_errors, event_ts, in_fcs_errors IS NOT NULL) as in_fcs_errors_val,
-			argMaxIf(out_discards, event_ts, out_discards IS NOT NULL) as out_discards_val,
-			argMaxIf(out_errors, event_ts, out_errors IS NOT NULL) as out_errors_val
-		FROM fact_dz_device_interface_counters
-		WHERE event_ts >= ? AND event_ts < ?
-			AND (in_discards IS NOT NULL OR in_errors IS NOT NULL OR in_fcs_errors IS NOT NULL
-				OR out_discards IS NOT NULL OR out_errors IS NOT NULL)
-		GROUP BY device_pk, intf
-	`
-
-	rows, err := conn.Query(ctx, sqlQuery, lookbackStart, windowStart)
-	if err != nil {
-		v.log.Warn("telemetry/usage: failed to query baselines from clickhouse", "error", err)
-		return baselines, nil
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var devicePK, intf *string
-		var inDiscards, inErrors, inFCSErrors, outDiscards, outErrors *int64
-		if err := rows.Scan(&devicePK, &intf, &inDiscards, &inErrors, &inFCSErrors, &outDiscards, &outErrors); err != nil {
-			v.log.Warn("telemetry/usage: failed to scan baseline row", "error", err)
-			continue
-		}
-
-		if devicePK == nil || intf == nil {
-			continue
-		}
-
-		key := fmt.Sprintf("%s:%s", *devicePK, *intf)
-		if inDiscards != nil {
-			baselines.InDiscards[key] = inDiscards
-		}
-		if inErrors != nil {
-			baselines.InErrors[key] = inErrors
-		}
-		if inFCSErrors != nil {
-			baselines.InFCSErrors[key] = inFCSErrors
-		}
-		if outDiscards != nil {
-			baselines.OutDiscards[key] = outDiscards
-		}
-		if outErrors != nil {
-			baselines.OutErrors[key] = outErrors
-		}
-	}
-
-	if err := rows.Err(); err != nil {
-		v.log.Warn("telemetry/usage: error iterating baseline rows", "error", err)
-	}
-
-	return baselines, nil
 }
 
 // queryBaselineCounters queries InfluxDB for the last non-null counter values before the window start

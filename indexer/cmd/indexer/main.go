@@ -113,16 +113,6 @@ func run() error {
 	// Readiness configuration
 	skipReadyWaitFlag := flag.Bool("skip-ready-wait", false, "Skip waiting for views to be ready (for preview/dev environments)")
 
-	// Admin: export InfluxDB interface counters to CSV
-	exportInfluxCSVFlag := flag.Bool("export-influx-csv", false, "Export intfCounters from InfluxDB to a CSV file and exit")
-	exportStartTimeFlag := flag.String("start-time", "", "Start time for CSV export (RFC3339, e.g. 2024-01-01T00:00:00Z)")
-	exportEndTimeFlag := flag.String("end-time", "", "End time for CSV export (RFC3339, e.g. 2024-01-02T00:00:00Z)")
-	exportOutputFlag := flag.String("export-output", "influx-export.csv", "Output file path for CSV export")
-	exportChunkSizeFlag := flag.Duration("export-chunk-size", time.Hour, "Time window per InfluxDB request during export (default: 1h)")
-
-	// Admin: backfill ClickHouse from a previously exported CSV file
-	backfillFromCSVFlag := flag.String("backfill-from-csv", "", "Import a CSV file exported by --export-influx-csv into ClickHouse and exit")
-
 	flag.Parse()
 
 	// Load .env file. godotenv does not override existing env vars, so
@@ -242,30 +232,6 @@ func run() error {
 		log.Info("server: received signal", "signal", sig.String())
 		cancel()
 	}()
-
-	// Admin: export intfCounters from InfluxDB to CSV.
-	if *exportInfluxCSVFlag {
-		if err := runExportInfluxCSV(ctx, *exportStartTimeFlag, *exportEndTimeFlag, *exportOutputFlag, *exportChunkSizeFlag); err != nil {
-			return fmt.Errorf("export-influx-csv: %w", err)
-		}
-		return nil
-	}
-
-	// Admin: backfill ClickHouse from a previously exported CSV file.
-	if *backfillFromCSVFlag != "" {
-		if *clickhouseAddrFlag == "" {
-			return fmt.Errorf("backfill-from-csv: --clickhouse-addr is required")
-		}
-		clickhouseDB, err := clickhouse.NewClient(ctx, log, *clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag, *clickhouseSecureFlag)
-		if err != nil {
-			return fmt.Errorf("backfill-from-csv: failed to create ClickHouse client: %w", err)
-		}
-		defer clickhouseDB.Close()
-		if err := runBackfillFromCSV(ctx, log, clickhouseDB, *backfillFromCSVFlag); err != nil {
-			return fmt.Errorf("backfill-from-csv: %w", err)
-		}
-		return nil
-	}
 
 	if *enablePprofFlag {
 		go func() {
@@ -592,113 +558,3 @@ func initializeGeoIP(cityDBPath, asnDBPath string, log *slog.Logger) (geoip.Reso
 	}, nil
 }
 
-// runExportInfluxCSV exports intfCounters data from InfluxDB to a CSV file.
-// The time range is split into chunks to avoid timeouts on large ranges.
-func runExportInfluxCSV(ctx context.Context, startStr, endStr, outputPath string, chunkSize time.Duration) error {
-	influxURL := os.Getenv("INFLUX_URL")
-	influxToken := os.Getenv("INFLUX_TOKEN")
-	influxBucket := os.Getenv("INFLUX_BUCKET")
-	if influxURL == "" || influxToken == "" || influxBucket == "" {
-		return fmt.Errorf("INFLUX_URL, INFLUX_TOKEN, and INFLUX_BUCKET must be set")
-	}
-	if startStr == "" || endStr == "" {
-		return fmt.Errorf("--export-start-time and --export-end-time are required")
-	}
-
-	startTime, err := time.Parse(time.RFC3339, startStr)
-	if err != nil {
-		return fmt.Errorf("invalid --export-start-time: %w", err)
-	}
-	endTime, err := time.Parse(time.RFC3339, endStr)
-	if err != nil {
-		return fmt.Errorf("invalid --export-end-time: %w", err)
-	}
-	if !startTime.Before(endTime) {
-		return fmt.Errorf("--export-start-time must be before --export-end-time")
-	}
-
-	client := dztelemusage.NewHTTPInfluxDBClient(influxURL, influxToken, influxBucket)
-
-	f, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("failed to create output file %s: %w", outputPath, err)
-	}
-	defer f.Close()
-
-	chunkStart := startTime.UTC()
-	first := true
-	for chunkStart.Before(endTime.UTC()) {
-		chunkEnd := chunkStart.Add(chunkSize)
-		if chunkEnd.After(endTime.UTC()) {
-			chunkEnd = endTime.UTC()
-		}
-
-		sqlQuery := fmt.Sprintf(`
-			SELECT
-				time,
-				dzd_pubkey,
-				host,
-				intf,
-				model_name,
-				serial_number,
-				"carrier-transitions",
-				"in-broadcast-pkts",
-				"in-discards",
-				"in-errors",
-				"in-fcs-errors",
-				"in-multicast-pkts",
-				"in-octets",
-				"in-pkts",
-				"in-unicast-pkts",
-				"out-broadcast-pkts",
-				"out-discards",
-				"out-errors",
-				"out-multicast-pkts",
-				"out-octets",
-				"out-pkts",
-				"out-unicast-pkts"
-			FROM "intfCounters"
-			WHERE time >= '%s' AND time < '%s'
-		`, chunkStart.Format(time.RFC3339Nano), chunkEnd.Format(time.RFC3339Nano))
-
-		fmt.Printf("exporting %s -> %s\n", chunkStart.Format(time.RFC3339), chunkEnd.Format(time.RFC3339))
-		if err := client.QueryRawCSV(ctx, sqlQuery, f, !first); err != nil {
-			return fmt.Errorf("query failed for chunk %s: %w", chunkStart.Format(time.RFC3339), err)
-		}
-
-		first = false
-		chunkStart = chunkEnd
-	}
-
-	fmt.Printf("export complete: %s\n", outputPath)
-	return nil
-}
-
-// runBackfillFromCSV reads a CSV file exported by --export-influx-csv and imports it into ClickHouse.
-func runBackfillFromCSV(ctx context.Context, log *slog.Logger, clickhouseDB clickhouse.Client, csvPath string) error {
-	f, err := os.Open(csvPath)
-	if err != nil {
-		return fmt.Errorf("failed to open CSV file %s: %w", csvPath, err)
-	}
-	defer f.Close()
-
-	view, err := dztelemusage.NewView(dztelemusage.ViewConfig{
-		Logger:          log,
-		ClickHouse:      clickhouseDB,
-		RefreshInterval: time.Hour,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create view: %w", err)
-	}
-
-	result, err := view.BackfillFromReader(ctx, f)
-	if err != nil {
-		return fmt.Errorf("backfill failed: %w", err)
-	}
-
-	fmt.Printf("backfill complete: queried=%d inserted=%d start=%s end=%s\n",
-		result.RowsQueried, result.RowsInserted,
-		result.StartTime.Format(time.RFC3339),
-		result.EndTime.Format(time.RFC3339))
-	return nil
-}
