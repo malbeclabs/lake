@@ -67,7 +67,13 @@ func run() error {
 	dryRunFlag := flag.Bool("dry-run", false, "Dry run mode - show what would be done without actually executing")
 	yesFlag := flag.Bool("yes", false, "Skip confirmation prompt (use with caution)")
 
+	// Export commands
+	exportInfluxCSVFlag := flag.Bool("export-device-interface-counters-csv", false, "Export intfCounters from InfluxDB to a CSV file and exit")
+	exportOutputFlag := flag.String("export-output", "influx-export.csv", "Output file path for CSV export")
+	exportChunkSizeFlag := flag.Duration("export-chunk-size", time.Hour, "Time window per InfluxDB request during export (default: 1h)")
+
 	// Backfill commands
+	backfillFromCSVFlag := flag.String("backfill-device-interface-counters-from-csv", "", "Import a CSV file exported by --export-device-interface-counters-csv into ClickHouse and exit")
 	backfillDeviceLinkLatencyFlag := flag.Bool("backfill-device-link-latency", false, "Backfill device link latency fact table from on-chain data")
 	backfillInternetMetroLatencyFlag := flag.Bool("backfill-internet-metro-latency", false, "Backfill internet metro latency fact table from on-chain data")
 	backfillDeviceInterfaceCountersFlag := flag.Bool("backfill-device-interface-counters", false, "Backfill device interface counters fact table from InfluxDB")
@@ -301,6 +307,33 @@ func run() error {
 			return fmt.Errorf("--clickhouse-addr is required for --reset-db")
 		}
 		return admin.ResetDB(log, *clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag, *clickhouseSecureFlag, *dryRunFlag, *yesFlag)
+	}
+
+	if *exportInfluxCSVFlag {
+		if *influxURLFlag == "" || *influxTokenFlag == "" || *influxBucketFlag == "" {
+			return fmt.Errorf("--influx-url, --influx-token, and --influx-bucket are required for --export-device-interface-counters-csv")
+		}
+		if *startTimeFlag == "" || *endTimeFlag == "" {
+			return fmt.Errorf("--start-time and --end-time are required for --export-device-interface-counters-csv")
+		}
+		return admin.ExportDeviceInterfaceCountersCSV(
+			log,
+			*influxURLFlag, *influxTokenFlag, *influxBucketFlag,
+			*startTimeFlag, *endTimeFlag,
+			*exportOutputFlag, *exportChunkSizeFlag,
+		)
+	}
+
+	if *backfillFromCSVFlag != "" {
+		if *clickhouseAddrFlag == "" {
+			return fmt.Errorf("--clickhouse-addr is required for --backfill-device-interface-counters-from-csv")
+		}
+		return admin.BackfillDeviceInterfaceCountersFromCSV(
+			log,
+			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
+			*clickhouseSecureFlag,
+			*backfillFromCSVFlag,
+		)
 	}
 
 	if *backfillDeviceLinkLatencyFlag {

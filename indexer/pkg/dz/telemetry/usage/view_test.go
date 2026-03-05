@@ -64,7 +64,7 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		require.Contains(t, err.Error(), "clickhouse connection is required")
 	})
 
-	t.Run("influxdb client is optional at construction", func(t *testing.T) {
+	t.Run("returns error when influxdb client is not configured", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
@@ -74,23 +74,8 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 			RefreshInterval: time.Second,
 		}
 		err := cfg.Validate()
-		require.NoError(t, err)
-	})
-
-	t.Run("refresh returns error when influxdb client is not configured", func(t *testing.T) {
-		t.Parallel()
-		mockDB := testClient(t)
-
-		view, err := NewView(ViewConfig{
-			Logger:          laketesting.NewLogger(),
-			ClickHouse:      mockDB,
-			RefreshInterval: time.Second,
-		})
-		require.NoError(t, err)
-
-		err = view.Refresh(context.Background())
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "InfluxDB client not configured")
+		require.Contains(t, err.Error(), "influxdb client is required")
 	})
 
 	t.Run("returns error when refresh interval is zero", func(t *testing.T) {
@@ -290,7 +275,7 @@ func TestLake_TelemetryUsage_View_buildLinkLookup(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		lookup, err := view.buildLinkLookup(context.Background())
+		lookup, err := view.Store().buildLinkLookup(context.Background())
 		require.NoError(t, err)
 		require.NotNil(t, lookup)
 
@@ -333,7 +318,7 @@ func TestLake_TelemetryUsage_View_buildLinkLookup(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		lookup, err := view.buildLinkLookup(context.Background())
+		lookup, err := view.Store().buildLinkLookup(context.Background())
 		require.NoError(t, err)
 		require.NotNil(t, lookup)
 		require.Equal(t, 0, len(lookup))
@@ -521,7 +506,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:Tunnel501": {LinkPK: "link1", LinkSide: "A"},
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, linkLookup, nil)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, linkLookup, nil)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -576,7 +561,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row should be skipped (used as baseline), so only second row should be stored
 		require.Len(t, usage, 1)
@@ -618,7 +603,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			InErrors: make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -675,7 +660,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now,
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First row should be skipped (already written), so only rows 2 and 3 should be stored
 		require.Len(t, usage, 2)
@@ -730,7 +715,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First two rows should be skipped (at or before already-written timestamp), only third row stored
 		require.Len(t, usage, 1)

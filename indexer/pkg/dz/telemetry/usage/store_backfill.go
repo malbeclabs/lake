@@ -23,7 +23,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 	}
 
 	// Query baseline counters from ClickHouse (or InfluxDB if not available)
-	baselines, err := v.queryBaselineCountersFromClickHouse(ctx, startTime)
+	baselines, err := v.store.queryBaselineCountersFromClickHouse(ctx, startTime)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to query baseline counters from clickhouse for backfill", "error", err)
 		// Fall back to empty baselines - sparse counters may have incorrect deltas for first measurement
@@ -37,7 +37,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 	}
 
 	// Build link lookup for enrichment
-	linkLookup, err := v.buildLinkLookup(ctx)
+	linkLookup, err := v.store.buildLinkLookup(ctx)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to build link lookup for backfill, proceeding without", "error", err)
 		linkLookup = make(map[string]LinkInfo)
@@ -95,7 +95,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	// Convert rows to InterfaceUsage
 	// Pass nil for alreadyWritten - backfill relies on ReplacingMergeTree for deduplication
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
+	usage, err := v.store.convertRowsToUsage(rows, baselines, linkLookup, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert rows for backfill: %w", err)
 	}
@@ -126,13 +126,13 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 // The CSV format must match the output of ExportInterfaceCountersCSV.
 // This does not require a live InfluxDB connection.
 // It relies on ReplacingMergeTree for deduplication, making it safe to re-run.
-func (v *View) BackfillFromReader(ctx context.Context, r io.Reader) (*BackfillResult, error) {
+func (s *Store) BackfillFromReader(ctx context.Context, r io.Reader) (*BackfillResult, error) {
 	rows, err := ParseInfluxCSV(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse CSV: %w", err)
 	}
 
-	v.log.Info("telemetry/usage: backfill from CSV parsed rows", "rows", len(rows))
+	s.log.Info("telemetry/usage: backfill from CSV parsed rows", "rows", len(rows))
 
 	if len(rows) == 0 {
 		return &BackfillResult{}, nil
@@ -161,9 +161,9 @@ func (v *View) BackfillFromReader(ctx context.Context, r io.Reader) (*BackfillRe
 	}
 
 	// Query baseline counters from ClickHouse to compute accurate deltas
-	baselines, err := v.queryBaselineCountersFromClickHouse(ctx, startTime)
+	baselines, err := s.queryBaselineCountersFromClickHouse(ctx, startTime)
 	if err != nil {
-		v.log.Warn("telemetry/usage: failed to query baseline counters for CSV backfill, proceeding without", "error", err)
+		s.log.Warn("telemetry/usage: failed to query baseline counters for CSV backfill, proceeding without", "error", err)
 		baselines = &CounterBaselines{
 			InDiscards:  make(map[string]*int64),
 			InErrors:    make(map[string]*int64),
@@ -174,13 +174,13 @@ func (v *View) BackfillFromReader(ctx context.Context, r io.Reader) (*BackfillRe
 	}
 
 	// Build link lookup for enrichment
-	linkLookup, err := v.buildLinkLookup(ctx)
+	linkLookup, err := s.buildLinkLookup(ctx)
 	if err != nil {
-		v.log.Warn("telemetry/usage: failed to build link lookup for CSV backfill, proceeding without", "error", err)
+		s.log.Warn("telemetry/usage: failed to build link lookup for CSV backfill, proceeding without", "error", err)
 		linkLookup = make(map[string]LinkInfo)
 	}
 
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
+	usage, err := s.convertRowsToUsage(rows, baselines, linkLookup, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert CSV rows: %w", err)
 	}
@@ -194,7 +194,7 @@ func (v *View) BackfillFromReader(ctx context.Context, r io.Reader) (*BackfillRe
 		}, nil
 	}
 
-	if err := v.store.InsertInterfaceUsage(ctx, usage); err != nil {
+	if err := s.InsertInterfaceUsage(ctx, usage); err != nil {
 		return nil, fmt.Errorf("failed to insert CSV backfill data: %w", err)
 	}
 
