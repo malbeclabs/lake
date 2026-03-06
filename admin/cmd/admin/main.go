@@ -91,6 +91,12 @@ func run() error {
 	pgMigrateDownFlag := flag.Bool("pg-migrate-down", false, "Rollback the last PostgreSQL migration")
 	pgMigrateStatusFlag := flag.Bool("pg-migrate-status", false, "Show PostgreSQL migration status")
 
+	// Remote tables command
+	setupRemoteTablesFlag := flag.String("setup-remote-tables", "", "Create remote proxy tables (all|external)")
+	remoteClickhouseAddrFlag := flag.String("remote-clickhouse-addr", "", "Remote ClickHouse host (or set REMOTE_CH_HOST env var)")
+	remoteClickhouseUserFlag := flag.String("remote-clickhouse-user", "", "Remote ClickHouse user (or set REMOTE_CH_USER env var)")
+	remoteClickhousePasswordFlag := flag.String("remote-clickhouse-password", "", "Remote ClickHouse password (or set REMOTE_CH_PASSWORD env var)")
+
 	flag.Parse()
 
 	log := logger.New(*verboseFlag)
@@ -138,6 +144,17 @@ func run() error {
 	}
 	if envDZEnv := os.Getenv("DZ_ENV"); envDZEnv != "" {
 		*dzEnvFlag = envDZEnv
+	}
+
+	// Override remote ClickHouse flags with environment variables if set
+	if envRemoteCHAddr := os.Getenv("REMOTE_CH_HOST"); envRemoteCHAddr != "" {
+		*remoteClickhouseAddrFlag = envRemoteCHAddr
+	}
+	if envRemoteCHUser := os.Getenv("REMOTE_CH_USER"); envRemoteCHUser != "" {
+		*remoteClickhouseUserFlag = envRemoteCHUser
+	}
+	if envRemoteCHPassword := os.Getenv("REMOTE_CH_PASSWORD"); envRemoteCHPassword != "" {
+		*remoteClickhousePasswordFlag = envRemoteCHPassword
 	}
 
 	// Resolve start/end time from absolute or relative flags
@@ -385,6 +402,31 @@ func run() error {
 			return fmt.Errorf("--pg-database, --pg-username, and --pg-password are required for --pg-migrate-status")
 		}
 		return admin.PgMigrateStatus(log, pgCfg)
+	}
+
+	if *setupRemoteTablesFlag != "" {
+		if *setupRemoteTablesFlag != "all" && *setupRemoteTablesFlag != "external" {
+			return fmt.Errorf("--setup-remote-tables must be 'all' or 'external'")
+		}
+		if *clickhouseAddrFlag == "" {
+			return fmt.Errorf("--clickhouse-addr is required for --setup-remote-tables")
+		}
+		if *remoteClickhouseAddrFlag == "" {
+			return fmt.Errorf("--remote-clickhouse-addr (or REMOTE_CH_HOST) is required for --setup-remote-tables")
+		}
+		if *remoteClickhouseUserFlag == "" {
+			return fmt.Errorf("--remote-clickhouse-user (or REMOTE_CH_USER) is required for --setup-remote-tables")
+		}
+		if *remoteClickhousePasswordFlag == "" {
+			return fmt.Errorf("--remote-clickhouse-password (or REMOTE_CH_PASSWORD) is required for --setup-remote-tables")
+		}
+		return admin.SetupRemoteTables(
+			log,
+			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
+			*clickhouseSecureFlag,
+			*remoteClickhouseAddrFlag, *remoteClickhouseUserFlag, *remoteClickhousePasswordFlag,
+			*setupRemoteTablesFlag,
+		)
 	}
 
 	return nil
