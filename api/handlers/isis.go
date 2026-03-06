@@ -2141,6 +2141,10 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 // fetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
 // Used by both the handler and the cache.
 func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
+	if config.Neo4jClient == nil {
+		return nil, fmt.Errorf("neo4j not available")
+	}
+
 	start := time.Now()
 
 	session := config.Neo4jSession(ctx)

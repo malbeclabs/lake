@@ -169,6 +169,17 @@ The API and web UI work as normal — they query local ClickHouse which forwards
 
 To add proxies for additional external tables, add entries to `externalRemoteTables` in `admin/internal/admin/setup_remote_tables.go`.
 
+### Testing with Seed Data
+
+For local-only testing without remote access, seed scripts provide sample data:
+
+```bash
+# Publisher check test data (shred stats for ~6 sample publishers)
+clickhouse-client --port 9100 --multiquery < scripts/seed-publisher-shred-stats.sql
+```
+
+Seed data is mock data with various states (healthy, retransmitting, needs repair) for UI development.
+
 ### Running Agent Evals
 
 The agent has evaluation tests that validate the natural language to SQL workflow. Run them with:

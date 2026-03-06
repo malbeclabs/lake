@@ -22,6 +22,7 @@ import {
   Map,
   Network,
   Shield,
+  ShieldCheck,
   Wrench,
   AlertTriangle,
   Gauge,
@@ -85,6 +86,7 @@ export function Sidebar() {
   const isTenantsRoute = location.pathname === '/dz/tenants'
   const isUsersRoute = location.pathname === '/dz/users'
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
+  const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isValidatorsRoute = location.pathname === '/solana/validators'
   const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
 
@@ -523,6 +525,10 @@ export function Sidebar() {
             <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
               <Radio className="h-4 w-4" />
               Multicast Groups
+            </Link>
+            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
+              <ShieldCheck className="h-4 w-4" />
+              Publisher Check
             </Link>
           </div>
         </div>

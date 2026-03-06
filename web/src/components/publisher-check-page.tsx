@@ -1,0 +1,396 @@
+import { useMemo, useState, useCallback } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
+import { Loader2, AlertCircle, Search, ShieldCheck, ChevronDown, ChevronUp, Info } from 'lucide-react'
+import { fetchPublisherCheck, type PublisherCheckItem } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { PageHeader } from './page-header'
+import { Pagination } from './pagination'
+import { StatusIcon } from './status-icon'
+
+const PAGE_SIZE = 100
+
+type SortField =
+  | 'publishing'
+  | 'publisher_ip'
+  | 'client_ip'
+  | 'dz_user_pubkey'
+  | 'dz_device_code'
+  | 'dz_metro_code'
+  | 'multicast_connected'
+  | 'publishing_leader_shreds'
+  | 'publishing_retransmitted'
+  | 'leader_slots'
+  | 'validator_client'
+
+type SortDirection = 'asc' | 'desc'
+
+type PublishingFilter = 'all' | 'publishing' | 'not_publishing'
+
+export function PublisherCheckPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filterInput, setFilterInput] = useState(searchParams.get('q') || '')
+
+  // URL-driven state
+  const activeFilter = searchParams.get('q') || ''
+  const page = parseInt(searchParams.get('page') || '1')
+  const offset = (page - 1) * PAGE_SIZE
+  const sortField = (searchParams.get('sort') || 'activated_stake') as SortField
+  const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
+  const publishingFilter = (searchParams.get('pub') || 'all') as PublishingFilter
+  const epochs = parseInt(searchParams.get('epochs') || '2')
+
+  const setOffset = useCallback((newOffset: number) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+      if (newPage <= 1) p.delete('page'); else p.set('page', String(newPage))
+      return p
+    })
+  }, [setSearchParams])
+
+  const handleSort = useCallback((field: SortField) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (p.get('sort') === field) {
+        p.set('dir', p.get('dir') === 'asc' ? 'desc' : 'asc')
+      } else {
+        p.set('sort', field)
+        p.set('dir', 'asc')
+      }
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  const handleFilterSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault()
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (filterInput) p.set('q', filterInput); else p.delete('q')
+      p.delete('page')
+      return p
+    })
+  }, [filterInput, setSearchParams])
+
+  const handleClearFilter = useCallback(() => {
+    setFilterInput('')
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      p.delete('q')
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  const handlePublishingFilter = useCallback((filter: PublishingFilter) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (filter === 'all') p.delete('pub'); else p.set('pub', filter)
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  const handleEpochs = useCallback((n: number) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (n === 2) p.delete('epochs'); else p.set('epochs', String(n))
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  // Fetch data — pass the server-side filter (for IP/DZ ID matching)
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['publisher-check', activeFilter, epochs],
+    queryFn: () => fetchPublisherCheck(activeFilter || undefined, epochs),
+    refetchInterval: 30000,
+  })
+
+  const isPublishing = useCallback((pub: PublisherCheckItem) =>
+    pub.publishing_leader_shreds && !pub.publishing_retransmitted,
+  [])
+
+  // Sort
+  const sortedPublishers = useMemo(() => {
+    if (!data?.publishers) return []
+    return [...data.publishers].sort((a, b) => {
+      let cmp: number
+      switch (sortField) {
+        case 'publishing': cmp = Number(isPublishing(a)) - Number(isPublishing(b)); break
+        case 'publisher_ip': cmp = a.publisher_ip.localeCompare(b.publisher_ip); break
+        case 'client_ip': cmp = a.client_ip.localeCompare(b.client_ip); break
+        case 'dz_user_pubkey': cmp = a.dz_user_pubkey.localeCompare(b.dz_user_pubkey); break
+        case 'dz_device_code': cmp = a.dz_device_code.localeCompare(b.dz_device_code); break
+        case 'dz_metro_code': cmp = a.dz_metro_code.localeCompare(b.dz_metro_code); break
+        case 'multicast_connected': cmp = Number(a.multicast_connected) - Number(b.multicast_connected); break
+        case 'publishing_leader_shreds': cmp = Number(a.publishing_leader_shreds) - Number(b.publishing_leader_shreds); break
+        case 'publishing_retransmitted': cmp = Number(a.publishing_retransmitted) - Number(b.publishing_retransmitted); break
+        case 'leader_slots': cmp = a.leader_slots - b.leader_slots; break
+        case 'validator_client': cmp = `${a.validator_client} ${a.validator_version}`.localeCompare(`${b.validator_client} ${b.validator_version}`); break
+        default: cmp = Number(a.activated_stake) - Number(b.activated_stake)
+      }
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [data?.publishers, sortField, sortDirection, isPublishing])
+
+  const filteredPublishers = useMemo(() => {
+    if (publishingFilter === 'all') return sortedPublishers
+    return sortedPublishers.filter(pub => {
+      const ok = pub.publishing_leader_shreds && !pub.publishing_retransmitted
+      return publishingFilter === 'publishing' ? ok : !ok
+    })
+  }, [sortedPublishers, publishingFilter])
+
+  const publishingCount = useMemo(() =>
+    (data?.publishers ?? []).filter(p => p.publishing_leader_shreds && !p.publishing_retransmitted).length,
+  [data?.publishers])
+
+  const pagedPublishers = useMemo(
+    () => filteredPublishers.slice(offset, offset + PAGE_SIZE),
+    [filteredPublishers, offset]
+  )
+
+  const SortIcon = ({ field }: { field: string }) => {
+    if (sortField !== field) return null
+    return sortDirection === 'asc'
+      ? <ChevronUp className="inline h-3 w-3 ml-0.5" />
+      : <ChevronDown className="inline h-3 w-3 ml-0.5" />
+  }
+
+  const thClass = 'px-4 py-3 font-medium cursor-pointer select-none hover:text-foreground transition-colors'
+  const thCenter = thClass + ' text-center'
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <div className="text-lg font-medium mb-2">Unable to load publisher data</div>
+          <div className="text-sm text-muted-foreground">{error?.message || 'Unknown error'}</div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="mx-auto px-4 sm:px-8 py-8">
+        <PageHeader
+          icon={ShieldCheck}
+          title="Publisher Check"
+          subtitle={data?.epoch ? `Epoch ${data.epoch}` : undefined}
+          actions={
+            <form onSubmit={handleFilterSubmit} className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Filter by IP or DZ ID..."
+                  value={filterInput}
+                  onChange={(e) => setFilterInput(e.target.value)}
+                  className="pl-8 pr-3 py-1.5 text-sm border border-border rounded-md bg-background w-64 focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+              <button
+                type="submit"
+                className="px-3 py-1.5 text-sm bg-accent text-accent-foreground rounded-md hover:bg-accent/90"
+              >
+                Search
+              </button>
+              {activeFilter && (
+                <button
+                  type="button"
+                  onClick={handleClearFilter}
+                  className="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted"
+                >
+                  Clear
+                </button>
+              )}
+            </form>
+          }
+        />
+
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-4">
+            <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
+              <span className="text-muted-foreground">Total Publishers</span>{' '}
+              <span className="font-medium">{data?.publishers?.length ?? 0}</span>
+            </div>
+            <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
+              <span className="text-muted-foreground">Publishing Shreds</span>{' '}
+              <span className="font-medium">{publishingCount}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center rounded-md border border-border text-sm">
+              {([
+                [1, 'Current Epoch'],
+                [2, 'Last 2 Epochs'],
+                [5, 'Last 5 Epochs'],
+              ] as const).map(([n, label]) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => handleEpochs(n)}
+                  className={cn(
+                    'px-3 py-1.5 transition-colors',
+                    epochs === n
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center rounded-md border border-border text-sm">
+              {([
+                ['all', 'All'],
+                ['publishing', 'Publishing'],
+                ['not_publishing', 'Not Publishing'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => handlePublishingFilter(value)}
+                  className={cn(
+                    'px-3 py-1.5 transition-colors',
+                    publishingFilter === value
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-lg bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          <div className="flex items-start gap-2">
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <ul className="space-y-1">
+              <li><span className="font-medium text-foreground">Connected</span> — The validator is connected and heartbeats are being sent by their DoubleZero client.</li>
+              <li><span className="font-medium text-foreground">Publishing Leader Shreds</span> — Leader shreds have been sent by the validator in the selected epoch range.</li>
+              <li><span className="font-medium text-foreground">No Retransmit Shreds</span> — No retransmit shreds have been sent by the validator. Retransmit shreds are undesirable.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="border border-border rounded-lg overflow-hidden bg-card">
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead>
+                <tr className="text-sm text-left text-muted-foreground border-b border-border">
+                  <th className={thCenter} onClick={() => handleSort('publishing')}>
+                    Publishing<SortIcon field="publishing" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('publisher_ip')}>
+                    Publisher IP<SortIcon field="publisher_ip" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('client_ip')}>
+                    Client IP<SortIcon field="client_ip" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('dz_user_pubkey')}>
+                    DZ ID<SortIcon field="dz_user_pubkey" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('dz_device_code')}>
+                    Device<SortIcon field="dz_device_code" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('dz_metro_code')}>
+                    Metro<SortIcon field="dz_metro_code" />
+                  </th>
+                  <th className={thCenter} onClick={() => handleSort('multicast_connected')}>
+                    Connected<SortIcon field="multicast_connected" />
+                  </th>
+                  <th className={thCenter} onClick={() => handleSort('publishing_leader_shreds')}>
+                    Publishing Leader Shreds<SortIcon field="publishing_leader_shreds" />
+                  </th>
+                  <th className={thCenter} onClick={() => handleSort('publishing_retransmitted')}>
+                    No Retransmit Shreds<SortIcon field="publishing_retransmitted" />
+                  </th>
+                  <th className={thCenter} onClick={() => handleSort('leader_slots')}>
+                    Leader Slots<SortIcon field="leader_slots" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('validator_client')}>
+                    Validator Client<SortIcon field="validator_client" />
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedPublishers.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">
+                      {activeFilter ? 'No publishers found for this filter' : 'No publishers found'}
+                    </td>
+                  </tr>
+                ) : (
+                  pagedPublishers.map((pub) => (
+                    <tr
+                      key={`${pub.publisher_ip}-${pub.dz_user_pubkey}`}
+                      className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
+                    >
+                      <td className="px-4 py-3 text-center">
+                        <StatusIcon ok={isPublishing(pub)} />
+                      </td>
+                      <td className="px-4 py-3 font-mono text-sm">{pub.publisher_ip}</td>
+                      <td className="px-4 py-3 font-mono text-sm">{pub.client_ip}</td>
+                      <td className="px-4 py-3 font-mono text-sm">
+                        {pub.dz_user_pubkey ? (
+                          <button
+                            type="button"
+                            className="hover:text-foreground transition-colors cursor-pointer"
+                            title="Click to copy"
+                            onClick={() => navigator.clipboard.writeText(pub.dz_user_pubkey)}
+                          >
+                            {pub.dz_user_pubkey.slice(0, 12)}...
+                          </button>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{pub.dz_device_code || '—'}</td>
+                      <td className="px-4 py-3 text-sm">{pub.dz_metro_code || '—'}</td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusIcon ok={pub.multicast_connected} />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusIcon ok={pub.publishing_leader_shreds} />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <StatusIcon ok={!pub.publishing_retransmitted} />
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums text-center">
+                        {pub.leader_slots.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {pub.validator_client} {pub.validator_version || '?'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {filteredPublishers.length > PAGE_SIZE && (
+            <Pagination
+              total={filteredPublishers.length}
+              limit={PAGE_SIZE}
+              offset={offset}
+              onOffsetChange={setOffset}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -4413,3 +4413,42 @@ export async function fetchTenant(pk: string): Promise<Tenant> {
   }
   return res.json()
 }
+
+// Publisher Check
+export interface PublisherCheckItem {
+  publisher_ip: string
+  client_ip: string
+  node_pubkey: string
+  vote_pubkey: string
+  dz_user_pubkey: string
+  dz_device_code: string
+  dz_metro_code: string
+  activated_stake: number
+  multicast_connected: boolean
+  publishing_leader_shreds: boolean
+  publishing_retransmitted: boolean
+  leader_slots: number
+  total_slots: number
+  total_unique_shreds: number
+  slots_needing_repair: number
+  validator_client: string
+  validator_version: string
+  validator_version_ok: boolean
+}
+
+export interface PublisherCheckResponse {
+  epoch: number
+  publishers: PublisherCheckItem[]
+}
+
+export async function fetchPublisherCheck(q?: string, epochs?: number): Promise<PublisherCheckResponse> {
+  const params = new URLSearchParams()
+  if (q) params.set('q', q)
+  if (epochs && epochs !== 2) params.set('epochs', String(epochs))
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/publisher-check${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch publisher check')
+  }
+  return res.json()
+}
