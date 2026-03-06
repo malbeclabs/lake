@@ -4434,6 +4434,7 @@ export interface PublisherCheckItem {
   validator_client: string
   validator_version: string
   validator_version_ok: boolean
+  is_backup: boolean
 }
 
 export interface PublisherCheckResponse {

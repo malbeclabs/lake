@@ -58,6 +58,7 @@ type PublisherCheckItem struct {
 	ValidatorClient         string `json:"validator_client"`
 	ValidatorVersion        string `json:"validator_version"`
 	ValidatorVersionOk      bool   `json:"validator_version_ok"`
+	IsBackup                bool   `json:"is_backup"`
 }
 
 // PublisherCheckResponse is the response for the publisher check endpoint.
@@ -128,8 +129,8 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			COALESCE(s.total_unique_shreds, 0) AS total_unique_shreds,
 			COALESCE(s.slots_needing_repair, 0) AS slots_needing_repair,
 			(SELECT epoch FROM current_epoch) AS epoch,
-			COALESCE(va.software_client, '') AS validator_client,
-			COALESCE(va.software_version, '') AS validator_version
+			if(va.software_client != '', va.software_client, '') AS validator_client,
+			if(va.software_version != '', va.software_version, COALESCE(g.version, '')) AS validator_version
 		FROM dz_users_current u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -210,6 +211,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		p.PublishingLeaderShreds = leaderSlots > 0
 		p.PublishingRetransmitted = retransmitSlots > 0
 		p.ValidatorVersionOk = isValidatorVersionOk(p.ValidatorClient, p.ValidatorVersion)
+		p.IsBackup = p.NodePubkey != "" && p.VotePubkey == ""
 
 		publishers = append(publishers, p)
 	}

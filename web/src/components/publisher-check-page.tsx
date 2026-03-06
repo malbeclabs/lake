@@ -18,7 +18,6 @@ type SortField =
   | 'vote_pubkey'
   | 'dz_device_code'
   | 'dz_metro_code'
-  | 'multicast_connected'
   | 'publishing_leader_shreds'
   | 'publishing_retransmitted'
   | 'leader_slots'
@@ -40,6 +39,7 @@ export function PublisherCheckPage() {
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const publishingFilter = (searchParams.get('pub') || 'all') as PublishingFilter
   const epochs = parseInt(searchParams.get('epochs') || '2')
+  const showBackups = searchParams.get('backups') === 'true'
 
   const setOffset = useCallback((newOffset: number) => {
     setSearchParams(prev => {
@@ -102,6 +102,15 @@ export function PublisherCheckPage() {
     })
   }, [setSearchParams])
 
+  const handleToggleBackups = useCallback(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (p.get('backups') === 'true') p.delete('backups'); else p.set('backups', 'true')
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
   // Fetch data — pass the server-side filter (for IP/DZ ID matching)
   const { data, isLoading, error } = useQuery({
     queryKey: ['publisher-check', activeFilter, epochs],
@@ -126,7 +135,6 @@ export function PublisherCheckPage() {
         case 'vote_pubkey': cmp = a.vote_pubkey.localeCompare(b.vote_pubkey); break
         case 'dz_device_code': cmp = a.dz_device_code.localeCompare(b.dz_device_code); break
         case 'dz_metro_code': cmp = a.dz_metro_code.localeCompare(b.dz_metro_code); break
-        case 'multicast_connected': cmp = Number(a.multicast_connected) - Number(b.multicast_connected); break
         case 'publishing_leader_shreds': cmp = Number(a.publishing_leader_shreds) - Number(b.publishing_leader_shreds); break
         case 'publishing_retransmitted': cmp = Number(a.publishing_retransmitted) - Number(b.publishing_retransmitted); break
         case 'leader_slots': cmp = a.leader_slots - b.leader_slots; break
@@ -137,17 +145,21 @@ export function PublisherCheckPage() {
     })
   }, [data?.publishers, sortField, sortDirection, isPublishing])
 
+  const nonBackupPublishers = useMemo(() =>
+    showBackups ? sortedPublishers : sortedPublishers.filter(pub => !pub.is_backup),
+  [sortedPublishers, showBackups])
+
   const filteredPublishers = useMemo(() => {
-    if (publishingFilter === 'all') return sortedPublishers
-    return sortedPublishers.filter(pub => {
+    if (publishingFilter === 'all') return nonBackupPublishers
+    return nonBackupPublishers.filter(pub => {
       const ok = pub.publishing_leader_shreds && !pub.publishing_retransmitted
       return publishingFilter === 'publishing' ? ok : !ok
     })
-  }, [sortedPublishers, publishingFilter])
+  }, [nonBackupPublishers, publishingFilter])
 
   const publishingCount = useMemo(() =>
-    (data?.publishers ?? []).filter(p => p.publishing_leader_shreds && !p.publishing_retransmitted).length,
-  [data?.publishers])
+    nonBackupPublishers.filter(p => p.publishing_leader_shreds && !p.publishing_retransmitted).length,
+  [nonBackupPublishers])
 
   const pagedPublishers = useMemo(
     () => filteredPublishers.slice(offset, offset + PAGE_SIZE),
@@ -226,7 +238,7 @@ export function PublisherCheckPage() {
           <div className="flex items-center gap-4">
             <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
               <span className="text-muted-foreground">Total Publishers</span>{' '}
-              <span className="font-medium">{data?.publishers?.length ?? 0}</span>
+              <span className="font-medium">{nonBackupPublishers.length}</span>
             </div>
             <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
               <span className="text-muted-foreground">Publishing Shreds</span>{' '}
@@ -258,8 +270,8 @@ export function PublisherCheckPage() {
             <div className="flex items-center rounded-md border border-border text-sm">
               {([
                 ['all', 'All'],
-                ['publishing', 'Publishing'],
-                ['not_publishing', 'Not Publishing'],
+                ['publishing', 'Healthy'],
+                ['not_publishing', 'Unhealthy'],
               ] as const).map(([value, label]) => (
                 <button
                   key={value}
@@ -276,6 +288,18 @@ export function PublisherCheckPage() {
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={handleToggleBackups}
+              className={cn(
+                'px-3 py-1.5 text-sm rounded-md border transition-colors',
+                showBackups
+                  ? 'bg-accent text-accent-foreground border-accent'
+                  : 'border-border hover:bg-muted'
+              )}
+            >
+              Show Backups
+            </button>
           </div>
         </div>
 
@@ -283,7 +307,6 @@ export function PublisherCheckPage() {
           <div className="flex items-start gap-2">
             <Info className="h-4 w-4 mt-0.5 shrink-0" />
             <ul className="space-y-1">
-              <li><span className="font-medium text-foreground">Connected</span> — The validator is connected and heartbeats are being sent by their DoubleZero client.</li>
               <li><span className="font-medium text-foreground">Publishing Leader Shreds</span> — Leader shreds have been sent by the validator in the selected epoch range.</li>
               <li><span className="font-medium text-foreground">No Retransmit Shreds</span> — No retransmit shreds have been sent by the validator. Retransmit shreds are undesirable.</li>
             </ul>
@@ -296,7 +319,7 @@ export function PublisherCheckPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className={thCenter} onClick={() => handleSort('publishing')}>
-                    Publishing<SortIcon field="publishing" />
+                    Healthy<SortIcon field="publishing" />
                   </th>
                   <th className={thClass} onClick={() => handleSort('publisher_ip')}>
                     Publisher IP<SortIcon field="publisher_ip" />
@@ -316,9 +339,6 @@ export function PublisherCheckPage() {
                   <th className={thClass} onClick={() => handleSort('dz_metro_code')}>
                     Metro<SortIcon field="dz_metro_code" />
                   </th>
-                  <th className={thCenter} onClick={() => handleSort('multicast_connected')}>
-                    Connected<SortIcon field="multicast_connected" />
-                  </th>
                   <th className={thCenter} onClick={() => handleSort('publishing_leader_shreds')}>
                     Publishing Leader Shreds<SortIcon field="publishing_leader_shreds" />
                   </th>
@@ -336,7 +356,7 @@ export function PublisherCheckPage() {
               <tbody>
                 {pagedPublishers.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">
                       {activeFilter ? 'No publishers found for this filter' : 'No publishers found'}
                     </td>
                   </tr>
@@ -347,7 +367,9 @@ export function PublisherCheckPage() {
                       className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
                     >
                       <td className="px-4 py-3 text-center">
-                        <StatusIcon ok={isPublishing(pub)} />
+                        {pub.is_backup
+                          ? <span className="inline-block rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">Backup</span>
+                          : <StatusIcon ok={isPublishing(pub)} />}
                       </td>
                       <td className="px-4 py-3 font-mono text-sm">{pub.publisher_ip}</td>
                       <td className="px-4 py-3 font-mono text-sm">{pub.client_ip}</td>
@@ -377,9 +399,6 @@ export function PublisherCheckPage() {
                       </td>
                       <td className="px-4 py-3 text-sm">{pub.dz_device_code || '—'}</td>
                       <td className="px-4 py-3 text-sm">{pub.dz_metro_code || '—'}</td>
-                      <td className="px-4 py-3 text-center">
-                        <StatusIcon ok={pub.multicast_connected} />
-                      </td>
                       <td className="px-4 py-3 text-center">
                         <StatusIcon ok={pub.publishing_leader_shreds} />
                       </td>
