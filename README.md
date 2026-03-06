@@ -145,6 +145,30 @@ cd ../..
 
 The control center will be at http://localhost:5174.
 
+### Testing with Real Data (Remote Tables)
+
+For testing the UI with real production data without running the full indexer, you can set up proxy tables that forward queries from your local ClickHouse to a remote ClickHouse Cloud instance.
+
+1. Add remote credentials to `.env`:
+   ```bash
+   REMOTE_CH_HOST=your-instance.us-east-1.aws.clickhouse.cloud
+   REMOTE_CH_USER=lake_dev_reader
+   REMOTE_CH_PASSWORD=your-password
+   ```
+
+2. Run the admin command:
+   ```bash
+   go run ./admin/cmd/admin/ --clickhouse-addr localhost:9100 --setup-remote-tables=all
+   ```
+
+This creates local proxy tables using ClickHouse `remoteSecure()` that transparently forward reads to the remote instance:
+- `all` mode discovers all tables in the remote `lake` database and creates local proxies, plus creates proxies for external service tables (e.g., `shredder.publisher_shred_stats`)
+- `external` mode only creates the external service proxies (used in k8s staging/PR preview environments)
+
+The API and web UI work as normal — they query local ClickHouse which forwards to remote. No code changes needed.
+
+To add proxies for additional external tables, add entries to `externalRemoteTables` in `admin/internal/admin/setup_remote_tables.go`.
+
 ### Running Agent Evals
 
 The agent has evaluation tests that validate the natural language to SQL workflow. Run them with:
