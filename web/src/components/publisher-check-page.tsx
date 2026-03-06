@@ -15,6 +15,7 @@ type SortField =
   | 'publisher_ip'
   | 'client_ip'
   | 'dz_user_pubkey'
+  | 'vote_pubkey'
   | 'dz_device_code'
   | 'dz_metro_code'
   | 'multicast_connected'
@@ -122,6 +123,7 @@ export function PublisherCheckPage() {
         case 'publisher_ip': cmp = a.publisher_ip.localeCompare(b.publisher_ip); break
         case 'client_ip': cmp = a.client_ip.localeCompare(b.client_ip); break
         case 'dz_user_pubkey': cmp = a.dz_user_pubkey.localeCompare(b.dz_user_pubkey); break
+        case 'vote_pubkey': cmp = a.vote_pubkey.localeCompare(b.vote_pubkey); break
         case 'dz_device_code': cmp = a.dz_device_code.localeCompare(b.dz_device_code); break
         case 'dz_metro_code': cmp = a.dz_metro_code.localeCompare(b.dz_metro_code); break
         case 'multicast_connected': cmp = Number(a.multicast_connected) - Number(b.multicast_connected); break
@@ -305,6 +307,9 @@ export function PublisherCheckPage() {
                   <th className={thClass} onClick={() => handleSort('dz_user_pubkey')}>
                     DZ ID<SortIcon field="dz_user_pubkey" />
                   </th>
+                  <th className={thClass} onClick={() => handleSort('vote_pubkey')}>
+                    Vote ID<SortIcon field="vote_pubkey" />
+                  </th>
                   <th className={thClass} onClick={() => handleSort('dz_device_code')}>
                     Device<SortIcon field="dz_device_code" />
                   </th>
@@ -331,7 +336,7 @@ export function PublisherCheckPage() {
               <tbody>
                 {pagedPublishers.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={12} className="px-4 py-12 text-center text-muted-foreground">
                       {activeFilter ? 'No publishers found for this filter' : 'No publishers found'}
                     </td>
                   </tr>
@@ -355,6 +360,18 @@ export function PublisherCheckPage() {
                             onClick={() => navigator.clipboard.writeText(pub.dz_user_pubkey)}
                           >
                             {pub.dz_user_pubkey.slice(0, 12)}...
+                          </button>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-sm">
+                        {pub.vote_pubkey ? (
+                          <button
+                            type="button"
+                            className="hover:text-foreground transition-colors cursor-pointer"
+                            title="Click to copy"
+                            onClick={() => navigator.clipboard.writeText(pub.vote_pubkey)}
+                          >
+                            {pub.vote_pubkey.slice(0, 12)}...
                           </button>
                         ) : '—'}
                       </td>
