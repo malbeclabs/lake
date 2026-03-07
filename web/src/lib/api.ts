@@ -4652,12 +4652,18 @@ export async function fetchPublisherCheck(q?: string, epochs?: number, slots?: n
 
 // Edge Scoreboard
 
+export interface EdgeScoreboardLeadTime {
+  loser_feed: string
+  p50_ms: number
+  p95_ms: number
+  slot_count: number
+}
+
 export interface EdgeScoreboardFeedStats {
   shreds_won: number
   total_shreds: number
   win_rate_pct: number
-  lead_p50_ms: number
-  lead_p95_ms: number
+  lead_times: EdgeScoreboardLeadTime[]
 }
 
 export interface EdgeScoreboardNode {
@@ -4676,6 +4682,7 @@ export interface EdgeScoreboardResponse {
   window: string
   generated_at: string
   current_epoch: number
+  current_slot: number
   total_slots: number
   dz_slots: number
   completeness_pct: number

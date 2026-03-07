@@ -29,13 +29,14 @@ func createSlotFeedRacesTable(t *testing.T) {
 			epoch UInt64,
 			slot UInt64,
 			feed String,
+			loser_feed String DEFAULT '',
 			total_shreds UInt64,
 			shreds_won UInt64,
-			lead_time_p50_ms Float64,
-			lead_time_p95_ms Float64
+			lead_time_p50_ms Float64 DEFAULT 0,
+			lead_time_p95_ms Float64 DEFAULT 0
 		) ENGINE = ReplacingMergeTree(ingested_at)
 		PARTITION BY toYYYYMM(event_ts)
-		ORDER BY (node_id, slot, feed)
+		ORDER BY (node_id, slot, feed, loser_feed)
 	`, "`"+config.ShredderDB+"`"))
 	require.NoError(t, err)
 }
@@ -53,29 +54,42 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			 pk, code, name, latitude, longitude)
 		VALUES
 			('metro-slc', now(), now(), generateUUIDv4(), 0, 1,
-			 'metro-slc', 'SLC', 'Salt Lake City', 40.76, -111.89),
+			 'metro-slc', 'slc', 'Salt Lake City', 40.76, -111.89),
 			('metro-fra', now(), now(), generateUUIDv4(), 0, 2,
-			 'metro-fra', 'FRA', 'Frankfurt', 50.11, 8.68)
+			 'metro-fra', 'fra', 'Frankfurt', 50.11, 8.68)
 	`)
 	require.NoError(t, err)
 
-	// Insert feed races for two nodes
+	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
 	// Slot 100: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds
 	// Slot 200: only turbine + jito (no DZ) — tests completeness calculation
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
-			(event_ts, node_id, feed_type, epoch, slot, feed, total_shreds, shreds_won, lead_time_p50_ms, lead_time_p95_ms)
+			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
 		VALUES
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz',      100, 80, 1.5, 3.0),
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'turbine',  100, 15, 5.0, 10.0),
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'jito',     100,  5, 8.0, 15.0),
-			(now(), 'slc-qa-bm1', 'shred', 800, 200, 'turbine',  100, 60, 4.0, 9.0),
-			(now(), 'slc-qa-bm1', 'shred', 800, 200, 'jito',     100, 40, 7.0, 14.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz',       100, 70, 2.0, 4.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'turbine',  100, 20, 6.0, 12.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'jito',     100, 10, 9.0, 16.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 200, 'turbine',  100, 55, 5.0, 11.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 200, 'jito',     100, 45, 8.0, 15.0)
+			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz',      '', 100, 80),
+			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'turbine',  '', 100, 15),
+			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'jito',     '', 100,  5),
+			(now(), 'slc-qa-bm1', 'shred', 800, 200, 'turbine',  '', 100, 60),
+			(now(), 'slc-qa-bm1', 'shred', 800, 200, 'jito',     '', 100, 40),
+			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz',       '', 100, 70),
+			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'turbine',  '', 100, 20),
+			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'jito',     '', 100, 10),
+			(now(), 'fra-qa-bm1', 'shred', 800, 200, 'turbine',  '', 100, 55),
+			(now(), 'fra-qa-bm1', 'shred', 800, 200, 'jito',     '', 100, 45)
+	`, "`"+config.ShredderDB+"`"))
+	require.NoError(t, err)
+
+	// Insert lead-time rows (loser_feed != '') — pairwise: winner vs specific loser
+	// For slot 100 on slc-qa-bm1: dz beat turbine and jito
+	err = config.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.slot_feed_races
+			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, lead_time_p50_ms, lead_time_p95_ms)
+		VALUES
+			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz', 'turbine', 1.5, 3.0),
+			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz', 'jito',    2.0, 4.0),
+			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz', 'turbine', 2.5, 5.0),
+			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz', 'jito',    3.0, 6.0)
 	`, "`"+config.ShredderDB+"`"))
 	require.NoError(t, err)
 }
@@ -144,6 +158,17 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
 	assert.Equal(t, 80.0, dzFeed.WinRatePct)
 
+	// Check pairwise lead times for SLC DZ feed
+	assert.Len(t, dzFeed.LeadTimes, 2, "slc dz should have 2 pairwise lead times")
+	ltMap := make(map[string]handlers.EdgeScoreboardLeadTime)
+	for _, lt := range dzFeed.LeadTimes {
+		ltMap[lt.LoserFeed] = lt
+	}
+	assert.InDelta(t, 1.5, ltMap["turbine"].P50Ms, 0.1)
+	assert.InDelta(t, 3.0, ltMap["turbine"].P95Ms, 0.1)
+	assert.InDelta(t, 2.0, ltMap["jito"].P50Ms, 0.1)
+	assert.InDelta(t, 4.0, ltMap["jito"].P95Ms, 0.1)
+
 	// Check FRA node
 	fra, ok := nodeMap["fra-qa-bm1"]
 	require.True(t, ok, "fra-qa-bm1 node should exist")
@@ -159,6 +184,9 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(70), dzFeed.ShredsWon)
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
 	assert.Equal(t, 70.0, dzFeed.WinRatePct)
+
+	// Check pairwise lead times for FRA DZ feed
+	assert.Len(t, dzFeed.LeadTimes, 2, "fra dz should have 2 pairwise lead times")
 }
 
 func TestGetEdgeScoreboard_WindowParam(t *testing.T) {

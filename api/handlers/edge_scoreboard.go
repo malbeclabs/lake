@@ -12,13 +12,20 @@ import (
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
-// EdgeScoreboardFeedStats holds per-feed win rate and lead time stats for an edge node.
+// EdgeScoreboardLeadTime holds pairwise lead time stats (winner vs specific loser).
+type EdgeScoreboardLeadTime struct {
+	LoserFeed string  `json:"loser_feed"`
+	P50Ms     float64 `json:"p50_ms"`
+	P95Ms     float64 `json:"p95_ms"`
+	SlotCount uint64  `json:"slot_count"`
+}
+
+// EdgeScoreboardFeedStats holds per-feed win rate and pairwise lead time stats for an edge node.
 type EdgeScoreboardFeedStats struct {
-	ShredsWon   uint64  `json:"shreds_won"`
-	TotalShreds uint64  `json:"total_shreds"`
-	WinRatePct  float64 `json:"win_rate_pct"`
-	LeadP50Ms   float64 `json:"lead_p50_ms"`
-	LeadP95Ms   float64 `json:"lead_p95_ms"`
+	ShredsWon   uint64                    `json:"shreds_won"`
+	TotalShreds uint64                    `json:"total_shreds"`
+	WinRatePct  float64                   `json:"win_rate_pct"`
+	LeadTimes   []EdgeScoreboardLeadTime  `json:"lead_times"`
 }
 
 // EdgeScoreboardNode holds aggregated stats for a single edge node.
@@ -39,6 +46,7 @@ type EdgeScoreboardResponse struct {
 	Window          string               `json:"window"`
 	GeneratedAt     time.Time            `json:"generated_at"`
 	CurrentEpoch    uint64               `json:"current_epoch"`
+	CurrentSlot     uint64               `json:"current_slot"`
 	TotalSlots      uint64               `json:"total_slots"`
 	DZSlots         uint64               `json:"dz_slots"`
 	CompletenessPct float64              `json:"completeness_pct"`
@@ -72,16 +80,20 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 
 	shredderDB := fmt.Sprintf("`%s`", config.ShredderDB)
 
-	// Query 1: Per-node slot counts
+	// Query 1: Per-node slot counts from win-count rows (loser_feed = '')
+	// Uses FINAL to handle ReplacingMergeTree pre-merge duplicates.
+	// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes)
 	query1 := fmt.Sprintf(`
 		SELECT
 			node_id,
 			uniqExact(slot) AS total_slots,
 			uniqExactIf(slot, feed = 'dz') AS dz_slots,
 			max(epoch) AS max_epoch,
-			max(event_ts) AS last_updated
-		FROM %s.slot_feed_races
-		WHERE feed_type = 'shred' %s
+			max(slot) AS max_slot,
+			max(event_ts) AS last_updated,
+			uniqExact(feed) AS feed_count
+		FROM %s.slot_feed_races FINAL
+		WHERE feed_type = 'shred' AND loser_feed = '' %s
 		GROUP BY node_id
 	`, shredderDB, timeFilter)
 
@@ -100,22 +112,31 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		totalSlots  uint64
 		dzSlots     uint64
 		maxEpoch    uint64
+		maxSlot     uint64
 		lastUpdated time.Time
 	}
 	nodeSlots := make(map[string]*nodeSlotInfo)
-	var globalMaxEpoch uint64
+	var globalMaxEpoch, globalMaxSlot uint64
 
 	for rows1.Next() {
 		var nodeID string
 		var info nodeSlotInfo
-		if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.lastUpdated); err != nil {
+		var feedCount uint64
+		if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.maxSlot, &info.lastUpdated, &feedCount); err != nil {
 			log.Printf("EdgeScoreboard query1 scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Skip nodes that only record one feed — they can't produce meaningful race data
+		if feedCount < 2 {
+			continue
+		}
 		nodeSlots[nodeID] = &info
 		if info.maxEpoch > globalMaxEpoch {
 			globalMaxEpoch = info.maxEpoch
+		}
+		if info.maxSlot > globalMaxSlot {
+			globalMaxSlot = info.maxSlot
 		}
 	}
 	if err := rows1.Err(); err != nil {
@@ -134,23 +155,33 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query 2: Per-node per-feed aggregates (only DZ-participating slots)
+	// Query 2: Per-node per-feed win counts from summary rows (loser_feed = '')
+	// Only DZ-participating slots. Uses FINAL for dedup safety.
+	// Win rate uses MAX(SUM(total_shreds)) OVER (PARTITION BY node_id) as the
+	// denominator so all feeds share the same base per node.
 	query2 := fmt.Sprintf(`
 		SELECT
-			r.node_id,
-			r.feed,
-			SUM(r.shreds_won) AS shreds_won,
-			SUM(r.total_shreds) AS total_shreds,
-			sumIf(r.lead_time_p50_ms * r.total_shreds, r.total_shreds > 0) / greatest(sumIf(r.total_shreds, r.total_shreds > 0), 1) AS lead_p50_ms,
-			sumIf(r.lead_time_p95_ms * r.total_shreds, r.total_shreds > 0) / greatest(sumIf(r.total_shreds, r.total_shreds > 0), 1) AS lead_p95_ms
-		FROM %s.slot_feed_races r
-		INNER JOIN (
-			SELECT DISTINCT node_id, slot
-			FROM %s.slot_feed_races
-			WHERE feed_type = 'shred' AND feed = 'dz' %s
-		) dz ON r.node_id = dz.node_id AND r.slot = dz.slot
-		WHERE r.feed_type = 'shred' %s
-		GROUP BY r.node_id, r.feed
+			node_id,
+			feed,
+			shreds_won,
+			total_shreds,
+			round(shreds_won / max_total * 100, 1) AS win_rate_pct
+		FROM (
+			SELECT
+				r.node_id,
+				r.feed,
+				SUM(r.shreds_won) AS shreds_won,
+				SUM(r.total_shreds) AS total_shreds,
+				MAX(SUM(r.total_shreds)) OVER (PARTITION BY r.node_id) AS max_total
+			FROM %s.slot_feed_races AS r FINAL
+			INNER JOIN (
+				SELECT DISTINCT node_id, slot
+				FROM %s.slot_feed_races FINAL
+				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = '' %s
+			) dz ON r.node_id = dz.node_id AND r.slot = dz.slot
+			WHERE r.feed_type = 'shred' AND r.loser_feed = '' %s
+			GROUP BY r.node_id, r.feed
+		)
 	`, shredderDB, shredderDB, timeFilter, timeFilter)
 
 	start = time.Now()
@@ -172,19 +203,78 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 
 	for rows2.Next() {
 		var nodeID, feed string
-		var fs EdgeScoreboardFeedStats
-		if err := rows2.Scan(&nodeID, &feed, &fs.ShredsWon, &fs.TotalShreds, &fs.LeadP50Ms, &fs.LeadP95Ms); err != nil {
+		var shredsWon, totalShreds uint64
+		var winRatePct float64
+		if err := rows2.Scan(&nodeID, &feed, &shredsWon, &totalShreds, &winRatePct); err != nil {
 			log.Printf("EdgeScoreboard query2 scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if fs.TotalShreds > 0 {
-			fs.WinRatePct = float64(fs.ShredsWon) / float64(fs.TotalShreds) * 100
+		feedStats[feedKey{nodeID, feed}] = &EdgeScoreboardFeedStats{
+			ShredsWon:   shredsWon,
+			TotalShreds: totalShreds,
+			WinRatePct:  winRatePct,
 		}
-		feedStats[feedKey{nodeID, feed}] = &fs
 	}
 	if err := rows2.Err(); err != nil {
 		log.Printf("EdgeScoreboard query2 rows error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Query 2b: Pairwise lead times from lead-time rows (loser_feed != '')
+	// Uses quantile() to aggregate per-slot percentiles across slots — never AVG.
+	// No DZ-slot join needed: lead time rows only exist when both feeds delivered
+	// the same shred, so sample counts naturally reflect coverage overlap.
+	// Uses FINAL for dedup safety.
+	query2b := fmt.Sprintf(`
+		SELECT
+			node_id,
+			feed,
+			loser_feed,
+			count() AS slot_count,
+			quantile(0.5)(lead_time_p50_ms) AS p50_ms,
+			quantile(0.5)(lead_time_p95_ms) AS p95_ms
+		FROM %s.slot_feed_races FINAL
+		WHERE feed_type = 'shred' AND loser_feed != '' %s
+		GROUP BY node_id, feed, loser_feed
+	`, shredderDB, timeFilter)
+
+	start = time.Now()
+	rows2b, err := envDB(ctx).Query(ctx, query2b)
+	duration = time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+	if err != nil {
+		log.Printf("EdgeScoreboard query2b error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows2b.Close()
+
+	for rows2b.Next() {
+		var nodeID, feed, loserFeed string
+		var slotCount uint64
+		var p50, p95 float64
+		if err := rows2b.Scan(&nodeID, &feed, &loserFeed, &slotCount, &p50, &p95); err != nil {
+			log.Printf("EdgeScoreboard query2b scan error: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		key := feedKey{nodeID, feed}
+		fs, ok := feedStats[key]
+		if !ok {
+			fs = &EdgeScoreboardFeedStats{}
+			feedStats[key] = fs
+		}
+		fs.LeadTimes = append(fs.LeadTimes, EdgeScoreboardLeadTime{
+			LoserFeed: loserFeed,
+			P50Ms:     p50,
+			P95Ms:     p95,
+			SlotCount: slotCount,
+		})
+	}
+	if err := rows2b.Err(); err != nil {
+		log.Printf("EdgeScoreboard query2b rows error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -210,7 +300,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	if len(locationCodes) > 0 {
 		codes := make([]string, 0, len(locationCodes))
 		for code := range locationCodes {
-			codes = append(codes, code)
+			codes = append(codes, strings.ToLower(code))
 		}
 
 		query3 := `SELECT code, name, latitude, longitude FROM dz_metros_current WHERE code IN (?)`
@@ -233,7 +323,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			metros[code] = &metroInfo{name: name, latitude: lat, longitude: lon}
+			metros[strings.ToUpper(code)] = &metroInfo{name: name, latitude: lat, longitude: lon}
 		}
 		if err := rows3.Err(); err != nil {
 			log.Printf("EdgeScoreboard query3 rows error: %v", err)
@@ -269,6 +359,9 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		// Attach feed stats
 		for key, fs := range feedStats {
 			if key.nodeID == nodeID {
+				if fs.LeadTimes == nil {
+					fs.LeadTimes = []EdgeScoreboardLeadTime{}
+				}
 				node.Feeds[key.feed] = fs
 			}
 		}
@@ -285,6 +378,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		Window:          window,
 		GeneratedAt:     time.Now().UTC(),
 		CurrentEpoch:    globalMaxEpoch,
+		CurrentSlot:     globalMaxSlot,
 		TotalSlots:      totalSlots,
 		DZSlots:         dzSlots,
 		CompletenessPct: completenessPct,

@@ -2,12 +2,13 @@ import { useMemo, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { Trophy, Info } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
   fetchEdgeScoreboard,
   type EdgeScoreboardNode,
+  type EdgeScoreboardFeedStats,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
@@ -24,13 +25,30 @@ function formatPct(v: number): string {
 }
 
 function formatMs(v: number): string {
-  if (v < 1) return '<1ms'
-  if (v >= 1000) return `${(v / 1000).toFixed(1)}s`
-  return `${v.toFixed(1)}ms`
+  if (v < 0.01) return '<0.01ms'
+  if (v >= 1000) return `${(v / 1000).toFixed(2)}s`
+  return `${v.toFixed(2)}ms`
 }
 
 function formatNumber(v: number): string {
   return v.toLocaleString()
+}
+
+/**
+ * Get the tightest DZ lead time across all losers (min p50/p95).
+ * Each lead time is already aggregated via quantile() on the server.
+ * We pick the minimum across competitors — the closest race — as the
+ * representative summary value. This avoids averaging percentiles.
+ */
+function getDzLead(feed: EdgeScoreboardFeedStats | undefined): { p50: number; p95: number } {
+  if (!feed?.lead_times?.length) return { p50: 0, p95: 0 }
+  let minP50 = Infinity
+  let minP95 = Infinity
+  for (const lt of feed.lead_times) {
+    if (lt.p50_ms < minP50) minP50 = lt.p50_ms
+    if (lt.p95_ms < minP95) minP95 = lt.p95_ms
+  }
+  return { p50: minP50 === Infinity ? 0 : minP50, p95: minP95 === Infinity ? 0 : minP95 }
 }
 
 function Skeleton({ className }: { className?: string }) {
@@ -64,35 +82,108 @@ function SummaryCard({ label, value, sub }: { label: string; value: string; sub?
   )
 }
 
-function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
-  const chartData = useMemo(() =>
-    [...nodes]
-      .map(n => ({
-        location: n.location,
-        winRate: n.feeds['dz']?.win_rate_pct ?? 0,
-      }))
-      .sort((a, b) => b.winRate - a.winRate),
-    [nodes]
-  )
+const FEED_COLORS: Record<string, string> = {
+  dz: '#22c55e',
+  jito: '#3b82f6',
+  turbine: '#f59e0b',
+  pipe: '#a855f7',
+}
 
-  if (chartData.length === 0) return null
+const FEED_LABELS: Record<string, string> = {
+  dz: 'Edge Direct',
+  jito: 'Jito',
+  turbine: 'Turbine',
+  pipe: 'Pipe',
+}
+
+const SLOTS_PER_EPOCH = 432_000
+
+function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
+  const slotInEpoch = slot % SLOTS_PER_EPOCH
+  const pct = (slotInEpoch / SLOTS_PER_EPOCH) * 100
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-medium">
+          Epoch {epoch.toLocaleString()}
+        </div>
+        <div className="text-sm text-muted-foreground tabular-nums">
+          Slot {slotInEpoch.toLocaleString()} / {SLOTS_PER_EPOCH.toLocaleString()} ({pct.toFixed(1)}%)
+        </div>
+      </div>
+      <div className="h-2 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
+  const chartData = useMemo(() => {
+    // Collect all feed names across nodes
+    const feedSet = new Set<string>()
+    for (const n of nodes) {
+      for (const f of Object.keys(n.feeds)) feedSet.add(f)
+    }
+    // Sort feeds: dz first, then alphabetical
+    const feeds = [...feedSet].sort((a, b) => {
+      if (a === 'dz') return -1
+      if (b === 'dz') return 1
+      return a.localeCompare(b)
+    })
+
+    const data = [...nodes]
+      .map(n => {
+        const row: Record<string, string | number> = { location: n.location }
+        for (const f of feeds) {
+          row[f] = n.feeds[f]?.win_rate_pct ?? 0
+        }
+        return row
+      })
+      .sort((a, b) => (Number(b['dz'] ?? 0)) - (Number(a['dz'] ?? 0)))
+
+    return { data, feeds }
+  }, [nodes])
+
+  if (chartData.data.length === 0) return null
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="text-sm font-medium mb-4">Win Rate by Node</h3>
-      <ResponsiveContainer width="100%" height={Math.max(200, chartData.length * 48)}>
-        <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-medium">Win Rate by Node</h3>
+        <div className="flex items-center gap-3">
+          {chartData.feeds.map(f => (
+            <div key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+              {FEED_LABELS[f] ?? f}
+            </div>
+          ))}
+        </div>
+      </div>
+      <ResponsiveContainer width="100%" height={Math.max(200, chartData.data.length * 48)}>
+        <BarChart data={chartData.data} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
           <XAxis type="number" domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} fontSize={12} />
           <YAxis type="category" dataKey="location" width={48} fontSize={12} />
           <Tooltip
-            formatter={(value: number | string | undefined) => [`${Number(value ?? 0).toFixed(1)}%`, 'DZ Win Rate']}
+            formatter={(value: number | string | undefined, name?: string) => [
+              `${Number(value ?? 0).toFixed(1)}%`,
+              FEED_LABELS[name ?? ''] ?? name ?? '',
+            ]}
             contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }}
           />
-          <Bar dataKey="winRate" radius={[0, 4, 4, 0]}>
-            {chartData.map((entry, i) => (
-              <Cell key={i} fill={entry.winRate >= 50 ? '#22c55e' : '#f59e0b'} />
-            ))}
-          </Bar>
+          {chartData.feeds.map((f, i) => (
+            <Bar
+              key={f}
+              dataKey={f}
+              stackId="winrate"
+              fill={FEED_COLORS[f] ?? '#6b7280'}
+              radius={i === chartData.feeds.length - 1 ? [0, 4, 4, 0] : undefined}
+            />
+          ))}
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -136,11 +227,18 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         }],
       },
       center: [0, 30],
-      zoom: 1.5,
+      zoom: 1,
       attributionControl: false,
     })
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right')
+
+    // Fit map to show all node markers
+    const bounds = new maplibregl.LngLatBounds()
+    for (const node of nodesWithCoords) {
+      bounds.extend([node.longitude, node.latitude])
+    }
+    map.fitBounds(bounds, { padding: 60, maxZoom: 8 })
 
     for (const node of nodesWithCoords) {
       const dz = node.feeds['dz']
@@ -217,8 +315,9 @@ export function EdgeScoreboardPage() {
       if (!dz) continue
       dzShredsWon += dz.shreds_won
       dzTotalShreds += dz.total_shreds
-      weightedLeadP50 += dz.lead_p50_ms * node.slots_observed
-      weightedLeadP95 += dz.lead_p95_ms * node.slots_observed
+      const lead = getDzLead(dz)
+      weightedLeadP50 += lead.p50 * node.slots_observed
+      weightedLeadP95 += lead.p95 * node.slots_observed
       totalSlots += node.slots_observed
     }
 
@@ -307,13 +406,18 @@ export function EdgeScoreboardPage() {
           </div>
         </div>
 
+        {/* Epoch progress */}
+        {data && data.current_epoch > 0 && (
+          <EpochProgress epoch={data.current_epoch} slot={data.current_slot} />
+        )}
+
         {/* Summary cards */}
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
-            <SummaryCard label="Avg Completeness" value={formatPct(globalStats.avgCompleteness)} />
-            <SummaryCard label="DZ Win Rate" value={formatPct(globalStats.winRate)} />
-            <SummaryCard label="DZ Lead p50" value={formatMs(globalStats.leadP50)} />
-            <SummaryCard label="DZ Lead p95" value={formatMs(globalStats.leadP95)} />
+            <SummaryCard label="Edge Direct Completeness" value={formatPct(globalStats.avgCompleteness)} />
+            <SummaryCard label="Edge Direct Win Rate" value={formatPct(globalStats.winRate)} />
+            <SummaryCard label="Edge Direct Lead (p50)" value={formatMs(globalStats.leadP50)} />
+            <SummaryCard label="Edge Direct Lead (p95)" value={formatMs(globalStats.leadP95)} />
             <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} />
           </div>
         )}
@@ -370,6 +474,7 @@ function NodeRow({ node }: { node: EdgeScoreboardNode }) {
   const jito = node.feeds['jito']
   const turbine = node.feeds['turbine']
   const pipe = node.feeds['pipe']
+  const dzLead = getDzLead(dz)
   const completeness = node.total_slots > 0 ? (node.slots_observed / node.total_slots) * 100 : 0
 
   const updated = new Date(node.last_updated)
@@ -386,10 +491,10 @@ function NodeRow({ node }: { node: EdgeScoreboardNode }) {
         {dz ? formatPct(dz.win_rate_pct) : '—'}
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">
-        {dz ? formatMs(dz.lead_p50_ms) : '—'}
+        {dz ? formatMs(dzLead.p50) : '—'}
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">
-        {dz ? formatMs(dz.lead_p95_ms) : '—'}
+        {dz ? formatMs(dzLead.p95) : '—'}
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">
         {jito ? formatPct(jito.win_rate_pct) : '—'}
