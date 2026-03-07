@@ -769,6 +769,11 @@ export function LinkStatusTimelines({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, linksWithIssues, linksWithHealth])
 
+  const drainedCount = useMemo(() => {
+    if (!data?.links) return 0
+    return data.links.filter(link => link.drained).length
+  }, [data?.links])
+
   if (isLoading) {
     return (
       <div className="border border-border rounded-lg p-6 flex items-center justify-center">
@@ -823,7 +828,7 @@ export function LinkStatusTimelines({
                   </svg>
                 )}
               </div>
-              <span className={showDrained ? 'text-foreground' : 'text-muted-foreground'}>Show Drained</span>
+              <span className={showDrained ? 'text-foreground' : 'text-muted-foreground'}>Show Drained ({drainedCount})</span>
             </button>
           )}
           {onTimeRangeChange && (
