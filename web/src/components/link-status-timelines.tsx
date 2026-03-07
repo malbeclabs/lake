@@ -577,7 +577,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {issueReasons.includes('down') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(17, 24, 39, 0.15)', color: '#111827' }}>Down</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Down</span>
                 )}
                 {issueReasons.includes('packet_loss') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' }}>Loss</span>
@@ -592,7 +592,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>Extended Loss</span>
                 )}
                 {issueReasons.includes('drained') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(100, 116, 139, 0.15)', color: '#475569' }}>Drained</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-slate-500/15 text-slate-600 dark:bg-slate-400/20 dark:text-slate-300">Drained</span>
                 )}
                 {issueReasons.includes('no_data') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
