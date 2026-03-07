@@ -830,7 +830,7 @@ export function LinkStatusTimelines({
                   </svg>
                 )}
               </div>
-              <span className={showDrained ? 'text-foreground' : 'text-muted-foreground'}>Show Drained ({drainedCount})</span>
+              <span className={showDrained ? 'text-foreground' : 'text-muted-foreground'}>Drained ({drainedCount})</span>
             </button>
           )}
           {onTimeRangeChange && (
