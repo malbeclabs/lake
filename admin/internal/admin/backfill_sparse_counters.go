@@ -224,11 +224,11 @@ func streamSparseChunk(
 		r.deltas = make(map[string]*int64)
 
 		var (
-			inDiscards, inErrors, inFCSErrors       *int64
-			outDiscards, outErrors                   *int64
-			inDiscardsDelta, inErrorsDelta           *int64
-			inFCSErrorsDelta, outDiscardsDelta       *int64
-			outErrorsDelta                           *int64
+			inDiscards, inErrors, inFCSErrors  *int64
+			outDiscards, outErrors             *int64
+			inDiscardsDelta, inErrorsDelta     *int64
+			inFCSErrorsDelta, outDiscardsDelta *int64
+			outErrorsDelta                     *int64
 		)
 
 		err := rows.Scan(
