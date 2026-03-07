@@ -442,9 +442,9 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
   const chartData = hours.map(h => ({
     time: new Date(h.hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     fullTime: h.hour,
-    total: h.avg_loss_pct,
-    A: h.side_a_loss_pct ?? 0,
-    Z: h.side_z_loss_pct ?? 0,
+    total: h.status === 'no_data' ? undefined : h.avg_loss_pct,
+    A: h.status === 'no_data' ? undefined : (h.side_a_loss_pct ?? 0),
+    Z: h.status === 'no_data' ? undefined : (h.side_z_loss_pct ?? 0),
   }))
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -517,9 +517,9 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
             <XAxis dataKey="time" tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={{ stroke: gridColor }} interval="preserveStartEnd" minTickGap={50} />
             <YAxis tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={false} width={40} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
             <RechartsTooltip content={<CustomTooltip />} />
-            {enabledSeries.has('total') && <Line type="monotone" dataKey="total" stroke={SERIES_CONFIG.total.color} strokeWidth={2} dot={false} connectNulls />}
-            {enabledSeries.has('A') && availableSeries.has('A') && <Line type="monotone" dataKey="A" stroke={SERIES_CONFIG.A.color} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls />}
-            {enabledSeries.has('Z') && availableSeries.has('Z') && <Line type="monotone" dataKey="Z" stroke={SERIES_CONFIG.Z.color} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls />}
+            {enabledSeries.has('total') && <Line type="monotone" dataKey="total" stroke={SERIES_CONFIG.total.color} strokeWidth={2} dot={false} />}
+            {enabledSeries.has('A') && availableSeries.has('A') && <Line type="monotone" dataKey="A" stroke={SERIES_CONFIG.A.color} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />}
+            {enabledSeries.has('Z') && availableSeries.has('Z') && <Line type="monotone" dataKey="Z" stroke={SERIES_CONFIG.Z.color} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />}
           </LineChart>
         </ResponsiveContainer>
       </div>
