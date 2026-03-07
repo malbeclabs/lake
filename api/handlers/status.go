@@ -1140,7 +1140,14 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	// Cache miss - fetch fresh data
 	w.Header().Set("X-Cache", "MISS")
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	timeout := 20 * time.Second
+	switch timeRange {
+	case "3d":
+		timeout = 40 * time.Second
+	case "7d":
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	resp, err := fetchLinkHistoryData(ctx, timeRange, requestedBuckets)
@@ -1345,6 +1352,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	if err := historyRows.Err(); err != nil {
 		return nil, fmt.Errorf("history rows iteration error: %w", err)
 	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("context cancelled during history query: %w", ctx.Err())
+	}
 
 	// Compute aggregate stats for each bucket (combining both directions)
 	linkBuckets := make(map[string][]bucketStats)
@@ -1441,6 +1451,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	if err := interfaceRows.Err(); err != nil {
 		return nil, fmt.Errorf("interface rows iteration error: %w", err)
 	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("context cancelled during interface query: %w", ctx.Err())
+	}
 
 	// Get utilization per link per bucket (traffic rate / capacity)
 	utilizationQuery := `
@@ -1490,6 +1503,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	}
 	if err := utilizationRows.Err(); err != nil {
 		return nil, fmt.Errorf("utilization rows iteration error: %w", err)
+	}
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("context cancelled during utilization query: %w", ctx.Err())
 	}
 
 	// Get historical link status per bucket from dim_dz_links_history
