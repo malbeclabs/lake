@@ -1645,9 +1645,13 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			historicalStatus, hasHistory := linkStatusHistory[histKey]
 			wasDrained := hasHistory && (historicalStatus == "soft-drained" || historicalStatus == "hard-drained")
 
-			// Also treat as drained if link is currently drained and no history overrides it
+			// If link is currently drained and history doesn't have an entry for this bucket,
+			// check if there's latency data — if there is, use it (link may not have been
+			// drained yet). If there's no data either, show as disabled.
 			if !hasHistory && isCurrentlyDrained {
-				wasDrained = true
+				if _, hasData := bucketMap[key]; !hasData {
+					wasDrained = true
+				}
 			}
 
 			// If link was drained at this time, show as disabled
