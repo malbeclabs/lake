@@ -16,6 +16,8 @@ interface LinkStatusTimelinesProps {
   onTimeRangeChange?: (range: TimeRange) => void
   issueFilters?: string[]
   healthFilters?: string[]
+  showDrained?: boolean
+  onShowDrainedChange?: (show: boolean) => void
   linksWithIssues?: Map<string, string[]>  // Map of link code -> issue reasons (from filter time range)
   linksWithHealth?: Map<string, string>    // Map of link code -> health status (from filter time range)
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>  // Map of link code -> criticality level
@@ -588,9 +590,6 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
                 {issueReasons.includes('high_utilization') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#4f46e5' }}>High Utilization</span>
                 )}
-                {issueReasons.includes('drained') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-slate-500/15 text-slate-600 dark:bg-slate-400/20 dark:text-slate-300">Drained</span>
-                )}
                 {issueReasons.includes('no_data') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
                 )}
@@ -655,8 +654,10 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
 export function LinkStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'drained', 'interface_errors', 'discards', 'carrier_transitions'],
+  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'discards', 'carrier_transitions'],
   healthFilters = ['healthy', 'degraded', 'unhealthy', 'disabled'],
+  showDrained = false,
+  onShowDrainedChange,
   linksWithIssues,
   linksWithHealth,
   criticalityMap,
@@ -730,11 +731,11 @@ export function LinkStatusTimelines({
         return false
       }
 
-      // Check if link matches issue filters
-      // Drained takes precedence: if link is drained and drained filter is off, always hide
-      if (issueReasons.includes('drained') && !issueTypesSelected.includes('drained')) {
+      // Hide drained links unless showDrained is enabled
+      if (issueReasons.includes('drained') && !showDrained) {
         return false
       }
+
       const matchesIssue = hasIssues
         ? issueReasons.some(reason => issueTypesSelected.includes(reason))
         : noIssuesSelected
@@ -766,7 +767,7 @@ export function LinkStatusTimelines({
       return bIndex - aIndex
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, linksWithIssues, linksWithHealth])
+  }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, linksWithIssues, linksWithHealth])
 
   if (isLoading) {
     return (
@@ -809,23 +810,37 @@ export function LinkStatusTimelines({
             ({filteredLinks.length} link{filteredLinks.length !== 1 ? 's' : ''})
           </span>
         </h3>
-        {onTimeRangeChange && (
-          <div className="inline-flex rounded-lg border border-border bg-background/50 p-0.5 ml-auto">
-            {timeRangeOptions.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => onTimeRangeChange(opt.value)}
-                className={`px-2.5 py-0.5 text-xs rounded-md transition-colors ${
-                  timeRange === opt.value
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-2 ml-auto">
+          {onShowDrainedChange && (
+            <button
+              onClick={() => onShowDrainedChange(!showDrained)}
+              className={`px-2.5 py-0.5 text-xs rounded-md border transition-colors ${
+                showDrained
+                  ? 'bg-background text-foreground border-border shadow-sm'
+                  : 'text-muted-foreground border-transparent hover:text-foreground'
+              }`}
+            >
+              Show Drained
+            </button>
+          )}
+          {onTimeRangeChange && (
+            <div className="inline-flex rounded-lg border border-border bg-background/50 p-0.5">
+              {timeRangeOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => onTimeRangeChange(opt.value)}
+                  className={`px-2.5 py-0.5 text-xs rounded-md transition-colors ${
+                    timeRange === opt.value
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Legend */}
