@@ -8,6 +8,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/joho/godotenv"
 	"github.com/malbeclabs/doublezero/config"
 	"github.com/malbeclabs/lake/admin/internal/admin"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
@@ -93,6 +94,10 @@ func run() error {
 	pgMigrateStatusFlag := flag.Bool("pg-migrate-status", false, "Show PostgreSQL migration status")
 
 	flag.Parse()
+
+	// Load .env file. godotenv does not override existing env vars, so
+	// explicitly set env vars take precedence.
+	_ = godotenv.Load()
 
 	log := logger.New(*verboseFlag)
 
