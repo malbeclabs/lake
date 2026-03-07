@@ -588,9 +588,6 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
                 {issueReasons.includes('high_utilization') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#4f46e5' }}>High Utilization</span>
                 )}
-                {issueReasons.includes('extended_loss') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>Extended Loss</span>
-                )}
                 {issueReasons.includes('drained') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-slate-500/15 text-slate-600 dark:bg-slate-400/20 dark:text-slate-300">Drained</span>
                 )}
@@ -658,7 +655,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
 export function LinkStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'interface_errors', 'discards', 'carrier_transitions'],
+  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'drained', 'interface_errors', 'discards', 'carrier_transitions'],
   healthFilters = ['healthy', 'degraded', 'unhealthy', 'disabled'],
   linksWithIssues,
   linksWithHealth,
@@ -734,6 +731,10 @@ export function LinkStatusTimelines({
       }
 
       // Check if link matches issue filters
+      // Drained takes precedence: if link is drained and drained filter is off, always hide
+      if (issueReasons.includes('drained') && !issueTypesSelected.includes('drained')) {
+        return false
+      }
       const matchesIssue = hasIssues
         ? issueReasons.some(reason => issueTypesSelected.includes(reason))
         : noIssuesSelected
@@ -842,12 +843,16 @@ export function LinkStatusTimelines({
           <span>Unhealthy</span>
         </div>
         <div className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-sm bg-gray-500 dark:bg-gray-600" />
+          <span>Down</span>
+        </div>
+        <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-sm bg-transparent border border-gray-200 dark:border-gray-700" />
           <span>No Data</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-sm bg-gray-500 dark:bg-gray-700" />
-          <span>Disabled</span>
+          <span>Drained</span>
         </div>
       </div>
 

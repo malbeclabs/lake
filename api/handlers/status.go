@@ -1781,13 +1781,14 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			}
 		}
 
-		// Post-process: treat consecutive 100% loss for 2+ hours as disabled
-		bucketsFor2Hours := 120 / bucketMinutes
-		if bucketsFor2Hours < 1 {
-			bucketsFor2Hours = 1
+		// Post-process: treat consecutive 100% loss for 10+ minutes as down
+		// (consistent with is_down which uses a 5-minute window)
+		bucketsForDown := 10 / bucketMinutes
+		if bucketsForDown < 1 {
+			bucketsForDown = 1
 		}
 
-		// Find runs of 100% loss and mark as disabled if >= 2 hours
+		// Find runs of 100% loss and mark as down if >= 10 minutes
 		i := 0
 		for i < len(hourStatuses) {
 			// Find start of a 100% loss run
@@ -1798,39 +1799,26 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 					i++
 				}
 				runLength := i - runStart
-				// If run is >= 2 hours, mark all as disabled
-				if runLength >= bucketsFor2Hours {
+				// If run is >= 10 minutes, mark all as down
+				if runLength >= bucketsForDown {
 					for j := runStart; j < i; j++ {
-						hourStatuses[j].Status = "disabled"
+						hourStatuses[j].Status = "down"
 					}
-					issueReasons["extended_loss"] = true
+					// Absorb adjacent buckets with any loss at the edges (transition buckets)
+					for runStart > 0 && hourStatuses[runStart-1].AvgLossPct > 0 && hourStatuses[runStart-1].Status != "disabled" {
+						runStart--
+						hourStatuses[runStart].Status = "down"
+					}
+					for i < len(hourStatuses) && hourStatuses[i].AvgLossPct > 0 && hourStatuses[i].Status != "disabled" {
+						hourStatuses[i].Status = "down"
+						i++
+					}
+					issueReasons["down"] = true
 				}
 			} else {
 				i++
 			}
 		}
-
-		// If all packet loss buckets are now disabled, remove packet_loss from reasons
-		// (extended_loss is a more accurate classification for extended outages)
-		if issueReasons["extended_loss"] && issueReasons["packet_loss"] {
-			hasNonDisabledLoss := false
-			for _, h := range hourStatuses {
-				if h.AvgLossPct >= LossWarningPct && h.Status != "disabled" {
-					hasNonDisabledLoss = true
-					break
-				}
-			}
-			if !hasNonDisabledLoss {
-				delete(issueReasons, "packet_loss")
-			}
-		}
-
-		// Update issue reasons list after potential disabled additions
-		issueReasonsList = nil
-		for reason := range issueReasons {
-			issueReasonsList = append(issueReasonsList, reason)
-		}
-		sort.Strings(issueReasonsList)
 
 		isDown := downLinkPKs[pk] && !isCurrentlyDrained
 		if isDown {

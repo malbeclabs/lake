@@ -12,7 +12,7 @@ import { DeviceStatusTimelines } from '@/components/device-status-timelines'
 import { MetroStatusTimelines, type MetroHealthFilter, type MetroIssueFilter } from '@/components/metro-status-timelines'
 
 type TimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
-type IssueFilter = 'packet_loss' | 'high_latency' | 'extended_loss' | 'drained' | 'no_data' | 'interface_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'down' | 'no_issues'
+type IssueFilter = 'packet_loss' | 'high_latency' | 'drained' | 'no_data' | 'interface_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'down' | 'no_issues'
 type DeviceIssueFilter = 'interface_errors' | 'discards' | 'carrier_transitions' | 'drained' | 'no_issues'
 type HealthFilter = 'healthy' | 'degraded' | 'unhealthy' | 'disabled'
 
@@ -58,7 +58,6 @@ interface IssueCounts {
   packet_loss: number
   high_latency: number
   high_utilization: number
-  extended_loss: number
   drained: number
   no_data: number
   interface_errors: number
@@ -630,7 +629,6 @@ function TabNavigation({ activeTab }: { activeTab: 'links' | 'devices' | 'metros
 interface HealthIssueBreakdown {
   packet_loss: number
   high_latency: number
-  extended_loss: number
   drained: number
   no_data: number
   interface_errors: number
@@ -678,14 +676,13 @@ function HealthFilterItem({
   const [showTooltip, setShowTooltip] = useState(false)
 
   const issueLabels: { key: keyof HealthIssueBreakdown; label: string; color: string }[] = [
-    { key: 'down', label: 'Down', color: 'bg-gray-900 dark:bg-gray-950' },
+    { key: 'down', label: 'Down', color: 'bg-gray-500 dark:bg-gray-600' },
     { key: 'packet_loss', label: 'Packet Loss', color: 'bg-purple-500' },
     { key: 'high_latency', label: 'High Latency', color: 'bg-blue-500' },
     { key: 'high_utilization', label: 'High Utilization', color: 'bg-indigo-500' },
     { key: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-yellow-500' },
     { key: 'discards', label: 'Discards', color: 'bg-teal-500' },
     { key: 'interface_errors', label: 'Errors', color: 'bg-red-500' },
-    { key: 'extended_loss', label: 'Extended Loss', color: 'bg-orange-500' },
     { key: 'drained', label: 'Drained', color: 'bg-slate-500' },
     { key: 'no_data', label: 'No Data', color: 'bg-pink-500' },
   ]
@@ -792,7 +789,6 @@ interface IssuesByHealth {
 interface HealthByIssue {
   packet_loss: IssueHealthBreakdown
   high_latency: IssueHealthBreakdown
-  extended_loss: IssueHealthBreakdown
   drained: IssueHealthBreakdown
   no_data: IssueHealthBreakdown
   interface_errors: IssueHealthBreakdown
@@ -931,7 +927,7 @@ function LinkIssuesFilterCard({
   healthByIssue?: HealthByIssue
   timeRange: TimeRange
 }) {
-  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'down', 'no_data', 'interface_errors', 'discards', 'carrier_transitions', 'no_issues']
+  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'drained', 'down', 'no_data', 'interface_errors', 'discards', 'carrier_transitions', 'no_issues']
 
   const toggleFilter = (filter: IssueFilter) => {
     if (selected.includes(filter)) {
@@ -952,8 +948,7 @@ function LinkIssuesFilterCard({
     { filter: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-yellow-500', description: 'Carrier transitions (interface up/down) on link endpoints.' },
     { filter: 'discards', label: 'Discards', color: 'bg-teal-500', description: 'Interface discards detected on link endpoints.' },
     { filter: 'interface_errors', label: 'Errors', color: 'bg-red-500', description: 'Interface errors detected on link endpoints.' },
-    { filter: 'extended_loss', label: 'Extended Loss', color: 'bg-orange-500', description: 'Link has 100% packet loss for 2+ hours.' },
-    { filter: 'down', label: 'Down', color: 'bg-gray-900 dark:bg-gray-950', description: 'Link is currently down (100% packet loss in all recent samples).' },
+    { filter: 'down', label: 'Down', color: 'bg-gray-500 dark:bg-gray-600', description: 'Link is down (100% packet loss).' },
     { filter: 'drained', label: 'Drained', color: 'bg-slate-500 dark:bg-slate-600', description: 'Link is soft-drained, hard-drained, or has ISIS delay override.' },
     { filter: 'no_data', label: 'No Data', color: 'bg-pink-500', description: 'No telemetry received for this link.' },
     { filter: 'no_issues', label: 'No Issues', color: 'bg-cyan-500', description: 'Link with no detected issues in the time range.' },
@@ -977,7 +972,6 @@ function LinkIssuesFilterCard({
   const grandTotal = (counts.total + counts.no_issues) || 1
   const packetLossPct = (counts.packet_loss / grandTotal) * 100
   const highLatencyPct = (counts.high_latency / grandTotal) * 100
-  const extendedLossPct = (counts.extended_loss / grandTotal) * 100
   const downPct = (counts.down / grandTotal) * 100
   const drainedPct = (counts.drained / grandTotal) * 100
   const noDataPct = (counts.no_data / grandTotal) * 100
@@ -1018,15 +1012,9 @@ function LinkIssuesFilterCard({
             style={{ width: `${highLatencyPct}%` }}
           />
         )}
-        {extendedLossPct > 0 && (
-          <div
-            className={`bg-orange-500 h-full transition-all ${!selected.includes('extended_loss') ? 'opacity-30' : ''}`}
-            style={{ width: `${extendedLossPct}%` }}
-          />
-        )}
         {downPct > 0 && (
           <div
-            className={`bg-gray-900 dark:bg-gray-950 h-full transition-all ${!selected.includes('down') ? 'opacity-30' : ''}`}
+            className={`bg-gray-500 dark:bg-gray-600 h-full transition-all ${!selected.includes('down') ? 'opacity-30' : ''}`}
             style={{ width: `${downPct}%` }}
           />
         )}
@@ -1486,7 +1474,7 @@ function useBucketCount() {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusResponse; linkHistory: any; criticalLinks: CriticalLinksResponse | undefined }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'extended_loss', 'drained', 'down', 'interface_errors', 'discards', 'carrier_transitions'])
+  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'down', 'interface_errors', 'discards', 'carrier_transitions'])
   const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy', 'disabled'])
 
   // Get search filters from URL
@@ -1588,7 +1576,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       packet_loss: 0,
       high_latency: 0,
       high_utilization: 0,
-      extended_loss: 0,
       drained: 0,
       no_data: 0,
       interface_errors: 0,
@@ -1618,7 +1605,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (issues.includes('packet_loss')) breakdown.packet_loss++
       if (issues.includes('high_latency')) breakdown.high_latency++
       if (issues.includes('high_utilization')) breakdown.high_utilization++
-      if (issues.includes('extended_loss')) breakdown.extended_loss++
       if (issues.includes('drained')) breakdown.drained++
       if (issues.includes('no_data')) breakdown.no_data++
       if (issues.includes('interface_errors')) breakdown.interface_errors++
@@ -1643,7 +1629,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       packet_loss: emptyBreakdown(),
       high_latency: emptyBreakdown(),
       high_utilization: emptyBreakdown(),
-      extended_loss: emptyBreakdown(),
       drained: emptyBreakdown(),
       no_data: emptyBreakdown(),
       interface_errors: emptyBreakdown(),
@@ -1667,7 +1652,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
         if (issues.includes('packet_loss')) result.packet_loss[health]++
         if (issues.includes('high_latency')) result.high_latency[health]++
         if (issues.includes('high_utilization')) result.high_utilization[health]++
-        if (issues.includes('extended_loss')) result.extended_loss[health]++
         if (issues.includes('drained')) result.drained[health]++
         if (issues.includes('no_data')) result.no_data[health]++
         if (issues.includes('interface_errors')) result.interface_errors[health]++
@@ -1683,17 +1667,16 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Issue counts from filter time range
   const issueCounts = useMemo((): IssueCounts => {
     if (!filteredLinkHistory?.links) {
-      return { packet_loss: 0, high_latency: 0, high_utilization: 0, extended_loss: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
+      return { packet_loss: 0, high_latency: 0, high_utilization: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
     }
 
-    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, extended_loss: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
+    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, drained: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
     const seenLinks = new Set<string>()
 
     for (const link of filteredLinkHistory.links) {
       if (link.issue_reasons?.includes('packet_loss')) counts.packet_loss++
       if (link.issue_reasons?.includes('high_latency')) counts.high_latency++
       if (link.issue_reasons?.includes('high_utilization')) counts.high_utilization++
-      if (link.issue_reasons?.includes('extended_loss')) counts.extended_loss++
       if (link.issue_reasons?.includes('drained')) counts.drained++
       if (link.issue_reasons?.includes('no_data')) counts.no_data++
       if (link.issue_reasons?.includes('interface_errors')) counts.interface_errors++

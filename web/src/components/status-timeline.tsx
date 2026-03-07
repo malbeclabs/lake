@@ -36,7 +36,7 @@ const statusColors: Record<string, string> = {
   healthy: 'bg-green-500',
   degraded: 'bg-amber-500',
   unhealthy: 'bg-red-500',
-  down: 'bg-gray-900 dark:bg-gray-950',
+  down: 'bg-gray-500 dark:bg-gray-700',
   no_data: 'bg-transparent border border-gray-200 dark:border-gray-700',
   disabled: 'bg-gray-500 dark:bg-gray-700',
 }
