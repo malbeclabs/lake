@@ -1102,7 +1102,7 @@ type LinkHistory struct {
 	IsDown         bool             `json:"is_down"`
 	Drained        bool             `json:"drained,omitempty"`
 	Hours          []LinkHourStatus `json:"hours"`
-	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization", "down"
+	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization"
 }
 
 type LinkHistoryResponse struct {
@@ -1859,9 +1859,6 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 
 		isDown := downLinkPKs[pk] && !isCurrentlyDrained
-		if isDown {
-			issueReasons["down"] = true
-		}
 
 		// Convert issue reasons to slice (after all tracking is complete)
 		var issueReasonsList []string

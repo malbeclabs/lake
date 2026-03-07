@@ -578,9 +578,6 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
             </div>
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
-                {issueReasons.includes('down') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Down</span>
-                )}
                 {issueReasons.includes('packet_loss') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' }}>Loss</span>
                 )}
