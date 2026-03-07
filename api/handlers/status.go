@@ -1163,6 +1163,22 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// snapBucketMinutes rounds the bucket size to a clean interval that divides
+// evenly into hours, so Go's time.Truncate and ClickHouse's toStartOfInterval
+// produce the same bucket boundaries.
+func snapBucketMinutes(raw int) int {
+	if raw < 5 {
+		return 5
+	}
+	clean := []int{240, 180, 120, 60, 30, 20, 15, 10, 5}
+	for _, c := range clean {
+		if raw >= c {
+			return c
+		}
+	}
+	return 5
+}
+
 // fetchLinkHistoryData performs the actual link history data fetch from the database.
 // This is called by both the cache refresh and direct requests.
 func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int) (*LinkHistoryResponse, error) {
@@ -1189,10 +1205,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	}
 
 	// Calculate bucket size to fit requested number of buckets
-	bucketMinutes := totalMinutes / requestedBuckets
-	if bucketMinutes < 5 {
-		bucketMinutes = 5 // minimum 5 minutes
-	}
+	bucketMinutes := snapBucketMinutes(totalMinutes / requestedBuckets)
 	bucketCount := totalMinutes / bucketMinutes
 	totalHours := totalMinutes / 60
 
@@ -2012,10 +2025,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 	}
 
 	// Calculate bucket size to fit requested number of buckets
-	bucketMinutes := totalMinutes / requestedBuckets
-	if bucketMinutes < 5 {
-		bucketMinutes = 5 // minimum 5 minutes
-	}
+	bucketMinutes := snapBucketMinutes(totalMinutes / requestedBuckets)
 	bucketCount := totalMinutes / bucketMinutes
 	totalHours := totalMinutes / 60
 
@@ -2524,10 +2534,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 
 	// Calculate bucket size in minutes
 	totalMinutes := totalHours * 60
-	bucketMinutes := totalMinutes / requestedBuckets
-	if bucketMinutes < 1 {
-		bucketMinutes = 1
-	}
+	bucketMinutes := snapBucketMinutes(totalMinutes / requestedBuckets)
 	bucketCount := totalMinutes / bucketMinutes
 
 	// Build interval expression for ClickHouse
@@ -2738,10 +2745,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		totalMinutes = 24 * 60
 	}
 
-	bucketMinutes := totalMinutes / requestedBuckets
-	if bucketMinutes < 5 {
-		bucketMinutes = 5
-	}
+	bucketMinutes := snapBucketMinutes(totalMinutes / requestedBuckets)
 	bucketCount := totalMinutes / bucketMinutes
 	totalHours := totalMinutes / 60
 	bucketDuration := time.Duration(bucketMinutes) * time.Minute
@@ -3080,10 +3084,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		totalMinutes = 24 * 60
 	}
 
-	bucketMinutes := totalMinutes / requestedBuckets
-	if bucketMinutes < 5 {
-		bucketMinutes = 5
-	}
+	bucketMinutes := snapBucketMinutes(totalMinutes / requestedBuckets)
 	bucketCount := totalMinutes / bucketMinutes
 	totalHours := totalMinutes / 60
 	bucketDuration := time.Duration(bucketMinutes) * time.Minute
