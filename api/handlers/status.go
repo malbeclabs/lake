@@ -75,8 +75,8 @@ type LinkHealth struct {
 	Total         uint64       `json:"total"`
 	Healthy       uint64       `json:"healthy"`
 	Degraded      uint64       `json:"degraded"`        // High latency or some loss
-	Unhealthy     uint64       `json:"unhealthy"`       // Significant loss or down
-	Disabled      uint64       `json:"disabled"`        // Extended packet loss (100% for 2+ hours)
+	Unhealthy     uint64       `json:"unhealthy"`       // Significant loss
+	Down          uint64       `json:"down"`            // 100% packet loss (link is down)
 	Issues        []LinkIssue  `json:"issues"`          // Top issues
 	HighUtilLinks []LinkMetric `json:"high_util_links"` // Links with high utilization
 	TopUtilLinks  []LinkMetric `json:"top_util_links"`  // Top 10 links by max utilization
@@ -552,13 +552,10 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		}
 		defer rows.Close()
 
-		var healthy, degraded, unhealthy, disabled uint64
+		var healthy, degraded, unhealthy, down uint64
 		var issues []LinkIssue
 		var highUtil []LinkMetric
 		var allUtilLinks []LinkMetric
-
-		// Threshold for "disabled" classification - high loss over 1h window
-		const DisabledLossPct = 95.0
 
 		for rows.Next() {
 			var pk, code, linkType, contributor, sideAMetro, sideZMetro string
@@ -579,13 +576,11 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			}
 
 			// Classify link health
-			// "disabled" if: is_down (100% loss in last 5min) OR high loss over 1h
-			isDisabled := isDown || lossPct >= DisabledLossPct
-			isUnhealthy := !isDisabled && (lossPct >= LossCriticalPct || latencyOveragePct >= LatencyCriticalPct)
-			isDegraded := !isDisabled && !isUnhealthy && (lossPct >= LossWarningPct || latencyOveragePct >= LatencyWarningPct)
+			isUnhealthy := !isDown && (lossPct >= LossCriticalPct || latencyOveragePct >= LatencyCriticalPct)
+			isDegraded := !isDown && !isUnhealthy && (lossPct >= LossWarningPct || latencyOveragePct >= LatencyWarningPct)
 
-			if isDisabled {
-				disabled++
+			if isDown {
+				down++
 			} else if isUnhealthy {
 				unhealthy++
 			} else if isDegraded {
@@ -663,11 +658,11 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			allUtilLinks = allUtilLinks[:100]
 		}
 
-		resp.Links.Total = healthy + degraded + unhealthy + disabled
+		resp.Links.Total = healthy + degraded + unhealthy + down
 		resp.Links.Healthy = healthy
 		resp.Links.Degraded = degraded
 		resp.Links.Unhealthy = unhealthy
-		resp.Links.Disabled = disabled
+		resp.Links.Down = down
 		resp.Links.HighUtilLinks = highUtil
 		resp.Links.TopUtilLinks = allUtilLinks
 
@@ -1933,9 +1928,9 @@ func determineOverallStatus(resp *StatusResponse) string {
 		return "unhealthy"
 	}
 
-	// Check link health
+	// Check link health (down links are treated like unhealthy for overall status)
 	if resp.Links.Total > 0 {
-		unhealthyPct := float64(resp.Links.Unhealthy) / float64(resp.Links.Total) * 100
+		unhealthyPct := float64(resp.Links.Unhealthy+resp.Links.Down) / float64(resp.Links.Total) * 100
 		degradedPct := float64(resp.Links.Degraded) / float64(resp.Links.Total) * 100
 
 		if unhealthyPct > 10 {

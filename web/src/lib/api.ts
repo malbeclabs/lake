@@ -1220,7 +1220,7 @@ export interface LinkHealth {
   healthy: number
   degraded: number
   unhealthy: number
-  disabled: number
+  down: number
   issues: LinkIssue[]
   high_util_links: LinkMetric[]
   top_util_links: LinkMetric[]

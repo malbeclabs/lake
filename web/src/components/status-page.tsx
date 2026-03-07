@@ -81,8 +81,8 @@ function formatTimeAgo(isoString: string): string {
 function getStatusReasons(status: StatusResponse): string[] {
   const reasons: string[] = []
 
-  if (status.links.disabled > 0) {
-    reasons.push(`${status.links.disabled} link${status.links.disabled > 1 ? 's' : ''} down`)
+  if (status.links.down > 0) {
+    reasons.push(`${status.links.down} link${status.links.down > 1 ? 's' : ''} down`)
   }
   if (status.links.unhealthy > 0) {
     reasons.push(`${status.links.unhealthy} link${status.links.unhealthy > 1 ? 's' : ''} with critical issues`)
@@ -206,7 +206,7 @@ function IssueDetails({
   )
 
   const sections: { key: IssueSeverity; label: string; icon: typeof XCircle; iconColor: string; valueColor: string }[] = [
-    { key: 'down', label: 'Links Down', icon: XCircle, iconColor: 'text-gray-500', valueColor: 'text-gray-600 dark:text-gray-400' },
+    { key: 'down', label: 'Links Down', icon: XCircle, iconColor: 'text-red-500', valueColor: 'text-red-600 dark:text-red-400' },
     { key: 'critical', label: 'Critical Issues', icon: XCircle, iconColor: 'text-red-500', valueColor: 'text-red-500' },
     { key: 'degraded', label: 'Degraded Performance', icon: AlertTriangle, iconColor: 'text-orange-500', valueColor: 'text-orange-500' },
     { key: 'no_data', label: 'Telemetry Stopped', icon: WifiOff, iconColor: 'text-amber-500', valueColor: 'text-amber-500' },
