@@ -1355,6 +1355,10 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("context cancelled during history query: %w", ctx.Err())
 	}
+	// If we have links but the history query returned nothing, the query likely failed silently
+	if len(linkMap) > 0 && len(linkBucketMap) == 0 {
+		return nil, fmt.Errorf("history query returned no data for %d links (range=%s) — likely timed out", len(linkMap), timeRange)
+	}
 
 	// Compute aggregate stats for each bucket (combining both directions)
 	linkBuckets := make(map[string][]bucketStats)
