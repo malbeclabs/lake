@@ -1781,45 +1781,6 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			}
 		}
 
-		// Post-process: treat consecutive 100% loss for 10+ minutes as down
-		// (consistent with is_down which uses a 5-minute window)
-		bucketsForDown := 10 / bucketMinutes
-		if bucketsForDown < 1 {
-			bucketsForDown = 1
-		}
-
-		// Find runs of 100% loss and mark as down if >= 10 minutes
-		i := 0
-		for i < len(hourStatuses) {
-			// Find start of a 100% loss run
-			if hourStatuses[i].AvgLossPct >= 99.9 && hourStatuses[i].Status != "disabled" {
-				runStart := i
-				// Find end of the run
-				for i < len(hourStatuses) && hourStatuses[i].AvgLossPct >= 99.9 && hourStatuses[i].Status != "disabled" {
-					i++
-				}
-				runLength := i - runStart
-				// If run is >= 10 minutes, mark all as down
-				if runLength >= bucketsForDown {
-					for j := runStart; j < i; j++ {
-						hourStatuses[j].Status = "down"
-					}
-					// Absorb adjacent buckets with any loss at the edges (transition buckets)
-					for runStart > 0 && hourStatuses[runStart-1].AvgLossPct > 0 && hourStatuses[runStart-1].Status != "disabled" {
-						runStart--
-						hourStatuses[runStart].Status = "down"
-					}
-					for i < len(hourStatuses) && hourStatuses[i].AvgLossPct > 0 && hourStatuses[i].Status != "disabled" {
-						hourStatuses[i].Status = "down"
-						i++
-					}
-					issueReasons["down"] = true
-				}
-			} else {
-				i++
-			}
-		}
-
 		isDown := downLinkPKs[pk] && !isCurrentlyDrained
 		if isDown {
 			issueReasons["down"] = true
