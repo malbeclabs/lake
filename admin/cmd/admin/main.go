@@ -382,6 +382,7 @@ func run() error {
 				EndTime:       endTime,
 				ChunkInterval: *chunkIntervalFlag,
 				DryRun:        *dryRunFlag,
+				Yes:           *yesFlag,
 			},
 		)
 	}

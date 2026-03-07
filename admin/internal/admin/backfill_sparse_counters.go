@@ -1,9 +1,12 @@
 package admin
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
@@ -16,6 +19,7 @@ type BackfillSparseCountersConfig struct {
 	EndTime       time.Time
 	ChunkInterval time.Duration
 	DryRun        bool
+	Yes           bool // Skip confirmation prompt
 }
 
 const defaultSparseBackfillChunkInterval = 24 * time.Hour
@@ -81,6 +85,25 @@ func BackfillSparseCounters(
 		fmt.Printf("  (no existing data)\n")
 	}
 	fmt.Println()
+
+	if cfg.DryRun {
+		fmt.Println("[DRY RUN] Scanning to show what would be corrected...")
+		fmt.Println()
+	} else if !cfg.Yes {
+		fmt.Printf("This will re-insert corrected rows into ClickHouse.\n")
+		fmt.Printf("Type 'yes' to confirm: ")
+
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("failed to read confirmation: %w", err)
+		}
+		if strings.TrimSpace(strings.ToLower(response)) != "yes" {
+			fmt.Println("Operation cancelled.")
+			return nil
+		}
+		fmt.Println()
+	}
 
 	// We need a baseline chunk before startTime to establish last-known values
 	// for sparse counters that may be NULL in the first real chunk.
