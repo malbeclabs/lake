@@ -32,6 +32,7 @@ import {
   Moon,
   Layers,
   BookOpen,
+  Trophy,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -88,6 +89,7 @@ export function Sidebar() {
   const isUsersRoute = location.pathname === '/dz/users'
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
+  const isScoreboardRoute = location.pathname === '/dz/edge/scoreboard'
   const isValidatorsRoute = location.pathname === '/solana/validators'
   const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -531,6 +533,10 @@ export function Sidebar() {
             <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
               <ShieldCheck className="h-4 w-4" />
               Publisher Check
+            </Link>
+            <Link to="/dz/edge/scoreboard" className={navItemClass(isScoreboardRoute)}>
+              <Trophy className="h-4 w-4" />
+              Scoreboard
             </Link>
           </div>
         </div>

@@ -4650,3 +4650,45 @@ export async function fetchPublisherCheck(q?: string, epochs?: number, slots?: n
   return res.json()
 }
 
+// Edge Scoreboard
+
+export interface EdgeScoreboardFeedStats {
+  shreds_won: number
+  total_shreds: number
+  win_rate_pct: number
+  lead_p50_ms: number
+  lead_p95_ms: number
+}
+
+export interface EdgeScoreboardNode {
+  node_id: string
+  location: string
+  metro_name: string
+  latitude: number
+  longitude: number
+  feeds: Record<string, EdgeScoreboardFeedStats>
+  total_slots: number
+  slots_observed: number
+  last_updated: string
+}
+
+export interface EdgeScoreboardResponse {
+  window: string
+  generated_at: string
+  current_epoch: number
+  total_slots: number
+  dz_slots: number
+  completeness_pct: number
+  nodes: EdgeScoreboardNode[]
+}
+
+export async function fetchEdgeScoreboard(window: string = '24h'): Promise<EdgeScoreboardResponse> {
+  const params = new URLSearchParams()
+  if (window !== '24h') params.set('window', window)
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/edge/scoreboard${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch edge scoreboard')
+  }
+  return res.json()
+}
