@@ -33,7 +33,10 @@ export function OutagesAppendix() {
             <div className="border border-border rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-                  Status
+                  soft-drained
+                </span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                  hard-drained
                 </span>
                 <h3 className="font-medium">Status Changes (Drained)</h3>
               </div>
@@ -42,28 +45,29 @@ export function OutagesAppendix() {
                 <code className="bg-muted px-1 py-0.5 rounded text-xs">hard-drained</code> from{' '}
                 <code className="bg-muted px-1 py-0.5 rounded text-xs">activated</code>. The outage starts when the
                 drain occurs and ends when the link returns to activated. Links currently drained always appear
-                as ongoing outages regardless of when the drain started.
+                as ongoing outages regardless of when the drain started. The badge shows the current drain status.
               </p>
             </div>
 
             <div className="border border-border rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                  Packet Loss
+                  packet loss
                 </span>
                 <h3 className="font-medium">Packet Loss Exceeding Threshold</h3>
               </div>
               <p className="text-sm text-muted-foreground">
                 Link packet loss exceeds the configured threshold for 2 or more consecutive 5-minute buckets.
                 Loss is measured per bucket as the percentage of probes that were lost or had zero RTT.
-                Buckets with fewer than 3 samples are excluded.
+                Buckets with fewer than 3 samples are excluded. The badge shows the peak loss percentage
+                when it is not 100%.
               </p>
             </div>
 
             <div className="border border-border rounded-lg p-4">
               <div className="flex items-center gap-2 mb-2">
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                  No Data
+                  no data
                 </span>
                 <h3 className="font-medium">Missing Telemetry</h3>
               </div>
@@ -79,44 +83,14 @@ export function OutagesAppendix() {
           </div>
         </section>
 
-        {/* Severity */}
+        {/* Ongoing Merging */}
         <section className="mb-12">
-          <h2 className="text-xl font-semibold mb-6 pb-2 border-b-2 border-border">Severity Classification</h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            Each outage is classified with a severity level based on its type and impact.
+          <h2 className="text-xl font-semibold mb-6 pb-2 border-b-2 border-border">Ongoing Outage Merging</h2>
+          <p className="text-sm text-muted-foreground">
+            When a link has multiple ongoing outage types simultaneously (e.g., it is both drained and
+            experiencing packet loss), they are merged into a single row with multiple type badges. The
+            start time is the earliest across all active outage types for that link.
           </p>
-
-          <div className="space-y-4">
-            <div className="border border-border rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                  outage
-                </span>
-                <h3 className="font-medium">Outage</h3>
-              </div>
-              <ul className="text-sm text-muted-foreground space-y-1 ml-5 list-disc">
-                <li>Packet loss with peak &ge; 10%</li>
-                <li>All status changes (drained)</li>
-                <li>All no-data events</li>
-              </ul>
-            </div>
-
-            <div className="border border-border rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
-                  degraded
-                </span>
-                <h3 className="font-medium">Degraded</h3>
-              </div>
-              <ul className="text-sm text-muted-foreground space-y-1 ml-5 list-disc">
-                <li>Packet loss with peak between the threshold and 10%</li>
-              </ul>
-              <p className="text-sm text-muted-foreground mt-2">
-                Only applies when using a threshold below 10% (e.g. 1%). At the default 10% threshold,
-                all packet loss outages are classified as "outage" severity.
-              </p>
-            </div>
-          </div>
         </section>
 
         {/* Filtering Logic */}
@@ -192,9 +166,10 @@ export function OutagesAppendix() {
           <div className="mb-8">
             <h3 className="text-lg font-semibold mb-4">Packet Loss Outage Start</h3>
             <p className="text-sm text-muted-foreground">
-              For ongoing packet loss outages, the system looks back up to 30 days to find when the loss
-              first exceeded the threshold. It identifies the earliest bucket where loss went above threshold
-              and hasn't dropped below since (accounting for the consecutive-bucket requirement).
+              For ongoing packet loss outages, the system walks backwards from now to find when the current
+              contiguous loss episode started. A gap of more than 15 minutes between above-threshold buckets
+              breaks the chain, so only the most recent episode is attributed to the current outage. The
+              lookback extends up to 365 days.
             </p>
           </div>
 
