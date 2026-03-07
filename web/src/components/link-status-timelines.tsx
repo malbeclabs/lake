@@ -814,13 +814,16 @@ export function LinkStatusTimelines({
           {onShowDrainedChange && (
             <button
               onClick={() => onShowDrainedChange(!showDrained)}
-              className={`px-2.5 py-0.5 text-xs rounded-md border transition-colors ${
-                showDrained
-                  ? 'bg-background text-foreground border-border shadow-sm'
-                  : 'text-muted-foreground border-transparent hover:text-foreground'
-              }`}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-border bg-background/50 transition-colors hover:bg-muted/50"
             >
-              Show Drained
+              <div className={`w-3 h-3 rounded-sm transition-colors ${showDrained ? 'bg-primary' : 'bg-muted-foreground/20 border border-muted-foreground/30'}`}>
+                {showDrained && (
+                  <svg viewBox="0 0 12 12" className="w-3 h-3 text-primary-foreground">
+                    <path d="M3.5 6L5.5 8L8.5 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </div>
+              <span className={showDrained ? 'text-foreground' : 'text-muted-foreground'}>Show Drained</span>
             </button>
           )}
           {onTimeRangeChange && (
