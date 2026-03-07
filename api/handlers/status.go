@@ -1551,6 +1551,34 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		log.Printf("Link status history query error: %v", err)
 	}
 
+	// Also fetch the most recent status BEFORE the time range for each link.
+	// This serves as the baseline for carry-forward when the drain happened before the window.
+	baselineQuery := `
+		SELECT pk as link_pk, argMax(status, snapshot_ts) as status
+		FROM dim_dz_links_history
+		WHERE snapshot_ts <= now() - INTERVAL ? HOUR
+		GROUP BY link_pk
+	`
+	baselineRows, baselineErr := safeQueryRows(ctx, baselineQuery, totalHours)
+	if baselineErr != nil {
+		log.Printf("Link status baseline query error: %v", baselineErr)
+	}
+	linkBaselineStatus := make(map[string]string) // linkPK -> status before time range
+	if baselineRows != nil {
+		defer baselineRows.Close()
+		for baselineRows.Next() {
+			var linkPK, status string
+			if err := baselineRows.Scan(&linkPK, &status); err != nil {
+				log.Printf("baseline scan error: %v", err)
+				break
+			}
+			linkBaselineStatus[linkPK] = status
+		}
+		if err := baselineRows.Err(); err != nil {
+			log.Printf("baseline rows iteration error: %v", err)
+		}
+	}
+
 	// Build per-link sorted history of statuses, keyed by bucket time string
 	// Since history is sparse (only records transitions), we need to carry forward
 	// the last known status for buckets without entries.
@@ -1659,13 +1687,18 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			}
 		}
 
-		// Also check if link was drained at any point in the history
+		// Also check if link was drained at any point in the history or baseline
 		for key := range linkStatusHistory {
 			if key.linkPK == pk {
 				if linkStatusHistory[key] == "soft-drained" || linkStatusHistory[key] == "hard-drained" {
 					issueReasons["drained"] = true
 					break
 				}
+			}
+		}
+		if !issueReasons["drained"] {
+			if baseline, ok := linkBaselineStatus[pk]; ok && (baseline == "soft-drained" || baseline == "hard-drained") {
+				issueReasons["drained"] = true
 			}
 		}
 
@@ -1682,21 +1715,25 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		// History is sparse (only records transitions), so for buckets without entries,
 		// we carry forward the most recent known status before that bucket.
 		entries := linkStatusEntries[pk]
+		isDrainedStatus := func(s string) bool {
+			return s == "soft-drained" || s == "hard-drained"
+		}
 		resolveDrained := func(bucketKey string) bool {
 			// Direct hit in history
-			if histKey, ok := linkStatusHistory[linkBucketKey{linkPK: pk, bucket: bucketKey}]; ok {
-				return histKey == "soft-drained" || histKey == "hard-drained"
+			if s, ok := linkStatusHistory[linkBucketKey{linkPK: pk, bucket: bucketKey}]; ok {
+				return isDrainedStatus(s)
 			}
 			// No direct hit — find the most recent entry before this bucket
 			if len(entries) > 0 {
-				// Binary search for the last entry <= bucketKey
 				idx := sort.Search(len(entries), func(i int) bool { return entries[i].bucket > bucketKey })
 				if idx > 0 {
-					prev := entries[idx-1]
-					return prev.status == "soft-drained" || prev.status == "hard-drained"
+					return isDrainedStatus(entries[idx-1].status)
 				}
 			}
-			// No history entries before this bucket — unknown, assume not drained
+			// No in-range entries before this bucket — fall back to baseline (last status before time range)
+			if baseline, ok := linkBaselineStatus[pk]; ok {
+				return isDrainedStatus(baseline)
+			}
 			return false
 		}
 
