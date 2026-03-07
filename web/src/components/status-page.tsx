@@ -647,7 +647,6 @@ interface IssueHealthBreakdown {
   healthy: number
   degraded: number
   unhealthy: number
-  disabled: number
 }
 
 function HealthFilterItem({
@@ -694,7 +693,6 @@ function HealthFilterItem({
     { key: 'healthy', label: 'Healthy', color: 'bg-green-500' },
     { key: 'degraded', label: 'Degraded', color: 'bg-amber-500' },
     { key: 'unhealthy', label: 'Unhealthy', color: 'bg-red-500' },
-    { key: 'disabled', label: 'Disabled', color: 'bg-gray-500' },
   ]
 
   const hasIssues = issueBreakdown && Object.values(issueBreakdown).some(v => v > 0)
@@ -779,7 +777,6 @@ interface IssuesByHealth {
   healthy: HealthIssueBreakdown
   degraded: HealthIssueBreakdown
   unhealthy: HealthIssueBreakdown
-  disabled: HealthIssueBreakdown
 }
 
 interface HealthByIssue {
@@ -801,7 +798,7 @@ function LinkHealthFilterCard({
   issuesByHealth,
   timeRange,
 }: {
-  links: { healthy: number; degraded: number; unhealthy: number; disabled: number; total: number }
+  links: { healthy: number; degraded: number; unhealthy: number; total: number }
   selected: HealthFilter[]
   onChange: (filters: HealthFilter[]) => void
   issuesByHealth?: IssuesByHealth
@@ -817,12 +814,11 @@ function LinkHealthFilterCard({
     }
   }
 
-  const allSelected = selected.length === 4
+  const allSelected = selected.length === 3
 
   const healthyPct = links.total > 0 ? (links.healthy / links.total) * 100 : 100
   const degradedPct = links.total > 0 ? (links.degraded / links.total) * 100 : 0
   const unhealthyPct = links.total > 0 ? (links.unhealthy / links.total) * 100 : 0
-  const disabledPct = links.total > 0 ? ((links.disabled || 0) / links.total) * 100 : 0
 
   return (
     <div className="border border-border rounded-lg p-4">
@@ -831,7 +827,7 @@ function LinkHealthFilterCard({
         <h3 className="font-medium">Link Health</h3>
         <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
         <button
-          onClick={() => onChange(['healthy', 'degraded', 'unhealthy', 'disabled'])}
+          onClick={() => onChange(['healthy', 'degraded', 'unhealthy'])}
           className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
             allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
           }`}
@@ -857,12 +853,6 @@ function LinkHealthFilterCard({
           <div
             className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
             style={{ width: `${unhealthyPct}%` }}
-          />
-        )}
-        {disabledPct > 0 && (
-          <div
-            className={`bg-gray-500 dark:bg-gray-700 h-full transition-all ${!selected.includes('disabled') ? 'opacity-30' : ''}`}
-            style={{ width: `${disabledPct}%` }}
           />
         )}
       </div>
@@ -894,15 +884,6 @@ function LinkHealthFilterCard({
           selected={selected.includes('unhealthy')}
           onClick={() => toggleFilter('unhealthy')}
           issueBreakdown={issuesByHealth?.unhealthy}
-        />
-        <HealthFilterItem
-          color="bg-gray-500 dark:bg-gray-700"
-          label="Disabled"
-          count={links.disabled || 0}
-          description="Drained (soft, hard, or ISIS delay override), or extended packet loss (100% for 2+ hours)."
-          selected={selected.includes('disabled')}
-          onClick={() => toggleFilter('disabled')}
-          issueBreakdown={issuesByHealth?.disabled}
         />
       </div>
     </div>
@@ -1462,7 +1443,7 @@ function useBucketCount() {
 function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusResponse; linkHistory: any; criticalLinks: CriticalLinksResponse | undefined }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
   const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'down', 'interface_errors', 'discards', 'carrier_transitions'])
-  const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy', 'disabled'])
+  const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy'])
   const [showDrained, setShowDrained] = useState(false)
 
   // Get search filters from URL
@@ -1513,9 +1494,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     const statusPriority: Record<string, number> = {
       'unhealthy': 0,
       'no_data': 1,
-      'disabled': 2,
-      'degraded': 3,
-      'healthy': 4,
+      'degraded': 2,
+      'healthy': 3,
     }
 
     let worstStatus = 'healthy'
@@ -1548,10 +1528,10 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Calculate health counts from link history (based on most recent bucket status)
   const healthCounts = useMemo(() => {
     if (visibleLinks.length === 0) {
-      return { healthy: 0, degraded: 0, unhealthy: 0, disabled: 0, total: 0 }
+      return { healthy: 0, degraded: 0, unhealthy: 0, total: 0 }
     }
 
-    const counts = { healthy: 0, degraded: 0, unhealthy: 0, disabled: 0, total: 0 }
+    const counts = { healthy: 0, degraded: 0, unhealthy: 0, total: 0 }
 
     for (const link of visibleLinks) {
       counts.total++
@@ -1559,7 +1539,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (status === 'healthy') counts.healthy++
       else if (status === 'degraded') counts.degraded++
       else if (status === 'down' || status === 'unhealthy' || status === 'no_data') counts.unhealthy++ // down, no_data map to unhealthy
-      else if (status === 'disabled') counts.disabled++
     }
 
     return counts
@@ -1582,7 +1561,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       healthy: emptyBreakdown(),
       degraded: emptyBreakdown(),
       unhealthy: emptyBreakdown(),
-      disabled: emptyBreakdown(),
     }
 
     if (visibleLinks.length === 0) return result
@@ -1615,7 +1593,6 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       healthy: 0,
       degraded: 0,
       unhealthy: 0,
-      disabled: 0,
     })
 
     const result: HealthByIssue = {

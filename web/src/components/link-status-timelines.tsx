@@ -655,7 +655,7 @@ export function LinkStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
   issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'discards', 'carrier_transitions'],
-  healthFilters = ['healthy', 'degraded', 'unhealthy', 'disabled'],
+  healthFilters = ['healthy', 'degraded', 'unhealthy'],
   showDrained = false,
   onShowDrainedChange,
   linksWithIssues,
@@ -702,7 +702,6 @@ export function LinkStatusTimelines({
       if (status === 'healthy' && healthFilters.includes('healthy')) return true
       if (status === 'degraded' && healthFilters.includes('degraded')) return true
       if (status === 'unhealthy' && healthFilters.includes('unhealthy')) return true
-      if (status === 'disabled' && healthFilters.includes('disabled')) return true
       if (status === 'no_data' && healthFilters.includes('unhealthy')) return true // no_data maps to unhealthy
       return false
     })
@@ -747,13 +746,13 @@ export function LinkStatusTimelines({
     })
 
     // Sort by most recent issue (higher index in hours = more recent)
-    // Issues are: unhealthy, degraded, disabled
+    // Issues are: unhealthy, degraded
     return filtered.sort((a, b) => {
       const getLatestIssueIndex = (link: LinkHistory): number => {
         if (!link.hours) return -1
         for (let i = link.hours.length - 1; i >= 0; i--) {
           const status = link.hours[i].status
-          if (status === 'unhealthy' || status === 'degraded' || status === 'disabled') {
+          if (status === 'unhealthy' || status === 'degraded') {
             return i
           }
         }
