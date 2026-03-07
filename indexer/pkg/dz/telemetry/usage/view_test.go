@@ -979,6 +979,91 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		require.Equal(t, int64(5), *usage[0].InErrorsDelta) // 45 - 40
 	})
 
+	t.Run("already-written rows with null sparse counters use baseline for forward-fill", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		// Simulate the real-world scenario: already-written rows have NULL for
+		// sparse counters (InfluxDB doesn't include them), but the ClickHouse
+		// baseline has a value. New rows also have NULL sparse counters and
+		// should be forward-filled from the baseline.
+		rows := []map[string]any{
+			{
+				// Already written - sparse counters are NULL (not present in InfluxDB)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				// in-errors intentionally absent
+			},
+			{
+				// Already written
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+			},
+			{
+				// New row - sparse counter still NULL, should forward-fill from baseline
+				"time":       now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+			},
+			{
+				// New row - sparse counter appears with new value
+				"time":       now.Add(3 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(4000),
+				"in-errors":  int64(10),
+			},
+		}
+
+		// ClickHouse baseline has in_errors = 1 (the last known value before the window)
+		baselineVal := int64(1)
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    map[string]*int64{"device1:eth0": &baselineVal},
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		alreadyWritten := MaxTimestampsByKey{
+			"device1:eth0": now.Add(time.Minute),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		require.NoError(t, err)
+		require.Len(t, usage, 2)
+
+		// First new row: in_errors should be forward-filled from baseline (1), not NULL
+		require.NotNil(t, usage[0].InErrors, "in_errors should be forward-filled from baseline, not NULL")
+		require.Equal(t, int64(1), *usage[0].InErrors)
+		// Delta should be 0 (1 - 1)
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(0), *usage[0].InErrorsDelta)
+
+		// Second new row: in_errors = 10, delta should be 9 (10 - 1)
+		require.NotNil(t, usage[1].InErrors)
+		require.Equal(t, int64(10), *usage[1].InErrors)
+		require.NotNil(t, usage[1].InErrorsDelta)
+		require.Equal(t, int64(9), *usage[1].InErrorsDelta)
+	})
+
 	t.Run("sparse counters with no baseline and no overlap still capture first change", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)

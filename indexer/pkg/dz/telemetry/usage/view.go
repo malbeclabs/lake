@@ -624,6 +624,31 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 			key = ""
 		}
 
+		// Initialize lastKnownValues and pre-populate sparse counter baselines.
+		// This must happen before the alreadyWritten skip below, otherwise
+		// baselines for sparse counters (errors/discards) are never loaded
+		// and those counters stay NULL in all subsequent rows.
+		if key != "" && lastKnownValues[key] == nil {
+			lastKnownValues[key] = make(map[string]*int64)
+			if baselines != nil {
+				if val := baselines.InDiscards[key]; val != nil {
+					lastKnownValues[key]["in-discards"] = val
+				}
+				if val := baselines.InErrors[key]; val != nil {
+					lastKnownValues[key]["in-errors"] = val
+				}
+				if val := baselines.InFCSErrors[key]; val != nil {
+					lastKnownValues[key]["in-fcs-errors"] = val
+				}
+				if val := baselines.OutDiscards[key]; val != nil {
+					lastKnownValues[key]["out-discards"] = val
+				}
+				if val := baselines.OutErrors[key]; val != nil {
+					lastKnownValues[key]["out-errors"] = val
+				}
+			}
+		}
+
 		// Skip rows that have already been written to avoid duplicates
 		// This is important because we use an overlap window when refreshing
 		if key != "" && alreadyWritten != nil {
@@ -631,9 +656,6 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 				if !t.After(maxTS) {
 					// This row has already been written, skip it
 					// But still update lastKnownValues for delta calculations of subsequent rows
-					if lastKnownValues[key] == nil {
-						lastKnownValues[key] = make(map[string]*int64)
-					}
 					for _, field := range counterFieldNames {
 						value := extractInt64FromRow(row, field)
 						if value != nil {
@@ -651,28 +673,6 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 			if linkInfo, ok := linkLookup[key]; ok {
 				u.LinkPK = &linkInfo.LinkPK
 				u.LinkSide = &linkInfo.LinkSide
-			}
-		}
-
-		if key != "" && lastKnownValues[key] == nil {
-			lastKnownValues[key] = make(map[string]*int64)
-			// Pre-populate sparse counter baselines for forward-filling
-			if baselines != nil {
-				if val := baselines.InDiscards[key]; val != nil {
-					lastKnownValues[key]["in-discards"] = val
-				}
-				if val := baselines.InErrors[key]; val != nil {
-					lastKnownValues[key]["in-errors"] = val
-				}
-				if val := baselines.InFCSErrors[key]; val != nil {
-					lastKnownValues[key]["in-fcs-errors"] = val
-				}
-				if val := baselines.OutDiscards[key]; val != nil {
-					lastKnownValues[key]["out-discards"] = val
-				}
-				if val := baselines.OutErrors[key]; val != nil {
-					lastKnownValues[key]["out-errors"] = val
-				}
 			}
 		}
 
