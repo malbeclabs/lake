@@ -4134,6 +4134,7 @@ export interface LinkOutage {
   side_z_metro: string
   contributor_code: string
   outage_type: OutageType
+  outage_types?: OutageType[] // populated when multiple ongoing outages are merged for the same link
   // Status outages
   previous_status?: string
   new_status?: string

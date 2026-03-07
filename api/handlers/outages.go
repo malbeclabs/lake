@@ -23,7 +23,8 @@ type LinkOutage struct {
 	SideAMetro      string   `json:"side_a_metro"`
 	SideZMetro      string   `json:"side_z_metro"`
 	ContributorCode string   `json:"contributor_code"`
-	OutageType      string   `json:"outage_type"` // "status" or "packet_loss"
+	OutageType      string   `json:"outage_type"`            // "status", "packet_loss", or "no_data"
+	OutageTypes     []string `json:"outage_types,omitempty"` // populated when multiple ongoing outages are merged for the same link
 	PreviousStatus  *string  `json:"previous_status,omitempty"`
 	NewStatus       *string  `json:"new_status,omitempty"`
 	ThresholdPct    *float64 `json:"threshold_pct,omitempty"`
@@ -213,12 +214,15 @@ func GetLinkOutages(w http.ResponseWriter, r *http.Request) {
 		outages = append(outages, noDataOutages...)
 	}
 
+	// Merge ongoing outages for the same link into a single row
+	outages = mergeOngoingOutages(outages)
+
 	// Sort by start time (most recent first)
 	sort.Slice(outages, func(i, j int) bool {
 		return outages[i].StartedAt > outages[j].StartedAt
 	})
 
-	// Build summary
+	// Build summary — count each type from merged outages
 	summary := LinkOutagesSummary{
 		Total:   len(outages),
 		Ongoing: 0,
@@ -228,7 +232,13 @@ func GetLinkOutages(w http.ResponseWriter, r *http.Request) {
 		if o.IsOngoing {
 			summary.Ongoing++
 		}
-		summary.ByType[o.OutageType]++
+		if len(o.OutageTypes) > 0 {
+			for _, t := range o.OutageTypes {
+				summary.ByType[t]++
+			}
+		} else {
+			summary.ByType[o.OutageType]++
+		}
 	}
 
 	response := LinkOutagesResponse{
@@ -718,6 +728,70 @@ func coalescePacketLossOutages(outages []LinkOutage) []LinkOutage {
 	return result
 }
 
+// mergeOngoingOutages consolidates multiple ongoing outages for the same link into a single row.
+// Completed outages are left as-is. This prevents the same link from appearing multiple times
+// in the ongoing section (e.g., once for status change and once for packet loss).
+func mergeOngoingOutages(outages []LinkOutage) []LinkOutage {
+	var completed []LinkOutage
+	ongoingByLink := make(map[string][]LinkOutage)
+
+	for _, o := range outages {
+		if !o.IsOngoing {
+			completed = append(completed, o)
+		} else {
+			ongoingByLink[o.LinkPK] = append(ongoingByLink[o.LinkPK], o)
+		}
+	}
+
+	var merged []LinkOutage
+	for _, group := range ongoingByLink {
+		if len(group) == 1 {
+			merged = append(merged, group[0])
+			continue
+		}
+
+		// Pick the earliest started_at as the primary
+		primary := group[0]
+		for _, o := range group[1:] {
+			if o.StartedAt < primary.StartedAt || primary.StartedAt == "unknown" {
+				primary = o
+			}
+		}
+
+		// Collect all outage types and merge fields
+		types := make([]string, 0, len(group))
+		for _, o := range group {
+			types = append(types, o.OutageType)
+			// Merge packet loss fields into primary
+			if o.OutageType == "packet_loss" {
+				if o.PeakLossPct != nil && (primary.PeakLossPct == nil || *o.PeakLossPct > *primary.PeakLossPct) {
+					primary.PeakLossPct = o.PeakLossPct
+				}
+				if o.ThresholdPct != nil {
+					primary.ThresholdPct = o.ThresholdPct
+				}
+			}
+			// Merge status fields into primary
+			if o.OutageType == "status" {
+				if o.PreviousStatus != nil {
+					primary.PreviousStatus = o.PreviousStatus
+				}
+				if o.NewStatus != nil {
+					primary.NewStatus = o.NewStatus
+				}
+			}
+			// Use worst severity
+			if o.Severity == "outage" {
+				primary.Severity = "outage"
+			}
+		}
+		primary.OutageTypes = types
+		merged = append(merged, primary)
+	}
+
+	return append(merged, completed...)
+}
+
 // fetchCurrentHighLossLinks finds all links currently experiencing packet loss above threshold
 func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold float64, linkMeta map[string]linkMetadata) ([]LinkOutage, error) {
 	// Collect link PKs to scope the query
@@ -841,7 +915,8 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 
 // findPacketLossOutageStart looks back in history to find when the current outage started
 func findPacketLossOutageStart(ctx context.Context, conn driver.Conn, linkPK string, threshold float64) (time.Time, float64, error) {
-	// Look back up to 30 days to find when loss first went above threshold
+	// Walk backwards from now to find when the current contiguous loss episode started.
+	// A gap of > 15 minutes between above-threshold buckets breaks the chain.
 	query := `
 		WITH buckets AS (
 			SELECT
@@ -849,22 +924,23 @@ func findPacketLossOutageStart(ctx context.Context, conn driver.Conn, linkPK str
 				countIf(loss = true OR rtt_us = 0) * 100.0 / count(*) as loss_pct
 			FROM fact_dz_device_link_latency
 			WHERE link_pk = $1
-			  AND event_ts >= now() - INTERVAL 30 DAY
+			  AND event_ts >= now() - INTERVAL 365 DAY
 			GROUP BY bucket
 			HAVING count(*) >= 3
 			ORDER BY bucket DESC
 		),
-		with_prev AS (
+		above AS (
 			SELECT
 				bucket,
 				loss_pct,
-				lagInFrame(loss_pct) OVER (ORDER BY bucket DESC) as next_pct
+				lagInFrame(bucket, 1) OVER (ORDER BY bucket ASC) as prev_bucket
 			FROM buckets
+			WHERE loss_pct >= $2
 		)
 		SELECT bucket, loss_pct
-		FROM with_prev
-		WHERE loss_pct >= $2 AND (next_pct < $2 OR next_pct IS NULL)
-		ORDER BY bucket ASC
+		FROM above
+		WHERE prev_bucket IS NULL OR dateDiff('minute', prev_bucket, bucket) > 15
+		ORDER BY bucket DESC
 		LIMIT 1
 	`
 
@@ -1485,6 +1561,9 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 		outages = append(outages, noDataOutages...)
 	}
 
+	// Merge ongoing outages for the same link into a single row
+	outages = mergeOngoingOutages(outages)
+
 	// Sort by start time (most recent first)
 	sort.Slice(outages, func(i, j int) bool {
 		return outages[i].StartedAt > outages[j].StartedAt
@@ -1498,12 +1577,27 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,outage_type,severity,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
 
 	for _, o := range outages {
-		var details string
-		if o.OutageType == "status" {
-			details = fmt.Sprintf("%s -> %s", strVal(o.PreviousStatus), strVal(o.NewStatus))
-		} else {
-			details = fmt.Sprintf("peak %.1f%% (threshold %.0f%%)", floatVal(o.PeakLossPct), floatVal(o.ThresholdPct))
+		outageTypeStr := o.OutageType
+		if len(o.OutageTypes) > 0 {
+			outageTypeStr = strings.Join(o.OutageTypes, "+")
 		}
+
+		var detailParts []string
+		types := o.OutageTypes
+		if len(types) == 0 {
+			types = []string{o.OutageType}
+		}
+		for _, t := range types {
+			switch t {
+			case "status":
+				detailParts = append(detailParts, fmt.Sprintf("%s -> %s", strVal(o.PreviousStatus), strVal(o.NewStatus)))
+			case "packet_loss":
+				detailParts = append(detailParts, fmt.Sprintf("peak %.1f%% (threshold %.0f%%)", floatVal(o.PeakLossPct), floatVal(o.ThresholdPct)))
+			case "no_data":
+				detailParts = append(detailParts, "telemetry stopped")
+			}
+		}
+		details := strings.Join(detailParts, "; ")
 
 		endedAt := ""
 		if o.EndedAt != nil {
@@ -1517,7 +1611,7 @@ func GetLinkOutagesCSV(w http.ResponseWriter, r *http.Request) {
 
 		line := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,\"%s\",%s,%s,%s,%t\n",
 			o.ID, o.LinkCode, o.LinkType, o.SideAMetro, o.SideZMetro,
-			o.ContributorCode, o.OutageType, o.Severity, details, o.StartedAt, endedAt,
+			o.ContributorCode, outageTypeStr, o.Severity, details, o.StartedAt, endedAt,
 			durationSecs, o.IsOngoing)
 		_, _ = w.Write([]byte(line))
 	}
@@ -1571,12 +1665,15 @@ func fetchDefaultOutagesData(ctx context.Context) *LinkOutagesResponse {
 		outages = append(outages, noDataOutages...)
 	}
 
+	// Merge ongoing outages for the same link into a single row
+	outages = mergeOngoingOutages(outages)
+
 	// Sort by start time (most recent first)
 	sort.Slice(outages, func(i, j int) bool {
 		return outages[i].StartedAt > outages[j].StartedAt
 	})
 
-	// Build summary
+	// Build summary — count each type from merged outages
 	summary := LinkOutagesSummary{
 		Total:   len(outages),
 		Ongoing: 0,
@@ -1586,7 +1683,13 @@ func fetchDefaultOutagesData(ctx context.Context) *LinkOutagesResponse {
 		if o.IsOngoing {
 			summary.Ongoing++
 		}
-		summary.ByType[o.OutageType]++
+		if len(o.OutageTypes) > 0 {
+			for _, t := range o.OutageTypes {
+				summary.ByType[t]++
+			}
+		} else {
+			summary.ByType[o.OutageType]++
+		}
 	}
 
 	return &LinkOutagesResponse{

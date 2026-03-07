@@ -105,64 +105,27 @@ function formatTimestamp(isoString: string): string {
   })
 }
 
-function SeverityBadge({ severity }: { severity?: 'degraded' | 'outage' }) {
-  if (severity === 'degraded') {
-    return (
-      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">
-        degraded
-      </span>
-    )
-  }
-  if (severity === 'outage') {
-    return (
-      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-        outage
-      </span>
-    )
-  }
-  return null
-}
-
-function OutageDetails({ outage }: { outage: LinkOutage }) {
-  if (outage.outage_type === 'status') {
-    return (
-      <span className="text-muted-foreground">
-        {outage.previous_status} &rarr; {outage.new_status}
-      </span>
-    )
-  }
-  if (outage.outage_type === 'no_data') {
-    return (
-      <span className="text-muted-foreground">
-        telemetry stopped
-      </span>
-    )
-  }
-  return (
-    <span className="text-muted-foreground">
-      peak {outage.peak_loss_pct?.toFixed(1)}%{outage.threshold_pct != null && outage.threshold_pct !== 10 && ` (threshold ${outage.threshold_pct}%)`}
-    </span>
-  )
-}
-
-function OutageTypeLabel({ type }: { type: 'status' | 'packet_loss' | 'no_data' }) {
+function OutageTypeBadge({ outage, type }: { outage: LinkOutage; type: string }) {
   if (type === 'status') {
+    const label = outage.new_status || 'status change'
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-        Status
+        {label}
       </span>
     )
   }
   if (type === 'no_data') {
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-        No Data
+        no data
       </span>
     )
   }
+  const peak = outage.peak_loss_pct
+  const label = peak != null && peak < 100 ? `packet loss (${peak.toFixed(0)}%)` : 'packet loss'
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-      Packet Loss
+      {label}
     </span>
   )
 }
@@ -415,7 +378,6 @@ export function OutagesPage() {
                   <th className="text-left px-4 py-3 font-medium">Link</th>
                   <th className="text-left px-4 py-3 font-medium">Route</th>
                   <th className="text-left px-4 py-3 font-medium">Type</th>
-                  <th className="text-left px-4 py-3 font-medium">Details</th>
                   <th
                     className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
                     onClick={() => toggleSort('started_at')}
@@ -455,13 +417,11 @@ export function OutagesPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <OutageTypeLabel type={outage.outage_type} />
-                        <SeverityBadge severity={outage.severity} />
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {(outage.outage_types ?? [outage.outage_type]).map((t) => (
+                          <OutageTypeBadge key={t} outage={outage} type={t} />
+                        ))}
                       </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <OutageDetails outage={outage} />
                     </td>
                     <td className="px-4 py-3">
                       <div>{formatTimeAgo(outage.started_at)}</div>
