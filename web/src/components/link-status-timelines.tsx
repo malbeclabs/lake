@@ -731,8 +731,8 @@ export function LinkStatusTimelines({
         return false
       }
 
-      // Hide drained links unless showDrained is enabled
-      if (issueReasons.includes('drained') && !showDrained) {
+      // Hide currently drained links unless showDrained is enabled
+      if (link.drained && !showDrained) {
         return false
       }
 

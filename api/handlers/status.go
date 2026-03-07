@@ -1100,8 +1100,9 @@ type LinkHistory struct {
 	BandwidthBps   int64            `json:"bandwidth_bps"`
 	CommittedRttUs float64          `json:"committed_rtt_us"`
 	IsDown         bool             `json:"is_down"`
+	Drained        bool             `json:"drained,omitempty"`
 	Hours          []LinkHourStatus `json:"hours"`
-	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "drained", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization", "down"
+	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization", "down"
 }
 
 type LinkHistoryResponse struct {
@@ -1661,10 +1662,6 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		// Check if this link has any issues in the time range
 		buckets := linkBuckets[pk]
 
-		if isCurrentlyDrained {
-			issueReasons["drained"] = true
-		}
-
 		// Check latency/loss issues (skip buckets where link was drained)
 		for _, b := range buckets {
 			bucketKey := b.bucket.UTC().Format(time.RFC3339)
@@ -1687,20 +1684,8 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			}
 		}
 
-		// Also check if link was drained at any point in the history or baseline
-		for key := range linkStatusHistory {
-			if key.linkPK == pk {
-				if linkStatusHistory[key] == "soft-drained" || linkStatusHistory[key] == "hard-drained" {
-					issueReasons["drained"] = true
-					break
-				}
-			}
-		}
-		if !issueReasons["drained"] {
-			if baseline, ok := linkBaselineStatus[pk]; ok && (baseline == "soft-drained" || baseline == "hard-drained") {
-				issueReasons["drained"] = true
-			}
-		}
+		// Determine if this link is currently drained (for the top-level Drained field)
+		linkIsDrained := isCurrentlyDrained
 
 		// Include all links (both healthy and those with issues)
 
@@ -1904,6 +1889,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			BandwidthBps:   meta.bandwidthBps,
 			CommittedRttUs: responseCommittedRtt,
 			IsDown:         isDown,
+			Drained:        linkIsDrained,
 			Hours:          hourStatuses,
 			IssueReasons:   issueReasonsList,
 		})

@@ -1365,8 +1365,9 @@ export interface LinkHistory {
   bandwidth_bps: number
   committed_rtt_us: number
   is_down?: boolean
+  drained?: boolean
   hours: LinkHourStatus[]
-  issue_reasons: string[] // "packet_loss", "high_latency", "drained", "no_data", "interface_errors", "discards", "carrier_transitions", "down"
+  issue_reasons: string[] // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "down"
 }
 
 export interface LinkHistoryResponse {

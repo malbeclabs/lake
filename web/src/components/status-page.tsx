@@ -1542,7 +1542,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   const visibleLinks = useMemo(() => {
     if (!filteredLinkHistory?.links) return []
     if (showDrained) return filteredLinkHistory.links
-    return filteredLinkHistory.links.filter((link: LinkHistory) => !link.issue_reasons?.includes('drained'))
+    return filteredLinkHistory.links.filter((link: LinkHistory) => !link.drained)
   }, [filteredLinkHistory, showDrained])
 
   // Calculate health counts from link history (based on most recent bucket status)
