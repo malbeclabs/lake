@@ -1538,15 +1538,22 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     return worstStatus
   }
 
+  // Filter out drained links when showDrained is off, so counts reflect visibility
+  const visibleLinks = useMemo(() => {
+    if (!filteredLinkHistory?.links) return []
+    if (showDrained) return filteredLinkHistory.links
+    return filteredLinkHistory.links.filter((link: LinkHistory) => !link.issue_reasons?.includes('drained'))
+  }, [filteredLinkHistory, showDrained])
+
   // Calculate health counts from link history (based on most recent bucket status)
   const healthCounts = useMemo(() => {
-    if (!filteredLinkHistory?.links) {
+    if (visibleLinks.length === 0) {
       return { healthy: 0, degraded: 0, unhealthy: 0, disabled: 0, total: 0 }
     }
 
     const counts = { healthy: 0, degraded: 0, unhealthy: 0, disabled: 0, total: 0 }
 
-    for (const link of filteredLinkHistory.links) {
+    for (const link of visibleLinks) {
       counts.total++
       const status = getEffectiveHealth(link)
       if (status === 'healthy') counts.healthy++
@@ -1556,7 +1563,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     }
 
     return counts
-  }, [filteredLinkHistory])
+  }, [visibleLinks])
 
   // Calculate issue breakdown per health category
   const issuesByHealth = useMemo((): IssuesByHealth => {
@@ -1578,9 +1585,9 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       disabled: emptyBreakdown(),
     }
 
-    if (!filteredLinkHistory?.links) return result
+    if (visibleLinks.length === 0) return result
 
-    for (const link of filteredLinkHistory.links) {
+    for (const link of visibleLinks) {
       const rawHealth = getEffectiveHealth(link)
       // Map no_data and down to unhealthy for categorization
       const health = (rawHealth === 'no_data' || rawHealth === 'down') ? 'unhealthy' : rawHealth
@@ -1600,7 +1607,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     }
 
     return result
-  }, [filteredLinkHistory])
+  }, [visibleLinks])
 
   // Calculate health breakdown per issue type
   const healthByIssue = useMemo((): HealthByIssue => {
@@ -1623,9 +1630,9 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       no_issues: emptyBreakdown(),
     }
 
-    if (!filteredLinkHistory?.links) return result
+    if (visibleLinks.length === 0) return result
 
-    for (const link of filteredLinkHistory.links) {
+    for (const link of visibleLinks) {
       const rawHealth = getEffectiveHealth(link)
       // Map no_data and down to unhealthy for categorization
       const health = ((rawHealth === 'no_data' || rawHealth === 'down') ? 'unhealthy' : rawHealth) as keyof IssueHealthBreakdown
@@ -1646,18 +1653,18 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     }
 
     return result
-  }, [filteredLinkHistory])
+  }, [visibleLinks])
 
   // Issue counts from filter time range
   const issueCounts = useMemo((): IssueCounts => {
-    if (!filteredLinkHistory?.links) {
+    if (visibleLinks.length === 0) {
       return { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
     }
 
     const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, down: 0, no_issues: 0, total: 0 }
     const seenLinks = new Set<string>()
 
-    for (const link of filteredLinkHistory.links) {
+    for (const link of visibleLinks) {
       if (link.issue_reasons?.includes('packet_loss')) counts.packet_loss++
       if (link.issue_reasons?.includes('high_latency')) counts.high_latency++
       if (link.issue_reasons?.includes('high_utilization')) counts.high_utilization++
@@ -1676,7 +1683,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     counts.no_issues = Math.max(0, totalLinks - counts.total)
 
     return counts
-  }, [filteredLinkHistory, healthCounts])
+  }, [visibleLinks, healthCounts])
 
   // Get set of link codes with issues in the filter time range (for filtering history table)
   const linksWithIssues = useMemo(() => {
