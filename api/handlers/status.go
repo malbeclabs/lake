@@ -1640,12 +1640,17 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 			key := bucketStart.UTC().Format(time.RFC3339)
 
-			// Check historical status for this bucket
+			// Check if link was drained at this time
 			histKey := linkBucketKey{linkPK: pk, bucket: key}
 			historicalStatus, hasHistory := linkStatusHistory[histKey]
 			wasDrained := hasHistory && (historicalStatus == "soft-drained" || historicalStatus == "hard-drained")
 
-			// If link was drained at this time (confirmed by history), show as disabled
+			// Also treat as drained if link is currently drained and no history overrides it
+			if !hasHistory && isCurrentlyDrained {
+				wasDrained = true
+			}
+
+			// If link was drained at this time, show as disabled
 			if wasDrained {
 				hourStatuses = append(hourStatuses, LinkHourStatus{
 					Hour:   key,
