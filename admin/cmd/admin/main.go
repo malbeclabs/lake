@@ -63,6 +63,7 @@ func run() error {
 	backfillInternetMetroLatencyFlag := flag.Bool("backfill-internet-metro-latency", false, "Backfill internet metro latency fact table from on-chain data")
 	backfillDeviceInterfaceCountersFlag := flag.Bool("backfill-device-interface-counters", false, "Backfill device interface counters fact table from InfluxDB")
 	recomputeSparseDeltasFlag := flag.Bool("recompute-sparse-deltas", false, "Recompute sparse counter deltas (errors/discards) from absolute values in ClickHouse")
+	backfillSparseCountersFlag := flag.Bool("backfill-sparse-counters", false, "Forward-fill NULL sparse counters (errors/discards) from last known values in ClickHouse")
 
 	// Backfill options (latency - epoch-based)
 	dzEnvFlag := flag.String("dz-env", config.EnvMainnetBeta, "DZ ledger environment (devnet, testnet, mainnet-beta)")
@@ -348,6 +349,30 @@ func run() error {
 			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
 			*clickhouseSecureFlag,
 			admin.RecomputeSparseCounterDeltasConfig{
+				StartTime:     startTime,
+				EndTime:       endTime,
+				ChunkInterval: *chunkIntervalFlag,
+				DryRun:        *dryRunFlag,
+			},
+		)
+	}
+
+	if *backfillSparseCountersFlag {
+		if *clickhouseAddrFlag == "" {
+			return fmt.Errorf("--clickhouse-addr is required for --backfill-sparse-counters")
+		}
+		if startTime.IsZero() {
+			return fmt.Errorf("--start-time or --start-time-ago is required for --backfill-sparse-counters")
+		}
+		if endTime.IsZero() {
+			return fmt.Errorf("--end-time or --end-time-ago is required for --backfill-sparse-counters")
+		}
+
+		return admin.BackfillSparseCounters(
+			log,
+			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
+			*clickhouseSecureFlag,
+			admin.BackfillSparseCountersConfig{
 				StartTime:     startTime,
 				EndTime:       endTime,
 				ChunkInterval: *chunkIntervalFlag,
