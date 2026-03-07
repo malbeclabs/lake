@@ -1061,6 +1061,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 type LinkHourStatus struct {
 	Hour         string  `json:"hour"`
 	Status       string  `json:"status"` // "healthy", "degraded", "unhealthy", "no_data"
+	Drained      bool    `json:"drained,omitempty"`
 	AvgLatencyUs float64 `json:"avg_latency_us"`
 	AvgLossPct   float64 `json:"avg_loss_pct"`
 	Samples      uint64  `json:"samples"`
@@ -1672,20 +1673,11 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 
 			// If link is currently drained and history doesn't have an entry for this bucket,
 			// check if there's latency data — if there is, use it (link may not have been
-			// drained yet). If there's no data either, show as disabled.
+			// drained yet). If there's no data either, assume drained.
 			if !hasHistory && isCurrentlyDrained {
 				if _, hasData := bucketMap[key]; !hasData {
 					wasDrained = true
 				}
-			}
-
-			// If link was drained at this time, show as disabled
-			if wasDrained {
-				hourStatuses = append(hourStatuses, LinkHourStatus{
-					Hour:   key,
-					Status: "disabled",
-				})
-				continue
 			}
 
 			// Check if we have latency/traffic data for this bucket
@@ -1699,6 +1691,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 				hourStatus := LinkHourStatus{
 					Hour:         key,
 					Status:       status,
+					Drained:      wasDrained,
 					AvgLatencyUs: stats.avgLatency,
 					AvgLossPct:   stats.lossPct,
 					Samples:      stats.samples,
@@ -1797,8 +1790,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 				hourStatuses = append(hourStatuses, hourStatus)
 			} else {
 				hourStatuses = append(hourStatuses, LinkHourStatus{
-					Hour:   key,
-					Status: "no_data",
+					Hour:    key,
+					Status:  "no_data",
+					Drained: wasDrained,
 				})
 			}
 		}

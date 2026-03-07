@@ -1326,6 +1326,7 @@ export async function fetchStatus(): Promise<StatusResponse> {
 export interface LinkHourStatus {
   hour: string
   status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'disabled'
+  drained?: boolean
   avg_latency_us: number
   avg_loss_pct: number
   samples: number

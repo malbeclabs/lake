@@ -50,6 +50,11 @@ const statusLabels: Record<string, string> = {
   disabled: 'Disabled',
 }
 
+// Diagonal stripe pattern for drained cells (overlaid on health color)
+const drainedStripeStyle: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, rgba(255,255,255,0.25) 2px, rgba(255,255,255,0.25) 4px)',
+}
+
 // Thresholds matching backend classification and methodology
 const LOSS_MINOR_PCT = 0.1      // Minor: detectable but not impactful
 const LOSS_MODERATE_PCT = 1.0   // Moderate: noticeable degradation
@@ -161,6 +166,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
       <div className="flex gap-[2px]">
         {hours.map((hour, index) => {
           const effectiveStatus = getEffectiveStatus(hour, committedRttUs)
+          const isDrained = hour.drained === true
           return (
           <div
             key={hour.hour}
@@ -170,6 +176,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
           >
             <div
               className={`w-full h-6 rounded-sm ${statusColors[effectiveStatus]} cursor-pointer transition-opacity hover:opacity-80`}
+              style={isDrained ? drainedStripeStyle : undefined}
             />
 
             {/* Tooltip */}
@@ -187,6 +194,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
                     'text-muted-foreground'
                   }`}>
                     {statusLabels[effectiveStatus] || effectiveStatus}
+                    {isDrained && <span className="text-muted-foreground ml-1">(Drained)</span>}
                   </div>
                   {/* Reasons */}
                   {(() => {
