@@ -865,7 +865,7 @@ export function LinkStatusTimelines({
           <span>No Data</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-4 h-3 rounded-sm bg-muted-foreground/20 border border-muted-foreground/30" style={{ backgroundImage: 'repeating-linear-gradient(135deg, rgba(120,120,120,0.9), rgba(120,120,120,0.9) 2px, transparent 2px, transparent 3.5px)' }} />
+          <div className="w-2.5 h-2.5 rounded-sm bg-muted-foreground/20 border border-muted-foreground/30" style={{ backgroundImage: 'repeating-linear-gradient(135deg, rgba(120,120,120,0.9), rgba(120,120,120,0.9) 1.5px, transparent 1.5px, transparent 3px)' }} />
           <span>Drained</span>
         </div>
       </div>
