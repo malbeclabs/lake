@@ -1672,12 +1672,10 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			wasDrained := hasHistory && (historicalStatus == "soft-drained" || historicalStatus == "hard-drained")
 
 			// If link is currently drained and history doesn't have an entry for this bucket,
-			// check if there's latency data — if there is, use it (link may not have been
-			// drained yet). If there's no data either, assume drained.
+			// assume it was drained (history may be sparse). The history table only tells us
+			// when the link *changed* status, so gaps mean the previous status continued.
 			if !hasHistory && isCurrentlyDrained {
-				if _, hasData := bucketMap[key]; !hasData {
-					wasDrained = true
-				}
+				wasDrained = true
 			}
 
 			// Check if we have latency/traffic data for this bucket

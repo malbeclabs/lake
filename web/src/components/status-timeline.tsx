@@ -52,7 +52,7 @@ const statusLabels: Record<string, string> = {
 
 // Diagonal stripe pattern for drained cells (overlaid on health color)
 const drainedStripeStyle: React.CSSProperties = {
-  backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, rgba(255,255,255,0.25) 2px, rgba(255,255,255,0.25) 4px)',
+  backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 2px, rgba(255,255,255,0.35) 2px, rgba(255,255,255,0.35) 4px)',
 }
 
 // Thresholds matching backend classification and methodology
