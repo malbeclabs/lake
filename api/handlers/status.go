@@ -1164,8 +1164,7 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // snapBucketMinutes rounds the bucket size to a clean interval that divides
-// evenly into hours, so Go's time.Truncate and ClickHouse's toStartOfInterval
-// produce the same bucket boundaries.
+// evenly into hours for readable bucket boundaries.
 func snapBucketMinutes(raw int) int {
 	if raw < 5 {
 		return 5
@@ -1212,9 +1211,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	// Build the bucket interval expression
 	var bucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	// Get all WAN links with their metadata
@@ -1278,7 +1277,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	// Get stats for the configured time range, grouped by direction (A→Z vs Z→A).
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
-	lossBucketInterval := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d MINUTE)", min(bucketMinutes, 5))
+	lossBucketInterval := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d MINUTE, 'UTC')", min(bucketMinutes, 5))
 	timeFilterExpr := fmt.Sprintf("f.event_ts > now() - INTERVAL %d HOUR", totalHours)
 	historyQuery := `
 		WITH loss_sub AS (
@@ -1530,9 +1529,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	// Build bucket interval for snapshot_ts (history table uses snapshot_ts, not event_ts)
 	var historyBucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	statusHistoryQuery := `
@@ -2032,9 +2031,9 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 	// Build the bucket interval expression
 	var bucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	// Get all devices with their metadata
@@ -2131,9 +2130,9 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 	// Get historical device status per bucket
 	var historyBucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	statusHistoryQuery := `
@@ -2754,9 +2753,9 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	// Build the bucket interval expression
 	var bucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	// Get link metadata
@@ -2789,7 +2788,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	// Get latency/loss stats per direction.
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
-	singleLossBucket := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE)", min(bucketMinutes, 5))
+	singleLossBucket := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", min(bucketMinutes, 5))
 	singleTimeFilter := fmt.Sprintf("event_ts > now() - INTERVAL %d HOUR", totalHours)
 	latencyQuery := `
 		WITH loss_sub AS (
@@ -3093,9 +3092,9 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 	// Build the bucket interval expression
 	var bucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	// Get device metadata
@@ -3177,9 +3176,9 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 	// Get historical device status per bucket
 	var historyBucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
-		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d HOUR)", bucketMinutes/60)
+		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
 	} else {
-		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d MINUTE)", bucketMinutes)
+		historyBucketInterval = fmt.Sprintf("toStartOfInterval(snapshot_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 	}
 
 	statusHistoryQuery := `
