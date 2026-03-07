@@ -861,10 +861,6 @@ export function LinkStatusTimelines({
           <span>Unhealthy</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-sm bg-gray-500 dark:bg-gray-600" />
-          <span>Down</span>
-        </div>
-        <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-sm bg-transparent border border-gray-200 dark:border-gray-700" />
           <span>No Data</span>
         </div>
