@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,15 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createPublisherShredStatsTable creates the shredder.publisher_shred_stats table
-// (normally created by shredder migrations, not lake migrations).
+// createPublisherShredStatsTable creates the publisher_shred_stats table
+// in the configured shredder database (normally created by shredder migrations, not lake migrations).
 func createPublisherShredStatsTable(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `CREATE DATABASE IF NOT EXISTS shredder`)
+	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.ShredderDB))
 	require.NoError(t, err)
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS shredder.publisher_shred_stats (
+	err = config.DB.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3),
 			host String,
@@ -47,7 +48,7 @@ func createPublisherShredStatsTable(t *testing.T) {
 		) ENGINE = ReplacingMergeTree(ingested_at)
 		PARTITION BY toYYYYMM(event_ts)
 		ORDER BY (host, slot, publisher_ip)
-	`)
+	`, "`"+config.ShredderDB+"`"))
 	require.NoError(t, err)
 }
 
@@ -163,8 +164,8 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Shred stats: only dzuser1 and dzuser2 are publishing (dzuser3 is NOT)
-	err = config.DB.Exec(ctx, `
-		INSERT INTO shredder.publisher_shred_stats
+	err = config.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,

@@ -162,10 +162,12 @@ For testing the UI with real production data without running the full indexer, y
    ```
 
 This creates local proxy tables using ClickHouse `remoteSecure()` that transparently forward reads to the remote instance:
-- `all` mode discovers all tables in the remote `lake` database and creates local proxies, plus creates proxies for external service tables (e.g., `shredder.publisher_shred_stats`)
+- `all` mode discovers all tables in the remote `lake` database and creates local proxies, plus creates proxies for external service tables (e.g., `shredder.publisher_shred_stats`, `shredder_qa.publisher_shred_stats`)
 - `external` mode only creates the external service proxies (used in k8s staging/PR preview environments)
 
 The API and web UI work as normal — they query local ClickHouse which forwards to remote. No code changes needed.
+
+Set `CLICKHOUSE_SHREDDER_DB` to control which shredder database the publisher check queries use (default: `shredder`). For example, set `CLICKHOUSE_SHREDDER_DB=shredder_qa` to use the QA environment.
 
 To add proxies for additional external tables, add entries to `externalRemoteTables` in `admin/internal/admin/setup_remote_tables.go`.
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"golang.org/x/mod/semver"
 
+	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -97,9 +99,10 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Build query: start from all bebop publishers (dz_users_current),
 	// LEFT JOIN shred stats and validator info.
-	query := `
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", config.ShredderDB)
+	query := fmt.Sprintf(`
 		WITH current_epoch AS (
-			SELECT max(epoch) AS epoch FROM shredder.publisher_shred_stats
+			SELECT max(epoch) AS epoch FROM %s
 		),
 		stats AS (
 			SELECT
@@ -110,7 +113,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 				countIf(is_scheduled_leader = false) AS retransmit_slots,
 				sum(unique_shreds) AS total_unique_shreds,
 				countIf(needs_repair = true) AS slots_needing_repair
-			FROM shredder.publisher_shred_stats
+			FROM %s
 			WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1
 			GROUP BY dz_user_pubkey
 		)
@@ -140,7 +143,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN validatorsapp_validators_current va ON v.vote_pubkey = va.vote_account
 		WHERE u.status = 'activated'
 			AND has(JSONExtract(u.publishers, 'Array(String)'), ?)
-	`
+	`, shredStatsTable, shredStatsTable)
 
 	// Query args: epochsParam for stats CTE, then bebopPK for has() filter
 	args := []any{epochsParam, bebopPK}

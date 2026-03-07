@@ -18,6 +18,7 @@ var externalRemoteTables = []struct {
 	RemoteTable string
 }{
 	{"shredder", "publisher_shred_stats"},
+	{"shredder_qa", "publisher_shred_stats"},
 }
 
 // SetupRemoteTables creates remoteSecure() proxy tables in local ClickHouse

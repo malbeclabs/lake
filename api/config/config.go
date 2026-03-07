@@ -15,6 +15,9 @@ import (
 // DB is the global ClickHouse connection pool (mainnet-beta)
 var DB driver.Conn
 
+// ShredderDB is the ClickHouse database name for shredder tables (default: "shredder").
+var ShredderDB = "shredder"
+
 // EnvDBs maps environment names to their ClickHouse connection pools.
 // The mainnet-beta entry always points to DB.
 var EnvDBs map[string]driver.Conn
@@ -87,6 +90,10 @@ func Load() error {
 
 	cfg.Password = os.Getenv("CLICKHOUSE_PASSWORD")
 
+	if db := os.Getenv("CLICKHOUSE_SHREDDER_DB"); db != "" {
+		ShredderDB = db
+	}
+
 	// Build env -> database mapping
 	EnvDatabases = map[string]string{
 		"mainnet-beta": cfg.Database,
@@ -100,7 +107,7 @@ func Load() error {
 
 	secure := os.Getenv("CLICKHOUSE_SECURE") == "true"
 
-	log.Printf("Connecting to ClickHouse: addr=%s, database=%s, username=%s, secure=%v", cfg.Addr, cfg.Database, cfg.Username, secure)
+	log.Printf("Connecting to ClickHouse: addr=%s, database=%s, username=%s, secure=%v, shredder_db=%s", cfg.Addr, cfg.Database, cfg.Username, secure, ShredderDB)
 
 	// Create connection pool
 	opts := &clickhouse.Options{

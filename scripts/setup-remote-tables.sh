@@ -30,6 +30,7 @@ REMOTE_LAKE_DB="lake"
 # External tables from other services (format: "remote_db.remote_table:local_table_name")
 EXTERNAL_TABLES=(
   "shredder.publisher_shred_stats:publisher_shred_stats"
+  "shredder_qa.publisher_shred_stats:publisher_shred_stats"
 )
 
 # ─── Load environment ─────────────────────────────────────────────────────────
