@@ -148,8 +148,13 @@ function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string
   return reasons
 }
 
-export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, timeRange = '24h' }: StatusTimelineProps) {
+export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes = 60, timeRange = '24h' }: StatusTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+
+  // Drop trailing no_data buckets — they're still being collected
+  const hours = rawHours.length > 0 && rawHours[rawHours.length - 1].status === 'no_data'
+    ? rawHours.slice(0, -1)
+    : rawHours
 
   const timeLabels: Record<string, string> = {
     '1h': '1h ago',
