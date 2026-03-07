@@ -1653,13 +1653,6 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 
 		// Include all links (both healthy and those with issues)
 
-		// Convert issue reasons to slice
-		var issueReasonsList []string
-		for reason := range issueReasons {
-			issueReasonsList = append(issueReasonsList, reason)
-		}
-		sort.Strings(issueReasonsList)
-
 		// Build bucket status array
 		bucketMap := make(map[string]bucketStats)
 		for _, b := range buckets {
@@ -1825,13 +1818,14 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		isDown := downLinkPKs[pk] && !isCurrentlyDrained
 		if isDown {
 			issueReasons["down"] = true
-			// Rebuild issue reasons list
-			issueReasonsList = nil
-			for reason := range issueReasons {
-				issueReasonsList = append(issueReasonsList, reason)
-			}
-			sort.Strings(issueReasonsList)
 		}
+
+		// Convert issue reasons to slice (after all tracking is complete)
+		var issueReasonsList []string
+		for reason := range issueReasons {
+			issueReasonsList = append(issueReasonsList, reason)
+		}
+		sort.Strings(issueReasonsList)
 
 		// Only expose committed RTT for inter-metro WAN links (not DZX)
 		// so the frontend doesn't apply latency classification to DZX links
