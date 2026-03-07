@@ -1551,12 +1551,14 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		log.Printf("Link status history query error: %v", err)
 	}
 
-	// Build map of link status per bucket
-	type linkBucketKey struct {
-		linkPK string
+	// Build per-link sorted history of statuses, keyed by bucket time string
+	// Since history is sparse (only records transitions), we need to carry forward
+	// the last known status for buckets without entries.
+	type statusEntry struct {
 		bucket string
+		status string
 	}
-	linkStatusHistory := make(map[linkBucketKey]string)
+	linkStatusEntries := make(map[string][]statusEntry) // linkPK -> sorted entries
 
 	if statusRows != nil {
 		defer statusRows.Close()
@@ -1566,11 +1568,26 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			if err := statusRows.Scan(&linkPK, &bucket, &status); err != nil {
 				return nil, fmt.Errorf("status history scan error: %w", err)
 			}
-			key := linkBucketKey{linkPK: linkPK, bucket: bucket.UTC().Format(time.RFC3339)}
-			linkStatusHistory[key] = status
+			key := bucket.UTC().Format(time.RFC3339)
+			linkStatusEntries[linkPK] = append(linkStatusEntries[linkPK], statusEntry{bucket: key, status: status})
 		}
 		if err := statusRows.Err(); err != nil {
 			return nil, fmt.Errorf("status rows iteration error: %w", err)
+		}
+	}
+
+	// Build a fast lookup map and also sort entries for carry-forward
+	type linkBucketKey struct {
+		linkPK string
+		bucket string
+	}
+	linkStatusHistory := make(map[linkBucketKey]string)
+	for linkPK, entries := range linkStatusEntries {
+		// Sort by bucket time
+		sort.Slice(entries, func(i, j int) bool { return entries[i].bucket < entries[j].bucket })
+		linkStatusEntries[linkPK] = entries
+		for _, e := range entries {
+			linkStatusHistory[linkBucketKey{linkPK: linkPK, bucket: e.bucket}] = e.status
 		}
 	}
 
@@ -1661,22 +1678,34 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			bucketMap[key] = b
 		}
 
+		// Build a function to resolve drained status per bucket for this link.
+		// History is sparse (only records transitions), so for buckets without entries,
+		// we carry forward the most recent known status before that bucket.
+		entries := linkStatusEntries[pk]
+		resolveDrained := func(bucketKey string) bool {
+			// Direct hit in history
+			if histKey, ok := linkStatusHistory[linkBucketKey{linkPK: pk, bucket: bucketKey}]; ok {
+				return histKey == "soft-drained" || histKey == "hard-drained"
+			}
+			// No direct hit — find the most recent entry before this bucket
+			if len(entries) > 0 {
+				// Binary search for the last entry <= bucketKey
+				idx := sort.Search(len(entries), func(i int) bool { return entries[i].bucket > bucketKey })
+				if idx > 0 {
+					prev := entries[idx-1]
+					return prev.status == "soft-drained" || prev.status == "hard-drained"
+				}
+			}
+			// No history entries before this bucket — unknown, assume not drained
+			return false
+		}
+
 		var hourStatuses []LinkHourStatus
 		for i := bucketCount - 1; i >= 0; i-- {
 			bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 			key := bucketStart.UTC().Format(time.RFC3339)
 
-			// Check if link was drained at this time
-			histKey := linkBucketKey{linkPK: pk, bucket: key}
-			historicalStatus, hasHistory := linkStatusHistory[histKey]
-			wasDrained := hasHistory && (historicalStatus == "soft-drained" || historicalStatus == "hard-drained")
-
-			// If link is currently drained and history doesn't have an entry for this bucket,
-			// assume it was drained (history may be sparse). The history table only tells us
-			// when the link *changed* status, so gaps mean the previous status continued.
-			if !hasHistory && isCurrentlyDrained {
-				wasDrained = true
-			}
+			wasDrained := resolveDrained(key)
 
 			// Check if we have latency/traffic data for this bucket
 			if stats, ok := bucketMap[key]; ok {
