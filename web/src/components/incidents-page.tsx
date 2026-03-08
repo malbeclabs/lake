@@ -973,37 +973,38 @@ function ActiveIncidentsTable({
 function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }) {
   return (
     <div className="border border-border rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm table-fixed">
         <thead className="bg-muted/50">
           <tr>
-            <th className="text-left px-4 py-3 font-medium">Link</th>
-            <th className="text-left px-4 py-3 font-medium">Route</th>
-            <th className="text-left px-4 py-3 font-medium">Drain Status</th>
-            <th className="text-left px-4 py-3 font-medium">Issues</th>
-            <th className="text-left px-4 py-3 font-medium">Started</th>
-            <th className="text-left px-4 py-3 font-medium">Clear For</th>
-            <th className="text-left px-4 py-3 font-medium">Readiness</th>
+            <th className="text-left px-4 py-3 font-medium w-[24%]">Link</th>
+            <th className="text-left px-4 py-3 font-medium w-[10%]">Route</th>
+            <th className="text-left px-4 py-3 font-medium w-[11%]">Drain Status</th>
+            <th className="text-left px-4 py-3 font-medium w-[16%]">Issues</th>
+            <th className="text-left px-4 py-3 font-medium w-[16%]">Started</th>
+            <th className="text-left px-4 py-3 font-medium w-[9%] whitespace-nowrap">Clear For</th>
+            <th className="text-left px-4 py-3 font-medium w-[14%]">Readiness</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
           {drainedLinks.map((dl) => (
             <tr key={dl.link_pk} className="hover:bg-muted/30">
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 truncate">
                 <Link
                   to={`/dz/links/${encodeURIComponent(dl.link_pk)}`}
-                  className="text-primary hover:underline inline-flex items-center gap-1"
+                  className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
+                  title={dl.link_code}
                 >
-                  {dl.link_code}
-                  <ExternalLink className="h-3 w-3" />
+                  <span className="truncate">{dl.link_code}</span>
+                  <ExternalLink className="h-3 w-3 shrink-0" />
                 </Link>
-                <div className="text-xs text-muted-foreground">{dl.contributor_code} · {dl.link_type}</div>
+                <div className="text-xs text-muted-foreground truncate">{dl.contributor_code} · {dl.link_type}</div>
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 <span className="font-mono">
                   {dl.side_a_metro} &rarr; {dl.side_z_metro}
                 </span>
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                   {dl.drain_status}
                 </span>
@@ -1020,12 +1021,11 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
                       {types.map((type) => (
                         <IncidentTypeBadge key={type} type={type} />
                       ))}
-                      <span className="text-xs text-muted-foreground">({allIncidents.length})</span>
                     </div>
                   )
                 })()}
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 {(() => {
                   const allIncidents = [...dl.active_incidents, ...dl.recent_incidents]
                   if (allIncidents.length > 0) {
@@ -1043,14 +1043,14 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
                     return (
                       <>
                         <div className="text-muted-foreground">{formatTimeAgo(dl.drained_since)}</div>
-                        <div className="text-xs text-muted-foreground">drained {formatTimestamp(dl.drained_since)}</div>
+                        <div className="text-xs text-muted-foreground">{formatTimestamp(dl.drained_since)}</div>
                       </>
                     )
                   }
                   return <span className="text-muted-foreground">-</span>
                 })()}
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 {dl.clear_for_seconds != null ? (
                   formatDuration(dl.clear_for_seconds)
                 ) : dl.active_incidents.length > 0 ? (
@@ -1059,7 +1059,7 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
                   <span className="text-muted-foreground">-</span>
                 )}
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 <ReadinessDot readiness={dl.readiness} />
               </td>
             </tr>
@@ -1190,35 +1190,36 @@ function ActiveDeviceIncidentsTable({
 function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDeviceInfo[] }) {
   return (
     <div className="border border-border rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm table-fixed">
         <thead className="bg-muted/50">
           <tr>
-            <th className="text-left px-4 py-3 font-medium">Device</th>
-            <th className="text-left px-4 py-3 font-medium">Metro</th>
-            <th className="text-left px-4 py-3 font-medium">Drain Status</th>
-            <th className="text-left px-4 py-3 font-medium">Issues</th>
-            <th className="text-left px-4 py-3 font-medium">Started</th>
-            <th className="text-left px-4 py-3 font-medium">Clear For</th>
-            <th className="text-left px-4 py-3 font-medium">Readiness</th>
+            <th className="text-left px-4 py-3 font-medium w-[24%]">Device</th>
+            <th className="text-left px-4 py-3 font-medium w-[10%]">Metro</th>
+            <th className="text-left px-4 py-3 font-medium w-[11%]">Drain Status</th>
+            <th className="text-left px-4 py-3 font-medium w-[16%]">Issues</th>
+            <th className="text-left px-4 py-3 font-medium w-[16%]">Started</th>
+            <th className="text-left px-4 py-3 font-medium w-[9%] whitespace-nowrap">Clear For</th>
+            <th className="text-left px-4 py-3 font-medium w-[14%]">Readiness</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
           {drainedDevices.map((dd) => (
             <tr key={dd.device_pk} className="hover:bg-muted/30">
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 truncate">
                 <Link
                   to={`/dz/devices/${encodeURIComponent(dd.device_pk)}`}
-                  className="text-primary hover:underline inline-flex items-center gap-1"
+                  className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
+                  title={dd.device_code}
                 >
-                  {dd.device_code}
-                  <ExternalLink className="h-3 w-3" />
+                  <span className="truncate">{dd.device_code}</span>
+                  <ExternalLink className="h-3 w-3 shrink-0" />
                 </Link>
-                <div className="text-xs text-muted-foreground">{dd.contributor_code} · {dd.device_type}</div>
+                <div className="text-xs text-muted-foreground truncate">{dd.contributor_code} · {dd.device_type}</div>
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 <span className="font-mono">{dd.metro}</span>
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                   {dd.drain_status}
                 </span>
@@ -1235,12 +1236,11 @@ function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDevice
                       {types.map((type) => (
                         <IncidentTypeBadge key={type} type={type} />
                       ))}
-                      <span className="text-xs text-muted-foreground">({allIncidents.length})</span>
                     </div>
                   )
                 })()}
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 {(() => {
                   const allIncidents = [...dd.active_incidents, ...dd.recent_incidents]
                   if (allIncidents.length > 0) {
@@ -1258,14 +1258,14 @@ function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDevice
                     return (
                       <>
                         <div className="text-muted-foreground">{formatTimeAgo(dd.drained_since)}</div>
-                        <div className="text-xs text-muted-foreground">drained {formatTimestamp(dd.drained_since)}</div>
+                        <div className="text-xs text-muted-foreground">{formatTimestamp(dd.drained_since)}</div>
                       </>
                     )
                   }
                   return <span className="text-muted-foreground">-</span>
                 })()}
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 {dd.clear_for_seconds != null ? (
                   formatDuration(dd.clear_for_seconds)
                 ) : dd.active_incidents.length > 0 ? (
@@ -1274,7 +1274,7 @@ function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDevice
                   <span className="text-muted-foreground">-</span>
                 )}
               </td>
-              <td className="px-4 py-3">
+              <td className="px-4 py-3 whitespace-nowrap">
                 <ReadinessDot readiness={dd.readiness} />
               </td>
             </tr>
