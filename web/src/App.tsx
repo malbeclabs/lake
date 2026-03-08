@@ -36,9 +36,7 @@ import { TrafficDashboardPage } from '@/pages/traffic-dashboard-page'
 import { MaintenancePlannerPage } from '@/components/maintenance-planner-page'
 import { StatusPage } from '@/components/status-page'
 import { TimelinePage } from '@/components/timeline-page'
-import { OutagesPage } from '@/components/outages-page'
 import { IncidentsPage } from '@/components/incidents-page'
-import { OutagesAppendix } from '@/components/outages-appendix'
 import { StatusAppendix } from '@/components/status-appendix'
 import { DevicesPage } from '@/components/devices-page'
 import { LinksPage } from '@/components/links-page'
@@ -656,10 +654,6 @@ function AppContent() {
 
             {/* Timeline route */}
             <Route path="/timeline" element={<TimelinePage />} />
-
-            {/* Outages route */}
-            <Route path="/outages" element={<OutagesPage />} />
-            <Route path="/outages/methodology" element={<OutagesAppendix />} />
 
             {/* Incidents route */}
             <Route path="/incidents" element={<IncidentsPage />} />

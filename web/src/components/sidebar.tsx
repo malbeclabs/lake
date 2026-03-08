@@ -24,7 +24,6 @@ import {
   Shield,
   ShieldCheck,
   Wrench,
-  AlertTriangle,
   ShieldAlert,
   Gauge,
   BarChart3,
@@ -50,7 +49,6 @@ export function Sidebar() {
   // Route detection
   const isStatusRoute = location.pathname.startsWith('/status')
   const isTimelineRoute = location.pathname === '/timeline'
-  const isOutagesRoute = location.pathname === '/outages'
   const isIncidentsRoute = location.pathname === '/incidents'
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'

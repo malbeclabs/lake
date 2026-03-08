@@ -192,7 +192,6 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
   const isTopologyPage = location.pathname === '/topology/map' || location.pathname === '/topology/graph' || location.pathname === '/topology/globe'
   const isTimelinePage = location.pathname === '/timeline'
   const isStatusPage = location.pathname.startsWith('/status')
-  const isOutagesPage = location.pathname === '/outages'
   const isPerformancePage = location.pathname.startsWith('/performance')
   const isValidatorsPage = location.pathname === '/solana/validators'
   const isGossipNodesPage = location.pathname === '/solana/gossip-nodes'
@@ -456,17 +455,6 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
       return
     }
 
-    // On outages page, add filter to accumulated filters instead of navigating away
-    if (isOutagesPage) {
-      if (e && (e.metaKey || e.ctrlKey)) {
-        // Open new tab with just this filter
-        window.open(`/outages?filter=${encodeURIComponent(`${item.type}:${item.label}`)}`, '_blank')
-      } else {
-        addStatusFilter(item.type, item.label)
-      }
-      return
-    }
-
     // On performance page, add metro filter (only metros are shown)
     if (isPerformancePage && item.type === 'metro') {
       if (e && (e.metaKey || e.ctrlKey)) {
@@ -495,7 +483,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
     } else {
       navigate(item.url)
     }
-  }, [navigate, addRecentSearch, onClose, isTopologyPage, isTimelinePage, addTimelineFilter, isStatusPage, isOutagesPage, addStatusFilter, isPerformancePage, addPerformanceFilter, location.pathname, addTableFilter, useTableFilterMode])
+  }, [navigate, addRecentSearch, onClose, isTopologyPage, isTimelinePage, addTimelineFilter, isStatusPage, addStatusFilter, isPerformancePage, addPerformanceFilter, location.pathname, addTableFilter, useTableFilterMode])
 
   const handleAskAI = useCallback((e?: React.MouseEvent) => {
     if (!query.trim()) return
@@ -615,7 +603,7 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={globalSearchMode ? "Search entities..." : isTopologyPage ? "Search entities (opens in map)..." : isTimelinePage ? "Filter timeline events..." : isStatusPage ? "Filter status by entity..." : isOutagesPage ? "Filter outages by entity..." : isPerformancePage ? "Filter by metro..." : isValidatorsPage ? "Filter validators..." : isGossipNodesPage ? "Filter gossip nodes..." : isDevicesPage ? "Filter devices..." : isLinksPage ? "Filter links..." : isMetrosPage ? "Filter metros..." : isContributorsPage ? "Filter contributors..." : isUsersPage ? "Filter users..." : isMulticastGroupsPage ? "Filter multicast groups..." : "Search entities..."}
+            placeholder={globalSearchMode ? "Search entities..." : isTopologyPage ? "Search entities (opens in map)..." : isTimelinePage ? "Filter timeline events..." : isStatusPage ? "Filter status by entity..." : isPerformancePage ? "Filter by metro..." : isValidatorsPage ? "Filter validators..." : isGossipNodesPage ? "Filter gossip nodes..." : isDevicesPage ? "Filter devices..." : isLinksPage ? "Filter links..." : isMetrosPage ? "Filter metros..." : isContributorsPage ? "Filter contributors..." : isUsersPage ? "Filter users..." : isMulticastGroupsPage ? "Filter multicast groups..." : "Search entities..."}
             className="flex-1 h-14 px-3 text-lg bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground"
           />
           {(isLoading || fieldValuesLoading) && query.length >= 2 && (
@@ -840,11 +828,6 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
                     Filter status
                   </span>
                 )}
-                {isOutagesPage && (
-                  <span className="text-xs text-muted-foreground flex-shrink-0">
-                    Filter outages
-                  </span>
-                )}
                 {isPerformancePage && (
                   <span className="text-xs text-muted-foreground flex-shrink-0">
                     Filter by metro
@@ -887,9 +870,6 @@ export function SearchSpotlight({ isOpen, onClose }: SearchSpotlightProps) {
             )}
             {isStatusPage && (
               <span className="text-blue-500">On status</span>
-            )}
-            {isOutagesPage && (
-              <span className="text-blue-500">On outages</span>
             )}
             {isPerformancePage && (
               <span className="text-blue-500">On performance</span>
