@@ -224,9 +224,6 @@ export function Sidebar() {
           <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
             <Clock className="h-4 w-4" />
           </Link>
-          <Link to="/outages" className={collapsedIconClass(isOutagesRoute)} title="Outages">
-            <AlertTriangle className="h-4 w-4" />
-          </Link>
           <Link to="/incidents" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
             <ShieldAlert className="h-4 w-4" />
           </Link>
@@ -446,10 +443,6 @@ export function Sidebar() {
             <Link to="/timeline" className={navItemClass(isTimelineRoute)}>
               <Clock className="h-4 w-4" />
               Timeline
-            </Link>
-            <Link to="/outages" className={navItemClass(isOutagesRoute)}>
-              <AlertTriangle className="h-4 w-4" />
-              Outages
             </Link>
             <Link to="/incidents" className={navItemClass(isIncidentsRoute)}>
               <ShieldAlert className="h-4 w-4" />

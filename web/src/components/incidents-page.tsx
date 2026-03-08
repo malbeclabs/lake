@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { ShieldAlert, Settings, ExternalLink } from 'lucide-react'
+import { ShieldAlert, Settings, ExternalLink, Info, Download } from 'lucide-react'
 import {
   fetchLinkIncidents,
   type LinkIncident,
@@ -58,6 +58,13 @@ function formatDuration(seconds: number | undefined): string {
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
   return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+}
+
+// Client-side confirmed check: ongoing incident is confirmed if elapsed time >= minDuration
+function isConfirmed(incident: LinkIncident, minDurationMin: number): boolean {
+  if (!incident.is_ongoing) return true
+  const elapsedSecs = (Date.now() - new Date(incident.started_at).getTime()) / 1000
+  return elapsedSecs >= minDurationMin * 60
 }
 
 function formatTimeAgo(isoString: string): string {
@@ -125,17 +132,6 @@ function DrainedBadge() {
   )
 }
 
-function OngoingIndicator() {
-  return (
-    <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
-      <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-        <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-      </span>
-      ongoing
-    </span>
-  )
-}
 
 function ReadinessDot({ readiness }: { readiness: string }) {
   const colors: Record<string, string> = {
@@ -145,10 +141,10 @@ function ReadinessDot({ readiness }: { readiness: string }) {
     gray: 'bg-gray-400',
   }
   const labels: Record<string, string> = {
-    red: 'Active incidents',
+    red: 'Active issues',
     yellow: 'Recently clear',
     green: 'Clear 30m+',
-    gray: 'No incidents',
+    gray: 'No issues in range',
   }
   return (
     <span className="inline-flex items-center gap-1.5" title={labels[readiness] || readiness}>
@@ -283,7 +279,6 @@ export function IncidentsPage() {
   })
 
   // Unfiltered summaries for the stat cards (always show all counts)
-  const allActiveSummary = data?.active_summary || { total: 0, ongoing: 0, by_type: {} }
   const allDrainedSummary = data?.drained_summary || { total: 0, with_incidents: 0, ready: 0, not_ready: 0 }
 
   // Client-side type filtering
@@ -309,6 +304,7 @@ export function IncidentsPage() {
   const [sortField, setSortField] = useState<'started_at' | 'duration'>('started_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [pinOngoing, setPinOngoing] = useState(true)
+  const [showDetecting, setShowDetecting] = useState(true)
 
   const sortedActiveIncidents = useMemo(() => {
     const compare = (a: LinkIncident, b: LinkIncident) => {
@@ -331,6 +327,24 @@ export function IncidentsPage() {
     return [...ongoing, ...notOngoing]
   }, [activeIncidents, sortField, sortDir, pinOngoing])
 
+  const displayedActiveIncidents = useMemo(() => {
+    if (showDetecting) return sortedActiveIncidents
+    return sortedActiveIncidents.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+  }, [sortedActiveIncidents, showDetecting])
+
+  // Compute counts from filtered data (respects showDetecting toggle)
+  const filteredByType = useMemo(() => {
+    const all = data?.active || []
+    const visible = showDetecting ? all : all.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+    const byType: Record<string, number> = { packet_loss: 0, errors: 0, discards: 0, carrier: 0, no_data: 0 }
+    let ongoing = 0
+    for (const i of visible) {
+      byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
+      if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
+    }
+    return { byType, ongoing }
+  }, [data?.active, showDetecting])
+
   const toggleSort = (field: 'started_at' | 'duration') => {
     if (sortField === field) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
@@ -340,6 +354,19 @@ export function IncidentsPage() {
     }
   }
 
+  const exportUrl = useMemo(() => {
+    const params = new URLSearchParams()
+    params.set('range', range)
+    params.set('threshold', threshold.toString())
+    params.set('errors_threshold', errorsThreshold.toString())
+    params.set('discards_threshold', discardsThreshold.toString())
+    params.set('carrier_threshold', carrierThreshold.toString())
+    params.set('min_duration', minDuration.toString())
+    params.set('coalesce_gap', coalesceGap.toString())
+    if (filterParam) params.set('filter', filterParam)
+    return `/api/incidents/links/csv?${params.toString()}`
+  }, [range, threshold, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam])
+
   if (isLoading) {
     return <IncidentsPageSkeleton />
   }
@@ -348,7 +375,20 @@ export function IncidentsPage() {
     return (
       <div className="flex-1 overflow-auto">
         <div className="max-w-6xl mx-auto px-4 sm:px-8 py-8">
-          <div className="text-red-500">Error loading incidents: {(error as Error).message}</div>
+          <PageHeader icon={ShieldAlert} title="Incidents" />
+          <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
+            <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-medium mb-2">Unable to load incidents</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              {(error as Error).message || 'Something went wrong. The API server may be unavailable.'}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -360,6 +400,15 @@ export function IncidentsPage() {
         <PageHeader
           icon={ShieldAlert}
           title="Incidents"
+          actions={
+            <a
+              href={exportUrl}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-muted transition-colors"
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </a>
+          }
         />
 
         {/* Scope toggle */}
@@ -510,7 +559,7 @@ export function IncidentsPage() {
             { key: 'carrier', label: 'Carrier' },
             { key: 'no_data', label: 'No Data' },
           ] as const).map(({ key, label }) => {
-            const count = allActiveSummary.by_type[key] || 0
+            const count = filteredByType.byType[key] || 0
             const isSelected = selectedTypes.has(key)
             return (
               <button
@@ -542,9 +591,9 @@ export function IncidentsPage() {
             }`}
           >
             Activated
-            {allActiveSummary.ongoing > 0 && (
+            {filteredByType.ongoing > 0 && (
               <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-red-500/10 text-red-600 dark:text-red-400">
-                {allActiveSummary.ongoing}
+                {filteredByType.ongoing}
               </span>
             )}
           </button>
@@ -600,12 +649,39 @@ export function IncidentsPage() {
                     </span>
                     Pin ongoing to top
                   </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showDetecting}
+                    onClick={() => setShowDetecting(!showDetecting)}
+                    className="flex items-center gap-2 text-sm text-muted-foreground"
+                  >
+                    <span
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                        showDetecting ? 'bg-primary' : 'bg-muted-foreground/30'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                          showDetecting ? 'translate-x-4' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </span>
+                    Show detecting
+                    <span className="relative group">
+                      <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
+                      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                        Above threshold but under min duration
+                      </span>
+                    </span>
+                  </button>
                 </div>
                 <ActiveIncidentsTable
-                  incidents={sortedActiveIncidents}
+                  incidents={displayedActiveIncidents}
                   sortField={sortField}
                   sortDir={sortDir}
                   toggleSort={toggleSort}
+                  minDuration={minDuration}
                 />
               </>
             )}
@@ -618,9 +694,9 @@ export function IncidentsPage() {
             {drainedLinks.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
                 <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No drained links with incidents</h3>
+                <h3 className="text-lg font-medium mb-2">No drained links</h3>
                 <p className="text-sm text-muted-foreground">
-                  {hasTypeFilter ? 'No drained links have incidents of the selected type(s).' : 'No drained links have incidents in the selected time range.'}
+                  {hasTypeFilter ? 'No drained links have issues of the selected type(s).' : 'No links are currently drained.'}
                 </p>
               </div>
             ) : (
@@ -638,11 +714,13 @@ function ActiveIncidentsTable({
   sortField,
   sortDir,
   toggleSort,
+  minDuration,
 }: {
   incidents: LinkIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'duration') => void
+  minDuration: number
 }) {
   return (
     <div className="border border-border rounded-lg overflow-hidden">
@@ -670,6 +748,7 @@ function ActiveIncidentsTable({
                 <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
               )}
             </th>
+            <th className="text-left px-4 py-3 font-medium">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -713,10 +792,29 @@ function ActiveIncidentsTable({
                 </div>
               </td>
               <td className="px-4 py-3">
-                {incident.is_ongoing ? (
-                  <OngoingIndicator />
+                {incident.is_ongoing
+                  ? formatDuration(Math.floor((Date.now() - new Date(incident.started_at).getTime()) / 1000))
+                  : formatDuration(incident.duration_seconds)
+                }
+              </td>
+              <td className="px-4 py-3">
+                {incident.is_ongoing && isConfirmed(incident, minDuration) ? (
+                  <span className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    </span>
+                    Ongoing
+                  </span>
+                ) : incident.is_ongoing ? (
+                  <span className="inline-flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
+                    </span>
+                    Detecting
+                  </span>
                 ) : (
-                  formatDuration(incident.duration_seconds)
+                  <span className="text-muted-foreground">Resolved</span>
                 )}
               </td>
             </tr>
@@ -736,7 +834,8 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
             <th className="text-left px-4 py-3 font-medium">Link</th>
             <th className="text-left px-4 py-3 font-medium">Route</th>
             <th className="text-left px-4 py-3 font-medium">Drain Status</th>
-            <th className="text-left px-4 py-3 font-medium">Incidents</th>
+            <th className="text-left px-4 py-3 font-medium">Issues</th>
+            <th className="text-left px-4 py-3 font-medium">Started</th>
             <th className="text-left px-4 py-3 font-medium">Clear For</th>
             <th className="text-left px-4 py-3 font-medium">Readiness</th>
           </tr>
@@ -782,12 +881,37 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
                 })()}
               </td>
               <td className="px-4 py-3">
+                {(() => {
+                  const allIncidents = [...dl.active_incidents, ...dl.recent_incidents]
+                  if (allIncidents.length > 0) {
+                    const earliest = allIncidents.reduce((a, b) =>
+                      new Date(a.started_at) < new Date(b.started_at) ? a : b
+                    )
+                    return (
+                      <>
+                        <div>{formatTimeAgo(earliest.started_at)}</div>
+                        <div className="text-xs text-muted-foreground">{formatTimestamp(earliest.started_at)}</div>
+                      </>
+                    )
+                  }
+                  if (dl.drained_since) {
+                    return (
+                      <>
+                        <div className="text-muted-foreground">{formatTimeAgo(dl.drained_since)}</div>
+                        <div className="text-xs text-muted-foreground">drained {formatTimestamp(dl.drained_since)}</div>
+                      </>
+                    )
+                  }
+                  return <span className="text-muted-foreground">-</span>
+                })()}
+              </td>
+              <td className="px-4 py-3">
                 {dl.clear_for_seconds != null ? (
                   formatDuration(dl.clear_for_seconds)
                 ) : dl.active_incidents.length > 0 ? (
                   <span className="text-red-600 dark:text-red-400">-</span>
                 ) : (
-                  <span className="text-muted-foreground">no incidents</span>
+                  <span className="text-muted-foreground">-</span>
                 )}
               </td>
               <td className="px-4 py-3">

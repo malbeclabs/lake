@@ -34,6 +34,7 @@ type LinkIncident struct {
 	EndedAt         *string  `json:"ended_at,omitempty"`
 	DurationSeconds *int64   `json:"duration_seconds,omitempty"`
 	IsOngoing       bool     `json:"is_ongoing"`
+	Confirmed       bool     `json:"confirmed"` // true if ongoing duration >= min_duration
 	IsDrained       bool     `json:"is_drained"`
 	Severity        string   `json:"severity"` // "degraded" or "incident"
 }
@@ -997,12 +998,18 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter out completed incidents shorter than min duration
+	// Filter out completed incidents shorter than min duration, and set Confirmed on ongoing incidents
 	minDurationSecs := int64(detectParams.MinDuration.Seconds())
 	filtered := allIncidents[:0]
-	for _, inc := range allIncidents {
-		if inc.IsOngoing || inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
-			filtered = append(filtered, inc)
+	for i := range allIncidents {
+		inc := &allIncidents[i]
+		if inc.IsOngoing {
+			startTime, _ := time.Parse(time.RFC3339, inc.StartedAt)
+			inc.Confirmed = time.Since(startTime) >= detectParams.MinDuration
+			filtered = append(filtered, *inc)
+		} else if inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
+			inc.Confirmed = true
+			filtered = append(filtered, *inc)
 		}
 	}
 	allIncidents = filtered
@@ -1026,8 +1033,11 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 		return activeIncidents[i].StartedAt > activeIncidents[j].StartedAt
 	})
 
+	// Fetch when each drained link was drained
+	drainedSince := fetchDrainedSince(ctx, envDB(ctx), linkMeta)
+
 	// Build drained links info
-	drainedLinks := buildDrainedLinksInfo(linkMeta, drainedIncidentsByLink)
+	drainedLinks := buildDrainedLinksInfo(linkMeta, drainedIncidentsByLink, drainedSince)
 
 	// Build summaries
 	activeSummary := LinkIncidentsSummary{
@@ -1074,8 +1084,226 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
+// GetLinkIncidentsCSV returns link incidents as a CSV download
+func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
+	timeRange := r.URL.Query().Get("range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+	duration := parseTimeRange(timeRange)
+
+	thresholdStr := r.URL.Query().Get("threshold")
+	threshold := parseThreshold(thresholdStr)
+
+	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
+	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
+
+	minDurationMin := parseIntParam(r.URL.Query().Get("min_duration"), 30)
+	if minDurationMin < 5 {
+		minDurationMin = 5
+	}
+	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 720)
+	if coalesceGapMin < 0 {
+		coalesceGapMin = 0
+	}
+	detectParams := incidentDetectionParams{
+		MinDuration: time.Duration(minDurationMin) * time.Minute,
+		CoalesceGap: time.Duration(coalesceGapMin) * time.Minute,
+	}
+
+	incidentType := r.URL.Query().Get("type")
+	if incidentType == "" {
+		incidentType = "all"
+	}
+
+	filterStr := r.URL.Query().Get("filter")
+	filters := parseOutageFilters(filterStr)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	linkMeta, err := fetchLinkMetadataWithStatus(ctx, envDB(ctx), filters)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to fetch link metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var allIncidents []LinkIncident
+	var mu = &sync.Mutex{}
+	g, gCtx := errgroup.WithContext(ctx)
+
+	if incidentType == "all" || incidentType == "packet_loss" {
+		g.Go(func() error {
+			incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "errors" {
+		g.Go(func() error {
+			incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, errorsThreshold,
+				"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", linkMeta, detectParams)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "discards" {
+		g.Go(func() error {
+			incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, discardsThreshold,
+				"sum(greatest(0, coalesce(in_discards_delta, 0))) + sum(greatest(0, coalesce(out_discards_delta, 0)))", "discards", linkMeta, detectParams)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "carrier" {
+		g.Go(func() error {
+			incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, carrierThreshold,
+				"sum(greatest(0, coalesce(carrier_transitions_delta, 0)))", "carrier", linkMeta, detectParams)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "no_data" {
+		g.Go(func() error {
+			incidents, err := fetchNoDataIncidents(gCtx, envDB(gCtx), duration, linkMeta)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to fetch incidents: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Filter by min duration
+	minDurationSecs := int64(detectParams.MinDuration.Seconds())
+	filtered := allIncidents[:0]
+	for _, inc := range allIncidents {
+		if inc.IsOngoing || inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
+			filtered = append(filtered, inc)
+		}
+	}
+	allIncidents = filtered
+
+	sort.Slice(allIncidents, func(i, j int) bool {
+		return allIncidents[i].StartedAt > allIncidents[j].StartedAt
+	})
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=link-incidents.csv")
+
+	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,incident_type,severity,is_drained,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
+
+	for _, inc := range allIncidents {
+		var details string
+		switch inc.IncidentType {
+		case "packet_loss":
+			if inc.PeakLossPct != nil && inc.ThresholdPct != nil {
+				details = fmt.Sprintf("peak %.1f%% (threshold %.0f%%)", *inc.PeakLossPct, *inc.ThresholdPct)
+			}
+		case "errors", "discards", "carrier":
+			if inc.PeakCount != nil && inc.ThresholdCount != nil {
+				details = fmt.Sprintf("peak %d (threshold %d)", *inc.PeakCount, *inc.ThresholdCount)
+			}
+		case "no_data":
+			details = "telemetry stopped"
+		}
+
+		endedAt := ""
+		if inc.EndedAt != nil {
+			endedAt = *inc.EndedAt
+		}
+		durationSecs := ""
+		if inc.DurationSeconds != nil {
+			durationSecs = strconv.FormatInt(*inc.DurationSeconds, 10)
+		}
+
+		line := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%t,\"%s\",%s,%s,%s,%t\n",
+			inc.ID, inc.LinkCode, inc.LinkType, inc.SideAMetro, inc.SideZMetro,
+			inc.ContributorCode, inc.IncidentType, inc.Severity, inc.IsDrained,
+			details, inc.StartedAt, endedAt, durationSecs, inc.IsOngoing)
+		_, _ = w.Write([]byte(line))
+	}
+}
+
+func drainedSinceStr(drainedSince map[string]time.Time, linkPK string) string {
+	if t, ok := drainedSince[linkPK]; ok {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return ""
+}
+
+// fetchDrainedSince finds when each drained link entered its current drain state
+func fetchDrainedSince(ctx context.Context, conn driver.Conn, linkMeta map[string]linkMetadataWithStatus) map[string]time.Time {
+	drainedPKs := make([]string, 0)
+	for pk, meta := range linkMeta {
+		if meta.Status == "soft-drained" || meta.Status == "hard-drained" {
+			drainedPKs = append(drainedPKs, pk)
+		}
+	}
+	if len(drainedPKs) == 0 {
+		return nil
+	}
+
+	query := `
+		SELECT sc.link_pk, max(sc.changed_ts) as drained_at
+		FROM dz_link_status_changes sc
+		WHERE sc.link_pk IN ($1)
+		  AND sc.new_status IN ('soft-drained', 'hard-drained')
+		GROUP BY sc.link_pk
+	`
+
+	rows, err := conn.Query(ctx, query, drainedPKs)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	result := make(map[string]time.Time)
+	for rows.Next() {
+		var linkPK string
+		var drainedAt time.Time
+		if err := rows.Scan(&linkPK, &drainedAt); err != nil {
+			continue
+		}
+		result[linkPK] = drainedAt
+	}
+	return result
+}
+
 // buildDrainedLinksInfo builds the drained view from link metadata and incidents
-func buildDrainedLinksInfo(linkMeta map[string]linkMetadataWithStatus, incidentsByLink map[string][]LinkIncident) []DrainedLinkInfo {
+func buildDrainedLinksInfo(linkMeta map[string]linkMetadataWithStatus, incidentsByLink map[string][]LinkIncident, drainedSince map[string]time.Time) []DrainedLinkInfo {
 	var drainedLinks []DrainedLinkInfo
 
 	for linkPK, meta := range linkMeta {
@@ -1119,7 +1347,7 @@ func buildDrainedLinksInfo(linkMeta map[string]linkMetadataWithStatus, incidents
 			SideZMetro:      meta.SideZMetro,
 			ContributorCode: meta.ContributorCode,
 			DrainStatus:     meta.Status,
-			DrainedSince:    "",
+			DrainedSince:    drainedSinceStr(drainedSince, linkPK),
 			ActiveIncidents: activeIncidents,
 			RecentIncidents: recentIncidents,
 		}

@@ -4208,6 +4208,7 @@ export interface LinkIncident {
   ended_at?: string
   duration_seconds?: number
   is_ongoing: boolean
+  confirmed: boolean
   is_drained: boolean
   severity: 'degraded' | 'incident'
 }

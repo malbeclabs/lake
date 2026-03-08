@@ -425,6 +425,7 @@ func main() {
 
 		// Incident routes
 		r.Get("/api/incidents/links", handlers.GetLinkIncidents)
+		r.Get("/api/incidents/links/csv", handlers.GetLinkIncidentsCSV)
 
 		// Search routes
 		r.Get("/api/search", handlers.Search)
