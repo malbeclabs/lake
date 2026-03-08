@@ -330,7 +330,7 @@ export function IncidentsPage() {
   const displayedActiveIncidents = useMemo(() => {
     if (showDetecting) return sortedActiveIncidents
     return sortedActiveIncidents.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
-  }, [sortedActiveIncidents, showDetecting])
+  }, [sortedActiveIncidents, showDetecting, minDuration])
 
   // Compute counts from filtered data (respects showDetecting toggle)
   const filteredByType = useMemo(() => {
@@ -343,7 +343,7 @@ export function IncidentsPage() {
       if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
     }
     return { byType, ongoing }
-  }, [data?.active, showDetecting])
+  }, [data?.active, showDetecting, minDuration])
 
   const toggleSort = (field: 'started_at' | 'duration') => {
     if (sortField === field) {
@@ -722,6 +722,10 @@ function ActiveIncidentsTable({
   toggleSort: (field: 'started_at' | 'duration') => void
   minDuration: number
 }) {
+  // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const renderTimestamp = useMemo(() => Date.now(), [incidents])
+
   return (
     <div className="border border-border rounded-lg overflow-hidden">
       <table className="w-full text-sm">
@@ -793,7 +797,7 @@ function ActiveIncidentsTable({
               </td>
               <td className="px-4 py-3">
                 {incident.is_ongoing
-                  ? formatDuration(Math.floor((Date.now() - new Date(incident.started_at).getTime()) / 1000))
+                  ? formatDuration(Math.floor((renderTimestamp - new Date(incident.started_at).getTime()) / 1000))
                   : formatDuration(incident.duration_seconds)
                 }
               </td>
