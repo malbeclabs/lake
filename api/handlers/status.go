@@ -1275,7 +1275,8 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
 	lossBucketInterval := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d MINUTE, 'UTC')", min(bucketMinutes, 5))
-	timeFilterExpr := fmt.Sprintf("f.event_ts > now() - INTERVAL %d HOUR", totalHours)
+	// Exclude the current incomplete bucket so chart lines don't drop to zero.
+	timeFilterExpr := fmt.Sprintf("f.event_ts > now() - INTERVAL %d HOUR AND f.event_ts < toStartOfInterval(now(), INTERVAL %d MINUTE, 'UTC')", totalHours, bucketMinutes)
 	historyQuery := `
 		WITH loss_sub AS (
 			SELECT
@@ -1416,12 +1417,13 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions
 		FROM fact_dz_device_interface_counters
 		WHERE event_ts > now() - INTERVAL ? HOUR
+		  AND event_ts < toStartOfInterval(now(), INTERVAL ? MINUTE, 'UTC')
 		  AND link_pk != ''
 		GROUP BY link_pk, link_side, bucket
 		ORDER BY link_pk, link_side, bucket
 	`
 
-	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, totalHours)
+	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, totalHours, bucketMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("link interface query error: %w", err)
 	}
@@ -1718,7 +1720,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 
 		var hourStatuses []LinkHourStatus
-		for i := bucketCount - 1; i >= 0; i-- {
+		for i := bucketCount - 1; i >= 1; i-- {
 			bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 			key := bucketStart.UTC().Format(time.RFC3339)
 
@@ -2124,11 +2126,12 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions
 		FROM fact_dz_device_interface_counters
 		WHERE event_ts > now() - INTERVAL ? HOUR
+		  AND event_ts < toStartOfInterval(now(), INTERVAL ? MINUTE, 'UTC')
 		GROUP BY device_pk, bucket
 		ORDER BY device_pk, bucket
 	`
 
-	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, totalHours)
+	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, totalHours, bucketMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("device interface query error: %w", err)
 	}
@@ -2267,7 +2270,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		}
 
 		var hourStatuses []DeviceHourStatus
-		for i := bucketCount - 1; i >= 0; i-- {
+		for i := bucketCount - 1; i >= 1; i-- {
 			bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 			key := bucketStart.UTC().Format(time.RFC3339)
 
@@ -2569,7 +2572,8 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 	// Build interval expression for ClickHouse
 	bucketInterval := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", bucketMinutes)
 
-	// Query interface stats per bucket for this device
+	// Query interface stats per bucket for this device.
+	// Exclude the current incomplete bucket so chart lines don't drop to zero.
 	query := `
 		SELECT
 			c.intf as interface_name,
@@ -2587,11 +2591,12 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 		LEFT JOIN dz_links_current l ON c.link_pk = l.pk
 		WHERE c.device_pk = ?
 		  AND c.event_ts > now() - INTERVAL ? HOUR
+		  AND c.event_ts < toStartOfInterval(now(), INTERVAL ? MINUTE)
 		GROUP BY c.intf, l.pk, l.code, l.link_type, c.link_side, bucket
 		ORDER BY c.intf, bucket
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, devicePK, totalHours)
+	rows, err := envDB(ctx).Query(ctx, query, devicePK, totalHours, bucketMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("interface history query error: %w", err)
 	}
@@ -2656,7 +2661,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 		}
 
 		var hourStatuses []InterfaceHourStatus
-		for i := bucketCount - 1; i >= 0; i-- {
+		for i := bucketCount - 1; i >= 1; i-- {
 			bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 			key := bucketStart.UTC().Format(time.RFC3339)
 
@@ -2819,7 +2824,8 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
 	singleLossBucket := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", min(bucketMinutes, 5))
-	singleTimeFilter := fmt.Sprintf("event_ts > now() - INTERVAL %d HOUR", totalHours)
+	// Exclude the current incomplete bucket so chart lines don't drop to zero.
+	singleTimeFilter := fmt.Sprintf("event_ts > now() - INTERVAL %d HOUR AND event_ts < toStartOfInterval(now(), INTERVAL %d MINUTE, 'UTC')", totalHours, bucketMinutes)
 	latencyQuery := `
 		WITH loss_sub AS (
 			SELECT
@@ -2901,10 +2907,11 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			sum(delta_duration) as duration
 		FROM fact_dz_device_interface_counters
 		WHERE link_pk = ? AND event_ts > now() - INTERVAL ? HOUR
+		  AND event_ts < toStartOfInterval(now(), INTERVAL ? MINUTE, 'UTC')
 		GROUP BY bucket, side
 		ORDER BY bucket, side
 	`
-	ifaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, sideAPK, linkPK, totalHours)
+	ifaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, sideAPK, linkPK, totalHours, bucketMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("interface query error: %w", err)
 	}
@@ -2945,9 +2952,10 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		}
 	}
 
-	// Build hour statuses
+	// Build hour statuses. Start from i=1 to skip the current incomplete bucket
+	// (whose data is already excluded from the SQL queries).
 	var hourStatuses []LinkHourStatus
-	for i := bucketCount - 1; i >= 0; i-- {
+	for i := bucketCount - 1; i >= 1; i-- {
 		bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 		key := bucketStart.UTC().Format(time.RFC3339)
 
@@ -3161,11 +3169,12 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions
 		FROM fact_dz_device_interface_counters
 		WHERE device_pk = ? AND event_ts > now() - INTERVAL ? HOUR
+		  AND event_ts < toStartOfInterval(now(), INTERVAL ? MINUTE, 'UTC')
 		GROUP BY bucket
 		ORDER BY bucket
 	`
 
-	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, devicePK, totalHours)
+	interfaceRows, err := envDB(ctx).Query(ctx, interfaceQuery, devicePK, totalHours, bucketMinutes)
 	if err != nil {
 		return nil, fmt.Errorf("device interface query error: %w", err)
 	}
@@ -3246,9 +3255,9 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		}
 	}
 
-	// Build bucket status array
+	// Build bucket status array. Start from i=1 to skip the current incomplete bucket.
 	var hourStatuses []DeviceHourStatus
-	for i := bucketCount - 1; i >= 0; i-- {
+	for i := bucketCount - 1; i >= 1; i-- {
 		bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
 		key := bucketStart.UTC().Format(time.RFC3339)
 

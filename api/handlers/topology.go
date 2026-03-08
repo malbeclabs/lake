@@ -447,6 +447,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 	var timeFilter string
 	var bucketSeconds int
 	var timeFormat string
+	isPresetRange := false
 
 	if fromParam != "" && toParam != "" {
 		fromTime, err := time.Parse("2006-01-02-15:04:05", fromParam)
@@ -468,6 +469,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 			fromTime.UTC().Format("2006-01-02 15:04:05"),
 			toTime.UTC().Format("2006-01-02 15:04:05"))
 	} else {
+		isPresetRange = true
 		var intervalMinutes int
 		switch rangeParam {
 		case "15m":
@@ -501,6 +503,12 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 			bucketSeconds = override
 			timeFormat = timeFormatForBucket(bucketSeconds)
 		}
+	}
+
+	// Exclude the current incomplete bucket for preset ranges so the chart
+	// line doesn't drop to zero at the trailing edge.
+	if isPresetRange {
+		timeFilter += fmt.Sprintf(" AND event_ts < toStartOfInterval(now(), INTERVAL %d SECOND)", bucketSeconds)
 	}
 
 	bucketExpr := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d SECOND)", bucketSeconds)
@@ -790,7 +798,8 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		bucketSeconds = calculateBucketSize(time.Duration(intervalMinutes) * time.Minute)
 		timeFormat = timeFormatForBucket(bucketSeconds)
-		timeFilter = fmt.Sprintf("f.event_ts > now() - INTERVAL %d MINUTE", intervalMinutes)
+		// Exclude the current incomplete bucket so the chart line doesn't drop to zero.
+		timeFilter = fmt.Sprintf("f.event_ts > now() - INTERVAL %d MINUTE AND f.event_ts < toStartOfInterval(now(), INTERVAL %d SECOND)", intervalMinutes, bucketSeconds)
 	}
 
 	start := time.Now()
@@ -1298,8 +1307,9 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_data dz ON tb.bucket = dz.bucket
 		LEFT JOIN inet_data inet ON tb.bucket = inet.bucket
 		WHERE tb.bucket >= now() - INTERVAL %d HOUR
+		  AND tb.bucket < toStartOfInterval(now(), INTERVAL %d MINUTE)
 		ORDER BY tb.bucket ASC
-	`, intervalHours, bucketMinutes, bucketMinutes, 48, bucketMinutes, bucketMinutes, intervalHours)
+	`, intervalHours, bucketMinutes, bucketMinutes, 48, bucketMinutes, bucketMinutes, intervalHours, bucketMinutes)
 
 	rows, err := envDB(ctx).Query(ctx, query, metro1, metro2)
 	duration := time.Since(start)
