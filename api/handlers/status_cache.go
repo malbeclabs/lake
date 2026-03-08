@@ -31,6 +31,7 @@ type StatusCache struct {
 	deviceHistory     map[string]*DeviceHistoryResponse    // keyed by "range:buckets" e.g. "24h:72"
 	timeline          *TimelineResponse                    // default 24h timeline
 	incidents         *LinkIncidentsResponse               // default 24h incidents
+	deviceIncidents   *DeviceIncidentsResponse             // default 24h device incidents
 	latencyComparison *LatencyComparisonResponse           // DZ vs Internet latency comparison
 	metroPathLatency  map[string]*MetroPathLatencyResponse // keyed by optimize strategy (hops, latency, bandwidth)
 
@@ -47,6 +48,7 @@ type StatusCache struct {
 	deviceHistoryLastRefresh     time.Time
 	timelineLastRefresh          time.Time
 	incidentsLastRefresh         time.Time
+	deviceIncidentsLastRefresh   time.Time
 	latencyComparisonLastRefresh time.Time
 	metroPathLatencyLastRefresh  time.Time
 
@@ -110,6 +112,7 @@ func (c *StatusCache) Start() {
 	c.refreshDeviceHistory()
 	c.refreshTimeline()
 	c.refreshIncidents()
+	c.refreshDeviceIncidents()
 	c.refreshLatencyComparison()
 	c.refreshMetroPathLatency()
 
@@ -132,6 +135,7 @@ func (c *StatusCache) refreshLoop() {
 		{"status", c.statusInterval, c.refreshStatus},
 		{"timeline", c.timelineInterval, c.refreshTimeline},
 		{"incidents", c.incidentsInterval, c.refreshIncidents},
+		{"device incidents", c.incidentsInterval, c.refreshDeviceIncidents},
 		{"link history", c.linkHistoryInterval, c.refreshLinkHistory},
 		{"device history", c.linkHistoryInterval, c.refreshDeviceHistory},
 		{"latency comparison", c.performanceInterval, c.refreshLatencyComparison},
@@ -251,6 +255,14 @@ func (c *StatusCache) GetIncidents() *LinkIncidentsResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.incidents
+}
+
+// GetDeviceIncidents returns the cached default device incidents response.
+// Returns nil if cache is empty (should not happen after Start() completes).
+func (c *StatusCache) GetDeviceIncidents() *DeviceIncidentsResponse {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.deviceIncidents
 }
 
 // GetLatencyComparison returns the cached DZ vs Internet latency comparison.
@@ -391,6 +403,32 @@ func (c *StatusCache) refreshIncidents() {
 	c.mu.Unlock()
 
 	log.Printf("Incidents cache refreshed in %v (%d active, %d drained)", time.Since(start), len(resp.Active), len(resp.Drained))
+}
+
+// refreshDeviceIncidents fetches fresh device incidents data for the default 24h view.
+func (c *StatusCache) refreshDeviceIncidents() {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
+	defer cancel()
+
+	resp := fetchDefaultDeviceIncidentsData(ctx)
+
+	if ctx.Err() != nil {
+		log.Printf("Device incidents cache refresh error: %v (keeping stale data)", ctx.Err())
+		return
+	}
+
+	if resp == nil {
+		log.Printf("Device incidents cache refresh returned nil (keeping stale data)")
+		return
+	}
+
+	c.mu.Lock()
+	c.deviceIncidents = resp
+	c.deviceIncidentsLastRefresh = time.Now()
+	c.mu.Unlock()
+
+	log.Printf("Device incidents cache refreshed in %v (%d active, %d drained)", time.Since(start), len(resp.Active), len(resp.Drained))
 }
 
 // refreshLatencyComparison fetches fresh DZ vs Internet latency comparison data.

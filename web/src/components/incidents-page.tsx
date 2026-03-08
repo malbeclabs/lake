@@ -4,8 +4,11 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { ShieldAlert, Settings, ExternalLink, Info, Download } from 'lucide-react'
 import {
   fetchLinkIncidents,
+  fetchDeviceIncidents,
   type LinkIncident,
   type DrainedLinkInfo,
+  type DeviceIncident,
+  type DrainedDeviceInfo,
   type IncidentTimeRange,
 } from '@/lib/api'
 import { StatusFilters, useStatusFilters } from '@/components/status-search-bar'
@@ -61,11 +64,13 @@ function formatDuration(seconds: number | undefined): string {
 }
 
 // Client-side confirmed check: ongoing incident is confirmed if elapsed time >= minDuration
-function isConfirmed(incident: LinkIncident, minDurationMin: number): boolean {
+function isConfirmed(incident: { is_ongoing: boolean; started_at: string }, minDurationMin: number): boolean {
   if (!incident.is_ongoing) return true
   const elapsedSecs = (Date.now() - new Date(incident.started_at).getTime()) / 1000
   return elapsedSecs >= minDurationMin * 60
 }
+
+type IncidentScope = 'links' | 'devices'
 
 function formatTimeAgo(isoString: string): string {
   if (isoString === 'unknown') return 'Unknown'
@@ -154,7 +159,7 @@ function ReadinessDot({ readiness }: { readiness: string }) {
   )
 }
 
-function dedupeIncidentTypes(incidents: LinkIncident[]): string[] {
+function dedupeIncidentTypes(incidents: { incident_type: string }[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
   for (const inc of incidents) {
@@ -168,6 +173,9 @@ function dedupeIncidentTypes(incidents: LinkIncident[]): string[] {
 
 export function IncidentsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+
+  // Scope
+  const scope = (searchParams.get('scope') as IncidentScope) || 'links'
 
   // Parse URL params with defaults
   const range = (searchParams.get('range') as IncidentTimeRange) || '24h'
@@ -184,6 +192,7 @@ export function IncidentsPage() {
   const coalesceGap = parseInt(searchParams.get('coalesce_gap') || '720') || 720
   const view = (searchParams.get('view') as 'active' | 'drained') || 'active'
   const filterParam = searchParams.get('filter') || ''
+  const showLinkInterfaces = searchParams.get('link_interfaces') === 'true'
 
   const [showSettings, setShowSettings] = useState(false)
 
@@ -250,6 +259,7 @@ export function IncidentsPage() {
 
   const getDefaultValue = (key: string): string => {
     switch (key) {
+      case 'scope': return 'links'
       case 'range': return '24h'
       case 'threshold': return '10'
       case 'errors_threshold': return '10'
@@ -263,7 +273,7 @@ export function IncidentsPage() {
     }
   }
 
-  const { data, isLoading, error } = useQuery({
+  const linkQuery = useQuery({
     queryKey: ['linkIncidents', range, threshold, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam],
     queryFn: () => fetchLinkIncidents({
       range,
@@ -276,29 +286,74 @@ export function IncidentsPage() {
       filter: filterParam || undefined,
     }),
     refetchInterval: 60000,
+    enabled: scope === 'links',
   })
 
+  const deviceQuery = useQuery({
+    queryKey: ['deviceIncidents', range, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam, showLinkInterfaces],
+    queryFn: () => fetchDeviceIncidents({
+      range,
+      errors_threshold: errorsThreshold,
+      discards_threshold: discardsThreshold,
+      carrier_threshold: carrierThreshold,
+      min_duration: minDuration,
+      coalesce_gap: coalesceGap,
+      filter: filterParam || undefined,
+      link_interfaces: showLinkInterfaces || undefined,
+    }),
+    refetchInterval: 60000,
+    enabled: scope === 'devices',
+  })
+
+  const isLoading = scope === 'links' ? linkQuery.isLoading : deviceQuery.isLoading
+  const error = scope === 'links' ? linkQuery.error : deviceQuery.error
+  const linkData = linkQuery.data
+  const deviceData = deviceQuery.data
+
   // Unfiltered summaries for the stat cards (always show all counts)
-  const allDrainedSummary = data?.drained_summary || { total: 0, with_incidents: 0, ready: 0, not_ready: 0 }
+  const allDrainedSummary = scope === 'links'
+    ? linkData?.drained_summary || { total: 0, with_incidents: 0, ready: 0, not_ready: 0 }
+    : deviceData?.drained_summary || { total: 0, with_incidents: 0, ready: 0, not_ready: 0 }
 
   // Client-side type filtering
   const hasTypeFilter = selectedTypes.size > 0
   const activeIncidents = useMemo(() => {
-    const all = data?.active || []
-    if (!hasTypeFilter) return all
-    return all.filter(i => selectedTypes.has(i.incident_type))
-  }, [data?.active, hasTypeFilter, selectedTypes])
+    if (scope === 'links') {
+      const all = linkData?.active || []
+      if (!hasTypeFilter) return all
+      return all.filter(i => selectedTypes.has(i.incident_type))
+    }
+    return [] as LinkIncident[]
+  }, [scope, linkData?.active, hasTypeFilter, selectedTypes])
+
+  const activeDeviceIncidents = useMemo(() => {
+    if (scope === 'devices') {
+      const all = deviceData?.active || []
+      if (!hasTypeFilter) return all
+      return all.filter(i => selectedTypes.has(i.incident_type))
+    }
+    return [] as DeviceIncident[]
+  }, [scope, deviceData?.active, hasTypeFilter, selectedTypes])
 
   const drainedLinks = useMemo(() => {
-    const all = data?.drained || []
+    const all = linkData?.drained || []
     if (!hasTypeFilter) return all
-    // Filter drained links: only show those with at least one incident matching the type filter
     return all.map(dl => ({
       ...dl,
       active_incidents: dl.active_incidents.filter(i => selectedTypes.has(i.incident_type)),
       recent_incidents: dl.recent_incidents.filter(i => selectedTypes.has(i.incident_type)),
     })).filter(dl => dl.active_incidents.length > 0 || dl.recent_incidents.length > 0)
-  }, [data?.drained, hasTypeFilter, selectedTypes])
+  }, [linkData?.drained, hasTypeFilter, selectedTypes])
+
+  const drainedDevices = useMemo(() => {
+    const all = deviceData?.drained || []
+    if (!hasTypeFilter) return all
+    return all.map(dd => ({
+      ...dd,
+      active_incidents: dd.active_incidents.filter(i => selectedTypes.has(i.incident_type)),
+      recent_incidents: dd.recent_incidents.filter(i => selectedTypes.has(i.incident_type)),
+    })).filter(dd => dd.active_incidents.length > 0 || dd.recent_incidents.length > 0)
+  }, [deviceData?.drained, hasTypeFilter, selectedTypes])
 
   // Sort state for active view
   const [sortField, setSortField] = useState<'started_at' | 'duration'>('started_at')
@@ -306,8 +361,10 @@ export function IncidentsPage() {
   const [pinOngoing, setPinOngoing] = useState(true)
   const [showDetecting, setShowDetecting] = useState(true)
 
-  const sortedActiveIncidents = useMemo(() => {
-    const compare = (a: LinkIncident, b: LinkIncident) => {
+  // Generic sort helper for incidents of either type
+  type SortableIncident = { started_at: string; is_ongoing: boolean; duration_seconds?: number }
+  const sortIncidents = <T extends SortableIncident>(items: T[]): T[] => {
+    const compare = (a: T, b: T) => {
       if (sortField === 'started_at') {
         const aTime = new Date(a.started_at).getTime()
         const bTime = new Date(b.started_at).getTime()
@@ -318,32 +375,58 @@ export function IncidentsPage() {
         return sortDir === 'asc' ? aDur - bDur : bDur - aDur
       }
     }
-
-    if (!pinOngoing) {
-      return [...activeIncidents].sort(compare)
-    }
-    const ongoing = activeIncidents.filter(i => i.is_ongoing).sort(compare)
-    const notOngoing = activeIncidents.filter(i => !i.is_ongoing).sort(compare)
+    if (!pinOngoing) return [...items].sort(compare)
+    const ongoing = items.filter(i => i.is_ongoing).sort(compare)
+    const notOngoing = items.filter(i => !i.is_ongoing).sort(compare)
     return [...ongoing, ...notOngoing]
-  }, [activeIncidents, sortField, sortDir, pinOngoing])
+  }
+
+  const sortedActiveIncidents = useMemo(
+    () => sortIncidents(activeIncidents),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeIncidents, sortField, sortDir, pinOngoing],
+  )
+
+  const sortedActiveDeviceIncidents = useMemo(
+    () => sortIncidents(activeDeviceIncidents),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeDeviceIncidents, sortField, sortDir, pinOngoing],
+  )
 
   const displayedActiveIncidents = useMemo(() => {
     if (showDetecting) return sortedActiveIncidents
     return sortedActiveIncidents.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
   }, [sortedActiveIncidents, showDetecting, minDuration])
 
+  const displayedActiveDeviceIncidents = useMemo(() => {
+    if (showDetecting) return sortedActiveDeviceIncidents
+    return sortedActiveDeviceIncidents.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+  }, [sortedActiveDeviceIncidents, showDetecting, minDuration])
+
   // Compute counts from filtered data (respects showDetecting toggle)
   const filteredByType = useMemo(() => {
-    const all = data?.active || []
-    const visible = showDetecting ? all : all.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
-    const byType: Record<string, number> = { packet_loss: 0, errors: 0, discards: 0, carrier: 0, no_data: 0 }
-    let ongoing = 0
-    for (const i of visible) {
-      byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
-      if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
+    if (scope === 'links') {
+      const all = linkData?.active || []
+      const visible = showDetecting ? all : all.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+      const byType: Record<string, number> = { packet_loss: 0, errors: 0, discards: 0, carrier: 0, no_data: 0 }
+      let ongoing = 0
+      for (const i of visible) {
+        byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
+        if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
+      }
+      return { byType, ongoing }
+    } else {
+      const all = deviceData?.active || []
+      const visible = showDetecting ? all : all.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+      const byType: Record<string, number> = { errors: 0, discards: 0, carrier: 0, no_data: 0 }
+      let ongoing = 0
+      for (const i of visible) {
+        byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
+        if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
+      }
+      return { byType, ongoing }
     }
-    return { byType, ongoing }
-  }, [data?.active, showDetecting, minDuration])
+  }, [scope, linkData?.active, deviceData?.active, showDetecting, minDuration])
 
   const toggleSort = (field: 'started_at' | 'duration') => {
     if (sortField === field) {
@@ -357,15 +440,17 @@ export function IncidentsPage() {
   const exportUrl = useMemo(() => {
     const params = new URLSearchParams()
     params.set('range', range)
-    params.set('threshold', threshold.toString())
+    if (scope === 'links') params.set('threshold', threshold.toString())
     params.set('errors_threshold', errorsThreshold.toString())
     params.set('discards_threshold', discardsThreshold.toString())
     params.set('carrier_threshold', carrierThreshold.toString())
     params.set('min_duration', minDuration.toString())
     params.set('coalesce_gap', coalesceGap.toString())
     if (filterParam) params.set('filter', filterParam)
-    return `/api/incidents/links/csv?${params.toString()}`
-  }, [range, threshold, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam])
+    if (scope === 'devices' && showLinkInterfaces) params.set('link_interfaces', 'true')
+    const base = scope === 'devices' ? '/api/incidents/devices/csv' : '/api/incidents/links/csv'
+    return `${base}?${params.toString()}`
+  }, [scope, range, threshold, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam, showLinkInterfaces])
 
   if (isLoading) {
     return <IncidentsPageSkeleton />
@@ -414,13 +499,23 @@ export function IncidentsPage() {
         {/* Scope toggle */}
         <div className="flex items-center gap-2 mb-4">
           <div className="flex items-center gap-1 bg-muted rounded-md p-1">
-            <button className="px-3 py-1 text-sm rounded bg-background text-foreground shadow-sm">
+            <button
+              onClick={() => updateParams({ scope: 'links' })}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                scope === 'links'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
               Links
             </button>
             <button
-              className="px-3 py-1 text-sm rounded text-muted-foreground cursor-not-allowed opacity-50"
-              title="Coming soon"
-              disabled
+              onClick={() => updateParams({ scope: 'devices' })}
+              className={`px-3 py-1 text-sm rounded transition-colors ${
+                scope === 'devices'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
             >
               Devices
             </button>
@@ -465,18 +560,20 @@ export function IncidentsPage() {
         {/* Settings panel */}
         {showSettings && (
           <div className="flex flex-wrap items-center gap-6 mb-4 p-4 bg-muted/50 rounded-lg border border-border">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Packet Loss:</span>
-              <input
-                type="number"
-                value={localSettings.threshold}
-                onChange={(e) => setLocalSettings(s => ({ ...s, threshold: e.target.value }))}
-                className="w-16 px-2 py-1 text-sm bg-background border border-border rounded"
-                min={1}
-                max={100}
-              />
-              <span className="text-sm text-muted-foreground">%</span>
-            </div>
+            {scope === 'links' && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Packet Loss:</span>
+                <input
+                  type="number"
+                  value={localSettings.threshold}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, threshold: e.target.value }))}
+                  className="w-16 px-2 py-1 text-sm bg-background border border-border rounded"
+                  min={1}
+                  max={100}
+                />
+                <span className="text-sm text-muted-foreground">%</span>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Errors:</span>
               <input
@@ -550,10 +647,12 @@ export function IncidentsPage() {
           </div>
         )}
 
+        {/* Link interfaces toggle is rendered inline with "Show detecting" in the Active view header */}
+
         {/* Type stat cards — clickable multi-select filters */}
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 mb-6">
+        <div className={`grid gap-3 mb-6 ${scope === 'links' ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
           {([
-            { key: 'packet_loss', label: 'Packet Loss' },
+            ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss' }] : []),
             { key: 'errors', label: 'Errors' },
             { key: 'discards', label: 'Discards' },
             { key: 'carrier', label: 'Carrier' },
@@ -617,91 +716,146 @@ export function IncidentsPage() {
         {/* Active view */}
         {view === 'active' && (
           <>
-            {activeIncidents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
-                <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No active incidents</h3>
-                <p className="text-sm text-muted-foreground">
-                  {filters.length > 0 ? 'No incidents match the selected filters ' : 'No incidents '}
-                  on non-drained links in the selected time range.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-3">
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={pinOngoing}
-                    onClick={() => setPinOngoing(!pinOngoing)}
-                    className="flex items-center gap-2 text-sm text-muted-foreground"
-                  >
-                    <span
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                        pinOngoing ? 'bg-primary' : 'bg-muted-foreground/30'
-                      }`}
+            {(() => {
+              const isEmpty = scope === 'links' ? activeIncidents.length === 0 : activeDeviceIncidents.length === 0
+              if (isEmpty) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
+                    <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
+                    <h3 className="text-lg font-medium mb-2">No active incidents</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {filters.length > 0 ? 'No incidents match the selected filters ' : 'No incidents '}
+                      on non-drained {scope === 'links' ? 'links' : 'devices'} in the selected time range.
+                    </p>
+                  </div>
+                )
+              }
+              return (
+                <>
+                  <div className="flex items-center flex-wrap gap-6 mb-3">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={pinOngoing}
+                      onClick={() => setPinOngoing(!pinOngoing)}
+                      className="flex items-center gap-2 text-sm text-muted-foreground"
                     >
                       <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
-                          pinOngoing ? 'translate-x-4' : 'translate-x-0.5'
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                          pinOngoing ? 'bg-primary' : 'bg-muted-foreground/30'
                         }`}
-                      />
-                    </span>
-                    Pin ongoing to top
-                  </button>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={showDetecting}
-                    onClick={() => setShowDetecting(!showDetecting)}
-                    className="flex items-center gap-2 text-sm text-muted-foreground"
-                  >
-                    <span
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                        showDetecting ? 'bg-primary' : 'bg-muted-foreground/30'
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
-                          showDetecting ? 'translate-x-4' : 'translate-x-0.5'
-                        }`}
-                      />
-                    </span>
-                    Show detecting
-                    <span className="relative group">
-                      <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
-                      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                        Above threshold but under min duration
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                            pinOngoing ? 'translate-x-4' : 'translate-x-0.5'
+                          }`}
+                        />
                       </span>
-                    </span>
-                  </button>
-                </div>
-                <ActiveIncidentsTable
-                  incidents={displayedActiveIncidents}
-                  sortField={sortField}
-                  sortDir={sortDir}
-                  toggleSort={toggleSort}
-                  minDuration={minDuration}
-                />
-              </>
-            )}
+                      Pin ongoing to top
+                    </button>
+                    <div className="flex items-center gap-6 ml-auto">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={showDetecting}
+                        onClick={() => setShowDetecting(!showDetecting)}
+                        className="flex items-center gap-2 text-sm text-muted-foreground"
+                      >
+                        <span
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            showDetecting ? 'bg-primary' : 'bg-muted-foreground/30'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                              showDetecting ? 'translate-x-4' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </span>
+                        Show detecting
+                        <span className="relative group">
+                          <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                            Above threshold but under min duration
+                          </span>
+                        </span>
+                      </button>
+                      {scope === 'devices' && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={showLinkInterfaces}
+                          onClick={() => updateParams({ link_interfaces: showLinkInterfaces ? undefined : 'true' })}
+                          className="flex items-center gap-2 text-sm text-muted-foreground"
+                        >
+                          <span
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                              showLinkInterfaces ? 'bg-primary' : 'bg-muted-foreground/30'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                                showLinkInterfaces ? 'translate-x-4' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </span>
+                          Show link interfaces
+                          <span className="relative group">
+                            <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
+                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                              Include interfaces already tracked in the Links view
+                            </span>
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {scope === 'links' ? (
+                    <ActiveIncidentsTable
+                      incidents={displayedActiveIncidents}
+                      sortField={sortField}
+                      sortDir={sortDir}
+                      toggleSort={toggleSort}
+                      minDuration={minDuration}
+                    />
+                  ) : (
+                    <ActiveDeviceIncidentsTable
+                      incidents={displayedActiveDeviceIncidents}
+                      sortField={sortField}
+                      sortDir={sortDir}
+                      toggleSort={toggleSort}
+                      minDuration={minDuration}
+                    />
+                  )}
+                </>
+              )
+            })()}
           </>
         )}
 
         {/* Drained view */}
         {view === 'drained' && (
           <>
-            {drainedLinks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
-                <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No drained links</h3>
-                <p className="text-sm text-muted-foreground">
-                  {hasTypeFilter ? 'No drained links have issues of the selected type(s).' : 'No links are currently drained.'}
-                </p>
-              </div>
-            ) : (
-              <DrainedLinksTable drainedLinks={drainedLinks} />
-            )}
+            {(() => {
+              const isEmpty = scope === 'links' ? drainedLinks.length === 0 : drainedDevices.length === 0
+              const entity = scope === 'links' ? 'links' : 'devices'
+              if (isEmpty) {
+                return (
+                  <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
+                    <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
+                    <h3 className="text-lg font-medium mb-2">No drained {entity}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {hasTypeFilter ? `No drained ${entity} have issues of the selected type(s).` : `No ${entity} are currently drained.`}
+                    </p>
+                  </div>
+                )
+              }
+              return scope === 'links' ? (
+                <DrainedLinksTable drainedLinks={drainedLinks} />
+              ) : (
+                <DrainedDevicesTable drainedDevices={drainedDevices} />
+              )
+            })()}
           </>
         )}
       </div>
@@ -788,6 +942,11 @@ function ActiveIncidentsTable({
                     </span>
                   )}
                 </div>
+                {incident.affected_interfaces && incident.affected_interfaces.length > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+                    {incident.affected_interfaces.join(', ')}
+                  </div>
+                )}
               </td>
               <td className="px-4 py-3">
                 <div>{formatTimeAgo(incident.started_at)}</div>
@@ -920,6 +1079,221 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
               </td>
               <td className="px-4 py-3">
                 <ReadinessDot readiness={dl.readiness} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ActiveDeviceIncidentsTable({
+  incidents,
+  sortField,
+  sortDir,
+  toggleSort,
+  minDuration,
+}: {
+  incidents: DeviceIncident[]
+  sortField: string
+  sortDir: string
+  toggleSort: (field: 'started_at' | 'duration') => void
+  minDuration: number
+}) {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const renderTimestamp = useMemo(() => Date.now(), [incidents])
+
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/50">
+          <tr>
+            <th className="text-left px-4 py-3 font-medium">Device</th>
+            <th className="text-left px-4 py-3 font-medium">Metro</th>
+            <th className="text-left px-4 py-3 font-medium">Type</th>
+            <th
+              className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
+              onClick={() => toggleSort('started_at')}
+            >
+              Started{' '}
+              {sortField === 'started_at' && (
+                <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
+              )}
+            </th>
+            <th
+              className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
+              onClick={() => toggleSort('duration')}
+            >
+              Duration{' '}
+              {sortField === 'duration' && (
+                <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
+              )}
+            </th>
+            <th className="text-left px-4 py-3 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {incidents.map((incident) => (
+            <tr key={incident.id} className="hover:bg-muted/30">
+              <td className="px-4 py-3">
+                <Link
+                  to={`/dz/devices/${encodeURIComponent(incident.device_pk)}`}
+                  className="text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  {incident.device_code}
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+                <div className="text-xs text-muted-foreground">{incident.contributor_code} · {incident.device_type}</div>
+              </td>
+              <td className="px-4 py-3">
+                <span className="font-mono">{incident.metro}</span>
+              </td>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <IncidentTypeBadge type={incident.incident_type} />
+                  {incident.is_drained && <DrainedBadge />}
+                  {incident.peak_count != null && (
+                    <span className="text-xs text-muted-foreground">
+                      ({incident.peak_count})
+                    </span>
+                  )}
+                </div>
+                {incident.affected_interfaces && incident.affected_interfaces.length > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+                    {incident.affected_interfaces.join(', ')}
+                  </div>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <div>{formatTimeAgo(incident.started_at)}</div>
+                <div className="text-xs text-muted-foreground">
+                  {formatTimestamp(incident.started_at)}
+                </div>
+              </td>
+              <td className="px-4 py-3">
+                {incident.is_ongoing
+                  ? formatDuration(Math.floor((renderTimestamp - new Date(incident.started_at).getTime()) / 1000))
+                  : formatDuration(incident.duration_seconds)
+                }
+              </td>
+              <td className="px-4 py-3">
+                {incident.is_ongoing && isConfirmed(incident, minDuration) ? (
+                  <span className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    </span>
+                    Ongoing
+                  </span>
+                ) : incident.is_ongoing ? (
+                  <span className="inline-flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400">
+                    <span className="relative flex h-2 w-2">
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
+                    </span>
+                    Detecting
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Resolved</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function DrainedDevicesTable({ drainedDevices }: { drainedDevices: DrainedDeviceInfo[] }) {
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/50">
+          <tr>
+            <th className="text-left px-4 py-3 font-medium">Device</th>
+            <th className="text-left px-4 py-3 font-medium">Metro</th>
+            <th className="text-left px-4 py-3 font-medium">Drain Status</th>
+            <th className="text-left px-4 py-3 font-medium">Issues</th>
+            <th className="text-left px-4 py-3 font-medium">Started</th>
+            <th className="text-left px-4 py-3 font-medium">Clear For</th>
+            <th className="text-left px-4 py-3 font-medium">Readiness</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {drainedDevices.map((dd) => (
+            <tr key={dd.device_pk} className="hover:bg-muted/30">
+              <td className="px-4 py-3">
+                <Link
+                  to={`/dz/devices/${encodeURIComponent(dd.device_pk)}`}
+                  className="text-primary hover:underline inline-flex items-center gap-1"
+                >
+                  {dd.device_code}
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
+                <div className="text-xs text-muted-foreground">{dd.contributor_code} · {dd.device_type}</div>
+              </td>
+              <td className="px-4 py-3">
+                <span className="font-mono">{dd.metro}</span>
+              </td>
+              <td className="px-4 py-3">
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                  {dd.drain_status}
+                </span>
+              </td>
+              <td className="px-4 py-3">
+                {(() => {
+                  const allIncidents = [...dd.active_incidents, ...dd.recent_incidents]
+                  if (allIncidents.length === 0) {
+                    return <span className="text-muted-foreground">-</span>
+                  }
+                  const types = dedupeIncidentTypes(allIncidents)
+                  return (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {types.map((type) => (
+                        <IncidentTypeBadge key={type} type={type} />
+                      ))}
+                      <span className="text-xs text-muted-foreground">({allIncidents.length})</span>
+                    </div>
+                  )
+                })()}
+              </td>
+              <td className="px-4 py-3">
+                {(() => {
+                  const allIncidents = [...dd.active_incidents, ...dd.recent_incidents]
+                  if (allIncidents.length > 0) {
+                    const earliest = allIncidents.reduce((a, b) =>
+                      new Date(a.started_at) < new Date(b.started_at) ? a : b
+                    )
+                    return (
+                      <>
+                        <div>{formatTimeAgo(earliest.started_at)}</div>
+                        <div className="text-xs text-muted-foreground">{formatTimestamp(earliest.started_at)}</div>
+                      </>
+                    )
+                  }
+                  if (dd.drained_since) {
+                    return (
+                      <>
+                        <div className="text-muted-foreground">{formatTimeAgo(dd.drained_since)}</div>
+                        <div className="text-xs text-muted-foreground">drained {formatTimestamp(dd.drained_since)}</div>
+                      </>
+                    )
+                  }
+                  return <span className="text-muted-foreground">-</span>
+                })()}
+              </td>
+              <td className="px-4 py-3">
+                {dd.clear_for_seconds != null ? (
+                  formatDuration(dd.clear_for_seconds)
+                ) : dd.active_incidents.length > 0 ? (
+                  <span className="text-red-600 dark:text-red-400">-</span>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <ReadinessDot readiness={dd.readiness} />
               </td>
             </tr>
           ))}

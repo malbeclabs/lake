@@ -4144,6 +4144,7 @@ export interface LinkIncident {
   confirmed: boolean
   is_drained: boolean
   severity: 'degraded' | 'incident'
+  affected_interfaces?: string[]
 }
 
 export interface DrainedLinkInfo {
@@ -4212,6 +4213,91 @@ export async function fetchLinkIncidents(params: FetchLinkIncidentsParams = {}):
   const res = await fetchWithRetry(url)
   if (!res.ok) {
     throw new Error('Failed to fetch link incidents')
+  }
+  return res.json()
+}
+
+// Device incident types
+export type DeviceIncidentType = 'errors' | 'discards' | 'carrier' | 'no_data'
+
+export interface DeviceIncident {
+  id: string
+  device_pk: string
+  device_code: string
+  device_type: string
+  metro: string
+  contributor_code: string
+  incident_type: DeviceIncidentType
+  threshold_count?: number
+  peak_count?: number
+  started_at: string
+  ended_at?: string
+  duration_seconds?: number
+  is_ongoing: boolean
+  confirmed: boolean
+  is_drained: boolean
+  severity: 'degraded' | 'incident'
+  affected_interfaces?: string[]
+}
+
+export interface DrainedDeviceInfo {
+  device_pk: string
+  device_code: string
+  device_type: string
+  metro: string
+  contributor_code: string
+  drain_status: string
+  drained_since: string
+  active_incidents: DeviceIncident[]
+  recent_incidents: DeviceIncident[]
+  last_incident_end?: string
+  clear_for_seconds?: number
+  readiness: 'red' | 'yellow' | 'green' | 'gray'
+}
+
+export interface DeviceIncidentsSummary {
+  total: number
+  ongoing: number
+  by_type: Record<string, number>
+}
+
+export interface DeviceIncidentsResponse {
+  active: DeviceIncident[]
+  drained: DrainedDeviceInfo[]
+  active_summary: DeviceIncidentsSummary
+  drained_summary: DrainedSummary
+}
+
+export interface FetchDeviceIncidentsParams {
+  range?: IncidentTimeRange
+  errors_threshold?: number
+  discards_threshold?: number
+  carrier_threshold?: number
+  min_duration?: number
+  coalesce_gap?: number
+  type?: 'all' | DeviceIncidentType
+  filter?: string
+  link_interfaces?: boolean
+}
+
+export async function fetchDeviceIncidents(params: FetchDeviceIncidentsParams = {}): Promise<DeviceIncidentsResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.range) searchParams.set('range', params.range)
+  if (params.errors_threshold) searchParams.set('errors_threshold', params.errors_threshold.toString())
+  if (params.discards_threshold) searchParams.set('discards_threshold', params.discards_threshold.toString())
+  if (params.carrier_threshold) searchParams.set('carrier_threshold', params.carrier_threshold.toString())
+  if (params.min_duration) searchParams.set('min_duration', params.min_duration.toString())
+  if (params.coalesce_gap != null) searchParams.set('coalesce_gap', params.coalesce_gap.toString())
+  if (params.type) searchParams.set('type', params.type)
+  if (params.filter) searchParams.set('filter', params.filter)
+  if (params.link_interfaces) searchParams.set('link_interfaces', 'true')
+
+  const queryString = searchParams.toString()
+  const url = `/api/incidents/devices${queryString ? `?${queryString}` : ''}`
+
+  const res = await fetchWithRetry(url)
+  if (!res.ok) {
+    throw new Error('Failed to fetch device incidents')
   }
   return res.json()
 }

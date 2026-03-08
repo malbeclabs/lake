@@ -716,3 +716,243 @@ func floatVal(f *float64) float64 {
 	}
 	return *f
 }
+
+// counterTypeFilter returns the SQL WHERE clause fragment that identifies
+// non-zero counter activity for a given incident type.
+func counterTypeFilter(incidentType string) string {
+	switch incidentType {
+	case "errors":
+		return "(coalesce(in_errors_delta, 0) > 0 OR coalesce(out_errors_delta, 0) > 0)"
+	case "discards":
+		return "(coalesce(in_discards_delta, 0) > 0 OR coalesce(out_discards_delta, 0) > 0)"
+	case "carrier":
+		return "(coalesce(carrier_transitions_delta, 0) > 0)"
+	default:
+		return "1=0"
+	}
+}
+
+// incidentWindow captures the time range and entity for a counter incident.
+type incidentWindow struct {
+	entityPK     string
+	incidentType string
+	startedAt    time.Time
+	endedAt      time.Time // for ongoing, use now
+}
+
+// enrichLinkIncidentsWithInterfaces queries for affected interfaces on each counter incident
+// and populates the AffectedInterfaces field.
+func enrichLinkIncidentsWithInterfaces(ctx context.Context, conn driver.Conn, incidents []LinkIncident) {
+	if len(incidents) == 0 {
+		return
+	}
+
+	// Collect counter incidents that need enrichment
+	type key struct {
+		linkPK       string
+		incidentType string
+	}
+	windows := make(map[key]incidentWindow)
+	for _, inc := range incidents {
+		if inc.IncidentType == "packet_loss" || inc.IncidentType == "no_data" {
+			continue
+		}
+		start, _ := time.Parse(time.RFC3339, inc.StartedAt)
+		end := time.Now()
+		if inc.EndedAt != nil {
+			end, _ = time.Parse(time.RFC3339, *inc.EndedAt)
+		}
+		k := key{inc.LinkPK, inc.IncidentType}
+		if existing, ok := windows[k]; ok {
+			if start.Before(existing.startedAt) {
+				existing.startedAt = start
+			}
+			if end.After(existing.endedAt) {
+				existing.endedAt = end
+			}
+			windows[k] = existing
+		} else {
+			windows[k] = incidentWindow{
+				entityPK:     inc.LinkPK,
+				incidentType: inc.IncidentType,
+				startedAt:    start,
+				endedAt:      end,
+			}
+		}
+	}
+
+	if len(windows) == 0 {
+		return
+	}
+
+	// Query affected interfaces per (link_pk, incident_type)
+	// Build a UNION ALL query for each incident type group
+	interfacesByKey := make(map[key][]string)
+
+	byType := make(map[string][]incidentWindow)
+	for k, w := range windows {
+		byType[k.incidentType] = append(byType[k.incidentType], w)
+	}
+
+	for incType, typeWindows := range byType {
+		filter := counterTypeFilter(incType)
+
+		// Collect all link PKs and find the widest time range for this type
+		var linkPKs []string
+		earliest := typeWindows[0].startedAt
+		latest := typeWindows[0].endedAt
+		for _, w := range typeWindows {
+			linkPKs = append(linkPKs, w.entityPK)
+			if w.startedAt.Before(earliest) {
+				earliest = w.startedAt
+			}
+			if w.endedAt.After(latest) {
+				latest = w.endedAt
+			}
+		}
+
+		query := fmt.Sprintf(`
+			SELECT link_pk, intf
+			FROM fact_dz_device_interface_counters
+			WHERE link_pk IN ($1)
+			  AND event_ts >= $2
+			  AND event_ts <= $3
+			  AND %s
+			GROUP BY link_pk, intf
+			ORDER BY link_pk, intf
+		`, filter)
+
+		rows, err := conn.Query(ctx, query, linkPKs, earliest, latest)
+		if err != nil {
+			continue
+		}
+
+		for rows.Next() {
+			var linkPK, intf string
+			if err := rows.Scan(&linkPK, &intf); err != nil {
+				continue
+			}
+			k := key{linkPK, incType}
+			interfacesByKey[k] = append(interfacesByKey[k], intf)
+		}
+		rows.Close()
+	}
+
+	// Assign interfaces to incidents
+	for i := range incidents {
+		inc := &incidents[i]
+		if inc.IncidentType == "packet_loss" || inc.IncidentType == "no_data" {
+			continue
+		}
+		k := key{inc.LinkPK, inc.IncidentType}
+		if intfs, ok := interfacesByKey[k]; ok {
+			inc.AffectedInterfaces = intfs
+		}
+	}
+}
+
+// enrichDeviceIncidentsWithInterfaces queries for affected interfaces on each counter incident
+// and populates the AffectedInterfaces field.
+func enrichDeviceIncidentsWithInterfaces(ctx context.Context, conn driver.Conn, incidents []DeviceIncident) {
+	if len(incidents) == 0 {
+		return
+	}
+
+	type key struct {
+		devicePK     string
+		incidentType string
+	}
+	windows := make(map[key]incidentWindow)
+	for _, inc := range incidents {
+		if inc.IncidentType == "no_data" {
+			continue
+		}
+		start, _ := time.Parse(time.RFC3339, inc.StartedAt)
+		end := time.Now()
+		if inc.EndedAt != nil {
+			end, _ = time.Parse(time.RFC3339, *inc.EndedAt)
+		}
+		k := key{inc.DevicePK, inc.IncidentType}
+		if existing, ok := windows[k]; ok {
+			if start.Before(existing.startedAt) {
+				existing.startedAt = start
+			}
+			if end.After(existing.endedAt) {
+				existing.endedAt = end
+			}
+			windows[k] = existing
+		} else {
+			windows[k] = incidentWindow{
+				entityPK:     inc.DevicePK,
+				incidentType: inc.IncidentType,
+				startedAt:    start,
+				endedAt:      end,
+			}
+		}
+	}
+
+	if len(windows) == 0 {
+		return
+	}
+
+	interfacesByKey := make(map[key][]string)
+
+	byType := make(map[string][]incidentWindow)
+	for k, w := range windows {
+		byType[k.incidentType] = append(byType[k.incidentType], w)
+	}
+
+	for incType, typeWindows := range byType {
+		filter := counterTypeFilter(incType)
+
+		var devicePKs []string
+		earliest := typeWindows[0].startedAt
+		latest := typeWindows[0].endedAt
+		for _, w := range typeWindows {
+			devicePKs = append(devicePKs, w.entityPK)
+			if w.startedAt.Before(earliest) {
+				earliest = w.startedAt
+			}
+			if w.endedAt.After(latest) {
+				latest = w.endedAt
+			}
+		}
+
+		query := fmt.Sprintf(`
+			SELECT device_pk, intf
+			FROM fact_dz_device_interface_counters
+			WHERE device_pk IN ($1)
+			  AND event_ts >= $2
+			  AND event_ts <= $3
+			  AND %s
+			GROUP BY device_pk, intf
+			ORDER BY device_pk, intf
+		`, filter)
+
+		rows, err := conn.Query(ctx, query, devicePKs, earliest, latest)
+		if err != nil {
+			continue
+		}
+
+		for rows.Next() {
+			var devicePK, intf string
+			if err := rows.Scan(&devicePK, &intf); err != nil {
+				continue
+			}
+			k := key{devicePK, incType}
+			interfacesByKey[k] = append(interfacesByKey[k], intf)
+		}
+		rows.Close()
+	}
+
+	for i := range incidents {
+		inc := &incidents[i]
+		if inc.IncidentType == "no_data" {
+			continue
+		}
+		k := key{inc.DevicePK, inc.IncidentType}
+		if intfs, ok := interfacesByKey[k]; ok {
+			inc.AffectedInterfaces = intfs
+		}
+	}
+}

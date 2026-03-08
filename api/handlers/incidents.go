@@ -18,25 +18,26 @@ import (
 
 // LinkIncident represents a discrete incident event on a link
 type LinkIncident struct {
-	ID              string   `json:"id"`
-	LinkPK          string   `json:"link_pk"`
-	LinkCode        string   `json:"link_code"`
-	LinkType        string   `json:"link_type"`
-	SideAMetro      string   `json:"side_a_metro"`
-	SideZMetro      string   `json:"side_z_metro"`
-	ContributorCode string   `json:"contributor_code"`
-	IncidentType    string   `json:"incident_type"` // packet_loss, errors, discards, carrier, no_data
-	ThresholdPct    *float64 `json:"threshold_pct,omitempty"`
-	PeakLossPct     *float64 `json:"peak_loss_pct,omitempty"`
-	ThresholdCount  *int64   `json:"threshold_count,omitempty"`
-	PeakCount       *int64   `json:"peak_count,omitempty"`
-	StartedAt       string   `json:"started_at"`
-	EndedAt         *string  `json:"ended_at,omitempty"`
-	DurationSeconds *int64   `json:"duration_seconds,omitempty"`
-	IsOngoing       bool     `json:"is_ongoing"`
-	Confirmed       bool     `json:"confirmed"` // true if ongoing duration >= min_duration
-	IsDrained       bool     `json:"is_drained"`
-	Severity        string   `json:"severity"` // "degraded" or "incident"
+	ID                 string   `json:"id"`
+	LinkPK             string   `json:"link_pk"`
+	LinkCode           string   `json:"link_code"`
+	LinkType           string   `json:"link_type"`
+	SideAMetro         string   `json:"side_a_metro"`
+	SideZMetro         string   `json:"side_z_metro"`
+	ContributorCode    string   `json:"contributor_code"`
+	IncidentType       string   `json:"incident_type"` // packet_loss, errors, discards, carrier, no_data
+	ThresholdPct       *float64 `json:"threshold_pct,omitempty"`
+	PeakLossPct        *float64 `json:"peak_loss_pct,omitempty"`
+	ThresholdCount     *int64   `json:"threshold_count,omitempty"`
+	PeakCount          *int64   `json:"peak_count,omitempty"`
+	StartedAt          string   `json:"started_at"`
+	EndedAt            *string  `json:"ended_at,omitempty"`
+	DurationSeconds    *int64   `json:"duration_seconds,omitempty"`
+	IsOngoing          bool     `json:"is_ongoing"`
+	Confirmed          bool     `json:"confirmed"` // true if ongoing duration >= min_duration
+	IsDrained          bool     `json:"is_drained"`
+	Severity           string   `json:"severity"` // "degraded" or "incident"
+	AffectedInterfaces []string `json:"affected_interfaces,omitempty"`
 }
 
 // DrainedLinkInfo represents a drained link with its incident status
@@ -1077,6 +1078,9 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 	allIncidents = filtered
 
+	// Enrich counter incidents with affected interface names
+	enrichLinkIncidentsWithInterfaces(ctx, envDB(ctx), allIncidents)
+
 	// Split into active (non-drained) and build drained view
 	var activeIncidents []LinkIncident
 	drainedIncidentsByLink := make(map[string][]LinkIncident)
@@ -1279,6 +1283,8 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	allIncidents = filtered
 
+	enrichLinkIncidentsWithInterfaces(ctx, envDB(ctx), allIncidents)
+
 	sort.Slice(allIncidents, func(i, j int) bool {
 		return allIncidents[i].StartedAt > allIncidents[j].StartedAt
 	})
@@ -1286,7 +1292,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=link-incidents.csv")
 
-	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,incident_type,severity,is_drained,details,started_at,ended_at,duration_seconds,is_ongoing\n"))
+	_, _ = w.Write([]byte("id,link_code,link_type,side_a_metro,side_z_metro,contributor,incident_type,severity,is_drained,details,affected_interfaces,started_at,ended_at,duration_seconds,is_ongoing\n"))
 
 	for _, inc := range allIncidents {
 		var details string
@@ -1312,10 +1318,12 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 			durationSecs = strconv.FormatInt(*inc.DurationSeconds, 10)
 		}
 
-		line := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%t,\"%s\",%s,%s,%s,%t\n",
+		interfaces := strings.Join(inc.AffectedInterfaces, "; ")
+
+		line := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s,%s,%t,\"%s\",\"%s\",%s,%s,%s,%t\n",
 			inc.ID, inc.LinkCode, inc.LinkType, inc.SideAMetro, inc.SideZMetro,
 			inc.ContributorCode, inc.IncidentType, inc.Severity, inc.IsDrained,
-			details, inc.StartedAt, endedAt, durationSecs, inc.IsOngoing)
+			details, interfaces, inc.StartedAt, endedAt, durationSecs, inc.IsOngoing)
 		_, _ = w.Write([]byte(line))
 	}
 }
@@ -1555,6 +1563,9 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 		}
 	}
 	allIncidents = filtered
+
+	// Enrich counter incidents with affected interface names
+	enrichLinkIncidentsWithInterfaces(ctx, envDB(ctx), allIncidents)
 
 	// Split into active and drained
 	var activeIncidents []LinkIncident
