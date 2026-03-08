@@ -231,7 +231,9 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		ORDER BY b.link_pk, b.bucket
 	`
 
-	rows, err := conn.Query(ctx, query, int64(duration.Seconds()), linkPKs)
+	// Add 1 day of lookback padding so incidents starting before the time range boundary get their true start time
+	lookbackSecs := int64((duration + 24*time.Hour).Seconds())
+	rows, err := conn.Query(ctx, query, lookbackSecs, linkPKs)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
@@ -450,7 +452,9 @@ func fetchCounterIncidents(ctx context.Context, conn driver.Conn, duration time.
 		ORDER BY ic.link_pk, bucket
 	`, metricExpr)
 
-	rows, err := conn.Query(ctx, query, int64(duration.Seconds()), linkPKs)
+	// Add 1 day of lookback padding so incidents starting before the time range boundary get their true start time
+	lookbackSecs := int64((duration + 24*time.Hour).Seconds())
+	rows, err := conn.Query(ctx, query, lookbackSecs, linkPKs)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
