@@ -423,6 +423,9 @@ func main() {
 		r.Get("/api/outages/links", handlers.GetLinkOutages)
 		r.Get("/api/outages/links/csv", handlers.GetLinkOutagesCSV)
 
+		// Incident routes
+		r.Get("/api/incidents/links", handlers.GetLinkIncidents)
+
 		// Search routes
 		r.Get("/api/search", handlers.Search)
 		r.Get("/api/search/autocomplete", handlers.SearchAutocomplete)

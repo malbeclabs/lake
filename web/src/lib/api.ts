@@ -4188,6 +4188,100 @@ export async function fetchLinkOutages(params: FetchLinkOutagesParams = {}): Pro
   return res.json()
 }
 
+// Incidents types and functions
+export type IncidentType = 'packet_loss' | 'errors' | 'discards' | 'carrier' | 'no_data'
+
+export interface LinkIncident {
+  id: string
+  link_pk: string
+  link_code: string
+  link_type: string
+  side_a_metro: string
+  side_z_metro: string
+  contributor_code: string
+  incident_type: IncidentType
+  threshold_pct?: number
+  peak_loss_pct?: number
+  threshold_count?: number
+  peak_count?: number
+  started_at: string
+  ended_at?: string
+  duration_seconds?: number
+  is_ongoing: boolean
+  is_drained: boolean
+  severity: 'degraded' | 'incident'
+}
+
+export interface DrainedLinkInfo {
+  link_pk: string
+  link_code: string
+  link_type: string
+  side_a_metro: string
+  side_z_metro: string
+  contributor_code: string
+  drain_status: string
+  drained_since: string
+  active_incidents: LinkIncident[]
+  recent_incidents: LinkIncident[]
+  last_incident_end?: string
+  clear_for_seconds?: number
+  readiness: 'red' | 'yellow' | 'green' | 'gray'
+}
+
+export interface LinkIncidentsSummary {
+  total: number
+  ongoing: number
+  by_type: Record<string, number>
+}
+
+export interface DrainedSummary {
+  total: number
+  with_incidents: number
+  ready: number
+  not_ready: number
+}
+
+export interface LinkIncidentsResponse {
+  active: LinkIncident[]
+  drained: DrainedLinkInfo[]
+  active_summary: LinkIncidentsSummary
+  drained_summary: DrainedSummary
+}
+
+export interface FetchLinkIncidentsParams {
+  range?: OutageTimeRange
+  threshold?: number
+  errors_threshold?: number
+  discards_threshold?: number
+  carrier_threshold?: number
+  min_duration?: number
+  coalesce_gap?: number
+  type?: 'all' | IncidentType
+  filter?: string
+}
+
+export async function fetchLinkIncidents(params: FetchLinkIncidentsParams = {}): Promise<LinkIncidentsResponse> {
+  const searchParams = new URLSearchParams()
+  if (params.range) searchParams.set('range', params.range)
+  if (params.threshold) searchParams.set('threshold', params.threshold.toString())
+  if (params.errors_threshold) searchParams.set('errors_threshold', params.errors_threshold.toString())
+  if (params.discards_threshold) searchParams.set('discards_threshold', params.discards_threshold.toString())
+  if (params.carrier_threshold) searchParams.set('carrier_threshold', params.carrier_threshold.toString())
+  if (params.min_duration) searchParams.set('min_duration', params.min_duration.toString())
+  if (params.coalesce_gap != null) searchParams.set('coalesce_gap', params.coalesce_gap.toString())
+  if (params.type) searchParams.set('type', params.type)
+  if (params.filter) searchParams.set('filter', params.filter)
+
+  const queryString = searchParams.toString()
+  const url = `/api/incidents/links${queryString ? `?${queryString}` : ''}`
+
+  const res = await fetchWithRetry(url)
+  if (!res.ok) {
+    throw new Error('Failed to fetch link incidents')
+  }
+  return res.json()
+}
+
 // Auth types and functions
 export type AccountType = 'domain' | 'wallet'
 
