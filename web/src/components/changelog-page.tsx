@@ -10,6 +10,84 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'March 8, 2026',
+    changes: [
+      { type: 'feature', description: 'Incidents page with link and device scopes' },
+      { type: 'feature', description: 'Down link classification in overall status banner' },
+      { type: 'improvement', description: 'Simplified link status classifications and drained handling' },
+      { type: 'fix', description: 'Dark mode visibility for issue tags' },
+    ],
+  },
+  {
+    date: 'March 5, 2026',
+    changes: [
+      { type: 'feature', description: 'Validators.app data ingestion and UI' },
+      { type: 'feature', description: 'Publisher check page for bebop group members' },
+      { type: 'improvement', description: 'In/out shown independently for interface errors and discards' },
+      { type: 'improvement', description: 'Row highlighting when navigating from status summary tables' },
+      { type: 'improvement', description: 'Merged ongoing outages per link with simplified type display' },
+    ],
+  },
+  {
+    date: 'March 1, 2026',
+    changes: [
+      { type: 'feature', description: 'Metro filter on path latency page' },
+      { type: 'improvement', description: 'Server-side multicast tree segments and animation performance' },
+    ],
+  },
+  {
+    date: 'February 27, 2026',
+    changes: [
+      { type: 'feature', description: 'Multicast group member count chart' },
+      { type: 'improvement', description: 'Server-side pagination for multicast group members' },
+      { type: 'improvement', description: 'Soft-drained links excluded from status page down classification' },
+      { type: 'fix', description: 'Y-axis scale cut off in traffic and interface charts' },
+      { type: 'fix', description: 'Down links not appearing in status page link history' },
+    ],
+  },
+  {
+    date: 'February 24, 2026',
+    changes: [
+      { type: 'improvement', description: 'Improved multicast group detail page interactivity' },
+      { type: 'improvement', description: 'Improved gossip node detail page DZ info' },
+      { type: 'improvement', description: 'Improved chart legends and detail page layout' },
+      { type: 'fix', description: 'Maintenance planner metric-based routing' },
+      { type: 'fix', description: 'Legend hover highlighting multiple table rows' },
+    ],
+  },
+  {
+    date: 'February 21, 2026',
+    changes: [
+      { type: 'feature', description: 'Outage severity classification' },
+      { type: 'feature', description: 'Validator disconnection detection in timeline' },
+      { type: 'improvement', description: 'Inline search replacing spotlight filters across all pages' },
+      { type: 'improvement', description: 'Multicast groups added to search and autocomplete' },
+      { type: 'fix', description: 'False issue badges and high latency classification on status page' },
+    ],
+  },
+  {
+    date: 'February 20, 2026',
+    changes: [
+      { type: 'feature', description: 'Redesigned multicast overlay and multicast group pages' },
+    ],
+  },
+  {
+    date: 'February 19, 2026',
+    changes: [
+      { type: 'feature', description: 'Service management dashboard' },
+      { type: 'improvement', description: 'Polished sidebar navigation and performance pages' },
+    ],
+  },
+  {
+    date: 'February 17, 2026',
+    changes: [
+      { type: 'feature', description: 'Traffic overview dashboard' },
+      { type: 'feature', description: 'Fullscreen toggle for topology views' },
+      { type: 'improvement', description: 'Tunnel traffic user kind filter and grouping' },
+      { type: 'improvement', description: 'Graceful fallback when WebGL/GPU is unavailable' },
+    ],
+  },
+  {
     date: 'February 15, 2026',
     changes: [
       { type: 'feature', description: 'Traffic analytics dashboard with aggregate stress charts, per-group localization, top interfaces table, drilldown panel, spike detection, and capacity planning' },
