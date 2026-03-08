@@ -655,8 +655,10 @@ function AppContent() {
             {/* Timeline route */}
             <Route path="/timeline" element={<TimelinePage />} />
 
-            {/* Incidents route */}
-            <Route path="/incidents" element={<IncidentsPage />} />
+            {/* Incidents routes */}
+            <Route path="/incidents" element={<Navigate to="/incidents/links" replace />} />
+            <Route path="/incidents/links" element={<IncidentsPage />} />
+            <Route path="/incidents/devices" element={<IncidentsPage />} />
 
             {/* Stake analytics route */}
             <Route path="/stake" element={<StakePage />} />

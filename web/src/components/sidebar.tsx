@@ -49,7 +49,7 @@ export function Sidebar() {
   // Route detection
   const isStatusRoute = location.pathname.startsWith('/status')
   const isTimelineRoute = location.pathname === '/timeline'
-  const isIncidentsRoute = location.pathname === '/incidents'
+  const isIncidentsRoute = location.pathname.startsWith('/incidents')
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
   const isQueryRoute = location.pathname.startsWith('/query')
@@ -222,7 +222,7 @@ export function Sidebar() {
           <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
             <Clock className="h-4 w-4" />
           </Link>
-          <Link to="/incidents" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
+          <Link to="/incidents/links" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
             <ShieldAlert className="h-4 w-4" />
           </Link>
           <button
@@ -442,7 +442,7 @@ export function Sidebar() {
               <Clock className="h-4 w-4" />
               Timeline
             </Link>
-            <Link to="/incidents" className={navItemClass(isIncidentsRoute)}>
+            <Link to="/incidents/links" className={navItemClass(isIncidentsRoute)}>
               <ShieldAlert className="h-4 w-4" />
               Incidents
             </Link>

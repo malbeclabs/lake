@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { ShieldAlert, Settings, ExternalLink, Info, Download } from 'lucide-react'
 import {
   fetchLinkIncidents,
@@ -173,9 +173,11 @@ function dedupeIncidentTypes(incidents: { incident_type: string }[]): string[] {
 
 export function IncidentsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
 
-  // Scope
-  const scope = (searchParams.get('scope') as IncidentScope) || 'links'
+  // Scope from path
+  const scope: IncidentScope = location.pathname === '/incidents/devices' ? 'devices' : 'links'
 
   // Parse URL params with defaults
   const range = (searchParams.get('range') as IncidentTimeRange) || '24h'
@@ -259,7 +261,6 @@ export function IncidentsPage() {
 
   const getDefaultValue = (key: string): string => {
     switch (key) {
-      case 'scope': return 'links'
       case 'range': return '24h'
       case 'threshold': return '10'
       case 'errors_threshold': return '10'
@@ -500,7 +501,7 @@ export function IncidentsPage() {
         <div className="flex items-center gap-2 mb-4">
           <div className="flex items-center gap-1 bg-muted rounded-md p-1">
             <button
-              onClick={() => updateParams({ scope: 'links' })}
+              onClick={() => navigate('/incidents/links')}
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 scope === 'links'
                   ? 'bg-background text-foreground shadow-sm'
@@ -510,7 +511,7 @@ export function IncidentsPage() {
               Links
             </button>
             <button
-              onClick={() => updateParams({ scope: 'devices' })}
+              onClick={() => navigate('/incidents/devices')}
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 scope === 'devices'
                   ? 'bg-background text-foreground shadow-sm'
