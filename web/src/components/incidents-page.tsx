@@ -6,12 +6,12 @@ import {
   fetchLinkIncidents,
   type LinkIncident,
   type DrainedLinkInfo,
-  type OutageTimeRange,
+  type IncidentTimeRange,
 } from '@/lib/api'
 import { StatusFilters, useStatusFilters } from '@/components/status-search-bar'
 import { PageHeader } from '@/components/page-header'
 
-const timeRanges: { value: OutageTimeRange; label: string }[] = [
+const timeRanges: { value: IncidentTimeRange; label: string }[] = [
   { value: '3h', label: '3h' },
   { value: '6h', label: '6h' },
   { value: '12h', label: '12h' },
@@ -170,7 +170,7 @@ export function IncidentsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Parse URL params with defaults
-  const range = (searchParams.get('range') as OutageTimeRange) || '24h'
+  const range = (searchParams.get('range') as IncidentTimeRange) || '24h'
   const threshold = parseInt(searchParams.get('threshold') || '10') || 10
   const errorsThreshold = parseInt(searchParams.get('errors_threshold') || '10') || 10
   const discardsThreshold = parseInt(searchParams.get('discards_threshold') || '10') || 10

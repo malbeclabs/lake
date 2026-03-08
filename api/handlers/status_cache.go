@@ -30,7 +30,7 @@ type StatusCache struct {
 	linkHistory       map[string]*LinkHistoryResponse      // keyed by "range:buckets" e.g. "24h:72"
 	deviceHistory     map[string]*DeviceHistoryResponse    // keyed by "range:buckets" e.g. "24h:72"
 	timeline          *TimelineResponse                    // default 24h timeline
-	outages           *LinkOutagesResponse                 // default 24h outages
+	incidents         *LinkIncidentsResponse               // default 24h incidents
 	latencyComparison *LatencyComparisonResponse           // DZ vs Internet latency comparison
 	metroPathLatency  map[string]*MetroPathLatencyResponse // keyed by optimize strategy (hops, latency, bandwidth)
 
@@ -38,7 +38,7 @@ type StatusCache struct {
 	statusInterval      time.Duration
 	linkHistoryInterval time.Duration
 	timelineInterval    time.Duration
-	outagesInterval     time.Duration
+	incidentsInterval   time.Duration
 	performanceInterval time.Duration // for latency comparison and metro path latency
 
 	// Last refresh times (for observability)
@@ -46,7 +46,7 @@ type StatusCache struct {
 	linkHistoryLastRefresh       time.Time
 	deviceHistoryLastRefresh     time.Time
 	timelineLastRefresh          time.Time
-	outagesLastRefresh           time.Time
+	incidentsLastRefresh         time.Time
 	latencyComparisonLastRefresh time.Time
 	metroPathLatencyLastRefresh  time.Time
 
@@ -82,7 +82,7 @@ type refreshEntry struct {
 }
 
 // NewStatusCache creates a new cache with the specified refresh intervals.
-func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, outagesInterval, performanceInterval time.Duration) *StatusCache {
+func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval time.Duration) *StatusCache {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StatusCache{
 		linkHistory:         make(map[string]*LinkHistoryResponse),
@@ -91,7 +91,7 @@ func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, outag
 		statusInterval:      statusInterval,
 		linkHistoryInterval: linkHistoryInterval,
 		timelineInterval:    timelineInterval,
-		outagesInterval:     outagesInterval,
+		incidentsInterval:   incidentsInterval,
 		performanceInterval: performanceInterval,
 		ctx:                 ctx,
 		cancel:              cancel,
@@ -101,15 +101,15 @@ func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, outag
 // Start begins the background refresh loop.
 // It performs an initial refresh synchronously to ensure cache is warm before returning.
 func (c *StatusCache) Start() {
-	log.Printf("Starting status cache with intervals: status=%v, linkHistory=%v, timeline=%v, outages=%v, performance=%v",
-		c.statusInterval, c.linkHistoryInterval, c.timelineInterval, c.outagesInterval, c.performanceInterval)
+	log.Printf("Starting status cache with intervals: status=%v, linkHistory=%v, timeline=%v, incidents=%v, performance=%v",
+		c.statusInterval, c.linkHistoryInterval, c.timelineInterval, c.incidentsInterval, c.performanceInterval)
 
 	// Initial refresh (synchronous to ensure cache is warm)
 	c.refreshStatus()
 	c.refreshLinkHistory()
 	c.refreshDeviceHistory()
 	c.refreshTimeline()
-	c.refreshOutages()
+	c.refreshIncidents()
 	c.refreshLatencyComparison()
 	c.refreshMetroPathLatency()
 
@@ -131,7 +131,7 @@ func (c *StatusCache) refreshLoop() {
 	entries := []refreshEntry{
 		{"status", c.statusInterval, c.refreshStatus},
 		{"timeline", c.timelineInterval, c.refreshTimeline},
-		{"outages", c.outagesInterval, c.refreshOutages},
+		{"incidents", c.incidentsInterval, c.refreshIncidents},
 		{"link history", c.linkHistoryInterval, c.refreshLinkHistory},
 		{"device history", c.linkHistoryInterval, c.refreshDeviceHistory},
 		{"latency comparison", c.performanceInterval, c.refreshLatencyComparison},
@@ -208,7 +208,7 @@ func (c *StatusCache) Stop() {
 func (c *StatusCache) IsReady() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.status != nil && c.timeline != nil && c.outages != nil
+	return c.status != nil && c.timeline != nil && c.incidents != nil
 }
 
 // GetStatus returns the cached status response.
@@ -245,12 +245,12 @@ func (c *StatusCache) GetTimeline() *TimelineResponse {
 	return c.timeline
 }
 
-// GetOutages returns the cached default outages response.
+// GetIncidents returns the cached default incidents response.
 // Returns nil if cache is empty (should not happen after Start() completes).
-func (c *StatusCache) GetOutages() *LinkOutagesResponse {
+func (c *StatusCache) GetIncidents() *LinkIncidentsResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.outages
+	return c.incidents
 }
 
 // GetLatencyComparison returns the cached DZ vs Internet latency comparison.
@@ -367,25 +367,30 @@ func (c *StatusCache) refreshTimeline() {
 	log.Printf("Timeline cache refreshed in %v (%d events)", time.Since(start), len(resp.Events))
 }
 
-// refreshOutages fetches fresh outages data for the default 24h view.
-func (c *StatusCache) refreshOutages() {
+// refreshIncidents fetches fresh incidents data for the default 24h view.
+func (c *StatusCache) refreshIncidents() {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
 
-	resp := fetchDefaultOutagesData(ctx)
+	resp := fetchDefaultIncidentsData(ctx)
 
 	if ctx.Err() != nil {
-		log.Printf("Outages cache refresh error: %v (keeping stale data)", ctx.Err())
+		log.Printf("Incidents cache refresh error: %v (keeping stale data)", ctx.Err())
+		return
+	}
+
+	if resp == nil {
+		log.Printf("Incidents cache refresh returned nil (keeping stale data)")
 		return
 	}
 
 	c.mu.Lock()
-	c.outages = resp
-	c.outagesLastRefresh = time.Now()
+	c.incidents = resp
+	c.incidentsLastRefresh = time.Now()
 	c.mu.Unlock()
 
-	log.Printf("Outages cache refreshed in %v (%d outages)", time.Since(start), len(resp.Outages))
+	log.Printf("Incidents cache refreshed in %v (%d active, %d drained)", time.Since(start), len(resp.Active), len(resp.Drained))
 }
 
 // refreshLatencyComparison fetches fresh DZ vs Internet latency comparison data.
@@ -454,7 +459,7 @@ func InitStatusCache() {
 		30*time.Second,  // Status refresh every 30s
 		60*time.Second,  // Link history refresh every 60s
 		30*time.Second,  // Timeline refresh every 30s
-		60*time.Second,  // Outages refresh every 60s
+		60*time.Second,  // Incidents refresh every 60s
 		120*time.Second, // Performance (latency comparison, metro path latency) refresh every 120s
 	)
 	statusCache.Start()

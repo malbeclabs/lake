@@ -124,7 +124,7 @@ func incidentSeverity(incidentType string, peakLossPct float64, _ int64) string 
 	}
 }
 
-func fetchLinkMetadataWithStatus(ctx context.Context, conn driver.Conn, filters []OutageFilter) (map[string]linkMetadataWithStatus, error) {
+func fetchLinkMetadataWithStatus(ctx context.Context, conn driver.Conn, filters []IncidentFilter) (map[string]linkMetadataWithStatus, error) {
 	var qb strings.Builder
 	qb.WriteString(`
 		SELECT
@@ -186,7 +186,7 @@ func fetchLinkMetadataWithStatus(ctx context.Context, conn driver.Conn, filters 
 	return result, nil
 }
 
-// fetchPacketLossIncidents detects packet loss incidents using the same pattern as outages
+// fetchPacketLossIncidents detects packet loss incidents using the shared detection logic
 func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration time.Duration, threshold float64, linkMeta map[string]linkMetadataWithStatus) ([]LinkIncident, error) {
 	// Convert to plain linkMetadata for reusing existing functions
 	plainMeta := make(map[string]linkMetadata, len(linkMeta))
@@ -195,13 +195,13 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 	}
 
 	// First, find links with current high packet loss (ongoing)
-	currentOutages, err := fetchCurrentHighLossLinks(ctx, conn, threshold, plainMeta)
+	currentEvents, err := fetchCurrentHighLossLinks(ctx, conn, threshold, plainMeta)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch current high loss links: %w", err)
 	}
 
 	ongoingLinks := make(map[string]bool)
-	for _, o := range currentOutages {
+	for _, o := range currentEvents {
 		ongoingLinks[o.LinkCode] = true
 	}
 
@@ -211,7 +211,7 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		linkPKs = append(linkPKs, pk)
 	}
 	if len(linkPKs) == 0 {
-		return convertOutagesToIncidents(currentOutages, linkMeta), nil
+		return convertEventsToIncidents(currentEvents, linkMeta), nil
 	}
 
 	query := `
@@ -249,17 +249,17 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		buckets = append(buckets, lb)
 	}
 
-	completedOutages := pairPacketLossOutagesCompleted(buckets, plainMeta, threshold, ongoingLinks)
-	allOutages := append(currentOutages, completedOutages...)
-	allOutages = coalescePacketLossOutages(allOutages)
+	completedEvents := pairPacketLossEventsCompleted(buckets, plainMeta, threshold, ongoingLinks)
+	allEvents := append(currentEvents, completedEvents...)
+	allEvents = coalescePacketLossEvents(allEvents)
 
-	return convertOutagesToIncidents(allOutages, linkMeta), nil
+	return convertEventsToIncidents(allEvents, linkMeta), nil
 }
 
-// convertOutagesToIncidents converts LinkOutage slice to LinkIncident slice
-func convertOutagesToIncidents(outages []LinkOutage, linkMeta map[string]linkMetadataWithStatus) []LinkIncident {
-	incidents := make([]LinkIncident, 0, len(outages))
-	for _, o := range outages {
+// convertEventsToIncidents converts DetectedEvent slice to LinkIncident slice
+func convertEventsToIncidents(detectedEvents []DetectedEvent, linkMeta map[string]linkMetadataWithStatus) []LinkIncident {
+	incidents := make([]LinkIncident, 0, len(detectedEvents))
+	for _, o := range detectedEvents {
 		meta := linkMeta[o.LinkPK]
 		isDrained := meta.Status == "soft-drained" || meta.Status == "hard-drained"
 
@@ -309,13 +309,13 @@ func fetchNoDataIncidents(ctx context.Context, conn driver.Conn, duration time.D
 		ongoingLinks[o.LinkCode] = true
 	}
 
-	completedNoData, err := findCompletedNoDataOutages(ctx, conn, duration, plainMeta, ongoingLinks)
+	completedNoData, err := findCompletedNoDataEvents(ctx, conn, duration, plainMeta, ongoingLinks)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find completed no-data incidents: %w", err)
 	}
 
-	// Convert completed outages to incidents
-	completedIncidents := convertOutagesToNoDataIncidents(completedNoData, linkMeta)
+	// Convert completed events to incidents
+	completedIncidents := convertNoDataEventsToIncidents(completedNoData, linkMeta)
 
 	return append(currentNoData, completedIncidents...), nil
 }
@@ -391,10 +391,10 @@ func fetchCurrentNoDataLinksIncidents(ctx context.Context, conn driver.Conn, lin
 	return incidents, nil
 }
 
-// convertOutagesToNoDataIncidents converts no-data LinkOutages to LinkIncidents
-func convertOutagesToNoDataIncidents(outages []LinkOutage, linkMeta map[string]linkMetadataWithStatus) []LinkIncident {
-	incidents := make([]LinkIncident, 0, len(outages))
-	for _, o := range outages {
+// convertNoDataEventsToIncidents converts no-data DetectedEvents to LinkIncidents
+func convertNoDataEventsToIncidents(detectedEvents []DetectedEvent, linkMeta map[string]linkMetadataWithStatus) []LinkIncident {
+	incidents := make([]LinkIncident, 0, len(detectedEvents))
+	for _, o := range detectedEvents {
 		meta := linkMeta[o.LinkPK]
 		isDrained := meta.Status == "soft-drained" || meta.Status == "hard-drained"
 
@@ -871,8 +871,71 @@ func parseIntParam(value string, defaultVal int64) int64 {
 	return v
 }
 
+// isDefaultIncidentsRequest checks if the request matches the default cached parameters
+func isDefaultIncidentsRequest(r *http.Request) bool {
+	q := r.URL.Query()
+
+	rangeParam := q.Get("range")
+	if rangeParam != "" && rangeParam != "24h" {
+		return false
+	}
+
+	threshold := q.Get("threshold")
+	if threshold != "" && threshold != "10" {
+		return false
+	}
+
+	incidentType := q.Get("type")
+	if incidentType != "" && incidentType != "all" {
+		return false
+	}
+
+	if q.Get("filter") != "" {
+		return false
+	}
+
+	errorsThreshold := q.Get("errors_threshold")
+	if errorsThreshold != "" && errorsThreshold != "10" {
+		return false
+	}
+
+	discardsThreshold := q.Get("discards_threshold")
+	if discardsThreshold != "" && discardsThreshold != "10" {
+		return false
+	}
+
+	carrierThreshold := q.Get("carrier_threshold")
+	if carrierThreshold != "" && carrierThreshold != "1" {
+		return false
+	}
+
+	minDuration := q.Get("min_duration")
+	if minDuration != "" && minDuration != "30" {
+		return false
+	}
+
+	coalesceGap := q.Get("coalesce_gap")
+	if coalesceGap != "" && coalesceGap != "720" {
+		return false
+	}
+
+	return true
+}
+
 // GetLinkIncidents returns incidents for links with active and drained views
 func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
+	// Check if this is a default request that can be served from cache
+	if isMainnet(r.Context()) && isDefaultIncidentsRequest(r) && statusCache != nil {
+		if cached := statusCache.GetIncidents(); cached != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			if err := json.NewEncoder(w).Encode(cached); err != nil {
+				log.Printf("Error encoding cached incidents response: %v", err)
+			}
+			return
+		}
+	}
+
 	// Parse query parameters
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
@@ -906,7 +969,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterStr := r.URL.Query().Get("filter")
-	filters := parseOutageFilters(filterStr)
+	filters := parseIncidentFilters(filterStr)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1118,7 +1181,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterStr := r.URL.Query().Get("filter")
-	filters := parseOutageFilters(filterStr)
+	filters := parseIncidentFilters(filterStr)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -1390,4 +1453,166 @@ func buildDrainedLinksInfo(linkMeta map[string]linkMetadataWithStatus, incidents
 	})
 
 	return drainedLinks
+}
+
+// fetchDefaultIncidentsData fetches incidents data with default parameters for caching.
+func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
+	duration := 24 * time.Hour
+	threshold := 10.0
+	var filters []IncidentFilter
+
+	detectParams := incidentDetectionParams{
+		MinDuration: 30 * time.Minute,
+		CoalesceGap: 720 * time.Minute,
+	}
+
+	linkMeta, err := fetchLinkMetadataWithStatus(ctx, envDB(ctx), filters)
+	if err != nil {
+		log.Printf("Cache: Failed to fetch link metadata for incidents: %v", err)
+		return nil
+	}
+
+	var allIncidents []LinkIncident
+	var mu sync.Mutex
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta)
+		if err != nil {
+			return fmt.Errorf("packet loss: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	g.Go(func() error {
+		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 10,
+			"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", linkMeta, detectParams)
+		if err != nil {
+			return fmt.Errorf("errors: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	g.Go(func() error {
+		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 10,
+			"sum(greatest(0, coalesce(in_discards_delta, 0))) + sum(greatest(0, coalesce(out_discards_delta, 0)))", "discards", linkMeta, detectParams)
+		if err != nil {
+			return fmt.Errorf("discards: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	g.Go(func() error {
+		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 1,
+			"sum(greatest(0, coalesce(carrier_transitions_delta, 0)))", "carrier", linkMeta, detectParams)
+		if err != nil {
+			return fmt.Errorf("carrier: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	g.Go(func() error {
+		incidents, err := fetchNoDataIncidents(gCtx, envDB(gCtx), duration, linkMeta)
+		if err != nil {
+			return fmt.Errorf("no_data: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		log.Printf("Cache: Failed to fetch incidents: %v", err)
+		return nil
+	}
+
+	// Filter by min duration and set confirmed
+	minDurationSecs := int64(detectParams.MinDuration.Seconds())
+	filtered := allIncidents[:0]
+	for i := range allIncidents {
+		inc := &allIncidents[i]
+		if inc.IsOngoing {
+			startTime, _ := time.Parse(time.RFC3339, inc.StartedAt)
+			inc.Confirmed = time.Since(startTime) >= detectParams.MinDuration
+			filtered = append(filtered, *inc)
+		} else if inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
+			inc.Confirmed = true
+			filtered = append(filtered, *inc)
+		}
+	}
+	allIncidents = filtered
+
+	// Split into active and drained
+	var activeIncidents []LinkIncident
+	drainedIncidentsByLink := make(map[string][]LinkIncident)
+
+	for _, inc := range allIncidents {
+		if !inc.IsDrained {
+			activeIncidents = append(activeIncidents, inc)
+		}
+		if inc.IsDrained {
+			drainedIncidentsByLink[inc.LinkPK] = append(drainedIncidentsByLink[inc.LinkPK], inc)
+		}
+	}
+
+	sort.Slice(activeIncidents, func(i, j int) bool {
+		return activeIncidents[i].StartedAt > activeIncidents[j].StartedAt
+	})
+
+	drainedSince := fetchDrainedSince(ctx, envDB(ctx), linkMeta)
+	drainedLinks := buildDrainedLinksInfo(linkMeta, drainedIncidentsByLink, drainedSince)
+
+	activeSummary := LinkIncidentsSummary{
+		Total:   len(activeIncidents),
+		Ongoing: 0,
+		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "discards": 0, "carrier": 0, "no_data": 0},
+	}
+	for _, inc := range activeIncidents {
+		if inc.IsOngoing {
+			activeSummary.Ongoing++
+		}
+		activeSummary.ByType[inc.IncidentType]++
+	}
+
+	drainedSummary := DrainedSummary{
+		Total: len(drainedLinks),
+	}
+	for _, dl := range drainedLinks {
+		if len(dl.ActiveIncidents) > 0 {
+			drainedSummary.WithIncidents++
+			drainedSummary.NotReady++
+		} else if dl.Readiness == "green" {
+			drainedSummary.Ready++
+		} else {
+			drainedSummary.NotReady++
+		}
+	}
+
+	if activeIncidents == nil {
+		activeIncidents = []LinkIncident{}
+	}
+	if drainedLinks == nil {
+		drainedLinks = []DrainedLinkInfo{}
+	}
+
+	return &LinkIncidentsResponse{
+		Active:         activeIncidents,
+		Drained:        drainedLinks,
+		ActiveSummary:  activeSummary,
+		DrainedSummary: drainedSummary,
+	}
 }

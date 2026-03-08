@@ -95,21 +95,21 @@ func TestStatusCache_RefreshTimelineKeepsStaleData(t *testing.T) {
 	}
 }
 
-func TestStatusCache_RefreshOutagesKeepsStaleData(t *testing.T) {
+func TestStatusCache_RefreshIncidentsKeepsStaleData(t *testing.T) {
 	c := newCancelledCache(t)
 
-	original := &LinkOutagesResponse{
-		Outages: []LinkOutage{{ID: "test-outage"}},
+	original := &LinkIncidentsResponse{
+		Active: []LinkIncident{{ID: "test-incident"}},
 	}
-	c.outages = original
-	c.outagesLastRefresh = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.incidents = original
+	c.incidentsLastRefresh = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	c.refreshOutages()
+	c.refreshIncidents()
 
-	if c.outages != original {
-		t.Error("refreshOutages overwrote stale data on error")
+	if c.incidents != original {
+		t.Error("refreshIncidents overwrote stale data on error")
 	}
-	if !c.outagesLastRefresh.Equal(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)) {
-		t.Error("refreshOutages updated timestamp on error")
+	if !c.incidentsLastRefresh.Equal(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Error("refreshIncidents updated timestamp on error")
 	}
 }
