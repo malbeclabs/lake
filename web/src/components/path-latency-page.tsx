@@ -1,9 +1,9 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, Route, Download, ArrowRight, ChevronDown, X, Search, MapPin, Filter } from 'lucide-react'
+import { Loader2, Route, Download, ArrowRight, ChevronDown, X, Search, MapPin, Filter, Zap, Globe, TrendingUp, Activity } from 'lucide-react'
 import { fetchMetroConnectivity, fetchMetroPathLatency, fetchMetroPathDetail, fetchFieldValues } from '@/lib/api'
-import type { MetroPathLatency, MetroPathDetailResponse, PathOptimizeMode } from '@/lib/api'
+import type { MetroPathLatency, MetroPathDetailResponse, MetroPathDetailHop, PathOptimizeMode } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from '@/components/page-header'
@@ -11,7 +11,6 @@ import { cn } from '@/lib/utils'
 
 const DEBOUNCE_MS = 150
 
-// Parse metro filters from URL
 function parseMetroFilters(searchParam: string): string[] {
   if (!searchParam) return []
   return searchParam.split(',').map(f => f.trim()).filter(Boolean)
@@ -131,40 +130,42 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
   )
 }
 
-// Color classes for improvement
-const STRENGTH_COLORS = {
-  strong: {
-    bg: 'bg-green-100 dark:bg-green-900/40',
-    text: 'text-green-700 dark:text-green-400',
-    hover: 'hover:bg-green-200 dark:hover:bg-green-900/60',
-  },
-  medium: {
-    bg: 'bg-yellow-100 dark:bg-yellow-900/40',
-    text: 'text-yellow-700 dark:text-yellow-400',
-    hover: 'hover:bg-yellow-200 dark:hover:bg-yellow-900/60',
-  },
-  weak: {
-    bg: 'bg-red-100 dark:bg-red-900/40',
-    text: 'text-red-700 dark:text-red-400',
-    hover: 'hover:bg-red-200 dark:hover:bg-red-900/60',
-  },
-  none: {
-    bg: 'bg-muted/50',
-    text: 'text-muted-foreground',
-    hover: 'hover:bg-muted',
-  },
+// 5-tier improvement classification
+type ImprovementTier = 'great' | 'good' | 'neutral' | 'bad' | 'none'
+
+function getImprovementTier(pct: number | null): ImprovementTier {
+  if (pct === null) return 'none'
+  if (pct > 20) return 'great'
+  if (pct > 0) return 'good'
+  if (pct >= -10) return 'neutral'
+  return 'bad'
 }
 
-// Get improvement color class based on percentage
-// Positive = green (DZ is faster), slightly negative = yellow, very negative = red
-function getImprovementColor(pct: number | null): { bg: string; text: string; hover: string } {
-  if (pct === null) return STRENGTH_COLORS.none
-  if (pct > 0) return STRENGTH_COLORS.strong    // Any positive = green
-  if (pct >= -10) return STRENGTH_COLORS.medium // 0% to -10% = yellow
-  return STRENGTH_COLORS.weak                    // < -10% = red
-}
+const TIER_CELL = {
+  great: 'bg-green-100 dark:bg-green-950/60 hover:bg-green-200 dark:hover:bg-green-950/80',
+  good: 'bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/60',
+  neutral: 'bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50',
+  bad: 'bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50',
+  none: 'bg-muted/20 hover:bg-muted/40',
+} as const
 
-// Path latency cell component for the matrix
+const TIER_PCT_TEXT = {
+  great: 'text-green-700 dark:text-green-400',
+  good: 'text-emerald-700 dark:text-emerald-400',
+  neutral: 'text-amber-700 dark:text-amber-400',
+  bad: 'text-red-700 dark:text-red-400',
+  none: 'text-muted-foreground',
+} as const
+
+const TIER_DETAIL_BG = {
+  great: 'bg-green-50 dark:bg-green-950/40 border border-green-200 dark:border-green-900',
+  good: 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900',
+  neutral: 'bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900',
+  bad: 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900',
+  none: 'bg-muted border border-border',
+} as const
+
+// Matrix cell
 function PathLatencyCell({
   pathLatency,
   onClick,
@@ -175,34 +176,119 @@ function PathLatencyCell({
   isSelected: boolean
 }) {
   if (!pathLatency) {
-    // Diagonal cell or no data
     return (
-      <div className="w-full h-full flex items-center justify-center bg-muted/30">
-        <span className="text-muted-foreground text-xs">-</span>
+      <div className="w-full h-full flex items-center justify-center bg-muted/20">
+        <div className="w-1.5 h-1.5 rounded-full bg-border" />
       </div>
     )
   }
 
-  const colors = getImprovementColor(pathLatency.improvementPct)
-  const hasInternet = pathLatency.internetLatencyMs > 0
+  const tier = getImprovementTier(pathLatency.improvementPct)
+  const hasInternet = pathLatency.internetLatencyMs > 0 && pathLatency.improvementPct !== null
+  const pct = pathLatency.improvementPct
 
   return (
     <button
       onClick={onClick}
-      className={`w-full h-full flex flex-col items-center justify-center p-1 transition-colors cursor-pointer ${colors.bg} ${colors.hover} ${isSelected ? 'ring-2 ring-accent ring-inset' : ''}`}
+      className={cn(
+        'w-full h-full flex flex-col items-center justify-center gap-0.5 px-1 transition-colors cursor-pointer',
+        TIER_CELL[tier],
+        isSelected && 'ring-2 ring-primary ring-inset'
+      )}
       title={`${pathLatency.fromMetroCode} → ${pathLatency.toMetroCode}: ${pathLatency.pathLatencyMs.toFixed(1)}ms (${pathLatency.hopCount} hops)${hasInternet ? ` vs Internet ${pathLatency.internetLatencyMs.toFixed(1)}ms` : ''}`}
     >
-      <span className={`text-sm font-medium ${colors.text}`}>
-        {pathLatency.pathLatencyMs.toFixed(1)}
-      </span>
-      <span className="text-[10px] text-muted-foreground">
-        {pathLatency.hopCount}h
-      </span>
+      {hasInternet && pct !== null ? (
+        <>
+          <span className={cn('text-[11px] font-semibold leading-none tabular-nums', TIER_PCT_TEXT[tier])}>
+            {pct > 0 ? '+' : ''}{pct.toFixed(0)}%
+          </span>
+          <span className="text-[10px] text-muted-foreground leading-none tabular-nums">
+            {pathLatency.pathLatencyMs.toFixed(0)}ms
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="text-[12px] font-medium leading-none tabular-nums text-foreground">
+            {pathLatency.pathLatencyMs.toFixed(0)}
+          </span>
+          <span className="text-[9px] text-muted-foreground leading-none">
+            {pathLatency.hopCount}h
+          </span>
+        </>
+      )}
     </button>
   )
 }
 
-// Detail panel for path latency with breakdown
+// Visual stepper for path hops
+function PathStepper({ hops }: { hops: MetroPathDetailHop[] }) {
+  return (
+    <div className="space-y-0">
+      {hops.map((hop, idx) => {
+        const isLast = idx === hops.length - 1
+        const hasLink = !isLast && hop.linkLatency > 0
+
+        return (
+          <div key={idx} className="flex items-stretch gap-3">
+            {/* Timeline rail */}
+            <div className="flex flex-col items-center w-5 flex-shrink-0">
+              <div className={cn(
+                'w-2.5 h-2.5 rounded-full flex-shrink-0 ring-2 ring-background mt-1',
+                idx === 0 ? 'bg-primary' : isLast ? 'bg-primary' : 'bg-muted-foreground/60'
+              )} />
+              {!isLast && (
+                <div className="w-px flex-1 bg-border min-h-[32px]" />
+              )}
+            </div>
+
+            {/* Content */}
+            <div className={cn('flex-1 flex items-start justify-between', !isLast && 'pb-3')}>
+              <div className="flex items-center gap-2 pt-0.5">
+                <span className="font-mono text-sm font-medium leading-none">{hop.deviceCode}</span>
+                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  {hop.metroCode}
+                </span>
+              </div>
+              {hasLink && (
+                <div className="text-right pt-0.5">
+                  <div className="text-xs font-medium text-primary tabular-nums">
+                    {hop.linkLatency.toFixed(2)}ms
+                  </div>
+                  {hop.linkBwGbps > 0 && (
+                    <div className="text-[10px] text-muted-foreground">
+                      {hop.linkBwGbps.toFixed(0)} Gbps
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Latency comparison bar
+function LatencyBar({ label, ms, maxMs, color }: { label: string; ms: number; maxMs: number; color: string }) {
+  const pct = Math.max(5, (ms / maxMs) * 100)
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between items-baseline">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-sm font-semibold tabular-nums">{ms.toFixed(1)}ms</span>
+      </div>
+      <div className="h-2 bg-muted rounded-full overflow-hidden">
+        <div
+          className={cn('h-full rounded-full transition-all duration-700', color)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Detail panel
 function PathLatencyDetail({
   fromCode,
   toCode,
@@ -218,77 +304,125 @@ function PathLatencyDetail({
   isLoadingDetail: boolean
   onClose: () => void
 }) {
-  const colors = getImprovementColor(pathLatency.improvementPct)
+  const tier = getImprovementTier(pathLatency.improvementPct)
   const hasInternet = pathLatency.internetLatencyMs > 0
+  const maxMs = hasInternet
+    ? Math.max(pathLatency.pathLatencyMs, pathLatency.internetLatencyMs)
+    : pathLatency.pathLatencyMs
+  const pct = pathLatency.improvementPct
 
   return (
-    <div className="p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-medium flex items-center gap-2">
-          <span>{fromCode}</span>
-          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-          <span>{toCode}</span>
-        </h3>
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 border-b border-border flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 font-semibold text-base">
+            <span>{fromCode}</span>
+            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+            <span>{toCode}</span>
+          </div>
+        </div>
         <button
           onClick={onClose}
-          className="text-muted-foreground hover:text-foreground"
+          className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Summary stats */}
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="rounded-lg p-2 bg-muted">
-          <div className="text-[10px] text-muted-foreground mb-0.5">DZ Latency</div>
-          <div className="text-lg font-bold">{pathLatency.pathLatencyMs.toFixed(1)}ms</div>
-        </div>
-        <div className="rounded-lg p-2 bg-muted">
-          <div className="text-[10px] text-muted-foreground mb-0.5">Hops</div>
-          <div className="text-lg font-bold">{pathLatency.hopCount}</div>
-        </div>
-        {pathLatency.bottleneckBwGbps > 0 && (
-          <div className="rounded-lg p-2 bg-muted">
-            <div className="text-[10px] text-muted-foreground mb-0.5">Bottleneck</div>
-            <div className="text-lg font-bold">{pathLatency.bottleneckBwGbps.toFixed(0)} Gbps</div>
+      <div className="flex-1 overflow-y-auto">
+        {/* Improvement badge */}
+        {hasInternet && pct !== null && (
+          <div className={cn('mx-4 mt-4 rounded-lg p-3', TIER_DETAIL_BG[tier])}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">DZ vs Internet</span>
+              <span className={cn('text-xl font-bold tabular-nums', TIER_PCT_TEXT[tier])}>
+                {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+              </span>
+            </div>
+            <div className={cn('text-xs mt-0.5', TIER_PCT_TEXT[tier])}>
+              {pct > 0 ? `${pct.toFixed(1)}% faster than internet` : `${Math.abs(pct).toFixed(1)}% slower than internet`}
+            </div>
           </div>
         )}
-      </div>
 
-      {/* Internet comparison */}
-      {hasInternet && pathLatency.improvementPct !== null && (
-        <div className={`rounded-lg p-3 ${colors.bg} mb-4`}>
-          <div className="text-xs text-muted-foreground mb-1">vs Internet ({pathLatency.internetLatencyMs.toFixed(1)}ms)</div>
-          <div className={`text-xl font-bold ${colors.text}`}>
-            {pathLatency.improvementPct > 0 ? '+' : ''}{pathLatency.improvementPct.toFixed(1)}% {pathLatency.improvementPct > 0 ? 'faster' : 'slower'}
+        {/* Stats grid */}
+        <div className="grid grid-cols-3 gap-2 px-4 mt-3">
+          <div className="bg-muted/50 rounded-lg p-2.5">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">DZ Latency</div>
+            <div className="text-lg font-bold tabular-nums">{pathLatency.pathLatencyMs.toFixed(1)}<span className="text-xs font-normal ml-0.5">ms</span></div>
           </div>
-        </div>
-      )}
-
-      {/* Path breakdown */}
-      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Path Breakdown</div>
-      {isLoadingDetail ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading path details...
-        </div>
-      ) : pathDetail && pathDetail.hops.length > 0 ? (
-        <div className="space-y-1">
-          {pathDetail.hops.map((hop, idx) => (
-            <div key={idx} className="flex items-center gap-2 text-sm">
-              <span className="font-mono text-xs text-muted-foreground w-8">{hop.metroCode}</span>
-              <span className="font-medium">{hop.deviceCode}</span>
-              {idx < pathDetail.hops.length - 1 && (
-                <span className="text-muted-foreground ml-auto">
-                  → {hop.linkLatency.toFixed(2)}ms
-                </span>
-              )}
+          <div className="bg-muted/50 rounded-lg p-2.5">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Hops</div>
+            <div className="text-lg font-bold tabular-nums">{pathLatency.hopCount}</div>
+          </div>
+          {pathLatency.bottleneckBwGbps > 0 ? (
+            <div className="bg-muted/50 rounded-lg p-2.5">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Bottleneck</div>
+              <div className="text-lg font-bold tabular-nums">{pathLatency.bottleneckBwGbps.toFixed(0)}<span className="text-xs font-normal ml-0.5">Gbps</span></div>
             </div>
-          ))}
+          ) : hasInternet ? (
+            <div className="bg-muted/50 rounded-lg p-2.5">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Internet</div>
+              <div className="text-lg font-bold tabular-nums">{pathLatency.internetLatencyMs.toFixed(1)}<span className="text-xs font-normal ml-0.5">ms</span></div>
+            </div>
+          ) : (
+            <div className="bg-muted/50 rounded-lg p-2.5 opacity-40">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Internet</div>
+              <div className="text-sm text-muted-foreground">—</div>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="text-sm text-muted-foreground">No path details available</div>
-      )}
+
+        {/* Latency comparison bars */}
+        {hasInternet && (
+          <div className="px-4 mt-4 space-y-2.5">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Latency Comparison</div>
+            <LatencyBar label="DZ Network" ms={pathLatency.pathLatencyMs} maxMs={maxMs} color="bg-blue-500" />
+            <LatencyBar label="Internet" ms={pathLatency.internetLatencyMs} maxMs={maxMs} color="bg-muted-foreground/40" />
+          </div>
+        )}
+
+        {/* Path breakdown */}
+        <div className="px-4 mt-4 mb-4">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium mb-3">Path Breakdown</div>
+          {isLoadingDetail ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading path details...
+            </div>
+          ) : pathDetail && pathDetail.hops.length > 0 ? (
+            <PathStepper hops={pathDetail.hops} />
+          ) : (
+            <div className="text-sm text-muted-foreground">No path details available</div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Summary stat card
+function SummaryCard({
+  icon: Icon,
+  label,
+  value,
+  className,
+}: {
+  icon: React.ElementType
+  label: string
+  value: string
+  className?: string
+}) {
+  return (
+    <div className="bg-card border border-border rounded-lg px-3 py-2.5 flex items-center gap-3">
+      <div className="p-1.5 rounded-md bg-muted flex-shrink-0">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none mb-1">{label}</div>
+        <div className={cn('text-base font-semibold tabular-nums leading-none', className)}>{value}</div>
+      </div>
     </div>
   )
 }
@@ -298,16 +432,13 @@ export function PathLatencyPage() {
   const optimizeParam = searchParams.get('optimize') as PathOptimizeMode | null
   const optimizeMode: PathOptimizeMode = optimizeParam || 'latency'
 
-  // Read selection from URL params (metro codes for readability)
   const fromCodeParam = searchParams.get('from')
   const toCodeParam = searchParams.get('to')
 
-  // Get metro filters from URL
   const metroFilters = useMemo(() => {
     return parseMetroFilters(searchParams.get('metros') || '')
   }, [searchParams])
 
-  // Add a metro filter
   const addMetroFilter = useCallback((metro: string) => {
     setSearchParams(prev => {
       const current = parseMetroFilters(prev.get('metros') || '')
@@ -318,7 +449,6 @@ export function PathLatencyPage() {
     })
   }, [setSearchParams])
 
-  // Remove a metro filter
   const removeMetroFilter = useCallback((metro: string) => {
     setSearchParams(prev => {
       const current = parseMetroFilters(prev.get('metros') || '')
@@ -332,7 +462,6 @@ export function PathLatencyPage() {
     })
   }, [setSearchParams])
 
-  // Clear all metro filters
   const clearAllFilters = useCallback(() => {
     setSearchParams(prev => {
       prev.delete('metros')
@@ -342,7 +471,6 @@ export function PathLatencyPage() {
 
   const queryClient = useQueryClient()
 
-  // Fetch metro connectivity for the matrix structure (metros list)
   const { data: connectivityData, isLoading: connectivityLoading, error: connectivityError, isFetching: connectivityFetching } = useQuery({
     queryKey: ['metro-connectivity'],
     queryFn: fetchMetroConnectivity,
@@ -350,7 +478,6 @@ export function PathLatencyPage() {
     retry: 2,
   })
 
-  // Derive selectedCell from URL params by looking up metro PKs (case-insensitive)
   const selectedCell = useMemo(() => {
     if (!fromCodeParam || !toCodeParam || !connectivityData) return null
     const fromUpper = fromCodeParam.toUpperCase()
@@ -361,7 +488,6 @@ export function PathLatencyPage() {
     return { from: fromMetro.pk, to: toMetro.pk }
   }, [fromCodeParam, toCodeParam, connectivityData])
 
-  // Update selection in URL params (uppercase for consistency)
   const setSelectedCell = useCallback((cell: { from: string; to: string } | null, fromCode?: string, toCode?: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
@@ -376,17 +502,14 @@ export function PathLatencyPage() {
     })
   }, [setSearchParams])
 
-  // Delay showing loading spinner to avoid flash on fast loads
   const showLoading = useDelayedLoading(connectivityLoading)
 
-  // Fetch path latency data
   const { data: pathLatencyData, isLoading: pathLatencyLoading } = useQuery({
     queryKey: ['metro-path-latency', optimizeMode],
     queryFn: () => fetchMetroPathLatency(optimizeMode),
     staleTime: 60000,
   })
 
-  // Build path latency lookup map (by metro PKs)
   const pathLatencyMap = useMemo(() => {
     if (!pathLatencyData) return new Map<string, MetroPathLatency>()
     const map = new Map<string, MetroPathLatency>()
@@ -396,13 +519,11 @@ export function PathLatencyPage() {
     return map
   }, [pathLatencyData])
 
-  // Get selected path latency
   const selectedPathLatency = useMemo(() => {
     if (!selectedCell) return null
     return pathLatencyMap.get(`${selectedCell.from}:${selectedCell.to}`) ?? null
   }, [selectedCell, pathLatencyMap])
 
-  // Fetch path detail when a cell is selected
   const { data: pathDetailData, isLoading: pathDetailLoading } = useQuery({
     queryKey: ['metro-path-detail', selectedPathLatency?.fromMetroCode, selectedPathLatency?.toMetroCode, optimizeMode],
     queryFn: () => {
@@ -413,7 +534,6 @@ export function PathLatencyPage() {
     enabled: selectedPathLatency !== null,
   })
 
-  // Filter metros based on metro filters (must be before early returns to preserve hook order)
   const metros = useMemo(() => {
     if (!connectivityData) return []
     if (metroFilters.length === 0) return connectivityData.metros
@@ -422,7 +542,6 @@ export function PathLatencyPage() {
     )
   }, [connectivityData, metroFilters])
 
-  // Export to CSV
   const handleExport = () => {
     if (!pathLatencyData) return
 
@@ -470,7 +589,6 @@ export function PathLatencyPage() {
   }
 
   if (!connectivityData || connectivityData.metros.length === 0) {
-    // Don't show "no data" message while still loading (before delay threshold)
     if (connectivityLoading) {
       return <div className="flex-1 bg-background" />
     }
@@ -481,10 +599,12 @@ export function PathLatencyPage() {
     )
   }
 
+  const summary = pathLatencyData?.summary
+
   return (
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4">
+      <div className="px-6 py-4 flex-shrink-0">
         <PageHeader
           icon={Route}
           title="Path Latency"
@@ -516,12 +636,38 @@ export function PathLatencyPage() {
           }
         />
 
-        <p className="mt-3 text-sm text-muted-foreground">
-          Compares end-to-end path latency across the DZ network against public internet latency.
+        <p className="mt-2 text-sm text-muted-foreground">
+          End-to-end path latency across the DZ network vs public internet.
         </p>
 
+        {/* Summary cards */}
+        {summary ? (
+          <div className="grid grid-cols-4 gap-2 mt-4">
+            <SummaryCard icon={Activity} label="Metro Pairs" value={summary.totalPairs.toString()} />
+            <SummaryCard icon={Globe} label="With Internet" value={summary.pairsWithInternet.toString()} />
+            <SummaryCard
+              icon={TrendingUp}
+              label="Avg Improvement"
+              value={`+${summary.avgImprovementPct.toFixed(1)}%`}
+              className="text-green-600 dark:text-green-400"
+            />
+            <SummaryCard
+              icon={Zap}
+              label="Best Improvement"
+              value={`+${summary.maxImprovementPct.toFixed(1)}%`}
+              className="text-green-600 dark:text-green-400"
+            />
+          </div>
+        ) : pathLatencyLoading ? (
+          <div className="grid grid-cols-4 gap-2 mt-4">
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} className="bg-card border border-border rounded-lg px-3 py-2.5 h-[56px] animate-pulse" />
+            ))}
+          </div>
+        ) : null}
+
         {/* Filter bar */}
-        <div className="flex items-center gap-2 flex-wrap mt-4">
+        <div className="flex items-center gap-2 flex-wrap mt-3">
           <MetroInlineFilter onCommit={addMetroFilter} />
 
           {metroFilters.map((metro) => (
@@ -545,60 +691,25 @@ export function PathLatencyPage() {
             </button>
           )}
         </div>
-
-        {/* Summary stats */}
-        {pathLatencyData && (
-          <div className="flex gap-6 mt-4 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Metro Pairs:</span>
-              <span className="font-medium">{pathLatencyData.summary.totalPairs}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">With Internet Data:</span>
-              <span className="font-medium">{pathLatencyData.summary.pairsWithInternet}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Avg Improvement:</span>
-              <span className="font-medium text-green-600 dark:text-green-400">
-                {pathLatencyData.summary.avgImprovementPct.toFixed(1)}%
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Max Improvement:</span>
-              <span className="font-medium text-green-600 dark:text-green-400">
-                {pathLatencyData.summary.maxImprovementPct.toFixed(1)}%
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Loading indicator */}
-        {pathLatencyLoading && (
-          <div className="flex items-center gap-2 mt-4 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading path latency data...
-          </div>
-        )}
       </div>
 
-      {/* Matrix grid */}
-      <div className="flex-1 flex gap-6 px-6 pb-6 min-h-0">
-        {/* Scrollable table area */}
-        <div className="flex-1 overflow-auto min-w-0">
+      {/* Matrix + detail panel */}
+      <div className="flex-1 flex gap-0 min-h-0 border-t border-border">
+        {/* Scrollable matrix */}
+        <div className="flex-1 overflow-auto min-w-0 p-4">
           <table className="border-separate border-spacing-0">
             <thead>
               <tr>
-                {/* Top-left corner (empty) */}
-                <th className="relative bg-muted sticky top-0 left-0 z-30 min-w-[48px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]" />
+                {/* Top-left corner */}
+                <th className="relative bg-muted sticky top-0 left-0 z-30 min-w-[52px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]" />
 
-                {/* Column headers */}
                 {metros.map(metro => (
                   <th
                     key={`col-${metro.pk}`}
-                    className="relative bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 min-w-[48px] max-w-[60px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]"
+                    className="relative bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-20 min-w-[52px] max-w-[64px] shadow-[inset_0_0_0_1px_hsl(var(--border))] before:absolute before:-top-1 before:left-0 before:right-0 before:h-1 before:bg-muted [backface-visibility:hidden] [transform:translateZ(0)]"
                     title={metro.name}
                   >
-                    <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap inline-block">
+                    <span className="writing-mode-vertical transform -rotate-45 origin-center whitespace-nowrap inline-block text-[11px]">
                       {metro.code}
                     </span>
                   </th>
@@ -606,18 +717,15 @@ export function PathLatencyPage() {
               </tr>
             </thead>
             <tbody>
-              {/* Rows */}
               {metros.map(fromMetro => (
                 <tr key={`row-${fromMetro.pk}`}>
-                  {/* Row header */}
                   <th
-                    className="bg-muted px-2 py-1 text-xs font-medium text-right sticky left-0 z-10 whitespace-nowrap shadow-[inset_0_0_0_1px_hsl(var(--border))] [backface-visibility:hidden] [transform:translateZ(0)]"
+                    className="bg-muted px-2 py-1 text-[11px] font-medium text-right sticky left-0 z-10 whitespace-nowrap shadow-[inset_0_0_0_1px_hsl(var(--border))] [backface-visibility:hidden] [transform:translateZ(0)]"
                     title={fromMetro.name}
                   >
                     {fromMetro.code}
                   </th>
 
-                  {/* Cells */}
                   {metros.map(toMetro => {
                     const isSame = fromMetro.pk === toMetro.pk
                     const pathLatency = isSame ? null : pathLatencyMap.get(`${fromMetro.pk}:${toMetro.pk}`) ?? null
@@ -626,7 +734,7 @@ export function PathLatencyPage() {
                     return (
                       <td
                         key={`cell-${fromMetro.pk}-${toMetro.pk}`}
-                        className="border border-border p-0 min-w-[48px] max-w-[60px] h-[40px]"
+                        className="border border-border/60 p-0 min-w-[52px] max-w-[64px] h-[44px]"
                       >
                         <PathLatencyCell
                           pathLatency={pathLatency}
@@ -652,7 +760,7 @@ export function PathLatencyPage() {
 
         {/* Detail panel */}
         {selectedPathLatency && selectedCell && (
-          <div className="w-96 flex-shrink-0 border-l border-border bg-card overflow-y-auto">
+          <div className="w-80 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
             <PathLatencyDetail
               fromCode={selectedPathLatency.fromMetroCode}
               toCode={selectedPathLatency.toMetroCode}
@@ -666,24 +774,31 @@ export function PathLatencyPage() {
       </div>
 
       {/* Legend */}
-      <div className="px-6 pb-6">
+      <div className="px-6 py-3 border-t border-border bg-muted/20 flex-shrink-0">
         <div className="flex items-center gap-6 text-xs text-muted-foreground">
-          <span className="font-medium">Legend (DZ Path vs Internet):</span>
+          <span className="font-medium text-foreground">DZ vs Internet:</span>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-green-100 dark:bg-green-900/40 border border-green-200 dark:border-green-800" />
-            <span>DZ faster</span>
+            <div className="w-3 h-3 rounded-sm bg-red-100 dark:bg-red-950/60 border border-red-200 dark:border-red-900" />
+            <span>Slower (&lt;-10%)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-yellow-100 dark:bg-yellow-900/40 border border-yellow-200 dark:border-yellow-800" />
+            <div className="w-3 h-3 rounded-sm bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900" />
             <span>Similar (0 to -10%)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-red-100 dark:bg-red-900/40 border border-red-200 dark:border-red-800" />
-            <span>Internet faster (&lt;-10%)</span>
+            <div className="w-3 h-3 rounded-sm bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900" />
+            <span>Faster (0 to +20%)</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-muted/50 border border-border" />
+            <div className="w-3 h-3 rounded-sm bg-green-100 dark:bg-green-950/60 border border-green-200 dark:border-green-900" />
+            <span>Much faster (&gt;+20%)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-sm bg-muted/40 border border-border" />
             <span>No internet data</span>
+          </div>
+          <div className="ml-auto text-[10px]">
+            Primary: improvement % — Secondary: latency ms
           </div>
         </div>
       </div>
