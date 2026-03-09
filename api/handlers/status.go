@@ -675,37 +675,39 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			}
 
 			// Query to find when the current continuous issue started:
-			// Find the most recent healthy hour, then the issue started the hour after.
-			// If no healthy hour exists in the last 7 days, use the earliest data we have.
+			// Use 5-minute buckets (matching incident detection granularity) and find the
+			// last healthy bucket, then the issue started the bucket after.
+			// If no healthy bucket exists in the last 7 days, use the earliest data we have.
 			issueStartQuery := `
-				WITH hourly AS (
+				WITH buckets AS (
 					SELECT
 						l.code,
-						toStartOfHour(event_ts) as hour,
+						toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket,
 						countIf(loss OR rtt_us = 0) * 100.0 / count(*) as loss_pct
 					FROM fact_dz_device_link_latency lat
 					JOIN dz_links_current l ON lat.link_pk = l.pk
 					WHERE lat.event_ts > now() - INTERVAL 7 DAY
 					  AND l.code IN (?)
-					GROUP BY l.code, hour
+					GROUP BY l.code, bucket
+					HAVING count(*) >= 3
 				),
 				last_healthy AS (
-					SELECT code, max(hour) as last_good_hour
-					FROM hourly
+					SELECT code, max(bucket) as last_good_bucket
+					FROM buckets
 					WHERE loss_pct < ?
 					GROUP BY code
 				),
 				earliest_issue AS (
-					SELECT code, min(hour) as first_issue_hour
-					FROM hourly
+					SELECT code, min(bucket) as first_issue_bucket
+					FROM buckets
 					WHERE loss_pct >= ?
 					GROUP BY code
 				)
 				SELECT
 					ei.code,
 					if(lh.code != '',
-					   lh.last_good_hour + INTERVAL 1 HOUR,
-					   ei.first_issue_hour) as issue_start
+					   lh.last_good_bucket + INTERVAL 5 MINUTE,
+					   ei.first_issue_bucket) as issue_start
 				FROM earliest_issue ei
 				LEFT JOIN last_healthy lh ON ei.code = lh.code
 			`
@@ -722,7 +724,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				}
 				// Populate Since field and filter out resolved issues
 				// An issue is considered resolved if its calculated start time is in the future,
-				// which happens when the current hour is healthy (last_good_hour + 1h > now)
+				// which happens when the current bucket is healthy (last_good_bucket + 5min > now)
 				now := time.Now()
 				filtered := issues[:0]
 				for i := range issues {
