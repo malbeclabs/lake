@@ -106,6 +106,9 @@ func (cfg *ViewConfig) Validate() error {
 	if cfg.InfluxDB == nil {
 		return errors.New("influxdb client is required")
 	}
+	if cfg.Bucket == "" {
+		return errors.New("influxdb bucket is required")
+	}
 	if cfg.RefreshInterval <= 0 {
 		return errors.New("refresh interval must be greater than 0")
 	}
