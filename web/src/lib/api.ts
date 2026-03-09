@@ -4673,6 +4673,8 @@ export interface EdgeScoreboardNode {
   latitude: number
   longitude: number
   feeds: Record<string, EdgeScoreboardFeedStats>
+  stake_sol: number
+  validators: number
   total_slots: number
   slots_observed: number
   last_updated: string
@@ -4687,6 +4689,15 @@ export interface EdgeScoreboardResponse {
   dz_slots: number
   completeness_pct: number
   nodes: EdgeScoreboardNode[]
+  recent_slots: EdgeScoreboardSlotRace[]
+}
+
+export interface EdgeScoreboardSlotRace {
+  node_id: string
+  slot: number
+  feed: string
+  shreds_won: number
+  win_pct: number
 }
 
 export async function fetchEdgeScoreboard(window: string = '24h'): Promise<EdgeScoreboardResponse> {
