@@ -166,7 +166,7 @@ func fetchDeviceCounterIncidents(ctx context.Context, conn driver.Conn, duration
 	query := fmt.Sprintf(`
 		SELECT
 			ic.device_pk,
-			toStartOfInterval(ic.event_ts, INTERVAL 5 MINUTE) as bucket,
+			toStartOfInterval(ic.event_ts, INTERVAL %s) as bucket,
 			%s as metric_value
 		FROM fact_dz_device_interface_counters ic
 		WHERE ic.event_ts >= now() - INTERVAL $1 SECOND
@@ -174,7 +174,7 @@ func fetchDeviceCounterIncidents(ctx context.Context, conn driver.Conn, duration
 		  %s
 		GROUP BY ic.device_pk, bucket
 		ORDER BY ic.device_pk, bucket
-	`, metricExpr, linkFilter)
+	`, sqlBucketInterval(dp.bucketSize()), metricExpr, linkFilter)
 
 	lookbackSecs := int64((duration + 24*time.Hour).Seconds())
 	rows, err := conn.Query(ctx, query, lookbackSecs, devicePKs)
@@ -447,14 +447,14 @@ func pairDeviceCounterIncidentsCompleted(buckets []deviceCounterBucket, deviceMe
 			} else if !aboveThreshold && prevAbove && activeIncident != nil {
 				if consecutiveBuckets >= dp.minBuckets() {
 					prevBucket := deviceBuckets[i-1]
-					endedAt := prevBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+					endedAt := prevBucket.Bucket.Add(dp.bucketSize()).UTC().Format(time.RFC3339)
 					activeIncident.EndedAt = &endedAt
 					peak := peakValue
 					activeIncident.PeakCount = &peak
 					activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
 
 					startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
-					endTime := prevBucket.Bucket.Add(5 * time.Minute)
+					endTime := prevBucket.Bucket.Add(dp.bucketSize())
 					durationSecs := int64(endTime.Sub(startTime).Seconds())
 					activeIncident.DurationSeconds = &durationSecs
 
@@ -478,16 +478,16 @@ func pairDeviceCounterIncidentsCompleted(buckets []deviceCounterBucket, deviceMe
 			activeIncident.PeakCount = &peak
 			activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
 
-			// If the last bucket is recent (within 15 minutes of now), the incident
+			// If the last bucket is recent (within 3 bucket intervals of now), the incident
 			// is likely still ongoing but wasn't caught by the current detection.
-			if time.Since(lastBucket.Bucket) <= 15*time.Minute {
+			if time.Since(lastBucket.Bucket) <= 3*dp.bucketSize() {
 				activeIncident.IsOngoing = true
 			} else {
-				endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+				endedAt := lastBucket.Bucket.Add(dp.bucketSize()).UTC().Format(time.RFC3339)
 				activeIncident.EndedAt = &endedAt
 
 				startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
-				endTime := lastBucket.Bucket.Add(5 * time.Minute)
+				endTime := lastBucket.Bucket.Add(dp.bucketSize())
 				durationSecs := int64(endTime.Sub(startTime).Seconds())
 				activeIncident.DurationSeconds = &durationSecs
 			}
@@ -1064,8 +1064,9 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 		coalesceGapMin = 0
 	}
 	detectParams := incidentDetectionParams{
-		MinDuration: time.Duration(minDurationMin) * time.Minute,
-		CoalesceGap: time.Duration(coalesceGapMin) * time.Minute,
+		MinDuration:    time.Duration(minDurationMin) * time.Minute,
+		CoalesceGap:    time.Duration(coalesceGapMin) * time.Minute,
+		BucketInterval: bucketIntervalForDuration(duration),
 	}
 
 	incidentType := r.URL.Query().Get("type")
@@ -1275,8 +1276,9 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		coalesceGapMin = 0
 	}
 	detectParams := incidentDetectionParams{
-		MinDuration: time.Duration(minDurationMin) * time.Minute,
-		CoalesceGap: time.Duration(coalesceGapMin) * time.Minute,
+		MinDuration:    time.Duration(minDurationMin) * time.Minute,
+		CoalesceGap:    time.Duration(coalesceGapMin) * time.Minute,
+		BucketInterval: bucketIntervalForDuration(duration),
 	}
 
 	incidentType := r.URL.Query().Get("type")
@@ -1439,8 +1441,9 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	var filters []IncidentFilter
 
 	detectParams := incidentDetectionParams{
-		MinDuration: 30 * time.Minute,
-		CoalesceGap: 180 * time.Minute,
+		MinDuration:    30 * time.Minute,
+		CoalesceGap:    180 * time.Minute,
+		BucketInterval: bucketIntervalForDuration(duration),
 	}
 
 	deviceMeta, err := fetchDeviceMetadata(ctx, envDB(ctx), filters)

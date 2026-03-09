@@ -88,22 +88,47 @@ type linkMetadataWithStatus struct {
 
 // incidentDetectionParams holds configurable detection parameters
 type incidentDetectionParams struct {
-	MinDuration time.Duration // minimum consecutive duration above threshold (default 30m)
-	CoalesceGap time.Duration // gap between incidents to merge (default 180m/3h)
+	MinDuration    time.Duration // minimum consecutive duration above threshold (default 30m)
+	CoalesceGap    time.Duration // gap between incidents to merge (default 180m/3h)
+	BucketInterval time.Duration // aggregation bucket size (default 5m, larger for longer ranges)
 }
 
-const bucketInterval = 5 * time.Minute
+const defaultBucketInterval = 5 * time.Minute
 
-// minBuckets returns the minimum number of consecutive 5-min buckets for the configured duration
+// bucketIntervalForDuration returns a coarser bucket interval for longer time ranges
+// to reduce the amount of data scanned in ClickHouse.
+func bucketIntervalForDuration(d time.Duration) time.Duration {
+	switch {
+	case d > 3*24*time.Hour: // 7d, 30d
+		return 15 * time.Minute
+	default: // 3h, 6h, 12h, 24h, 3d
+		return defaultBucketInterval
+	}
+}
+
+// sqlBucketInterval returns the SQL INTERVAL string for a bucket interval duration.
+func sqlBucketInterval(d time.Duration) string {
+	return fmt.Sprintf("%d MINUTE", int(d.Minutes()))
+}
+
+// bucketSize returns the configured bucket interval, defaulting to 5 minutes.
+func (p incidentDetectionParams) bucketSize() time.Duration {
+	if p.BucketInterval == 0 {
+		return defaultBucketInterval
+	}
+	return p.BucketInterval
+}
+
+// minBuckets returns the minimum number of consecutive buckets for the configured duration
 func (p incidentDetectionParams) minBuckets() int {
-	n := int(p.MinDuration / bucketInterval)
+	n := int(p.MinDuration / p.bucketSize())
 	if n < 1 {
 		return 1
 	}
 	return n
 }
 
-// counterBucket represents a 5-minute aggregation of counter metrics
+// counterBucket represents a bucketed aggregation of counter metrics
 type counterBucket struct {
 	LinkPK string
 	Bucket time.Time
@@ -215,11 +240,11 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		return convertEventsToIncidents(currentEvents, linkMeta), nil
 	}
 
-	query := `
+	query := fmt.Sprintf(`
 		WITH buckets AS (
 			SELECT
 				lat.link_pk,
-				toStartOfInterval(lat.event_ts, INTERVAL 5 MINUTE) as bucket,
+				toStartOfInterval(lat.event_ts, INTERVAL %s) as bucket,
 				countIf(lat.loss = true OR lat.rtt_us = 0) * 100.0 / count(*) as loss_pct,
 				count(*) as sample_count
 			FROM fact_dz_device_link_latency lat
@@ -231,7 +256,7 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		SELECT b.link_pk, b.bucket, b.loss_pct, b.sample_count
 		FROM buckets b
 		ORDER BY b.link_pk, b.bucket
-	`
+	`, sqlBucketInterval(dp.bucketSize()))
 
 	// Add 1 day of lookback padding so incidents starting before the time range boundary get their true start time
 	lookbackSecs := int64((duration + 24*time.Hour).Seconds())
@@ -250,7 +275,7 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		buckets = append(buckets, lb)
 	}
 
-	completedEvents := pairPacketLossEventsCompleted(buckets, plainMeta, threshold, ongoingLinks)
+	completedEvents := pairPacketLossEventsCompleted(buckets, plainMeta, threshold, ongoingLinks, dp.bucketSize())
 	allEvents := append(currentEvents, completedEvents...)
 	allEvents = coalescePacketLossEvents(allEvents, dp.CoalesceGap)
 
@@ -445,14 +470,14 @@ func fetchCounterIncidents(ctx context.Context, conn driver.Conn, duration time.
 	query := fmt.Sprintf(`
 		SELECT
 			ic.link_pk,
-			toStartOfInterval(ic.event_ts, INTERVAL 5 MINUTE) as bucket,
+			toStartOfInterval(ic.event_ts, INTERVAL %s) as bucket,
 			%s as metric_value
 		FROM fact_dz_device_interface_counters ic
 		WHERE ic.event_ts >= now() - INTERVAL $1 SECOND
 		  AND ic.link_pk IN ($2)
 		GROUP BY ic.link_pk, bucket
 		ORDER BY ic.link_pk, bucket
-	`, metricExpr)
+	`, sqlBucketInterval(dp.bucketSize()), metricExpr)
 
 	// Add 1 day of lookback padding so incidents starting before the time range boundary get their true start time
 	lookbackSecs := int64((duration + 24*time.Hour).Seconds())
@@ -735,14 +760,14 @@ func pairCounterIncidentsCompleted(buckets []counterBucket, linkMeta map[string]
 			} else if !aboveThreshold && prevAbove && activeIncident != nil {
 				if consecutiveBuckets >= dp.minBuckets() {
 					prevBucket := linkBuckets[i-1]
-					endedAt := prevBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+					endedAt := prevBucket.Bucket.Add(dp.bucketSize()).UTC().Format(time.RFC3339)
 					activeIncident.EndedAt = &endedAt
 					peak := peakValue
 					activeIncident.PeakCount = &peak
 					activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
 
 					startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
-					endTime := prevBucket.Bucket.Add(5 * time.Minute)
+					endTime := prevBucket.Bucket.Add(dp.bucketSize())
 					durationSecs := int64(endTime.Sub(startTime).Seconds())
 					activeIncident.DurationSeconds = &durationSecs
 
@@ -766,16 +791,16 @@ func pairCounterIncidentsCompleted(buckets []counterBucket, linkMeta map[string]
 			activeIncident.PeakCount = &peak
 			activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
 
-			// If the last bucket is recent (within 15 minutes of now), the incident
+			// If the last bucket is recent (within 3 bucket intervals of now), the incident
 			// is likely still ongoing but wasn't caught by the current detection.
-			if time.Since(lastBucket.Bucket) <= 15*time.Minute {
+			if time.Since(lastBucket.Bucket) <= 3*dp.bucketSize() {
 				activeIncident.IsOngoing = true
 			} else {
-				endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+				endedAt := lastBucket.Bucket.Add(dp.bucketSize()).UTC().Format(time.RFC3339)
 				activeIncident.EndedAt = &endedAt
 
 				startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
-				endTime := lastBucket.Bucket.Add(5 * time.Minute)
+				endTime := lastBucket.Bucket.Add(dp.bucketSize())
 				durationSecs := int64(endTime.Sub(startTime).Seconds())
 				activeIncident.DurationSeconds = &durationSecs
 			}
@@ -972,8 +997,9 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 		coalesceGapMin = 0
 	}
 	detectParams := incidentDetectionParams{
-		MinDuration: time.Duration(minDurationMin) * time.Minute,
-		CoalesceGap: time.Duration(coalesceGapMin) * time.Minute,
+		MinDuration:    time.Duration(minDurationMin) * time.Minute,
+		CoalesceGap:    time.Duration(coalesceGapMin) * time.Minute,
+		BucketInterval: bucketIntervalForDuration(duration),
 	}
 
 	incidentType := r.URL.Query().Get("type")
@@ -1202,8 +1228,9 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		coalesceGapMin = 0
 	}
 	detectParams := incidentDetectionParams{
-		MinDuration: time.Duration(minDurationMin) * time.Minute,
-		CoalesceGap: time.Duration(coalesceGapMin) * time.Minute,
+		MinDuration:    time.Duration(minDurationMin) * time.Minute,
+		CoalesceGap:    time.Duration(coalesceGapMin) * time.Minute,
+		BucketInterval: bucketIntervalForDuration(duration),
 	}
 
 	incidentType := r.URL.Query().Get("type")
@@ -1511,8 +1538,9 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	var filters []IncidentFilter
 
 	detectParams := incidentDetectionParams{
-		MinDuration: 30 * time.Minute,
-		CoalesceGap: 180 * time.Minute,
+		MinDuration:    30 * time.Minute,
+		CoalesceGap:    180 * time.Minute,
+		BucketInterval: bucketIntervalForDuration(duration),
 	}
 
 	linkMeta, err := fetchLinkMetadataWithStatus(ctx, envDB(ctx), filters)

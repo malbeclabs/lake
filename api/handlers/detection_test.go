@@ -248,7 +248,7 @@ func TestPairPacketLossEventsCompleted(t *testing.T) {
 			{LinkPK: "pk-1", Bucket: bucket(5 * time.Minute), LossPct: 50.0},
 			{LinkPK: "pk-1", Bucket: bucket(10 * time.Minute), LossPct: 0.0},
 		}
-		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil)
+		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil, 5*time.Minute)
 		assert.Empty(t, got)
 	})
 
@@ -259,7 +259,7 @@ func TestPairPacketLossEventsCompleted(t *testing.T) {
 			{LinkPK: "pk-1", Bucket: bucket(10 * time.Minute), LossPct: 25.0},
 			{LinkPK: "pk-1", Bucket: bucket(15 * time.Minute), LossPct: 0.0},
 		}
-		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil)
+		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil, 5*time.Minute)
 		assert.Len(t, got, 1)
 		assert.Equal(t, "packet_loss", got[0].EventType)
 		assert.Equal(t, "LINK-1", got[0].LinkCode)
@@ -275,7 +275,7 @@ func TestPairPacketLossEventsCompleted(t *testing.T) {
 			{LinkPK: "pk-1", Bucket: bucket(10 * time.Minute), LossPct: 8.0},
 			{LinkPK: "pk-1", Bucket: bucket(15 * time.Minute), LossPct: 0.0},
 		}
-		got := pairPacketLossEventsCompleted(buckets, meta, 1.0, nil)
+		got := pairPacketLossEventsCompleted(buckets, meta, 1.0, nil, 5*time.Minute)
 		assert.Len(t, got, 1)
 		assert.Equal(t, "degraded", got[0].Severity)
 	})
@@ -288,7 +288,7 @@ func TestPairPacketLossEventsCompleted(t *testing.T) {
 			{LinkPK: "pk-1", Bucket: bucket(15 * time.Minute), LossPct: 0.0},
 		}
 		excluded := map[string]bool{"LINK-1": true}
-		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, excluded)
+		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, excluded, 5*time.Minute)
 		assert.Empty(t, got)
 	})
 
@@ -297,7 +297,7 @@ func TestPairPacketLossEventsCompleted(t *testing.T) {
 			{LinkPK: "pk-unknown", Bucket: bucket(0), LossPct: 50.0},
 			{LinkPK: "pk-unknown", Bucket: bucket(5 * time.Minute), LossPct: 50.0},
 		}
-		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil)
+		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil, 5*time.Minute)
 		assert.Empty(t, got)
 	})
 
@@ -307,7 +307,7 @@ func TestPairPacketLossEventsCompleted(t *testing.T) {
 			{LinkPK: "pk-1", Bucket: bucket(5 * time.Minute), LossPct: 20.0},
 			{LinkPK: "pk-1", Bucket: bucket(10 * time.Minute), LossPct: 30.0},
 		}
-		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil)
+		got := pairPacketLossEventsCompleted(buckets, meta, 10.0, nil, 5*time.Minute)
 		assert.Len(t, got, 1)
 		assert.Equal(t, 30.0, *got[0].PeakLossPct)
 	})

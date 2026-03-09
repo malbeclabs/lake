@@ -368,7 +368,7 @@ type linkMetadata struct {
 
 // pairPacketLossEventsCompleted finds completed packet loss events within the time window
 // Links with ongoing events are excluded (they're handled separately)
-func pairPacketLossEventsCompleted(buckets []lossBucket, linkMeta map[string]linkMetadata, threshold float64, excludeLinks map[string]bool) []DetectedEvent {
+func pairPacketLossEventsCompleted(buckets []lossBucket, linkMeta map[string]linkMetadata, threshold float64, excludeLinks map[string]bool, bucketInterval time.Duration) []DetectedEvent {
 	var events []DetectedEvent
 	eventIDCounter := 1000 // Start high to avoid collision with ongoing IDs
 
@@ -451,7 +451,7 @@ func pairPacketLossEventsCompleted(buckets []lossBucket, linkMeta map[string]lin
 			} else if !aboveThreshold && wasAbove && activeEvent != nil {
 				if consecutiveBuckets >= 2 {
 					prevBucket := linkBuckets[i-1]
-					endedAt := prevBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+					endedAt := prevBucket.Bucket.Add(bucketInterval).UTC().Format(time.RFC3339)
 					activeEvent.EndedAt = &endedAt
 					activeEvent.IsOngoing = false
 					peak := peakLoss
@@ -459,7 +459,7 @@ func pairPacketLossEventsCompleted(buckets []lossBucket, linkMeta map[string]lin
 					activeEvent.Severity = packetLossSeverity(peakLoss)
 
 					startTime, _ := time.Parse(time.RFC3339, activeEvent.StartedAt)
-					endTime := prevBucket.Bucket.Add(5 * time.Minute)
+					endTime := prevBucket.Bucket.Add(bucketInterval)
 					durationSecs := int64(endTime.Sub(startTime).Seconds())
 					activeEvent.DurationSeconds = &durationSecs
 
@@ -483,18 +483,18 @@ func pairPacketLossEventsCompleted(buckets []lossBucket, linkMeta map[string]lin
 			activeEvent.PeakLossPct = &peak
 			activeEvent.Severity = packetLossSeverity(peakLoss)
 
-			// If the last bucket is recent (within 15 minutes of now), the event
+			// If the last bucket is recent (within 3 bucket intervals of now), the event
 			// is likely still ongoing but wasn't caught by the current detection
-			// (e.g., the most recent 5-min bucket doesn't have enough samples yet).
-			if time.Since(lastBucket.Bucket) <= 15*time.Minute {
+			// (e.g., the most recent bucket doesn't have enough samples yet).
+			if time.Since(lastBucket.Bucket) <= 3*bucketInterval {
 				activeEvent.IsOngoing = true
 			} else {
-				endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+				endedAt := lastBucket.Bucket.Add(bucketInterval).UTC().Format(time.RFC3339)
 				activeEvent.EndedAt = &endedAt
 				activeEvent.IsOngoing = false
 
 				startTime, _ := time.Parse(time.RFC3339, activeEvent.StartedAt)
-				endTime := lastBucket.Bucket.Add(5 * time.Minute)
+				endTime := lastBucket.Bucket.Add(bucketInterval)
 				durationSecs := int64(endTime.Sub(startTime).Seconds())
 				activeEvent.DurationSeconds = &durationSecs
 			}
