@@ -61,16 +61,17 @@ cd web && bun run build   # Build frontend (runs tsc first)
 
 ### shapley-cli (rewards feature dependency)
 
-The rewards simulation uses a Rust binary for Shapley value computation. Build it before running the API if you're working on rewards:
+The rewards simulation uses a Rust binary for Shapley value computation. Build it from [network-shapley-rs](https://github.com/doublezerofoundation/network-shapley-rs) before running the API if you're working on rewards:
 
 ```bash
-cd shapley-cli && cargo build --release
+git clone https://github.com/doublezerofoundation/network-shapley-rs.git
+cd network-shapley-rs && cargo build --release
 ```
 
 Then set the env var when starting the API server:
 
 ```bash
-SHAPLEY_CLI_PATH=./shapley-cli/target/release/shapley-cli go run ./api/main.go
+SHAPLEY_CLI_PATH=/path/to/network-shapley-rs/target/release/shapley-cli go run ./api/main.go
 ```
 
 Requires Rust — install via [rustup.rs](https://rustup.rs) if not already present.
