@@ -676,8 +676,11 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 
 			// Query to find when the current continuous issue started:
 			// Use 5-minute buckets (matching incident detection granularity) and find the
-			// last healthy bucket, then the issue started the bucket after.
-			// If no healthy bucket exists in the last 7 days, use the earliest data we have.
+			// last sustained healthy period, then the issue started the bucket after.
+			// A healthy period requires 3 consecutive healthy buckets (15 minutes),
+			// matching the detection layer's coalesce gap. This prevents brief dips
+			// below threshold from resetting the duration counter.
+			// If no healthy period exists in the last 7 days, use the earliest data we have.
 			issueStartQuery := `
 				WITH buckets AS (
 					SELECT
@@ -692,10 +695,16 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 					HAVING count(*) >= 3
 				),
 				last_healthy AS (
-					SELECT code, max(bucket) as last_good_bucket
-					FROM buckets
-					WHERE loss_pct < ?
-					GROUP BY code
+					-- Find 3 consecutive healthy buckets (15 min, matching detection coalesce gap).
+					-- The last such triplet's end marks when the issue started.
+					SELECT b1.code, max(b3.bucket) as last_good_bucket
+					FROM buckets b1
+					JOIN buckets b2 ON b1.code = b2.code
+						AND b2.bucket = b1.bucket + INTERVAL 5 MINUTE AND b2.loss_pct < ?
+					JOIN buckets b3 ON b1.code = b3.code
+						AND b3.bucket = b1.bucket + INTERVAL 10 MINUTE AND b3.loss_pct < ?
+					WHERE b1.loss_pct < ?
+					GROUP BY b1.code
 				),
 				earliest_issue AS (
 					SELECT code, min(bucket) as first_issue_bucket
@@ -711,7 +720,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				FROM earliest_issue ei
 				LEFT JOIN last_healthy lh ON ei.code = lh.code
 			`
-			issueRows, err := envDB(ctx).Query(ctx, issueStartQuery, linkCodes, LossWarningPct, LossWarningPct)
+			issueRows, err := envDB(ctx).Query(ctx, issueStartQuery, linkCodes, LossWarningPct, LossWarningPct, LossWarningPct, LossWarningPct)
 			if err == nil {
 				defer issueRows.Close()
 				issueSince := make(map[string]time.Time)
