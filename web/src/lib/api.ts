@@ -4550,6 +4550,7 @@ export interface PublisherCheckItem {
   slots_needing_repair: number
   validator_client: string
   validator_version: string
+  validator_name: string
   validator_version_ok: boolean
   is_backup: boolean
 }
