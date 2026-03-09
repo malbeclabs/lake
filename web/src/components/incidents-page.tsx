@@ -183,7 +183,7 @@ export function IncidentsPage() {
     return new Set(typeParam.split(',').filter(Boolean))
   }, [typeParam])
   const minDuration = parseInt(searchParams.get('min_duration') || '30') || 30
-  const coalesceGap = parseInt(searchParams.get('coalesce_gap') || '180') || 720
+  const coalesceGap = parseInt(searchParams.get('coalesce_gap') || '180') || 180
   const view = (searchParams.get('view') as 'active' | 'drained') || 'active'
   const filterParam = searchParams.get('filter') || ''
   const showLinkInterfaces = searchParams.get('link_interfaces') === 'true'
