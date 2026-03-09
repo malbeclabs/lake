@@ -59,6 +59,7 @@ type PublisherCheckItem struct {
 	SlotsNeedingRepair      uint64 `json:"slots_needing_repair"`
 	ValidatorClient         string `json:"validator_client"`
 	ValidatorVersion        string `json:"validator_version"`
+	ValidatorName           string `json:"validator_name"`
 	ValidatorVersionOk      bool   `json:"validator_version_ok"`
 	IsBackup                bool   `json:"is_backup"`
 }
@@ -133,7 +134,8 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			COALESCE(s.slots_needing_repair, 0) AS slots_needing_repair,
 			(SELECT epoch FROM current_epoch) AS epoch,
 			if(va.software_client != '', va.software_client, '') AS validator_client,
-			if(va.software_version != '', va.software_version, COALESCE(g.version, '')) AS validator_version
+			if(va.software_version != '', va.software_version, COALESCE(g.version, '')) AS validator_version,
+			COALESCE(va.name, '') AS validator_name
 		FROM dz_users_current u
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -196,6 +198,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			&rowEpoch,
 			&p.ValidatorClient,
 			&p.ValidatorVersion,
+			&p.ValidatorName,
 		); err != nil {
 			log.Printf("PublisherCheck scan error: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
