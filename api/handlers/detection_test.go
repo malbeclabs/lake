@@ -119,6 +119,8 @@ func TestCoalescePacketLossEvents(t *testing.T) {
 	floatPtr := func(f float64) *float64 { return &f }
 	int64Ptr := func(i int64) *int64 { return &i }
 
+	defaultGap := 180 * time.Minute
+
 	makeEvent := func(link string, start, end time.Duration, ongoing bool, peak float64) DetectedEvent {
 		o := DetectedEvent{
 			LinkCode:    link,
@@ -136,33 +138,33 @@ func TestCoalescePacketLossEvents(t *testing.T) {
 	}
 
 	t.Run("empty", func(t *testing.T) {
-		assert.Nil(t, coalescePacketLossEvents(nil))
+		assert.Nil(t, coalescePacketLossEvents(nil, defaultGap))
 	})
 
 	t.Run("single event passthrough", func(t *testing.T) {
 		in := []DetectedEvent{makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0)}
-		got := coalescePacketLossEvents(in)
+		got := coalescePacketLossEvents(in, defaultGap)
 		assert.Len(t, got, 1)
 	})
 
-	t.Run("two within 15min gap are merged", func(t *testing.T) {
+	t.Run("two within gap are merged", func(t *testing.T) {
 		in := []DetectedEvent{
 			makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0),
 			makeEvent("LINK-1", 20*time.Minute, 30*time.Minute, false, 25.0),
 		}
-		got := coalescePacketLossEvents(in)
+		got := coalescePacketLossEvents(in, defaultGap)
 		assert.Len(t, got, 1)
 		assert.Equal(t, ts(0), got[0].StartedAt)
 		assert.Equal(t, ts(30*time.Minute), *got[0].EndedAt)
 		assert.Equal(t, 25.0, *got[0].PeakLossPct)
 	})
 
-	t.Run("two beyond 15min gap stay separate", func(t *testing.T) {
+	t.Run("two beyond gap stay separate", func(t *testing.T) {
 		in := []DetectedEvent{
 			makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0),
-			makeEvent("LINK-1", 30*time.Minute, 40*time.Minute, false, 20.0),
+			makeEvent("LINK-1", 13*time.Hour, 14*time.Hour, false, 20.0),
 		}
-		got := coalescePacketLossEvents(in)
+		got := coalescePacketLossEvents(in, defaultGap)
 		assert.Len(t, got, 2)
 	})
 
@@ -171,7 +173,7 @@ func TestCoalescePacketLossEvents(t *testing.T) {
 			makeEvent("LINK-1", 0, 0, true, 15.0),
 			makeEvent("LINK-1", 10*time.Minute, 20*time.Minute, false, 30.0),
 		}
-		got := coalescePacketLossEvents(in)
+		got := coalescePacketLossEvents(in, defaultGap)
 		assert.Len(t, got, 1)
 		assert.True(t, got[0].IsOngoing)
 		assert.Equal(t, 30.0, *got[0].PeakLossPct)
@@ -182,7 +184,7 @@ func TestCoalescePacketLossEvents(t *testing.T) {
 			makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0),
 			makeEvent("LINK-2", 5*time.Minute, 15*time.Minute, false, 20.0),
 		}
-		got := coalescePacketLossEvents(in)
+		got := coalescePacketLossEvents(in, defaultGap)
 		assert.Len(t, got, 2)
 	})
 
@@ -191,11 +193,44 @@ func TestCoalescePacketLossEvents(t *testing.T) {
 			makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0),
 			makeEvent("LINK-1", 20*time.Minute, 0, true, 25.0),
 		}
-		got := coalescePacketLossEvents(in)
+		got := coalescePacketLossEvents(in, defaultGap)
 		assert.Len(t, got, 1)
 		assert.True(t, got[0].IsOngoing)
 		assert.Nil(t, got[0].EndedAt)
 		assert.Nil(t, got[0].DurationSeconds)
+	})
+
+	t.Run("small gap merges events that would have been separate with old 15min gap", func(t *testing.T) {
+		// Simulates the real-world bug: two packet loss events ~70min apart
+		// should be merged with the default 180min gap
+		in := []DetectedEvent{
+			makeEvent("LINK-1", 0, 55*time.Minute, false, 100.0),
+			makeEvent("LINK-1", 2*time.Hour+5*time.Minute, 7*time.Hour+45*time.Minute, false, 100.0),
+		}
+		got := coalescePacketLossEvents(in, defaultGap)
+		assert.Len(t, got, 1, "events ~70min apart should merge with 180min coalesce gap")
+		assert.Equal(t, ts(0), got[0].StartedAt)
+		assert.Equal(t, ts(7*time.Hour+45*time.Minute), *got[0].EndedAt)
+	})
+
+	t.Run("custom short gap keeps events separate", func(t *testing.T) {
+		shortGap := 30 * time.Minute
+		in := []DetectedEvent{
+			makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0),
+			makeEvent("LINK-1", 45*time.Minute, 60*time.Minute, false, 25.0),
+		}
+		got := coalescePacketLossEvents(in, shortGap)
+		assert.Len(t, got, 2, "events 35min apart should stay separate with 30min coalesce gap")
+	})
+
+	t.Run("custom short gap still merges close events", func(t *testing.T) {
+		shortGap := 30 * time.Minute
+		in := []DetectedEvent{
+			makeEvent("LINK-1", 0, 10*time.Minute, false, 15.0),
+			makeEvent("LINK-1", 25*time.Minute, 40*time.Minute, false, 25.0),
+		}
+		got := coalescePacketLossEvents(in, shortGap)
+		assert.Len(t, got, 1, "events 15min apart should merge with 30min coalesce gap")
 	})
 }
 

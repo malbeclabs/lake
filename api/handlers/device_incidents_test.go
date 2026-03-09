@@ -37,7 +37,7 @@ func TestIsDefaultDeviceIncidentsRequest(t *testing.T) {
 		expected bool
 	}{
 		{"empty params", "/api/incidents/devices", true},
-		{"all defaults explicit", "/api/incidents/devices?range=24h&type=all&errors_threshold=10&discards_threshold=10&carrier_threshold=1&min_duration=30&coalesce_gap=720", true},
+		{"all defaults explicit", "/api/incidents/devices?range=24h&type=all&errors_threshold=10&discards_threshold=10&carrier_threshold=1&min_duration=30&coalesce_gap=180", true},
 		{"custom range", "/api/incidents/devices?range=6h", false},
 		{"custom type", "/api/incidents/devices?type=errors", false},
 		{"with filter", "/api/incidents/devices?filter=metro:NYC", false},

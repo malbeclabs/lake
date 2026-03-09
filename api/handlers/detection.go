@@ -106,12 +106,10 @@ type lossBucket struct {
 	SampleCount uint64
 }
 
-func coalescePacketLossEvents(events []DetectedEvent) []DetectedEvent {
+func coalescePacketLossEvents(events []DetectedEvent, coalesceGap time.Duration) []DetectedEvent {
 	if len(events) <= 1 {
 		return events
 	}
-
-	const coalesceGap = 15 * time.Minute
 
 	// Group by link
 	byLink := make(map[string][]DetectedEvent)

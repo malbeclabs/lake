@@ -18,7 +18,7 @@ func TestIsDefaultIncidentsRequest(t *testing.T) {
 		expected bool
 	}{
 		{"empty params", "/api/incidents/links", true},
-		{"all defaults explicit", "/api/incidents/links?range=24h&threshold=10&type=all&errors_threshold=10&discards_threshold=10&carrier_threshold=1&min_duration=30&coalesce_gap=720", true},
+		{"all defaults explicit", "/api/incidents/links?range=24h&threshold=10&type=all&errors_threshold=10&discards_threshold=10&carrier_threshold=1&min_duration=30&coalesce_gap=180", true},
 		{"custom range", "/api/incidents/links?range=6h", false},
 		{"custom threshold", "/api/incidents/links?threshold=20", false},
 		{"custom type", "/api/incidents/links?type=errors", false},

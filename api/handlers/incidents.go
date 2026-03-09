@@ -89,7 +89,7 @@ type linkMetadataWithStatus struct {
 // incidentDetectionParams holds configurable detection parameters
 type incidentDetectionParams struct {
 	MinDuration time.Duration // minimum consecutive duration above threshold (default 30m)
-	CoalesceGap time.Duration // gap between incidents to merge (default 720m/12h)
+	CoalesceGap time.Duration // gap between incidents to merge (default 180m/3h)
 }
 
 const bucketInterval = 5 * time.Minute
@@ -188,7 +188,7 @@ func fetchLinkMetadataWithStatus(ctx context.Context, conn driver.Conn, filters 
 }
 
 // fetchPacketLossIncidents detects packet loss incidents using the shared detection logic
-func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration time.Duration, threshold float64, linkMeta map[string]linkMetadataWithStatus) ([]LinkIncident, error) {
+func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration time.Duration, threshold float64, linkMeta map[string]linkMetadataWithStatus, dp incidentDetectionParams) ([]LinkIncident, error) {
 	// Convert to plain linkMetadata for reusing existing functions
 	plainMeta := make(map[string]linkMetadata, len(linkMeta))
 	for k, v := range linkMeta {
@@ -252,7 +252,7 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 
 	completedEvents := pairPacketLossEventsCompleted(buckets, plainMeta, threshold, ongoingLinks)
 	allEvents := append(currentEvents, completedEvents...)
-	allEvents = coalescePacketLossEvents(allEvents)
+	allEvents = coalescePacketLossEvents(allEvents, dp.CoalesceGap)
 
 	return convertEventsToIncidents(allEvents, linkMeta), nil
 }
@@ -787,9 +787,7 @@ func pairCounterIncidentsCompleted(buckets []counterBucket, linkMeta map[string]
 	return incidents
 }
 
-// coalesceIncidents merges incidents on the same link that are separated by less than 30 minutes.
-// Counter-based metrics (errors, discards, carrier) tend to be bursty, so a wider gap than
-// the 15-min used for packet loss prevents fragmenting a single event into many incidents.
+// coalesceIncidents merges incidents on the same link that are separated by less than the coalesce gap.
 func coalesceIncidents(incidents []LinkIncident, coalesceGap time.Duration) []LinkIncident {
 	if len(incidents) <= 1 {
 		return incidents
@@ -924,7 +922,7 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 	}
 
 	coalesceGap := q.Get("coalesce_gap")
-	if coalesceGap != "" && coalesceGap != "720" {
+	if coalesceGap != "" && coalesceGap != "180" {
 		return false
 	}
 
@@ -963,7 +961,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	if minDurationMin < 5 {
 		minDurationMin = 5
 	}
-	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 720)
+	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 180)
 	if coalesceGapMin < 0 {
 		coalesceGapMin = 0
 	}
@@ -998,7 +996,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 
 	if incidentType == "all" || incidentType == "packet_loss" {
 		g.Go(func() error {
-			incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta)
+			incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta, detectParams)
 			if err != nil {
 				return fmt.Errorf("packet loss: %w", err)
 			}
@@ -1178,7 +1176,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	if minDurationMin < 5 {
 		minDurationMin = 5
 	}
-	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 720)
+	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 180)
 	if coalesceGapMin < 0 {
 		coalesceGapMin = 0
 	}
@@ -1210,7 +1208,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 
 	if incidentType == "all" || incidentType == "packet_loss" {
 		g.Go(func() error {
-			incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta)
+			incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta, detectParams)
 			if err != nil {
 				return err
 			}
@@ -1479,7 +1477,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 
 	detectParams := incidentDetectionParams{
 		MinDuration: 30 * time.Minute,
-		CoalesceGap: 720 * time.Minute,
+		CoalesceGap: 180 * time.Minute,
 	}
 
 	linkMeta, err := fetchLinkMetadataWithStatus(ctx, envDB(ctx), filters)
@@ -1494,7 +1492,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	g, gCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta)
+		incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta, detectParams)
 		if err != nil {
 			return fmt.Errorf("packet loss: %w", err)
 		}

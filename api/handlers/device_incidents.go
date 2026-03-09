@@ -1019,7 +1019,7 @@ func isDefaultDeviceIncidentsRequest(r *http.Request) bool {
 	}
 
 	coalesceGap := q.Get("coalesce_gap")
-	if coalesceGap != "" && coalesceGap != "720" {
+	if coalesceGap != "" && coalesceGap != "180" {
 		return false
 	}
 
@@ -1058,7 +1058,7 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	if minDurationMin < 5 {
 		minDurationMin = 5
 	}
-	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 720)
+	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 180)
 	if coalesceGapMin < 0 {
 		coalesceGapMin = 0
 	}
@@ -1254,7 +1254,7 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	if minDurationMin < 5 {
 		minDurationMin = 5
 	}
-	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 720)
+	coalesceGapMin := parseIntParam(r.URL.Query().Get("coalesce_gap"), 180)
 	if coalesceGapMin < 0 {
 		coalesceGapMin = 0
 	}
@@ -1410,7 +1410,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 
 	detectParams := incidentDetectionParams{
 		MinDuration: 30 * time.Minute,
-		CoalesceGap: 720 * time.Minute,
+		CoalesceGap: 180 * time.Minute,
 	}
 
 	deviceMeta, err := fetchDeviceMetadata(ctx, envDB(ctx), filters)

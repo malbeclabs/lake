@@ -183,7 +183,7 @@ export function IncidentsPage() {
     return new Set(typeParam.split(',').filter(Boolean))
   }, [typeParam])
   const minDuration = parseInt(searchParams.get('min_duration') || '30') || 30
-  const coalesceGap = parseInt(searchParams.get('coalesce_gap') || '720') || 720
+  const coalesceGap = parseInt(searchParams.get('coalesce_gap') || '180') || 720
   const view = (searchParams.get('view') as 'active' | 'drained') || 'active'
   const filterParam = searchParams.get('filter') || ''
   const showLinkInterfaces = searchParams.get('link_interfaces') === 'true'
@@ -259,7 +259,7 @@ export function IncidentsPage() {
       case 'discards_threshold': return '10'
       case 'carrier_threshold': return '1'
       case 'min_duration': return '30'
-      case 'coalesce_gap': return '720'
+      case 'coalesce_gap': return '180'
       case 'type': return ''
       case 'view': return 'active'
       default: return ''
