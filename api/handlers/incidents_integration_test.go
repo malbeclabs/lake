@@ -86,6 +86,7 @@ func setupIncidentsTables(t *testing.T) {
 			out_errors_delta Nullable(Int64),
 			in_discards_delta Nullable(Int64),
 			out_discards_delta Nullable(Int64),
+			in_fcs_errors_delta Nullable(Int64),
 			carrier_transitions_delta Nullable(Int64)
 		) ENGINE = Memory
 	`)
