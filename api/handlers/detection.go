@@ -481,17 +481,25 @@ func pairPacketLossEventsCompleted(buckets []lossBucket, linkMeta map[string]lin
 		// Handle event that was active at end of time window
 		if activeEvent != nil && len(linkBuckets) > 0 && consecutiveBuckets >= 2 {
 			lastBucket := linkBuckets[len(linkBuckets)-1]
-			endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
-			activeEvent.EndedAt = &endedAt
-			activeEvent.IsOngoing = false
 			peak := peakLoss
 			activeEvent.PeakLossPct = &peak
 			activeEvent.Severity = packetLossSeverity(peakLoss)
 
-			startTime, _ := time.Parse(time.RFC3339, activeEvent.StartedAt)
-			endTime := lastBucket.Bucket.Add(5 * time.Minute)
-			durationSecs := int64(endTime.Sub(startTime).Seconds())
-			activeEvent.DurationSeconds = &durationSecs
+			// If the last bucket is recent (within 15 minutes of now), the event
+			// is likely still ongoing but wasn't caught by the current detection
+			// (e.g., the most recent 5-min bucket doesn't have enough samples yet).
+			if time.Since(lastBucket.Bucket) <= 15*time.Minute {
+				activeEvent.IsOngoing = true
+			} else {
+				endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+				activeEvent.EndedAt = &endedAt
+				activeEvent.IsOngoing = false
+
+				startTime, _ := time.Parse(time.RFC3339, activeEvent.StartedAt)
+				endTime := lastBucket.Bucket.Add(5 * time.Minute)
+				durationSecs := int64(endTime.Sub(startTime).Seconds())
+				activeEvent.DurationSeconds = &durationSecs
+			}
 
 			events = append(events, *activeEvent)
 		}

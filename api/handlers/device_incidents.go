@@ -474,16 +474,23 @@ func pairDeviceCounterIncidentsCompleted(buckets []deviceCounterBucket, deviceMe
 		// Handle incident active at end of window
 		if activeIncident != nil && consecutiveBuckets >= dp.minBuckets() {
 			lastBucket := deviceBuckets[len(deviceBuckets)-1]
-			endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
-			activeIncident.EndedAt = &endedAt
 			peak := peakValue
 			activeIncident.PeakCount = &peak
 			activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
 
-			startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
-			endTime := lastBucket.Bucket.Add(5 * time.Minute)
-			durationSecs := int64(endTime.Sub(startTime).Seconds())
-			activeIncident.DurationSeconds = &durationSecs
+			// If the last bucket is recent (within 15 minutes of now), the incident
+			// is likely still ongoing but wasn't caught by the current detection.
+			if time.Since(lastBucket.Bucket) <= 15*time.Minute {
+				activeIncident.IsOngoing = true
+			} else {
+				endedAt := lastBucket.Bucket.Add(5 * time.Minute).UTC().Format(time.RFC3339)
+				activeIncident.EndedAt = &endedAt
+
+				startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
+				endTime := lastBucket.Bucket.Add(5 * time.Minute)
+				durationSecs := int64(endTime.Sub(startTime).Seconds())
+				activeIncident.DurationSeconds = &durationSecs
+			}
 
 			incidents = append(incidents, *activeIncident)
 		}
