@@ -697,7 +697,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				last_healthy AS (
 					-- Find 3 consecutive healthy buckets (15 min, matching detection coalesce gap).
 					-- The last such triplet's end marks when the issue started.
-					SELECT b1.code, max(b3.bucket) as last_good_bucket
+					SELECT b1.code as code, max(b3.bucket) as last_good_bucket
 					FROM buckets b1
 					JOIN buckets b2 ON b1.code = b2.code
 						AND b2.bucket = b1.bucket + INTERVAL 5 MINUTE AND b2.loss_pct < ?
