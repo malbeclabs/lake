@@ -105,17 +105,28 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		WITH current_epoch AS (
 			SELECT max(epoch) AS epoch FROM %s
 		),
+		per_slot AS (
+			SELECT
+				dz_user_pubkey,
+				slot,
+				max(activated_stake) AS activated_stake,
+				max(is_scheduled_leader) AS is_scheduled_leader,
+				max(unique_shreds) AS unique_shreds,
+				max(needs_repair) AS needs_repair
+			FROM %s
+			WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1
+			GROUP BY dz_user_pubkey, slot
+		),
 		stats AS (
 			SELECT
 				dz_user_pubkey,
 				max(activated_stake) AS activated_stake,
-				count(*) AS total_slots,
+				count() AS total_slots,
 				countIf(is_scheduled_leader = true) AS leader_slots,
 				countIf(is_scheduled_leader = false) AS retransmit_slots,
 				sum(unique_shreds) AS total_unique_shreds,
 				countIf(needs_repair = true) AS slots_needing_repair
-			FROM %s
-			WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1
+			FROM per_slot
 			GROUP BY dz_user_pubkey
 		)
 		SELECT

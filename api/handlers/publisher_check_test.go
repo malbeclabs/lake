@@ -340,6 +340,53 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	assert.Len(t, resp.Publishers, 3)
 }
 
+// TestGetPublisherCheck_MultiHost verifies that slot counts are not inflated
+// when multiple shredder hosts report stats for the same (publisher, slot) pair.
+// The publisher_shred_stats table is keyed by (host, slot, publisher_ip), so each
+// shredder instance writes its own row per slot. The query must deduplicate by slot.
+func TestGetPublisherCheck_MultiHost(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	insertPublisherCheckTestData(t)
+
+	// Insert duplicate rows from a second shredder host for dzuser1's slots.
+	ctx := t.Context()
+	err := config.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
+			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
+			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+		VALUES
+			(now(), now(), 'shredder-2', '10.0.0.1', '203.0.113.1', 'nodepub1',
+			 'votepub1', 50000000000, 'dzuser1', 'ams1', 'AMS',
+			 800, 1001, 100, 64, 32, 32, 31, false, 0, 0, true),
+			(now(), now(), 'shredder-2', '10.0.0.1', '203.0.113.1', 'nodepub1',
+			 'votepub1', 50000000000, 'dzuser1', 'ams1', 'AMS',
+			 800, 1002, 100, 64, 32, 32, 31, true, 0, 0, false),
+			(now(), now(), 'shredder-2', '10.0.0.2', '203.0.113.2', 'nodepub2',
+			 'votepub2', 10000000000, 'dzuser2', 'nyc1', 'NYC',
+			 800, 1001, 50, 32, 16, 16, 15, false, 0, 0, false)
+	`)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=dzuser1", nil)
+	rr := httptest.NewRecorder()
+	handlers.GetPublisherCheck(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.PublisherCheckResponse
+	err = json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Publishers, 1)
+
+	pub := resp.Publishers[0]
+	// With 2 shredder hosts, each slot has 2 rows. Slot counts must NOT be doubled.
+	assert.Equal(t, uint64(1), pub.LeaderSlots, "leader_slots should count distinct slots, not rows")
+	assert.Equal(t, uint64(2), pub.TotalSlots, "total_slots should count distinct slots, not rows")
+	assert.Equal(t, uint64(128), pub.TotalUniqueShreds, "unique_shreds should use max per slot, not sum across hosts")
+}
+
 func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
