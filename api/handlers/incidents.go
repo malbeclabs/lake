@@ -118,7 +118,7 @@ func incidentSeverity(incidentType string, peakLossPct float64, _ int64) string 
 			return "incident"
 		}
 		return "degraded"
-	case "carrier":
+	case "carrier", "fcs":
 		return "incident"
 	default:
 		return "degraded"
@@ -908,6 +908,11 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 		return false
 	}
 
+	fcsThreshold := q.Get("fcs_threshold")
+	if fcsThreshold != "" && fcsThreshold != "1" {
+		return false
+	}
+
 	discardsThreshold := q.Get("discards_threshold")
 	if discardsThreshold != "" && discardsThreshold != "10" {
 		return false
@@ -956,6 +961,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	threshold := parseThreshold(thresholdStr)
 
 	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
 	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
@@ -1015,6 +1021,20 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 				"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", linkMeta, detectParams)
 			if err != nil {
 				return fmt.Errorf("errors: %w", err)
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "fcs" {
+		g.Go(func() error {
+			incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, fcsThreshold,
+				"sum(greatest(0, coalesce(in_fcs_errors_delta, 0)))", "fcs", linkMeta, detectParams)
+			if err != nil {
+				return fmt.Errorf("fcs: %w", err)
 			}
 			mu.Lock()
 			allIncidents = append(allIncidents, incidents...)
@@ -1171,6 +1191,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	threshold := parseThreshold(thresholdStr)
 
 	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
 	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
@@ -1225,6 +1246,20 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, errorsThreshold,
 				"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", linkMeta, detectParams)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "fcs" {
+		g.Go(func() error {
+			incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, fcsThreshold,
+				"sum(greatest(0, coalesce(in_fcs_errors_delta, 0)))", "fcs", linkMeta, detectParams)
 			if err != nil {
 				return err
 			}

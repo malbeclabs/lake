@@ -1051,6 +1051,7 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	duration := parseTimeRange(timeRange)
 
 	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
 	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
@@ -1100,6 +1101,20 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 				"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", deviceMeta, detectParams, linkFilter)
 			if err != nil {
 				return fmt.Errorf("errors: %w", err)
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "fcs" {
+		g.Go(func() error {
+			incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, fcsThreshold,
+				"sum(greatest(0, coalesce(in_fcs_errors_delta, 0)))", "fcs", deviceMeta, detectParams, linkFilter)
+			if err != nil {
+				return fmt.Errorf("fcs: %w", err)
 			}
 			mu.Lock()
 			allIncidents = append(allIncidents, incidents...)
@@ -1247,6 +1262,7 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	duration := parseTimeRange(timeRange)
 
 	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
 	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
@@ -1293,6 +1309,20 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, errorsThreshold,
 				"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", deviceMeta, detectParams, linkFilter)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "fcs" {
+		g.Go(func() error {
+			incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, fcsThreshold,
+				"sum(greatest(0, coalesce(in_fcs_errors_delta, 0)))", "fcs", deviceMeta, detectParams, linkFilter)
 			if err != nil {
 				return err
 			}

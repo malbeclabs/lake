@@ -155,6 +155,7 @@ type InterfaceIssue struct {
 	LinkSide           string `json:"link_side,omitempty"` // A or Z
 	InErrors           uint64 `json:"in_errors"`
 	OutErrors          uint64 `json:"out_errors"`
+	InFcsErrors        uint64 `json:"in_fcs_errors"`
 	InDiscards         uint64 `json:"in_discards"`
 	OutDiscards        uint64 `json:"out_discards"`
 	CarrierTransitions uint64 `json:"carrier_transitions"`
@@ -918,6 +919,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				COALESCE(c.link_side, '') as link_side,
 				toUInt64(SUM(greatest(0, c.in_errors_delta))) as in_errors,
 				toUInt64(SUM(greatest(0, c.out_errors_delta))) as out_errors,
+				toUInt64(SUM(greatest(0, c.in_fcs_errors_delta))) as in_fcs_errors,
 				toUInt64(SUM(greatest(0, c.in_discards_delta))) as in_discards,
 				toUInt64(SUM(greatest(0, c.out_discards_delta))) as out_discards,
 				toUInt64(SUM(greatest(0, c.carrier_transitions_delta))) as carrier_transitions,
@@ -930,9 +932,9 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			LEFT JOIN dz_links_current l ON c.link_pk = l.pk
 			WHERE c.event_ts > now() - INTERVAL 1 HOUR
 			  AND d.status = 'activated'
-			  AND (c.in_errors_delta > 0 OR c.out_errors_delta > 0 OR c.in_discards_delta > 0 OR c.out_discards_delta > 0 OR c.carrier_transitions_delta > 0)
+			  AND (c.in_errors_delta > 0 OR c.out_errors_delta > 0 OR c.in_fcs_errors_delta > 0 OR c.in_discards_delta > 0 OR c.out_discards_delta > 0 OR c.carrier_transitions_delta > 0)
 			GROUP BY d.pk, d.code, d.device_type, contrib.code, m.code, c.intf, l.pk, l.code, l.link_type, c.link_side
-			ORDER BY (in_errors + out_errors + in_discards + out_discards + carrier_transitions) DESC
+			ORDER BY (in_errors + out_errors + in_fcs_errors + in_discards + out_discards + carrier_transitions) DESC
 			LIMIT 20
 		`
 		rows, err := envDB(ctx).Query(ctx, query)
@@ -957,6 +959,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				&issue.LinkSide,
 				&issue.InErrors,
 				&issue.OutErrors,
+				&issue.InFcsErrors,
 				&issue.InDiscards,
 				&issue.OutDiscards,
 				&issue.CarrierTransitions,
@@ -1081,11 +1084,13 @@ type LinkHourStatus struct {
 	// Per-side interface issues (errors, discards, carrier transitions)
 	SideAInErrors           uint64 `json:"side_a_in_errors,omitempty"`
 	SideAOutErrors          uint64 `json:"side_a_out_errors,omitempty"`
+	SideAInFcsErrors        uint64 `json:"side_a_in_fcs_errors,omitempty"`
 	SideAInDiscards         uint64 `json:"side_a_in_discards,omitempty"`
 	SideAOutDiscards        uint64 `json:"side_a_out_discards,omitempty"`
 	SideACarrierTransitions uint64 `json:"side_a_carrier_transitions,omitempty"`
 	SideZInErrors           uint64 `json:"side_z_in_errors,omitempty"`
 	SideZOutErrors          uint64 `json:"side_z_out_errors,omitempty"`
+	SideZInFcsErrors        uint64 `json:"side_z_in_fcs_errors,omitempty"`
 	SideZInDiscards         uint64 `json:"side_z_in_discards,omitempty"`
 	SideZOutDiscards        uint64 `json:"side_z_out_discards,omitempty"`
 	SideZCarrierTransitions uint64 `json:"side_z_carrier_transitions,omitempty"`
@@ -1423,6 +1428,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			` + bucketInterval + ` as bucket,
 			toUInt64(SUM(greatest(0, in_errors_delta))) as in_errors,
 			toUInt64(SUM(greatest(0, out_errors_delta))) as out_errors,
+			toUInt64(SUM(greatest(0, in_fcs_errors_delta))) as in_fcs_errors,
 			toUInt64(SUM(greatest(0, in_discards_delta))) as in_discards,
 			toUInt64(SUM(greatest(0, out_discards_delta))) as out_discards,
 			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions
@@ -1444,6 +1450,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	type interfaceStats struct {
 		inErrors           uint64
 		outErrors          uint64
+		inFcsErrors        uint64
 		inDiscards         uint64
 		outDiscards        uint64
 		carrierTransitions uint64
@@ -1457,8 +1464,8 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	for interfaceRows.Next() {
 		var linkPK, linkSide string
 		var bucket time.Time
-		var inErrors, outErrors, inDiscards, outDiscards, carrierTransitions uint64
-		if err := interfaceRows.Scan(&linkPK, &linkSide, &bucket, &inErrors, &outErrors, &inDiscards, &outDiscards, &carrierTransitions); err != nil {
+		var inErrors, outErrors, inFcsErrors, inDiscards, outDiscards, carrierTransitions uint64
+		if err := interfaceRows.Scan(&linkPK, &linkSide, &bucket, &inErrors, &outErrors, &inFcsErrors, &inDiscards, &outDiscards, &carrierTransitions); err != nil {
 			return nil, fmt.Errorf("interface scan error: %w", err)
 		}
 		bucketKey := bucket.UTC().Format(time.RFC3339)
@@ -1469,6 +1476,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		linkInterfaceBuckets[key][linkSide] = &interfaceStats{
 			inErrors:           inErrors,
 			outErrors:          outErrors,
+			inFcsErrors:        inFcsErrors,
 			inDiscards:         inDiscards,
 			outDiscards:        outDiscards,
 			carrierTransitions: carrierTransitions,
@@ -1773,12 +1781,17 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 					if sideA, ok := intfBucket["A"]; ok {
 						hourStatus.SideAInErrors = sideA.inErrors
 						hourStatus.SideAOutErrors = sideA.outErrors
+						hourStatus.SideAInFcsErrors = sideA.inFcsErrors
 						hourStatus.SideAInDiscards = sideA.inDiscards
 						hourStatus.SideAOutDiscards = sideA.outDiscards
 						hourStatus.SideACarrierTransitions = sideA.carrierTransitions
 						// Track issue reasons
 						if sideA.inErrors > 0 || sideA.outErrors > 0 {
 							issueReasons["interface_errors"] = true
+							hasErrors = true
+						}
+						if sideA.inFcsErrors > 0 {
+							issueReasons["fcs_errors"] = true
 							hasErrors = true
 						}
 						if sideA.inDiscards > 0 || sideA.outDiscards > 0 {
@@ -1793,12 +1806,17 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 					if sideZ, ok := intfBucket["Z"]; ok {
 						hourStatus.SideZInErrors = sideZ.inErrors
 						hourStatus.SideZOutErrors = sideZ.outErrors
+						hourStatus.SideZInFcsErrors = sideZ.inFcsErrors
 						hourStatus.SideZInDiscards = sideZ.inDiscards
 						hourStatus.SideZOutDiscards = sideZ.outDiscards
 						hourStatus.SideZCarrierTransitions = sideZ.carrierTransitions
 						// Track issue reasons
 						if sideZ.inErrors > 0 || sideZ.outErrors > 0 {
 							issueReasons["interface_errors"] = true
+							hasErrors = true
+						}
+						if sideZ.inFcsErrors > 0 {
+							issueReasons["fcs_errors"] = true
 							hasErrors = true
 						}
 						if sideZ.inDiscards > 0 || sideZ.outDiscards > 0 {
@@ -1974,6 +1992,7 @@ type DeviceHourStatus struct {
 	UtilizationPct     float64 `json:"utilization_pct"`
 	InErrors           uint64  `json:"in_errors"`
 	OutErrors          uint64  `json:"out_errors"`
+	InFcsErrors        uint64  `json:"in_fcs_errors"`
 	InDiscards         uint64  `json:"in_discards"`
 	OutDiscards        uint64  `json:"out_discards"`
 	CarrierTransitions uint64  `json:"carrier_transitions"`
@@ -2132,6 +2151,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 			` + bucketInterval + ` as bucket,
 			toUInt64(SUM(greatest(0, in_errors_delta))) as in_errors,
 			toUInt64(SUM(greatest(0, out_errors_delta))) as out_errors,
+			toUInt64(SUM(greatest(0, in_fcs_errors_delta))) as in_fcs_errors,
 			toUInt64(SUM(greatest(0, in_discards_delta))) as in_discards,
 			toUInt64(SUM(greatest(0, out_discards_delta))) as out_discards,
 			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions
@@ -2153,6 +2173,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		bucket             time.Time
 		inErrors           uint64
 		outErrors          uint64
+		inFcsErrors        uint64
 		inDiscards         uint64
 		outDiscards        uint64
 		carrierTransitions uint64
@@ -2162,7 +2183,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 	for interfaceRows.Next() {
 		var devicePK string
 		var stats bucketStats
-		if err := interfaceRows.Scan(&devicePK, &stats.bucket, &stats.inErrors, &stats.outErrors, &stats.inDiscards, &stats.outDiscards, &stats.carrierTransitions); err != nil {
+		if err := interfaceRows.Scan(&devicePK, &stats.bucket, &stats.inErrors, &stats.outErrors, &stats.inFcsErrors, &stats.inDiscards, &stats.outDiscards, &stats.carrierTransitions); err != nil {
 			return nil, fmt.Errorf("interface scan error: %w", err)
 		}
 		deviceBuckets[devicePK] = append(deviceBuckets[devicePK], stats)
@@ -2247,6 +2268,9 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 			if totalErrors > 0 {
 				issueReasons["interface_errors"] = true
 			}
+			if b.inFcsErrors > 0 {
+				issueReasons["fcs_errors"] = true
+			}
 			if totalDiscards > 0 {
 				issueReasons["discards"] = true
 			}
@@ -2301,13 +2325,14 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 
 			// Check if we have interface data for this bucket
 			if stats, ok := bucketMap[key]; ok {
-				status := classifyDeviceStatus(stats.inErrors+stats.outErrors, stats.inDiscards+stats.outDiscards, stats.carrierTransitions)
+				status := classifyDeviceStatus(stats.inErrors+stats.outErrors+stats.inFcsErrors, stats.inDiscards+stats.outDiscards, stats.carrierTransitions)
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
 					Hour:               key,
 					Status:             status,
 					MaxUsers:           meta.maxUsers,
 					InErrors:           stats.inErrors,
 					OutErrors:          stats.outErrors,
+					InFcsErrors:        stats.inFcsErrors,
 					InDiscards:         stats.inDiscards,
 					OutDiscards:        stats.outDiscards,
 					CarrierTransitions: stats.carrierTransitions,
@@ -2437,6 +2462,7 @@ func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]In
 			COALESCE(c.link_side, '') as link_side,
 			toUInt64(SUM(greatest(0, c.in_errors_delta))) as in_errors,
 			toUInt64(SUM(greatest(0, c.out_errors_delta))) as out_errors,
+			toUInt64(SUM(greatest(0, c.in_fcs_errors_delta))) as in_fcs_errors,
 			toUInt64(SUM(greatest(0, c.in_discards_delta))) as in_discards,
 			toUInt64(SUM(greatest(0, c.out_discards_delta))) as out_discards,
 			toUInt64(SUM(greatest(0, c.carrier_transitions_delta))) as carrier_transitions,
@@ -2449,9 +2475,9 @@ func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]In
 		LEFT JOIN dz_links_current l ON c.link_pk = l.pk
 		WHERE c.event_ts > now() - INTERVAL %d HOUR
 		  AND d.status = 'activated'
-		  AND (c.in_errors_delta > 0 OR c.out_errors_delta > 0 OR c.in_discards_delta > 0 OR c.out_discards_delta > 0 OR c.carrier_transitions_delta > 0)
+		  AND (c.in_errors_delta > 0 OR c.out_errors_delta > 0 OR c.in_fcs_errors_delta > 0 OR c.in_discards_delta > 0 OR c.out_discards_delta > 0 OR c.carrier_transitions_delta > 0)
 		GROUP BY d.pk, d.code, d.device_type, contrib.code, m.code, c.intf, l.pk, l.code, l.link_type, c.link_side
-		ORDER BY (in_errors + out_errors + in_discards + out_discards + carrier_transitions) DESC
+		ORDER BY (in_errors + out_errors + in_fcs_errors + in_discards + out_discards + carrier_transitions) DESC
 		LIMIT 50
 	`, hours)
 
@@ -2477,6 +2503,7 @@ func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]In
 			&issue.LinkSide,
 			&issue.InErrors,
 			&issue.OutErrors,
+			&issue.InFcsErrors,
 			&issue.InDiscards,
 			&issue.OutDiscards,
 			&issue.CarrierTransitions,
@@ -2514,6 +2541,7 @@ type InterfaceHourStatus struct {
 	Hour               string `json:"hour"`
 	InErrors           uint64 `json:"in_errors"`
 	OutErrors          uint64 `json:"out_errors"`
+	InFcsErrors        uint64 `json:"in_fcs_errors"`
 	InDiscards         uint64 `json:"in_discards"`
 	OutDiscards        uint64 `json:"out_discards"`
 	CarrierTransitions uint64 `json:"carrier_transitions"`
@@ -2595,6 +2623,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 			` + bucketInterval + ` as bucket,
 			toUInt64(SUM(greatest(0, c.in_errors_delta))) as in_errors,
 			toUInt64(SUM(greatest(0, c.out_errors_delta))) as out_errors,
+			toUInt64(SUM(greatest(0, c.in_fcs_errors_delta))) as in_fcs_errors,
 			toUInt64(SUM(greatest(0, c.in_discards_delta))) as in_discards,
 			toUInt64(SUM(greatest(0, c.out_discards_delta))) as out_discards,
 			toUInt64(SUM(greatest(0, c.carrier_transitions_delta))) as carrier_transitions
@@ -2624,6 +2653,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 		bucket             time.Time
 		inErrors           uint64
 		outErrors          uint64
+		inFcsErrors        uint64
 		inDiscards         uint64
 		outDiscards        uint64
 		carrierTransitions uint64
@@ -2645,6 +2675,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 			&stats.bucket,
 			&stats.inErrors,
 			&stats.outErrors,
+			&stats.inFcsErrors,
 			&stats.inDiscards,
 			&stats.outDiscards,
 			&stats.carrierTransitions,
@@ -2681,6 +2712,7 @@ func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeR
 					Hour:               key,
 					InErrors:           stats.inErrors,
 					OutErrors:          stats.outErrors,
+					InFcsErrors:        stats.inFcsErrors,
 					InDiscards:         stats.inDiscards,
 					OutDiscards:        stats.outDiscards,
 					CarrierTransitions: stats.carrierTransitions,
@@ -2910,6 +2942,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			if(device_pk = ?, 'A', 'Z') as side,
 			toUInt64(sum(greatest(0, in_errors_delta))) as in_errors,
 			toUInt64(sum(greatest(0, out_errors_delta))) as out_errors,
+			toUInt64(sum(greatest(0, in_fcs_errors_delta))) as in_fcs_errors,
 			toUInt64(sum(greatest(0, in_discards_delta))) as in_discards,
 			toUInt64(sum(greatest(0, out_discards_delta))) as out_discards,
 			toUInt64(sum(greatest(0, carrier_transitions_delta))) as carrier_transitions,
@@ -2931,6 +2964,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	type ifaceStats struct {
 		inErrors           uint64
 		outErrors          uint64
+		inFcsErrors        uint64
 		inDiscards         uint64
 		outDiscards        uint64
 		carrierTransitions uint64
@@ -2948,7 +2982,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		var bucket time.Time
 		var side string
 		var stats ifaceStats
-		if err := ifaceRows.Scan(&bucket, &side, &stats.inErrors, &stats.outErrors, &stats.inDiscards, &stats.outDiscards, &stats.carrierTransitions, &stats.inOctets, &stats.outOctets, &stats.duration); err != nil {
+		if err := ifaceRows.Scan(&bucket, &side, &stats.inErrors, &stats.outErrors, &stats.inFcsErrors, &stats.inDiscards, &stats.outDiscards, &stats.carrierTransitions, &stats.inOctets, &stats.outOctets, &stats.duration); err != nil {
 			return nil, fmt.Errorf("interface scan error: %w", err)
 		}
 
@@ -3005,6 +3039,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			if ibs.sideA != nil {
 				hs.SideAInErrors = ibs.sideA.inErrors
 				hs.SideAOutErrors = ibs.sideA.outErrors
+				hs.SideAInFcsErrors = ibs.sideA.inFcsErrors
 				hs.SideAInDiscards = ibs.sideA.inDiscards
 				hs.SideAOutDiscards = ibs.sideA.outDiscards
 				hs.SideACarrierTransitions = ibs.sideA.carrierTransitions
@@ -3018,6 +3053,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			if ibs.sideZ != nil {
 				hs.SideZInErrors = ibs.sideZ.inErrors
 				hs.SideZOutErrors = ibs.sideZ.outErrors
+				hs.SideZInFcsErrors = ibs.sideZ.inFcsErrors
 				hs.SideZInDiscards = ibs.sideZ.inDiscards
 				hs.SideZOutDiscards = ibs.sideZ.outDiscards
 				hs.SideZCarrierTransitions = ibs.sideZ.carrierTransitions
@@ -3175,6 +3211,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 			` + bucketInterval + ` as bucket,
 			toUInt64(SUM(greatest(0, in_errors_delta))) as in_errors,
 			toUInt64(SUM(greatest(0, out_errors_delta))) as out_errors,
+			toUInt64(SUM(greatest(0, in_fcs_errors_delta))) as in_fcs_errors,
 			toUInt64(SUM(greatest(0, in_discards_delta))) as in_discards,
 			toUInt64(SUM(greatest(0, out_discards_delta))) as out_discards,
 			toUInt64(SUM(greatest(0, carrier_transitions_delta))) as carrier_transitions
@@ -3195,6 +3232,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		bucket             time.Time
 		inErrors           uint64
 		outErrors          uint64
+		inFcsErrors        uint64
 		inDiscards         uint64
 		outDiscards        uint64
 		carrierTransitions uint64
@@ -3203,7 +3241,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 
 	for interfaceRows.Next() {
 		var stats bucketStats
-		if err := interfaceRows.Scan(&stats.bucket, &stats.inErrors, &stats.outErrors, &stats.inDiscards, &stats.outDiscards, &stats.carrierTransitions); err != nil {
+		if err := interfaceRows.Scan(&stats.bucket, &stats.inErrors, &stats.outErrors, &stats.inFcsErrors, &stats.inDiscards, &stats.outDiscards, &stats.carrierTransitions); err != nil {
 			return nil, fmt.Errorf("interface scan error: %w", err)
 		}
 		key := stats.bucket.UTC().Format(time.RFC3339)
@@ -3214,6 +3252,9 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		totalDiscards := stats.inDiscards + stats.outDiscards
 		if totalErrors > 0 {
 			issueReasons["interface_errors"] = true
+		}
+		if stats.inFcsErrors > 0 {
+			issueReasons["fcs_errors"] = true
 		}
 		if totalDiscards > 0 {
 			issueReasons["discards"] = true
@@ -3288,13 +3329,14 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 
 		// Check if we have interface data for this bucket
 		if stats, ok := bucketMap[key]; ok {
-			deviceStatus := classifyDeviceStatus(stats.inErrors+stats.outErrors, stats.inDiscards+stats.outDiscards, stats.carrierTransitions)
+			deviceStatus := classifyDeviceStatus(stats.inErrors+stats.outErrors+stats.inFcsErrors, stats.inDiscards+stats.outDiscards, stats.carrierTransitions)
 			hourStatuses = append(hourStatuses, DeviceHourStatus{
 				Hour:               key,
 				Status:             deviceStatus,
 				MaxUsers:           maxUsers,
 				InErrors:           stats.inErrors,
 				OutErrors:          stats.outErrors,
+				InFcsErrors:        stats.inFcsErrors,
 				InDiscards:         stats.inDiscards,
 				OutDiscards:        stats.outDiscards,
 				CarrierTransitions: stats.carrierTransitions,

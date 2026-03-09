@@ -599,6 +599,9 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
                 {issueReasons.includes('interface_errors') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
                 )}
+                {issueReasons.includes('fcs_errors') && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>FCS Errors</span>
+                )}
                 {issueReasons.includes('discards') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' }}>Discards</span>
                 )}
@@ -739,7 +742,7 @@ export function LinkStatusTimelines({
       }
 
       const matchesIssue = hasIssues
-        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason === 'fcs_errors' ? 'interface_errors' : reason))
         : noIssuesSelected
 
       // Must match at least one health filter

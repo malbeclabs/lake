@@ -731,6 +731,8 @@ func counterTypeFilter(incidentType string) string {
 	switch incidentType {
 	case "errors":
 		return "(coalesce(in_errors_delta, 0) > 0 OR coalesce(out_errors_delta, 0) > 0)"
+	case "fcs":
+		return "(coalesce(in_fcs_errors_delta, 0) > 0)"
 	case "discards":
 		return "(coalesce(in_discards_delta, 0) > 0 OR coalesce(out_discards_delta, 0) > 0)"
 	case "carrier":

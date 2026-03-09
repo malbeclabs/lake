@@ -746,6 +746,11 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
                     Interface Errors
                   </span>
                 )}
+                {issueReasons.includes('fcs_errors') && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>
+                    FCS Errors
+                  </span>
+                )}
                 {issueReasons.includes('discards') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-500/15 text-rose-600 dark:text-rose-400">
                     Discards
@@ -862,7 +867,7 @@ export function DeviceStatusTimelines({
       const hasIssues = issueReasons.length > 0
 
       const matchesIssue = hasIssues
-        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason === 'fcs_errors' ? 'interface_errors' : reason))
         : noIssuesSelected
 
       const matchesHealth = deviceMatchesHealthFilters(device)

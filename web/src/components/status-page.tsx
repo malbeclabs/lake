@@ -1349,6 +1349,7 @@ function InterfaceIssuesTable({
               <th className="px-4 py-2 font-medium">Interface</th>
               <th className="px-4 py-2 font-medium">Link</th>
               <th className="px-4 py-2 font-medium text-right">Errors</th>
+              <th className="px-4 py-2 font-medium text-right">FCS Errors</th>
               <th className="px-4 py-2 font-medium text-right">Discards</th>
               <th className="px-4 py-2 font-medium text-right">Carrier Transitions</th>
               <th className="px-4 py-2 font-medium text-right">First Seen</th>
@@ -1380,6 +1381,9 @@ function InterfaceIssuesTable({
                   </td>
                   <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${totalErrors > 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
                     {totalErrors > 0 ? totalErrors.toLocaleString() : '-'}
+                  </td>
+                  <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${issue.in_fcs_errors > 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                    {issue.in_fcs_errors > 0 ? issue.in_fcs_errors.toLocaleString() : '-'}
                   </td>
                   <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${totalDiscards > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>
                     {totalDiscards > 0 ? totalDiscards.toLocaleString() : '-'}
@@ -1565,7 +1569,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (issues.includes('high_latency')) breakdown.high_latency++
       if (issues.includes('high_utilization')) breakdown.high_utilization++
       if (issues.includes('no_data')) breakdown.no_data++
-      if (issues.includes('interface_errors')) breakdown.interface_errors++
+      if (issues.includes('interface_errors') || issues.includes('fcs_errors')) breakdown.interface_errors++
       if (issues.includes('discards')) breakdown.discards++
       if (issues.includes('carrier_transitions')) breakdown.carrier_transitions++
     }
@@ -1607,7 +1611,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
         if (issues.includes('high_latency')) result.high_latency[health]++
         if (issues.includes('high_utilization')) result.high_utilization[health]++
         if (issues.includes('no_data')) result.no_data[health]++
-        if (issues.includes('interface_errors')) result.interface_errors[health]++
+        if (issues.includes('interface_errors') || issues.includes('fcs_errors')) result.interface_errors[health]++
         if (issues.includes('discards')) result.discards[health]++
         if (issues.includes('carrier_transitions')) result.carrier_transitions[health]++
       }
@@ -1630,7 +1634,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (link.issue_reasons?.includes('high_latency')) counts.high_latency++
       if (link.issue_reasons?.includes('high_utilization')) counts.high_utilization++
       if (link.issue_reasons?.includes('no_data')) counts.no_data++
-      if (link.issue_reasons?.includes('interface_errors')) counts.interface_errors++
+      if (link.issue_reasons?.includes('interface_errors') || link.issue_reasons?.includes('fcs_errors')) counts.interface_errors++
       if (link.issue_reasons?.includes('discards')) counts.discards++
       if (link.issue_reasons?.includes('carrier_transitions')) counts.carrier_transitions++
       if (link.issue_reasons?.length > 0 && !seenLinks.has(link.code)) {
@@ -2264,7 +2268,7 @@ function DevicesContent({ status }: { status: StatusResponse }) {
       const breakdown = result[health as keyof DeviceIssuesByHealth]
       const issues = device.issue_reasons ?? []
 
-      if (issues.includes('interface_errors')) breakdown.interface_errors++
+      if (issues.includes('interface_errors') || issues.includes('fcs_errors')) breakdown.interface_errors++
       if (issues.includes('discards')) breakdown.discards++
       if (issues.includes('carrier_transitions')) breakdown.carrier_transitions++
       if (issues.includes('drained')) breakdown.drained++
@@ -2295,7 +2299,7 @@ function DevicesContent({ status }: { status: StatusResponse }) {
       if (issues.length === 0) {
         result.no_issues[health]++
       } else {
-        if (issues.includes('interface_errors')) result.interface_errors[health]++
+        if (issues.includes('interface_errors') || issues.includes('fcs_errors')) result.interface_errors[health]++
         if (issues.includes('discards')) result.discards[health]++
         if (issues.includes('carrier_transitions')) result.carrier_transitions[health]++
         if (issues.includes('drained')) result.drained[health]++
@@ -2315,7 +2319,7 @@ function DevicesContent({ status }: { status: StatusResponse }) {
     const seenDevices = new Set<string>()
 
     for (const device of filteredDeviceHistory.devices) {
-      if (device.issue_reasons?.includes('interface_errors')) counts.interface_errors++
+      if (device.issue_reasons?.includes('interface_errors') || device.issue_reasons?.includes('fcs_errors')) counts.interface_errors++
       if (device.issue_reasons?.includes('discards')) counts.discards++
       if (device.issue_reasons?.includes('carrier_transitions')) counts.carrier_transitions++
       if (device.issue_reasons?.includes('drained')) counts.drained++

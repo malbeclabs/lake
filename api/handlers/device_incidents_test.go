@@ -405,6 +405,7 @@ func TestCounterTypeFilter(t *testing.T) {
 		{"errors", true},
 		{"discards", true},
 		{"carrier", true},
+		{"fcs", true},
 		{"no_data", false},
 		{"unknown", false},
 	}

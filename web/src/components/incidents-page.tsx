@@ -175,6 +175,7 @@ export function IncidentsPage() {
   const range = (searchParams.get('range') as IncidentTimeRange) || '24h'
   const threshold = parseInt(searchParams.get('threshold') || '10') || 10
   const errorsThreshold = parseInt(searchParams.get('errors_threshold') || '10') || 10
+  const fcsThreshold = parseInt(searchParams.get('fcs_threshold') || '1') || 1
   const discardsThreshold = parseInt(searchParams.get('discards_threshold') || '10') || 10
   const carrierThreshold = parseInt(searchParams.get('carrier_threshold') || '1') || 1
   const typeParam = searchParams.get('type') || ''
@@ -194,6 +195,7 @@ export function IncidentsPage() {
   const [localSettings, setLocalSettings] = useState({
     threshold: String(threshold),
     errors_threshold: String(errorsThreshold),
+    fcs_threshold: String(fcsThreshold),
     discards_threshold: String(discardsThreshold),
     carrier_threshold: String(carrierThreshold),
     min_duration: String(minDuration),
@@ -201,13 +203,14 @@ export function IncidentsPage() {
   })
 
   // Sync local state when URL params change externally
-  const settingsKey = `${threshold}-${errorsThreshold}-${discardsThreshold}-${carrierThreshold}-${minDuration}-${coalesceGap}`
+  const settingsKey = `${threshold}-${errorsThreshold}-${fcsThreshold}-${discardsThreshold}-${carrierThreshold}-${minDuration}-${coalesceGap}`
   const [lastSettingsKey, setLastSettingsKey] = useState(settingsKey)
   if (settingsKey !== lastSettingsKey) {
     setLastSettingsKey(settingsKey)
     setLocalSettings({
       threshold: String(threshold),
       errors_threshold: String(errorsThreshold),
+      fcs_threshold: String(fcsThreshold),
       discards_threshold: String(discardsThreshold),
       carrier_threshold: String(carrierThreshold),
       min_duration: String(minDuration),
@@ -222,6 +225,7 @@ export function IncidentsPage() {
   const settingsDirty =
     localSettings.threshold !== String(threshold) ||
     localSettings.errors_threshold !== String(errorsThreshold) ||
+    localSettings.fcs_threshold !== String(fcsThreshold) ||
     localSettings.discards_threshold !== String(discardsThreshold) ||
     localSettings.carrier_threshold !== String(carrierThreshold) ||
     localSettings.min_duration !== String(minDuration) ||
@@ -256,6 +260,7 @@ export function IncidentsPage() {
       case 'range': return '24h'
       case 'threshold': return '10'
       case 'errors_threshold': return '10'
+      case 'fcs_threshold': return '1'
       case 'discards_threshold': return '10'
       case 'carrier_threshold': return '1'
       case 'min_duration': return '30'
@@ -267,11 +272,12 @@ export function IncidentsPage() {
   }
 
   const linkQuery = useQuery({
-    queryKey: ['linkIncidents', range, threshold, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam],
+    queryKey: ['linkIncidents', range, threshold, errorsThreshold, fcsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam],
     queryFn: () => fetchLinkIncidents({
       range,
       threshold,
       errors_threshold: errorsThreshold,
+      fcs_threshold: fcsThreshold,
       discards_threshold: discardsThreshold,
       carrier_threshold: carrierThreshold,
       min_duration: minDuration,
@@ -283,10 +289,11 @@ export function IncidentsPage() {
   })
 
   const deviceQuery = useQuery({
-    queryKey: ['deviceIncidents', range, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam, showLinkInterfaces],
+    queryKey: ['deviceIncidents', range, errorsThreshold, fcsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam, showLinkInterfaces],
     queryFn: () => fetchDeviceIncidents({
       range,
       errors_threshold: errorsThreshold,
+      fcs_threshold: fcsThreshold,
       discards_threshold: discardsThreshold,
       carrier_threshold: carrierThreshold,
       min_duration: minDuration,
@@ -435,6 +442,7 @@ export function IncidentsPage() {
     params.set('range', range)
     if (scope === 'links') params.set('threshold', threshold.toString())
     params.set('errors_threshold', errorsThreshold.toString())
+    params.set('fcs_threshold', fcsThreshold.toString())
     params.set('discards_threshold', discardsThreshold.toString())
     params.set('carrier_threshold', carrierThreshold.toString())
     params.set('min_duration', minDuration.toString())
@@ -443,7 +451,7 @@ export function IncidentsPage() {
     if (scope === 'devices' && showLinkInterfaces) params.set('link_interfaces', 'true')
     const base = scope === 'devices' ? '/api/incidents/devices/csv' : '/api/incidents/links/csv'
     return `${base}?${params.toString()}`
-  }, [scope, range, threshold, errorsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam, showLinkInterfaces])
+  }, [scope, range, threshold, errorsThreshold, fcsThreshold, discardsThreshold, carrierThreshold, minDuration, coalesceGap, filterParam, showLinkInterfaces])
 
   return (
     <div className="flex-1 overflow-auto">
@@ -552,6 +560,17 @@ export function IncidentsPage() {
               <span className="text-sm text-muted-foreground">/5m</span>
             </div>
             <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">FCS:</span>
+              <input
+                type="number"
+                value={localSettings.fcs_threshold}
+                onChange={(e) => setLocalSettings(s => ({ ...s, fcs_threshold: e.target.value }))}
+                className="w-16 px-2 py-1 text-sm bg-background border border-border rounded"
+                min={1}
+              />
+              <span className="text-sm text-muted-foreground">/5m</span>
+            </div>
+            <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Discards:</span>
               <input
                 type="number"
@@ -631,10 +650,11 @@ export function IncidentsPage() {
           </div>
         ) : (<>
         {/* Type stat cards — clickable multi-select filters */}
-        <div className={`grid gap-3 mb-6 ${scope === 'links' ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
+        <div className={`grid gap-3 mb-6 ${scope === 'links' ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
           {([
             ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss' }] : []),
             { key: 'errors', label: 'Errors' },
+            { key: 'fcs', label: 'FCS Errors' },
             { key: 'discards', label: 'Discards' },
             { key: 'carrier', label: 'Carrier' },
             { key: 'no_data', label: 'No Data' },

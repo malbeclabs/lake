@@ -787,9 +787,13 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 // queryBaselineCountersFromClickHouse queries ClickHouse for the last non-null counter values before the window start
 // for each device/interface combination. Returns error if ClickHouse doesn't have data or query fails.
 func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
-	// Query recent data before the window start to find the last non-null values
-	// Limit to 90 days lookback to enable partition pruning - baselines don't need to go back years
-	lookbackStart := windowStart.Add(-90 * 24 * time.Hour)
+	// Query recent data before the window start to find the last non-null values.
+	// Use a 7-day lookback — the indexer writes every few minutes, so the last
+	// non-null value for any sparse counter should be well within this window.
+	// A shorter window is critical because the table has billions of rows and the
+	// global max_execution_time (60s) can cause longer lookbacks to time out,
+	// leaving baselines empty and breaking forward-fill.
+	lookbackStart := windowStart.Add(-7 * 24 * time.Hour)
 
 	baselines := &CounterBaselines{
 		InDiscards:  make(map[string]*int64),
@@ -799,65 +803,70 @@ func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowSt
 		OutErrors:   make(map[string]*int64),
 	}
 
-	// Only query baselines for sparse counters (errors/discards)
-	// For non-sparse counters, we use the first row as baseline and don't store it
-	counterFields := []struct {
-		field    string
-		baseline map[string]*int64
-	}{
-		{"in_discards", baselines.InDiscards},
-		{"in_errors", baselines.InErrors},
-		{"in_fcs_errors", baselines.InFCSErrors},
-		{"out_discards", baselines.OutDiscards},
-		{"out_errors", baselines.OutErrors},
-	}
-
 	conn, err := v.cfg.ClickHouse.Conn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ClickHouse connection: %w", err)
 	}
 	defer conn.Close()
 
-	for _, cf := range counterFields {
-		// Use argMax to get the latest row per device/interface
-		sqlQuery := fmt.Sprintf(`
-			SELECT
-				device_pk,
-				intf,
-				argMax(%s, (event_ts)) as value
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts >= ? AND event_ts < ? AND %s IS NOT NULL
-			GROUP BY device_pk, intf
-		`, cf.field, cf.field)
+	// Use a single query to fetch all sparse counter baselines at once.
+	// This is faster than 5 separate queries and avoids hitting the global
+	// max_execution_time limit.
+	sqlQuery := `
+		SELECT
+			device_pk,
+			intf,
+			argMaxIf(in_discards, event_ts, in_discards IS NOT NULL) as in_discards_val,
+			argMaxIf(in_errors, event_ts, in_errors IS NOT NULL) as in_errors_val,
+			argMaxIf(in_fcs_errors, event_ts, in_fcs_errors IS NOT NULL) as in_fcs_errors_val,
+			argMaxIf(out_discards, event_ts, out_discards IS NOT NULL) as out_discards_val,
+			argMaxIf(out_errors, event_ts, out_errors IS NOT NULL) as out_errors_val
+		FROM fact_dz_device_interface_counters
+		WHERE event_ts >= ? AND event_ts < ?
+			AND (in_discards IS NOT NULL OR in_errors IS NOT NULL OR in_fcs_errors IS NOT NULL
+				OR out_discards IS NOT NULL OR out_errors IS NOT NULL)
+		GROUP BY device_pk, intf
+	`
 
-		rows, err := conn.Query(ctx, sqlQuery, lookbackStart, windowStart)
-		if err != nil {
-			v.log.Warn("telemetry/usage: failed to query baseline for counter from clickhouse", "counter", cf.field, "error", err)
+	rows, err := conn.Query(ctx, sqlQuery, lookbackStart, windowStart)
+	if err != nil {
+		v.log.Warn("telemetry/usage: failed to query baselines from clickhouse", "error", err)
+		return baselines, nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var devicePK, intf *string
+		var inDiscards, inErrors, inFCSErrors, outDiscards, outErrors *int64
+		if err := rows.Scan(&devicePK, &intf, &inDiscards, &inErrors, &inFCSErrors, &outDiscards, &outErrors); err != nil {
+			v.log.Warn("telemetry/usage: failed to scan baseline row", "error", err)
 			continue
 		}
 
-		for rows.Next() {
-			var devicePK, intf *string
-			var val *int64
-			if err := rows.Scan(&devicePK, &intf, &val); err != nil {
-				v.log.Warn("telemetry/usage: failed to scan baseline row", "counter", cf.field, "error", err)
-				continue
-			}
-
-			if devicePK == nil || intf == nil {
-				continue
-			}
-
-			key := fmt.Sprintf("%s:%s", *devicePK, *intf)
-			if val != nil {
-				cf.baseline[key] = val
-			}
+		if devicePK == nil || intf == nil {
+			continue
 		}
-		rows.Close()
 
-		if err := rows.Err(); err != nil {
-			v.log.Warn("telemetry/usage: error iterating baseline rows", "counter", cf.field, "error", err)
+		key := fmt.Sprintf("%s:%s", *devicePK, *intf)
+		if inDiscards != nil {
+			baselines.InDiscards[key] = inDiscards
 		}
+		if inErrors != nil {
+			baselines.InErrors[key] = inErrors
+		}
+		if inFCSErrors != nil {
+			baselines.InFCSErrors[key] = inFCSErrors
+		}
+		if outDiscards != nil {
+			baselines.OutDiscards[key] = outDiscards
+		}
+		if outErrors != nil {
+			baselines.OutErrors[key] = outErrors
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		v.log.Warn("telemetry/usage: error iterating baseline rows", "error", err)
 	}
 
 	return baselines, nil

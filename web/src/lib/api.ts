@@ -1250,6 +1250,7 @@ export interface InterfaceIssue {
   link_side?: string
   in_errors: number
   out_errors: number
+  in_fcs_errors: number
   in_discards: number
   out_discards: number
   carrier_transitions: number
@@ -1340,11 +1341,13 @@ export interface LinkHourStatus {
   // Per-side interface issues (errors, discards, carrier transitions)
   side_a_in_errors?: number
   side_a_out_errors?: number
+  side_a_in_fcs_errors?: number
   side_a_in_discards?: number
   side_a_out_discards?: number
   side_a_carrier_transitions?: number
   side_z_in_errors?: number
   side_z_out_errors?: number
+  side_z_in_fcs_errors?: number
   side_z_in_discards?: number
   side_z_out_discards?: number
   side_z_carrier_transitions?: number
@@ -1367,7 +1370,7 @@ export interface LinkHistory {
   is_down?: boolean
   drained?: boolean
   hours: LinkHourStatus[]
-  issue_reasons: string[] // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "down"
+  issue_reasons: string[] // "packet_loss", "high_latency", "no_data", "interface_errors", "fcs_errors", "discards", "carrier_transitions", "down"
 }
 
 export interface LinkHistoryResponse {
@@ -1421,6 +1424,7 @@ export interface DeviceHourStatus {
   utilization_pct: number
   in_errors: number
   out_errors: number
+  in_fcs_errors: number
   in_discards: number
   out_discards: number
   carrier_transitions: number
@@ -1499,6 +1503,7 @@ export interface InterfaceHourStatus {
   hour: string
   in_errors: number
   out_errors: number
+  in_fcs_errors: number
   in_discards: number
   out_discards: number
   carrier_transitions: number
@@ -4122,7 +4127,7 @@ export async function fetchSearch(
 
 // Incidents types and functions
 export type IncidentTimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '30d'
-export type IncidentType = 'packet_loss' | 'errors' | 'discards' | 'carrier' | 'no_data'
+export type IncidentType = 'packet_loss' | 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data'
 
 export interface LinkIncident {
   id: string
@@ -4187,6 +4192,7 @@ export interface FetchLinkIncidentsParams {
   range?: IncidentTimeRange
   threshold?: number
   errors_threshold?: number
+  fcs_threshold?: number
   discards_threshold?: number
   carrier_threshold?: number
   min_duration?: number
@@ -4200,6 +4206,7 @@ export async function fetchLinkIncidents(params: FetchLinkIncidentsParams = {}):
   if (params.range) searchParams.set('range', params.range)
   if (params.threshold) searchParams.set('threshold', params.threshold.toString())
   if (params.errors_threshold) searchParams.set('errors_threshold', params.errors_threshold.toString())
+  if (params.fcs_threshold) searchParams.set('fcs_threshold', params.fcs_threshold.toString())
   if (params.discards_threshold) searchParams.set('discards_threshold', params.discards_threshold.toString())
   if (params.carrier_threshold) searchParams.set('carrier_threshold', params.carrier_threshold.toString())
   if (params.min_duration) searchParams.set('min_duration', params.min_duration.toString())
@@ -4218,7 +4225,7 @@ export async function fetchLinkIncidents(params: FetchLinkIncidentsParams = {}):
 }
 
 // Device incident types
-export type DeviceIncidentType = 'errors' | 'discards' | 'carrier' | 'no_data'
+export type DeviceIncidentType = 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data'
 
 export interface DeviceIncident {
   id: string
@@ -4271,6 +4278,7 @@ export interface DeviceIncidentsResponse {
 export interface FetchDeviceIncidentsParams {
   range?: IncidentTimeRange
   errors_threshold?: number
+  fcs_threshold?: number
   discards_threshold?: number
   carrier_threshold?: number
   min_duration?: number
@@ -4284,6 +4292,7 @@ export async function fetchDeviceIncidents(params: FetchDeviceIncidentsParams = 
   const searchParams = new URLSearchParams()
   if (params.range) searchParams.set('range', params.range)
   if (params.errors_threshold) searchParams.set('errors_threshold', params.errors_threshold.toString())
+  if (params.fcs_threshold) searchParams.set('fcs_threshold', params.fcs_threshold.toString())
   if (params.discards_threshold) searchParams.set('discards_threshold', params.discards_threshold.toString())
   if (params.carrier_threshold) searchParams.set('carrier_threshold', params.carrier_threshold.toString())
   if (params.min_duration) searchParams.set('min_duration', params.min_duration.toString())

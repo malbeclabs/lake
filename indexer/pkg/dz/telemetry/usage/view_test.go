@@ -1064,6 +1064,166 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		require.Equal(t, int64(9), *usage[1].InErrorsDelta)
 	})
 
+	t.Run("forward-fill works when sparse counter goes from value to explicit nil in InfluxDB", func(t *testing.T) {
+		// This reproduces the production scenario where a device stops reporting
+		// in-errors (goes nil in InfluxDB) while still reporting non-sparse counters.
+		// The overlap window includes rows where in-errors had a value (30),
+		// then transitions to nil. New rows should be forward-filled from the
+		// last known value.
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		rows := []map[string]any{
+			{
+				// Already written - has in-errors = 30 (before the gap)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				"in-errors":  int64(30),
+			},
+			{
+				// Already written - in-errors goes nil (explicit nil in map)
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+				"in-errors":  nil, // explicit nil, not absent
+			},
+			{
+				// New row - in-errors still nil, should forward-fill from last known value (30)
+				"time":       now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+				"in-errors":  nil,
+			},
+			{
+				// New row - in-errors comes back with new value
+				"time":       now.Add(3 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(4000),
+				"in-errors":  int64(32),
+			},
+		}
+
+		baselineVal := int64(30)
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    map[string]*int64{"device1:eth0": &baselineVal},
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		alreadyWritten := MaxTimestampsByKey{
+			"device1:eth0": now.Add(time.Minute),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		require.NoError(t, err)
+		require.Len(t, usage, 2)
+
+		// First new row: in_errors should be forward-filled to 30 (last known value)
+		require.NotNil(t, usage[0].InErrors, "in_errors should be forward-filled, not NULL")
+		require.Equal(t, int64(30), *usage[0].InErrors)
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(0), *usage[0].InErrorsDelta)
+
+		// Second new row: in_errors = 32, delta = 32 - 30 = 2
+		require.NotNil(t, usage[1].InErrors)
+		require.Equal(t, int64(32), *usage[1].InErrors)
+		require.NotNil(t, usage[1].InErrorsDelta)
+		require.Equal(t, int64(2), *usage[1].InErrorsDelta)
+	})
+
+	t.Run("forward-fill works with baseline and no overlap rows for key", func(t *testing.T) {
+		// Reproduces the production scenario where the global maxTime is ahead of this
+		// key's latest event_ts, so alreadyWritten has no entry for this key.
+		// The first row triggers the first-row handler (skip), and subsequent rows
+		// should be forward-filled from the baseline.
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		rows := []map[string]any{
+			{
+				// First row for this key - has in-octets but NOT in-errors
+				// Should be consumed as baseline (first-row handler)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+				// in-errors absent - gNMI stopped reporting it
+			},
+			{
+				// Second row - should forward-fill in-errors from baseline
+				"time":       now.Add(time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+			},
+			{
+				// Third row
+				"time":       now.Add(2 * time.Minute).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+			},
+		}
+
+		baselineVal := int64(55)
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    map[string]*int64{"device1:eth0": &baselineVal},
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		// No alreadyWritten entries for this key (global maxTime is ahead)
+		alreadyWritten := MaxTimestampsByKey{}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		require.NoError(t, err)
+		// First row is consumed as baseline, so we get 2 rows
+		require.Len(t, usage, 2)
+
+		// First output row: in_errors should be forward-filled to 55
+		require.NotNil(t, usage[0].InErrors, "in_errors should be forward-filled from baseline, not NULL")
+		require.Equal(t, int64(55), *usage[0].InErrors)
+		require.NotNil(t, usage[0].InErrorsDelta)
+		require.Equal(t, int64(0), *usage[0].InErrorsDelta)
+
+		// Second output row: in_errors should still be 55
+		require.NotNil(t, usage[1].InErrors)
+		require.Equal(t, int64(55), *usage[1].InErrors)
+	})
+
 	t.Run("sparse counters with no baseline and no overlap still capture first change", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)

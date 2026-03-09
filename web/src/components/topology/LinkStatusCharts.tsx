@@ -27,6 +27,7 @@ function hasInterfaceIssueData(hours: LinkHourStatus[]): boolean {
   return hours.some(h =>
     (h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
     (h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0 ||
+    (h.side_a_in_fcs_errors ?? 0) > 0 || (h.side_z_in_fcs_errors ?? 0) > 0 ||
     (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 ||
     (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0 ||
     (h.side_a_carrier_transitions ?? 0) > 0 || (h.side_z_carrier_transitions ?? 0) > 0
@@ -68,6 +69,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   const sideAColor = isDark ? '#10b981' : '#059669'
   const sideZColor = isDark ? '#3b82f6' : '#2563eb'
   const errorColor = isDark ? '#ef4444' : '#dc2626'
+  const fcsColor = isDark ? '#f97316' : '#ea580c'
   const discardColor = isDark ? '#f59e0b' : '#d97706'
   const carrierColor = isDark ? '#8b5cf6' : '#7c3aed'
 
@@ -106,6 +108,9 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
       (h.side_a_in_errors ?? 0) + (h.side_a_out_errors ?? 0) +
       (h.side_z_in_errors ?? 0) + (h.side_z_out_errors ?? 0)
     )
+    const fcs = historyData.hours.map((h) =>
+      (h.side_a_in_fcs_errors ?? 0) + (h.side_z_in_fcs_errors ?? 0)
+    )
     const discards = historyData.hours.map((h) =>
       (h.side_a_in_discards ?? 0) + (h.side_a_out_discards ?? 0) +
       (h.side_z_in_discards ?? 0) + (h.side_z_out_discards ?? 0)
@@ -117,15 +122,16 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     const series: uPlot.Series[] = [
       {},
       { label: 'errors', stroke: errorColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'fcs', stroke: fcsColor, width: 1.5, points: { show: true, size: 4 } },
       { label: 'discards', stroke: discardColor, width: 1.5, points: { show: true, size: 4 } },
       { label: 'carrier', stroke: carrierColor, width: 1.5, points: { show: true, size: 4 } },
     ]
 
     return {
-      issuesUPlotData: [timestamps, errors, discards, carrier] as uPlot.AlignedData,
+      issuesUPlotData: [timestamps, errors, fcs, discards, carrier] as uPlot.AlignedData,
       issuesSeries: series,
     }
-  }, [historyData, errorColor, discardColor, carrierColor])
+  }, [historyData, errorColor, fcsColor, discardColor, carrierColor])
 
   const showPacketLoss = historyData?.hours && hasPacketLossData(historyData.hours)
   const showInterfaceIssues = historyData?.hours && hasInterfaceIssueData(historyData.hours)
@@ -141,9 +147,10 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   const interfaceIssueLegend = useChartLegend()
   const interfaceIssueLegendSeries: ChartLegendSeries[] = useMemo(() => [
     { key: 'errors', color: errorColor, label: 'Errors' },
+    { key: 'fcs', color: fcsColor, label: 'FCS Errors' },
     { key: 'discards', color: discardColor, label: 'Discards' },
     { key: 'carrier', color: carrierColor, label: 'Carrier' },
-  ], [errorColor, discardColor, carrierColor])
+  ], [errorColor, fcsColor, discardColor, carrierColor])
 
   // Axes
   const pctAxes = useMemo((): uPlot.Axis[] => [
