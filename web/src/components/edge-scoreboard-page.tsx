@@ -42,7 +42,7 @@ function formatStake(sol: number): string {
 }
 
 /**
- * Get the tightest DZ lead time across all losers (min p50/p95).
+ * Get the tightest Edge lead time across all losers (min p50/p95).
  * Each lead time is already aggregated via quantile() on the server.
  * We pick the minimum across competitors — the closest race — as the
  * representative summary value. This avoids averaging percentiles.
@@ -97,7 +97,7 @@ const FEED_COLORS: Record<string, string> = {
 }
 
 const FEED_LABELS: Record<string, string> = {
-  dz: 'Edge Direct',
+  dz: 'Edge',
   jito: 'Jito',
   turbine: 'Turbine',
   pipe: 'Pipe',
@@ -153,6 +153,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         for (const f of feeds) {
           row[f] = Math.round(((n.feeds[f]?.win_rate_pct ?? 0) * scale) * 10) / 10
           row[`${f}_shreds`] = n.feeds[f]?.shreds_won ?? 0
+          row[`${f}_raw`] = n.feeds[f]?.win_rate_pct ?? 0
         }
         return { nodeId: n.node_id, location: n.location, data: [row] }
       })
@@ -180,7 +181,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
           <div className="w-12 shrink-0 text-xs text-muted-foreground text-right pr-2">{nr.location}</div>
           <div className="flex-1 h-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={nr.data} layout="vertical" barSize={56} margin={{ top: 2, right: 24, bottom: 2, left: 0 }}>
+              <BarChart data={nr.data} layout="vertical" barSize={62} margin={{ top: 2, right: 24, bottom: 2, left: 0 }}>
                 <XAxis type="number" domain={[0, 100]} hide />
                 <YAxis type="category" hide dataKey="location" />
                 <Tooltip
@@ -201,6 +202,14 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
                     stackId="winrate"
                     fill={FEED_COLORS[f] ?? '#6b7280'}
                     radius={i === chartData.feeds.length - 1 ? [0, 4, 4, 0] : undefined}
+                    label={f === 'dz' ? ((props: { x?: number; y?: number; width?: number; height?: number; [k: string]: unknown }) => {
+                      const raw = Number(nr.data[0]['dz_raw'] ?? 0)
+                      return (
+                        <text x={(props.x ?? 0) + (props.width ?? 0) / 2} y={(props.y ?? 0) + (props.height ?? 0) / 2} fill="#fff" fontSize={12} fontWeight={600} textAnchor="middle" dominantBaseline="central">
+                          {`${raw.toFixed(1)}%`}
+                        </text>
+                      )
+                    }) as unknown as boolean : undefined}
                   />
                 ))}
               </BarChart>
@@ -250,7 +259,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
         const slotMap = byNode.get(n.node_id)!
         const data = slotNumbers.map((slot, idx) => {
           const feedPcts = slotMap.get(slot) ?? {}
-          const row: Record<string, number> = { idx }
+          const row: Record<string, number> = { idx, slot }
           for (const f of feeds) row[f] = feedPcts[f] ?? 0
           return row
         })
@@ -262,7 +271,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
 
   if (!slots.length) return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="text-sm font-medium mb-4">Recent DZ Leader Slots — Win Rate per Slot</h3>
+      <h3 className="text-sm font-medium mb-4">Recent Edge Leader Slots — Win Rate per Slot</h3>
       <div className="text-sm text-muted-foreground text-center py-12">No recent slot data available.</div>
     </div>
   )
@@ -272,7 +281,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium">Recent DZ Leader Slots — Win Rate per Slot</h3>
+        <h3 className="text-sm font-medium">Recent Edge Leader Slots — Win Rate per Slot</h3>
         <div className="flex items-center gap-3">
           {feeds.map(f => (
             <div key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -287,7 +296,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
           <div className="w-12 shrink-0 text-xs text-muted-foreground text-right pr-2">{nc.location}</div>
           <div className="flex-1 h-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={nc.data} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
+              <BarChart data={nc.data} margin={{ top: 6, right: 0, bottom: 6, left: 0 }}>
                 <XAxis dataKey="idx" hide />
                 <YAxis domain={[0, 100]} hide allowDataOverflow />
                 <Tooltip
@@ -295,8 +304,11 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
                     `${(value ?? 0).toFixed(1)}%`,
                     FEED_LABELS[name ?? ''] ?? name ?? '',
                   ]}
-                  labelFormatter={() => ''}
+                  labelFormatter={(_label: string, payload: ReadonlyArray<{ payload?: Record<string, number> }>) =>
+                    payload[0]?.payload?.slot ? `Slot ${payload[0].payload.slot.toLocaleString()}` : ''
+                  }
                   contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #333', borderRadius: '6px', color: '#e5e5e5' }}
+                  wrapperStyle={{ zIndex: 10 }}
                 />
                 {feeds.map(f => (
                   <Bar key={f} dataKey={f} stackId="s" fill={FEED_COLORS[f] ?? '#6b7280'} />
@@ -307,7 +319,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
         </div>
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
-        {slotCount} most recent DZ leader slots
+        {slotCount} most recent Edge leader slots
       </div>
     </div>
   )
@@ -377,7 +389,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(
           `<div style="font-size:13px;color:#1a1a2e">` +
           `<strong>${node.location}</strong> — ${node.metro_name}<br/>` +
-          `DZ Win Rate: ${winRate.toFixed(1)}%<br/>` +
+          `Edge Win Rate: ${winRate.toFixed(1)}%<br/>` +
           `Slots: ${node.slots_observed.toLocaleString()}` +
           `</div>`
         ))
@@ -423,7 +435,7 @@ export function EdgeScoreboardPage() {
     })
   }
 
-  // Aggregate global DZ stats across all nodes
+  // Aggregate global Edge stats across all nodes
   const globalStats = useMemo(() => {
     if (!data?.nodes) return null
 
@@ -520,7 +532,7 @@ export function EdgeScoreboardPage() {
           <div className="flex items-start gap-2">
             <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
             <span>
-              <span className="font-medium text-amber-500">Completeness</span> — DZ delivers leader shreds only. Completeness measures the percentage of total leader slots observed by each edge node during the selected window.
+              <span className="font-medium text-amber-500">Completeness</span> — Edge delivers leader shreds only. Completeness measures the percentage of total leader slots observed by each edge node during the selected window.
             </span>
           </div>
         </div>
@@ -533,10 +545,10 @@ export function EdgeScoreboardPage() {
         {/* Summary cards */}
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
-            <SummaryCard label="Edge Direct Completeness" value={formatPct(globalStats.avgCompleteness)} />
-            <SummaryCard label="Edge Direct Win Rate" value={formatPct(globalStats.winRate)} />
-            <SummaryCard label="Edge Direct Lead (p50)" value={formatMs(globalStats.leadP50)} />
-            <SummaryCard label="Edge Direct Lead (p95)" value={formatMs(globalStats.leadP95)} />
+            <SummaryCard label="Edge Completeness" value={formatPct(globalStats.avgCompleteness)} />
+            <SummaryCard label="Edge Win Rate" value={formatPct(globalStats.winRate)} />
+            <SummaryCard label="Edge Lead (p50)" value={formatMs(globalStats.leadP50)} />
+            <SummaryCard label="Edge Lead (p95)" value={formatMs(globalStats.leadP95)} />
             <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} />
           </div>
         )}
@@ -557,7 +569,7 @@ export function EdgeScoreboardPage() {
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium text-right">Completeness</th>
-                  <th className="px-4 py-3 font-medium text-right">Edge Direct Win %</th>
+                  <th className="px-4 py-3 font-medium text-right">Edge Win %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Pipe<span className="block font-normal text-xs">p50 (p95)</span></th>
