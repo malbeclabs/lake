@@ -71,11 +71,27 @@ func TestLake_TelemetryUsage_View_ViewConfig_Validate(t *testing.T) {
 		cfg := ViewConfig{
 			Logger:          laketesting.NewLogger(),
 			ClickHouse:      mockDB,
+			Bucket:          "test-bucket",
 			RefreshInterval: time.Second,
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "influxdb client is required")
+	})
+
+	t.Run("returns error when bucket is empty", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		cfg := ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			RefreshInterval: time.Second,
+		}
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "influxdb bucket is required")
 	})
 
 	t.Run("returns error when refresh interval is zero", func(t *testing.T) {
@@ -776,7 +792,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 1)
 
@@ -833,7 +849,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row is skipped (baseline for non-sparse), only second row stored
 		require.Len(t, usage, 1)
@@ -952,7 +968,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(2 * time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 1)
 
@@ -1030,7 +1046,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -1260,7 +1276,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row skipped (baseline), rows 2 and 3 stored
 		require.Len(t, usage, 2)

@@ -10,7 +10,7 @@ import (
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 )
 
-// BackfillDeviceInterfaceCountersFromCSV imports a CSV file exported by --export-influx-csv into ClickHouse.
+// BackfillDeviceInterfaceCountersFromCSV imports a CSV file exported by --export-device-interface-counters-csv into ClickHouse.
 func BackfillDeviceInterfaceCountersFromCSV(
 	log *slog.Logger,
 	clickhouseAddr, clickhouseDatabase, clickhouseUsername, clickhousePassword string,
