@@ -970,8 +970,10 @@ function ActiveIncidentsTable({
                     </span>
                     Detecting
                   </span>
-                ) : (
+                ) : incident.confirmed ? (
                   <span className="text-muted-foreground">Resolved</span>
+                ) : (
+                  <span className="text-muted-foreground/60">Transient</span>
                 )}
               </td>
             </tr>
@@ -1185,8 +1187,10 @@ function ActiveDeviceIncidentsTable({
                     </span>
                     Detecting
                   </span>
-                ) : (
+                ) : incident.confirmed ? (
                   <span className="text-muted-foreground">Resolved</span>
+                ) : (
+                  <span className="text-muted-foreground/60">Transient</span>
                 )}
               </td>
             </tr>
