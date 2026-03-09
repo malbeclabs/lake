@@ -209,6 +209,7 @@ func fetchCurrentHighCounterDevices(ctx context.Context, conn driver.Conn, thres
 		return nil, nil
 	}
 
+	lookbackSecs := int64(dp.CoalesceGap.Seconds())
 	query := fmt.Sprintf(`
 		WITH recent_buckets AS (
 			SELECT
@@ -216,8 +217,8 @@ func fetchCurrentHighCounterDevices(ctx context.Context, conn driver.Conn, thres
 				toStartOfInterval(ic.event_ts, INTERVAL 5 MINUTE) as bucket,
 				%s as metric_value
 			FROM fact_dz_device_interface_counters ic
-			WHERE ic.event_ts >= now() - INTERVAL 15 MINUTE
-			  AND ic.device_pk IN ($1)
+			WHERE ic.event_ts >= now() - INTERVAL $1 SECOND
+			  AND ic.device_pk IN ($2)
 			  %s
 			GROUP BY ic.device_pk, bucket
 		),
@@ -235,7 +236,7 @@ func fetchCurrentHighCounterDevices(ctx context.Context, conn driver.Conn, thres
 		ORDER BY device_pk, rn
 	`, metricExpr, linkFilter)
 
-	rows, err := conn.Query(ctx, query, devicePKs)
+	rows, err := conn.Query(ctx, query, lookbackSecs, devicePKs)
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
