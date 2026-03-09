@@ -12,8 +12,8 @@ import { DeviceStatusTimelines } from '@/components/device-status-timelines'
 import { MetroStatusTimelines, type MetroHealthFilter, type MetroIssueFilter } from '@/components/metro-status-timelines'
 
 type TimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
-type IssueFilter = 'packet_loss' | 'high_latency' | 'no_data' | 'interface_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'no_issues'
-type DeviceIssueFilter = 'interface_errors' | 'discards' | 'carrier_transitions' | 'drained' | 'no_issues'
+type IssueFilter = 'packet_loss' | 'high_latency' | 'no_data' | 'interface_errors' | 'fcs_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'no_issues'
+type DeviceIssueFilter = 'interface_errors' | 'fcs_errors' | 'discards' | 'carrier_transitions' | 'drained' | 'no_issues'
 type HealthFilter = 'healthy' | 'degraded' | 'unhealthy' | 'disabled'
 
 const timeRangeLabels: Record<TimeRange, string> = {
@@ -60,6 +60,7 @@ interface IssueCounts {
   high_utilization: number
   no_data: number
   interface_errors: number
+  fcs_errors: number
   discards: number
   carrier_transitions: number
   no_issues: number
@@ -629,6 +630,7 @@ interface HealthIssueBreakdown {
   high_latency: number
   no_data: number
   interface_errors: number
+  fcs_errors: number
   discards: number
   carrier_transitions: number
   high_utilization: number
@@ -636,6 +638,7 @@ interface HealthIssueBreakdown {
 
 interface DeviceIssueBreakdown {
   interface_errors: number
+  fcs_errors: number
   discards: number
   carrier_transitions: number
   drained: number
@@ -677,11 +680,13 @@ function HealthFilterItem({
     { key: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-yellow-500' },
     { key: 'discards', label: 'Discards', color: 'bg-teal-500' },
     { key: 'interface_errors', label: 'Errors', color: 'bg-red-500' },
+    { key: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-500' },
     { key: 'no_data', label: 'No Data', color: 'bg-pink-500' },
   ]
 
   const deviceIssueLabels: { key: keyof DeviceIssueBreakdown; label: string; color: string }[] = [
     { key: 'interface_errors', label: 'Interface Errors', color: 'bg-fuchsia-500' },
+    { key: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-600' },
     { key: 'discards', label: 'Discards', color: 'bg-rose-500' },
     { key: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-orange-500' },
   ]
@@ -781,6 +786,7 @@ interface HealthByIssue {
   high_latency: IssueHealthBreakdown
   no_data: IssueHealthBreakdown
   interface_errors: IssueHealthBreakdown
+  fcs_errors: IssueHealthBreakdown
   discards: IssueHealthBreakdown
   carrier_transitions: IssueHealthBreakdown
   high_utilization: IssueHealthBreakdown
@@ -899,7 +905,7 @@ function LinkIssuesFilterCard({
   healthByIssue?: HealthByIssue
   timeRange: TimeRange
 }) {
-  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'no_data', 'interface_errors', 'discards', 'carrier_transitions', 'no_issues']
+  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'no_data', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'no_issues']
 
   const toggleFilter = (filter: IssueFilter) => {
     if (selected.includes(filter)) {
@@ -920,6 +926,7 @@ function LinkIssuesFilterCard({
     { filter: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-yellow-500', description: 'Carrier transitions (interface up/down) on link endpoints.' },
     { filter: 'discards', label: 'Discards', color: 'bg-teal-500', description: 'Interface discards detected on link endpoints.' },
     { filter: 'interface_errors', label: 'Errors', color: 'bg-red-500', description: 'Interface errors detected on link endpoints.' },
+    { filter: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-500', description: 'FCS (Frame Check Sequence) errors detected on link endpoints.' },
     { filter: 'no_data', label: 'No Data', color: 'bg-pink-500', description: 'No telemetry received for this link.' },
     { filter: 'no_issues', label: 'No Issues', color: 'bg-cyan-500', description: 'Link with no detected issues in the time range.' },
   ]
@@ -1434,7 +1441,7 @@ function useBucketCount() {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusResponse; linkHistory: any; criticalLinks: CriticalLinksResponse | undefined }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'discards', 'carrier_transitions'])
+  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions'])
   const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy'])
   const [showDrained, setShowDrained] = useState(false)
 
@@ -1544,6 +1551,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       high_utilization: 0,
       no_data: 0,
       interface_errors: 0,
+      fcs_errors: 0,
       discards: 0,
       carrier_transitions: 0,
     })
@@ -1569,7 +1577,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (issues.includes('high_latency')) breakdown.high_latency++
       if (issues.includes('high_utilization')) breakdown.high_utilization++
       if (issues.includes('no_data')) breakdown.no_data++
-      if (issues.includes('interface_errors') || issues.includes('fcs_errors')) breakdown.interface_errors++
+      if (issues.includes('interface_errors')) breakdown.interface_errors++
+      if (issues.includes('fcs_errors')) breakdown.fcs_errors++
       if (issues.includes('discards')) breakdown.discards++
       if (issues.includes('carrier_transitions')) breakdown.carrier_transitions++
     }
@@ -1591,6 +1600,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       high_utilization: emptyBreakdown(),
       no_data: emptyBreakdown(),
       interface_errors: emptyBreakdown(),
+      fcs_errors: emptyBreakdown(),
       discards: emptyBreakdown(),
       carrier_transitions: emptyBreakdown(),
       no_issues: emptyBreakdown(),
@@ -1611,7 +1621,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
         if (issues.includes('high_latency')) result.high_latency[health]++
         if (issues.includes('high_utilization')) result.high_utilization[health]++
         if (issues.includes('no_data')) result.no_data[health]++
-        if (issues.includes('interface_errors') || issues.includes('fcs_errors')) result.interface_errors[health]++
+        if (issues.includes('interface_errors')) result.interface_errors[health]++
+        if (issues.includes('fcs_errors')) result.fcs_errors[health]++
         if (issues.includes('discards')) result.discards[health]++
         if (issues.includes('carrier_transitions')) result.carrier_transitions[health]++
       }
@@ -1623,10 +1634,10 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Issue counts from filter time range
   const issueCounts = useMemo((): IssueCounts => {
     if (visibleLinks.length === 0) {
-      return { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
+      return { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
     }
 
-    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, interface_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
+    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
     const seenLinks = new Set<string>()
 
     for (const link of visibleLinks) {
@@ -1634,7 +1645,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       if (link.issue_reasons?.includes('high_latency')) counts.high_latency++
       if (link.issue_reasons?.includes('high_utilization')) counts.high_utilization++
       if (link.issue_reasons?.includes('no_data')) counts.no_data++
-      if (link.issue_reasons?.includes('interface_errors') || link.issue_reasons?.includes('fcs_errors')) counts.interface_errors++
+      if (link.issue_reasons?.includes('interface_errors')) counts.interface_errors++
+      if (link.issue_reasons?.includes('fcs_errors')) counts.fcs_errors++
       if (link.issue_reasons?.includes('discards')) counts.discards++
       if (link.issue_reasons?.includes('carrier_transitions')) counts.carrier_transitions++
       if (link.issue_reasons?.length > 0 && !seenLinks.has(link.code)) {
@@ -1776,6 +1788,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 // Device issue counts interface
 interface DeviceIssueCounts {
   interface_errors: number
+  fcs_errors: number
   discards: number
   carrier_transitions: number
   drained: number
@@ -1785,15 +1798,16 @@ interface DeviceIssueCounts {
 
 // Device issues breakdown per health category
 interface DeviceIssuesByHealth {
-  healthy: { interface_errors: number; discards: number; carrier_transitions: number; drained: number }
-  degraded: { interface_errors: number; discards: number; carrier_transitions: number; drained: number }
-  unhealthy: { interface_errors: number; discards: number; carrier_transitions: number; drained: number }
-  disabled: { interface_errors: number; discards: number; carrier_transitions: number; drained: number }
+  healthy: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number }
+  degraded: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number }
+  unhealthy: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number }
+  disabled: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number }
 }
 
 // Device health breakdown per issue type
 interface DeviceHealthByIssue {
   interface_errors: { healthy: number; degraded: number; unhealthy: number; disabled: number }
+  fcs_errors: { healthy: number; degraded: number; unhealthy: number; disabled: number }
   discards: { healthy: number; degraded: number; unhealthy: number; disabled: number }
   carrier_transitions: { healthy: number; degraded: number; unhealthy: number; disabled: number }
   drained: { healthy: number; degraded: number; unhealthy: number; disabled: number }
@@ -1928,7 +1942,7 @@ function DeviceIssuesFilterCard({
   healthByIssue?: DeviceHealthByIssue
   timeRange: TimeRange
 }) {
-  const allFilters: DeviceIssueFilter[] = ['interface_errors', 'discards', 'carrier_transitions', 'drained', 'no_issues']
+  const allFilters: DeviceIssueFilter[] = ['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained', 'no_issues']
 
   const toggleFilter = (filter: DeviceIssueFilter) => {
     if (selected.includes(filter)) {
@@ -1944,6 +1958,7 @@ function DeviceIssuesFilterCard({
 
   const grandTotal = (counts.total + counts.no_issues) || 1
   const interfaceErrorsPct = (counts.interface_errors / grandTotal) * 100
+  const fcsErrorsPct = (counts.fcs_errors / grandTotal) * 100
   const discardsPct = (counts.discards / grandTotal) * 100
   const carrierTransitionsPct = (counts.carrier_transitions / grandTotal) * 100
   const drainedPct = (counts.drained / grandTotal) * 100
@@ -1951,6 +1966,7 @@ function DeviceIssuesFilterCard({
 
   const items: { filter: DeviceIssueFilter; label: string; color: string; description: string }[] = [
     { filter: 'interface_errors', label: 'Interface Errors', color: 'bg-fuchsia-500', description: 'Device experiencing interface errors.' },
+    { filter: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-600', description: 'Device experiencing FCS (Frame Check Sequence) errors.' },
     { filter: 'discards', label: 'Discards', color: 'bg-rose-500', description: 'Device experiencing interface discards.' },
     { filter: 'carrier_transitions', label: 'Link Flapping', color: 'bg-orange-500', description: 'Device experiencing carrier state changes (link up/down).' },
     { filter: 'drained', label: 'Drained', color: 'bg-slate-500 dark:bg-slate-600', description: 'Device is soft-drained, hard-drained, or suspended.' },
@@ -1984,6 +2000,12 @@ function DeviceIssuesFilterCard({
           <div
             className={`bg-fuchsia-500 h-full transition-all ${!selected.includes('interface_errors') ? 'opacity-30' : ''}`}
             style={{ width: `${interfaceErrorsPct}%` }}
+          />
+        )}
+        {fcsErrorsPct > 0 && (
+          <div
+            className={`bg-orange-600 h-full transition-all ${!selected.includes('fcs_errors') ? 'opacity-30' : ''}`}
+            style={{ width: `${fcsErrorsPct}%` }}
           />
         )}
         {discardsPct > 0 && (
@@ -2137,7 +2159,7 @@ function deviceUtilMatchesSearchFilters(device: DeviceUtilization, filters: Stat
 // Devices tab content
 function DevicesContent({ status }: { status: StatusResponse }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [issueFilters, setIssueFilters] = useState<DeviceIssueFilter[]>(['interface_errors', 'discards', 'carrier_transitions', 'drained'])
+  const [issueFilters, setIssueFilters] = useState<DeviceIssueFilter[]>(['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained'])
   const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy', 'disabled'])
   const location = useLocation()
 
@@ -2249,7 +2271,7 @@ function DevicesContent({ status }: { status: StatusResponse }) {
 
   // Calculate issue breakdown per health category
   const issuesByHealth = useMemo((): DeviceIssuesByHealth => {
-    const emptyBreakdown = () => ({ interface_errors: 0, discards: 0, carrier_transitions: 0, drained: 0 })
+    const emptyBreakdown = () => ({ interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, drained: 0 })
 
     const result: DeviceIssuesByHealth = {
       healthy: emptyBreakdown(),
@@ -2268,7 +2290,8 @@ function DevicesContent({ status }: { status: StatusResponse }) {
       const breakdown = result[health as keyof DeviceIssuesByHealth]
       const issues = device.issue_reasons ?? []
 
-      if (issues.includes('interface_errors') || issues.includes('fcs_errors')) breakdown.interface_errors++
+      if (issues.includes('interface_errors')) breakdown.interface_errors++
+      if (issues.includes('fcs_errors')) breakdown.fcs_errors++
       if (issues.includes('discards')) breakdown.discards++
       if (issues.includes('carrier_transitions')) breakdown.carrier_transitions++
       if (issues.includes('drained')) breakdown.drained++
@@ -2283,6 +2306,7 @@ function DevicesContent({ status }: { status: StatusResponse }) {
 
     const result: DeviceHealthByIssue = {
       interface_errors: emptyBreakdown(),
+      fcs_errors: emptyBreakdown(),
       discards: emptyBreakdown(),
       carrier_transitions: emptyBreakdown(),
       drained: emptyBreakdown(),
@@ -2299,7 +2323,8 @@ function DevicesContent({ status }: { status: StatusResponse }) {
       if (issues.length === 0) {
         result.no_issues[health]++
       } else {
-        if (issues.includes('interface_errors') || issues.includes('fcs_errors')) result.interface_errors[health]++
+        if (issues.includes('interface_errors')) result.interface_errors[health]++
+        if (issues.includes('fcs_errors')) result.fcs_errors[health]++
         if (issues.includes('discards')) result.discards[health]++
         if (issues.includes('carrier_transitions')) result.carrier_transitions[health]++
         if (issues.includes('drained')) result.drained[health]++
@@ -2312,14 +2337,15 @@ function DevicesContent({ status }: { status: StatusResponse }) {
   // Issue counts from filter time range
   const issueCounts = useMemo((): DeviceIssueCounts => {
     if (!filteredDeviceHistory?.devices) {
-      return { interface_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, no_issues: 0, total: 0 }
+      return { interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, no_issues: 0, total: 0 }
     }
 
-    const counts = { interface_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, no_issues: 0, total: 0 }
+    const counts = { interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, no_issues: 0, total: 0 }
     const seenDevices = new Set<string>()
 
     for (const device of filteredDeviceHistory.devices) {
-      if (device.issue_reasons?.includes('interface_errors') || device.issue_reasons?.includes('fcs_errors')) counts.interface_errors++
+      if (device.issue_reasons?.includes('interface_errors')) counts.interface_errors++
+      if (device.issue_reasons?.includes('fcs_errors')) counts.fcs_errors++
       if (device.issue_reasons?.includes('discards')) counts.discards++
       if (device.issue_reasons?.includes('carrier_transitions')) counts.carrier_transitions++
       if (device.issue_reasons?.includes('drained')) counts.drained++

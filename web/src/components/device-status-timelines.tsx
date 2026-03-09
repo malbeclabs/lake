@@ -155,6 +155,12 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
                           </span>
                         </div>
                       )}
+                      {hour.in_fcs_errors > 0 && (
+                        <div className="flex justify-between gap-4">
+                          <span>FCS Errors:</span>
+                          <span className="font-mono">{hour.in_fcs_errors.toLocaleString()}</span>
+                        </div>
+                      )}
                       {(hour.in_discards > 0 || hour.out_discards > 0) && (
                         <div className="flex justify-between gap-4">
                           <span>Discards:</span>
@@ -184,6 +190,7 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
                         </div>
                       )}
                       {hour.in_errors === 0 && hour.out_errors === 0 &&
+                       hour.in_fcs_errors === 0 &&
                        hour.in_discards === 0 && hour.out_discards === 0 &&
                        hour.carrier_transitions === 0 && hour.max_users === 0 && (
                         <div className="text-xs">No issues detected</div>
@@ -248,10 +255,11 @@ const INTERFACE_COLORS = [
   '#6366f1', // indigo-500
 ]
 
-type MetricType = 'errors' | 'discards' | 'carrier'
+type MetricType = 'errors' | 'fcs_errors' | 'discards' | 'carrier'
 
 const METRIC_CONFIG: Record<MetricType, { label: string; color: string }> = {
   errors: { label: 'Errors', color: '#d946ef' },
+  fcs_errors: { label: 'FCS Errors', color: '#ea580c' },
   discards: { label: 'Discards', color: '#f43f5e' },
   carrier: { label: 'Carrier Transitions', color: '#f97316' },
 }
@@ -336,7 +344,7 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
   const { resolvedTheme } = useTheme()
   const isDarkMode = resolvedTheme === 'dark'
   const [enabledInterfaces, setEnabledInterfaces] = useState<Set<string>>(new Set())
-  const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'discards', 'carrier']))
+  const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [initialized, setInitialized] = useState(false)
 
   const { data, isLoading, error } = useQuery({
@@ -349,7 +357,7 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
   const interfacesWithIssues = useMemo(() => {
     if (!data?.interfaces) return []
     return data.interfaces.filter(intf =>
-      intf.hours.some(h => h.in_errors > 0 || h.out_errors > 0 || h.in_discards > 0 || h.out_discards > 0 || h.carrier_transitions > 0)
+      intf.hours.some(h => h.in_errors > 0 || h.out_errors > 0 || h.in_fcs_errors > 0 || h.in_discards > 0 || h.out_discards > 0 || h.carrier_transitions > 0)
     )
   }, [data?.interfaces])
 
@@ -367,6 +375,7 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
     for (const intf of interfacesWithIssues) {
       for (const h of intf.hours) {
         if (h.in_errors > 0 || h.out_errors > 0) metrics.add('errors')
+        if (h.in_fcs_errors > 0) metrics.add('fcs_errors')
         if (h.in_discards > 0 || h.out_discards > 0) metrics.add('discards')
         if (h.carrier_transitions > 0) metrics.add('carrier')
       }
@@ -468,6 +477,7 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
       if (h) {
         point[`${intf.interface_name}_errors_in`] = h.in_errors || 0
         point[`${intf.interface_name}_errors_out`] = h.out_errors ? -h.out_errors : 0
+        point[`${intf.interface_name}_fcs_errors`] = h.in_fcs_errors || 0
         point[`${intf.interface_name}_discards_in`] = h.in_discards || 0
         point[`${intf.interface_name}_discards_out`] = h.out_discards ? -h.out_discards : 0
         point[`${intf.interface_name}_carrier`] = h.carrier_transitions || 0
@@ -485,18 +495,20 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
     if (!data) return null
 
     // Group by interface
-    const interfaceData: Record<string, { errorsIn: number; errorsOut: number; discardsIn: number; discardsOut: number; carrier: number; color: string }> = {}
+    const interfaceData: Record<string, { errorsIn: number; errorsOut: number; fcsErrors: number; discardsIn: number; discardsOut: number; carrier: number; color: string }> = {}
     for (const intf of interfacesWithIssues) {
       if (!enabledInterfaces.has(intf.interface_name)) continue
       const errorsIn = data[`${intf.interface_name}_errors_in`] || 0
       const errorsOut = Math.abs(data[`${intf.interface_name}_errors_out`] || 0)
+      const fcsErrors = data[`${intf.interface_name}_fcs_errors`] || 0
       const discardsIn = data[`${intf.interface_name}_discards_in`] || 0
       const discardsOut = Math.abs(data[`${intf.interface_name}_discards_out`] || 0)
       const carrier = data[`${intf.interface_name}_carrier`] || 0
-      if (errorsIn > 0 || errorsOut > 0 || discardsIn > 0 || discardsOut > 0 || carrier > 0) {
+      if (errorsIn > 0 || errorsOut > 0 || fcsErrors > 0 || discardsIn > 0 || discardsOut > 0 || carrier > 0) {
         interfaceData[intf.interface_name] = {
           errorsIn,
           errorsOut,
+          fcsErrors,
           discardsIn,
           discardsOut,
           carrier,
@@ -525,6 +537,9 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
                 <div className="pl-3.5 text-xs text-muted-foreground space-y-0.5">
                   {enabledMetrics.has('errors') && (values.errorsIn > 0 || values.errorsOut > 0) && (
                     <div>Errors: {values.errorsIn.toLocaleString()} in / {values.errorsOut.toLocaleString()} out</div>
+                  )}
+                  {enabledMetrics.has('fcs_errors') && values.fcsErrors > 0 && (
+                    <div>FCS Errors: {values.fcsErrors.toLocaleString()}</div>
                   )}
                   {enabledMetrics.has('discards') && (values.discardsIn > 0 || values.discardsOut > 0) && (
                     <div>Discards: {values.discardsIn.toLocaleString()} in / {values.discardsOut.toLocaleString()} out</div>
@@ -557,6 +572,9 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
       lines.push({ dataKey: `${intf.interface_name}_errors_in`, color, strokeDasharray: undefined })
       lines.push({ dataKey: `${intf.interface_name}_errors_out`, color, strokeDasharray: undefined })
     }
+    if (enabledMetrics.has('fcs_errors') && availableMetrics.has('fcs_errors')) {
+      lines.push({ dataKey: `${intf.interface_name}_fcs_errors`, color, strokeDasharray: '8 3' })
+    }
     if (enabledMetrics.has('discards') && availableMetrics.has('discards')) {
       lines.push({ dataKey: `${intf.interface_name}_discards_in`, color, strokeDasharray: '5 5' })
       lines.push({ dataKey: `${intf.interface_name}_discards_out`, color, strokeDasharray: '5 5' })
@@ -574,11 +592,11 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
         <div className="space-y-1.5">
           <span className="text-xs text-muted-foreground">Metrics</span>
           <div className="flex flex-col gap-1">
-            {(['errors', 'discards', 'carrier'] as MetricType[]).map(metric => {
+            {(['errors', 'fcs_errors', 'discards', 'carrier'] as MetricType[]).map(metric => {
               if (!availableMetrics.has(metric)) return null
               const config = METRIC_CONFIG[metric]
               const isEnabled = enabledMetrics.has(metric)
-              const dashArray = metric === 'errors' ? undefined : metric === 'discards' ? '5 5' : '2 2'
+              const dashArray = metric === 'errors' ? undefined : metric === 'fcs_errors' ? '8 3' : metric === 'discards' ? '5 5' : '2 2'
               return (
                 <button
                   key={metric}
@@ -804,7 +822,7 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
 export function DeviceStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['interface_errors', 'discards', 'carrier_transitions', 'drained'],
+  issueFilters = ['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained'],
   healthFilters = ['healthy', 'degraded', 'unhealthy', 'disabled'],
   devicesWithIssues,
   devicesWithHealth,
@@ -867,7 +885,7 @@ export function DeviceStatusTimelines({
       const hasIssues = issueReasons.length > 0
 
       const matchesIssue = hasIssues
-        ? issueReasons.some(reason => issueTypesSelected.includes(reason === 'fcs_errors' ? 'interface_errors' : reason))
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
         : noIssuesSelected
 
       const matchesHealth = deviceMatchesHealthFilters(device)

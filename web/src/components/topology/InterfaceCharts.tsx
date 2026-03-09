@@ -255,7 +255,7 @@ interface HealthColumnar {
 function buildHealthColumnar(
   historyData: Awaited<ReturnType<typeof fetchDeviceInterfaceHistory>>,
   interfaces: string[],
-  field: 'errors' | 'discards' | 'transitions',
+  field: 'errors' | 'fcs_errors' | 'discards' | 'transitions',
   bidirectional?: boolean
 ): HealthColumnar {
   const allTimes = new Set<string>()
@@ -320,6 +320,8 @@ function buildHealthColumnar(
       let value: number
       if (field === 'errors') {
         value = (h.in_errors || 0) + (h.out_errors || 0)
+      } else if (field === 'fcs_errors') {
+        value = h.in_fcs_errors || 0
       } else if (field === 'discards') {
         value = (h.in_discards || 0) + (h.out_discards || 0)
       } else {
@@ -380,11 +382,13 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [errorHoveredIdx, setErrorHoveredIdx] = useState<number | null>(null)
+  const [fcsErrorHoveredIdx, setFcsErrorHoveredIdx] = useState<number | null>(null)
   const [discardHoveredIdx, setDiscardHoveredIdx] = useState<number | null>(null)
   const [transitionHoveredIdx, setTransitionHoveredIdx] = useState<number | null>(null)
 
   const trafficChartRef = useRef<HTMLDivElement>(null)
   const errorChartRef = useRef<HTMLDivElement>(null)
+  const fcsErrorChartRef = useRef<HTMLDivElement>(null)
   const discardChartRef = useRef<HTMLDivElement>(null)
   const transitionChartRef = useRef<HTMLDivElement>(null)
 
@@ -471,6 +475,11 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     return buildHealthColumnar(historyData, interfaces, 'errors', true)
   }, [historyData, interfaces])
 
+  const fcsErrorHealth = useMemo(() => {
+    if (!historyData?.interfaces || interfaces.length === 0) return null
+    return buildHealthColumnar(historyData, interfaces, 'fcs_errors')
+  }, [historyData, interfaces])
+
   const discardHealth = useMemo(() => {
     if (!historyData?.interfaces || interfaces.length === 0) return null
     return buildHealthColumnar(historyData, interfaces, 'discards', true)
@@ -552,6 +561,9 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const handleErrorCursorIdx = useCallback((idx: number | null) => {
     setErrorHoveredIdx(idx)
   }, [])
+  const handleFcsErrorCursorIdx = useCallback((idx: number | null) => {
+    setFcsErrorHoveredIdx(idx)
+  }, [])
   const handleDiscardCursorIdx = useCallback((idx: number | null) => {
     setDiscardHoveredIdx(idx)
   }, [])
@@ -580,6 +592,15 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     onCursorIdx: handleErrorCursorIdx,
   })
 
+  const { plotRef: fcsErrorPlotRef} = useUPlotChart({
+    containerRef: fcsErrorChartRef,
+    data: fcsErrorHealth?.data ?? ([[]] as uPlot.AlignedData),
+    series: healthSeries,
+    height: 144,
+    axes: healthAxes,
+    onCursorIdx: handleFcsErrorCursorIdx,
+  })
+
   const { plotRef: discardPlotRef} = useUPlotChart({
     containerRef: discardChartRef,
     data: discardHealth?.data ?? ([[]] as uPlot.AlignedData),
@@ -604,6 +625,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   // Sync legend visibility to health charts
   const healthSeriesKeys = useMemo(() => [...interfaces], [interfaces])
   useUPlotLegendSync(errorPlotRef, legend, healthBidirectionalSeriesKeys)
+  useUPlotLegendSync(fcsErrorPlotRef, legend, healthSeriesKeys)
   useUPlotLegendSync(discardPlotRef, legend, healthBidirectionalSeriesKeys)
   useUPlotLegendSync(transitionPlotRef, legend, healthSeriesKeys)
 
@@ -670,6 +692,23 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
             visibleSeries={visibleSeries}
             interfaceLabels={interfaceLabels}
             bidirectional
+          />
+        </div>
+      )}
+
+      {fcsErrorHealth?.hasData && (
+        <div className={className}>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+            FCS Errors</div>
+          <div ref={fcsErrorChartRef} className="h-36" />
+          <HealthLegendTable
+            interfaces={interfaces}
+            colors={colors}
+            data={fcsErrorHealth.data}
+            hoveredIdx={fcsErrorHoveredIdx}
+            legend={legend}
+            visibleSeries={visibleSeries}
+            interfaceLabels={interfaceLabels}
           />
         </div>
       )}

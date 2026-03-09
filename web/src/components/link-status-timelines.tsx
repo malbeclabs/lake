@@ -158,10 +158,11 @@ function hasPacketLoss(hours: LinkHourStatus[]): boolean {
   return hours.some(h => h.avg_loss_pct > 0)
 }
 
-type MetricType = 'errors' | 'discards' | 'carrier'
+type MetricType = 'errors' | 'fcs_errors' | 'discards' | 'carrier'
 
 const METRIC_CONFIG: Record<MetricType, { label: string; dashArray?: string }> = {
   errors: { label: 'Errors', dashArray: undefined },
+  fcs_errors: { label: 'FCS Errors', dashArray: '8 3' },
   discards: { label: 'Discards', dashArray: '5 5' },
   carrier: { label: 'Carrier Transitions', dashArray: '2 2' },
 }
@@ -181,7 +182,7 @@ interface LinkInterfaceChartProps {
 function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: LinkInterfaceChartProps) {
   const { resolvedTheme } = useTheme()
   const isDarkMode = resolvedTheme === 'dark'
-  const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'discards', 'carrier']))
+  const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [enabledSides, setEnabledSides] = useState<Set<'A' | 'Z'>>(new Set(['A', 'Z']))
 
   // Determine which metrics have data
@@ -191,6 +192,9 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
       if ((h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
           (h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0) {
         metrics.add('errors')
+      }
+      if ((h.side_a_in_fcs_errors ?? 0) > 0 || (h.side_z_in_fcs_errors ?? 0) > 0) {
+        metrics.add('fcs_errors')
       }
       if ((h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 ||
           (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0) {
@@ -208,11 +212,13 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
     const sides: Set<'A' | 'Z'> = new Set()
     for (const h of hours) {
       if ((h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
+          (h.side_a_in_fcs_errors ?? 0) > 0 ||
           (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 ||
           (h.side_a_carrier_transitions ?? 0) > 0) {
         sides.add('A')
       }
       if ((h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0 ||
+          (h.side_z_in_fcs_errors ?? 0) > 0 ||
           (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0 ||
           (h.side_z_carrier_transitions ?? 0) > 0) {
         sides.add('Z')
@@ -248,12 +254,14 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
       // Side A
       A_errors_in: h.side_a_in_errors ?? 0,
       A_errors_out: -(h.side_a_out_errors ?? 0),
+      A_fcs_errors: h.side_a_in_fcs_errors ?? 0,
       A_discards_in: h.side_a_in_discards ?? 0,
       A_discards_out: -(h.side_a_out_discards ?? 0),
       A_carrier: h.side_a_carrier_transitions ?? 0,
       // Side Z
       Z_errors_in: h.side_z_in_errors ?? 0,
       Z_errors_out: -(h.side_z_out_errors ?? 0),
+      Z_fcs_errors: h.side_z_in_fcs_errors ?? 0,
       Z_discards_in: h.side_z_in_discards ?? 0,
       Z_discards_out: -(h.side_z_out_discards ?? 0),
       Z_carrier: h.side_z_carrier_transitions ?? 0,
@@ -280,10 +288,12 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
             if (!enabledSides.has(side)) return null
             const errorsIn = data[`${side}_errors_in`] || 0
             const errorsOut = Math.abs(data[`${side}_errors_out`] || 0)
+            const fcsErrors = data[`${side}_fcs_errors`] || 0
             const discardsIn = data[`${side}_discards_in`] || 0
             const discardsOut = Math.abs(data[`${side}_discards_out`] || 0)
             const carrier = data[`${side}_carrier`] || 0
             const hasData = (enabledMetrics.has('errors') && (errorsIn > 0 || errorsOut > 0)) ||
+                           (enabledMetrics.has('fcs_errors') && fcsErrors > 0) ||
                            (enabledMetrics.has('discards') && (discardsIn > 0 || discardsOut > 0)) ||
                            (enabledMetrics.has('carrier') && carrier > 0)
             if (!hasData) return null
@@ -296,6 +306,9 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
                 <div className="pl-3.5 text-xs text-muted-foreground space-y-0.5">
                   {enabledMetrics.has('errors') && (errorsIn > 0 || errorsOut > 0) && (
                     <div>Errors: {errorsIn.toLocaleString()} in / {errorsOut.toLocaleString()} out</div>
+                  )}
+                  {enabledMetrics.has('fcs_errors') && fcsErrors > 0 && (
+                    <div>FCS Errors: {fcsErrors.toLocaleString()}</div>
                   )}
                   {enabledMetrics.has('discards') && (discardsIn > 0 || discardsOut > 0) && (
                     <div>Discards: {discardsIn.toLocaleString()} in / {discardsOut.toLocaleString()} out</div>
@@ -324,6 +337,9 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
       lines.push({ dataKey: `${side}_errors_in`, color })
       lines.push({ dataKey: `${side}_errors_out`, color })
     }
+    if (enabledMetrics.has('fcs_errors') && availableMetrics.has('fcs_errors')) {
+      lines.push({ dataKey: `${side}_fcs_errors`, color, strokeDasharray: '8 3' })
+    }
     if (enabledMetrics.has('discards') && availableMetrics.has('discards')) {
       lines.push({ dataKey: `${side}_discards_in`, color, strokeDasharray: '5 5' })
       lines.push({ dataKey: `${side}_discards_out`, color, strokeDasharray: '5 5' })
@@ -340,7 +356,7 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
         <div className="space-y-1.5">
           <span className="text-xs text-muted-foreground">Metrics</span>
           <div className="flex flex-wrap gap-1">
-            {(['errors', 'discards', 'carrier'] as MetricType[]).map(metric => {
+            {(['errors', 'fcs_errors', 'discards', 'carrier'] as MetricType[]).map(metric => {
               if (!availableMetrics.has(metric)) return null
               const config = METRIC_CONFIG[metric]
               const isEnabled = enabledMetrics.has(metric)
@@ -660,7 +676,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
 export function LinkStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'discards', 'carrier_transitions'],
+  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions'],
   healthFilters = ['healthy', 'degraded', 'unhealthy'],
   showDrained = false,
   onShowDrainedChange,
@@ -742,7 +758,7 @@ export function LinkStatusTimelines({
       }
 
       const matchesIssue = hasIssues
-        ? issueReasons.some(reason => issueTypesSelected.includes(reason === 'fcs_errors' ? 'interface_errors' : reason))
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
         : noIssuesSelected
 
       // Must match at least one health filter

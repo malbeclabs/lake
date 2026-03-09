@@ -42,8 +42,10 @@ function deviceHourToLinkHour(hour: DeviceHourStatus) {
     samples: 0,
     side_a_in_errors: hour.in_errors,
     side_a_out_errors: hour.out_errors,
+    side_a_in_fcs_errors: hour.in_fcs_errors,
     side_z_in_errors: 0,
     side_z_out_errors: 0,
+    side_z_in_fcs_errors: 0,
     side_a_in_discards: hour.in_discards,
     side_a_out_discards: hour.out_discards,
     side_z_in_discards: 0,
@@ -79,11 +81,13 @@ export function SingleDeviceStatusRow({ devicePk, timeRange = '24h' }: SingleDev
   // Extract issue reasons from hours data
   const issueReasons: string[] = []
   const hasAnyErrors = data.hours.some(h => h.in_errors > 0 || h.out_errors > 0)
+  const hasAnyFcsErrors = data.hours.some(h => h.in_fcs_errors > 0)
   const hasAnyDiscards = data.hours.some(h => h.in_discards > 0 || h.out_discards > 0)
   const hasAnyCarrier = data.hours.some(h => h.carrier_transitions > 0)
   const hasAnyDrained = data.issue_reasons?.includes('drained') ?? false
 
   if (hasAnyErrors) issueReasons.push('interface_errors')
+  if (hasAnyFcsErrors) issueReasons.push('fcs_errors')
   if (hasAnyDiscards) issueReasons.push('discards')
   if (hasAnyCarrier) issueReasons.push('carrier_transitions')
   if (hasAnyDrained) issueReasons.push('drained')
@@ -98,6 +102,9 @@ export function SingleDeviceStatusRow({ devicePk, timeRange = '24h' }: SingleDev
         <div className="flex flex-wrap gap-1.5">
           {issueReasons.includes('interface_errors') && (
             <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
+          )}
+          {issueReasons.includes('fcs_errors') && (
+            <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>FCS Errors</span>
           )}
           {issueReasons.includes('discards') && (
             <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' }}>Discards</span>

@@ -66,12 +66,14 @@ export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkSta
     return latencyOveragePct >= 20 // LATENCY_WARNING_PCT from backend
   })
   const hasAnyErrors = data.hours.some(h => (h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 || (h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0)
+  const hasAnyFcsErrors = data.hours.some(h => (h.side_a_in_fcs_errors ?? 0) > 0 || (h.side_z_in_fcs_errors ?? 0) > 0)
   const hasAnyDiscards = data.hours.some(h => (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 || (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0)
   const hasAnyCarrier = data.hours.some(h => (h.side_a_carrier_transitions ?? 0) > 0 || (h.side_z_carrier_transitions ?? 0) > 0)
 
   if (hasAnyPacketLoss) issueReasons.push('packet_loss')
   if (hasAnyHighLatency) issueReasons.push('high_latency')
   if (hasAnyErrors) issueReasons.push('interface_errors')
+  if (hasAnyFcsErrors) issueReasons.push('fcs_errors')
   if (hasAnyDiscards) issueReasons.push('discards')
   if (hasAnyCarrier) issueReasons.push('carrier_transitions')
 
@@ -88,6 +90,9 @@ export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkSta
           )}
           {issueReasons.includes('interface_errors') && (
             <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
+          )}
+          {issueReasons.includes('fcs_errors') && (
+            <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>FCS Errors</span>
           )}
           {issueReasons.includes('discards') && (
             <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' }}>Discards</span>

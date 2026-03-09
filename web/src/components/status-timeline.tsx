@@ -67,8 +67,10 @@ function hasInterfaceIssues(hour: LinkHourStatus): boolean {
   return (
     (hour.side_a_in_errors ?? 0) > 0 ||
     (hour.side_a_out_errors ?? 0) > 0 ||
+    (hour.side_a_in_fcs_errors ?? 0) > 0 ||
     (hour.side_z_in_errors ?? 0) > 0 ||
     (hour.side_z_out_errors ?? 0) > 0 ||
+    (hour.side_z_in_fcs_errors ?? 0) > 0 ||
     (hour.side_a_in_discards ?? 0) > 0 ||
     (hour.side_a_out_discards ?? 0) > 0 ||
     (hour.side_z_in_discards ?? 0) > 0 ||
@@ -133,10 +135,12 @@ function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string
   if (hasInterfaceIssues(hour)) {
     const interfaceIssues: string[] = []
     const totalErrors = (hour.side_a_in_errors ?? 0) + (hour.side_a_out_errors ?? 0) + (hour.side_z_in_errors ?? 0) + (hour.side_z_out_errors ?? 0)
+    const totalFcsErrors = (hour.side_a_in_fcs_errors ?? 0) + (hour.side_z_in_fcs_errors ?? 0)
     const totalDiscards = (hour.side_a_in_discards ?? 0) + (hour.side_a_out_discards ?? 0) + (hour.side_z_in_discards ?? 0) + (hour.side_z_out_discards ?? 0)
     const totalCarrier = (hour.side_a_carrier_transitions ?? 0) + (hour.side_z_carrier_transitions ?? 0)
 
     if (totalErrors > 0) interfaceIssues.push(`${totalErrors} interface errors`)
+    if (totalFcsErrors > 0) interfaceIssues.push(`${totalFcsErrors} FCS errors`)
     if (totalDiscards > 0) interfaceIssues.push(`${totalDiscards} discards`)
     if (totalCarrier > 0) interfaceIssues.push(`${totalCarrier} carrier transitions`)
 
@@ -284,23 +288,26 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
                       {/* Interface issues */}
                       {(() => {
                         const sideAErrors = (hour.side_a_in_errors ?? 0) + (hour.side_a_out_errors ?? 0)
+                        const sideAFcsErrors = hour.side_a_in_fcs_errors ?? 0
                         const sideADiscards = (hour.side_a_in_discards ?? 0) + (hour.side_a_out_discards ?? 0)
                         const sideACarrier = hour.side_a_carrier_transitions ?? 0
                         const sideZErrors = (hour.side_z_in_errors ?? 0) + (hour.side_z_out_errors ?? 0)
+                        const sideZFcsErrors = hour.side_z_in_fcs_errors ?? 0
                         const sideZDiscards = (hour.side_z_in_discards ?? 0) + (hour.side_z_out_discards ?? 0)
                         const sideZCarrier = hour.side_z_carrier_transitions ?? 0
-                        const hasInterfaceIssues = sideAErrors > 0 || sideADiscards > 0 || sideACarrier > 0 ||
-                                                   sideZErrors > 0 || sideZDiscards > 0 || sideZCarrier > 0
+                        const hasInterfaceIssues = sideAErrors > 0 || sideAFcsErrors > 0 || sideADiscards > 0 || sideACarrier > 0 ||
+                                                   sideZErrors > 0 || sideZFcsErrors > 0 || sideZDiscards > 0 || sideZCarrier > 0
                         if (!hasInterfaceIssues) return null
                         return (
                           <div className="pt-2 mt-2 border-t border-border space-y-1.5">
                             <div className="text-[11px] font-medium text-foreground">Interface Issues</div>
-                            {(sideAErrors > 0 || sideADiscards > 0 || sideACarrier > 0) && (
+                            {(sideAErrors > 0 || sideAFcsErrors > 0 || sideADiscards > 0 || sideACarrier > 0) && (
                               <div className="text-[11px]">
                                 <span className="text-muted-foreground">A-Side: </span>
                                 <span className="font-mono">
                                   {[
                                     sideAErrors > 0 && <span key="err" className="text-red-500">{sideAErrors} errors</span>,
+                                    sideAFcsErrors > 0 && <span key="fcs" className="text-orange-500">{sideAFcsErrors} FCS errors</span>,
                                     sideADiscards > 0 && <span key="disc" className="text-teal-500">{sideADiscards} discards</span>,
                                     sideACarrier > 0 && <span key="carr" className="text-yellow-600">{sideACarrier} carrier</span>,
                                   ].filter(Boolean).map((el, i, arr) => (
@@ -309,12 +316,13 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
                                 </span>
                               </div>
                             )}
-                            {(sideZErrors > 0 || sideZDiscards > 0 || sideZCarrier > 0) && (
+                            {(sideZErrors > 0 || sideZFcsErrors > 0 || sideZDiscards > 0 || sideZCarrier > 0) && (
                               <div className="text-[11px]">
                                 <span className="text-muted-foreground">Z-Side: </span>
                                 <span className="font-mono">
                                   {[
                                     sideZErrors > 0 && <span key="err" className="text-red-500">{sideZErrors} errors</span>,
+                                    sideZFcsErrors > 0 && <span key="fcs" className="text-orange-500">{sideZFcsErrors} FCS errors</span>,
                                     sideZDiscards > 0 && <span key="disc" className="text-teal-500">{sideZDiscards} discards</span>,
                                     sideZCarrier > 0 && <span key="carr" className="text-yellow-600">{sideZCarrier} carrier</span>,
                                   ].filter(Boolean).map((el, i, arr) => (
