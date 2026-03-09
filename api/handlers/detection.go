@@ -188,7 +188,7 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 		return nil, nil
 	}
 
-	// Get the most recent two 5-min buckets individually to require 2+ consecutive above-threshold
+	// Get the most recent 5-min buckets to check for above-threshold loss
 	query := `
 		WITH recent_buckets AS (
 			SELECT
@@ -254,16 +254,10 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 			continue
 		}
 
-		// Require at least 2 consecutive recent buckets above threshold
-		consecutiveAbove := 0
-		for _, b := range buckets {
-			if b.LossPct >= threshold {
-				consecutiveAbove++
-			} else {
-				break // buckets are ordered most recent first (rn=1,2,3)
-			}
-		}
-		if consecutiveAbove < 2 {
+		// Require the most recent bucket to be above threshold to trigger detecting state.
+		// A single bucket is enough — the confirmed flag (based on min_duration) handles
+		// whether the incident is promoted from "detecting" to "confirmed".
+		if len(buckets) == 0 || buckets[0].LossPct < threshold {
 			continue
 		}
 

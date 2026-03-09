@@ -273,15 +273,10 @@ func fetchCurrentHighCounterDevices(ctx context.Context, conn driver.Conn, thres
 			continue
 		}
 
-		consecutiveAbove := 0
-		for _, b := range buckets {
-			if b.Value >= threshold {
-				consecutiveAbove++
-			} else {
-				break
-			}
-		}
-		if consecutiveAbove < dp.minBuckets() {
+		// Require the most recent bucket to be above threshold to trigger detecting state.
+		// A single bucket is enough — the confirmed flag (based on min_duration) handles
+		// whether the incident is promoted from "detecting" to "confirmed".
+		if len(buckets) == 0 || buckets[0].Value < threshold {
 			continue
 		}
 
@@ -1171,21 +1166,17 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter by min duration and set confirmed
+	// Set Confirmed flag based on min duration
 	minDurationSecs := int64(detectParams.MinDuration.Seconds())
-	filtered := allIncidents[:0]
 	for i := range allIncidents {
 		inc := &allIncidents[i]
 		if inc.IsOngoing {
 			startTime, _ := time.Parse(time.RFC3339, inc.StartedAt)
 			inc.Confirmed = time.Since(startTime) >= detectParams.MinDuration
-			filtered = append(filtered, *inc)
-		} else if inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
-			inc.Confirmed = true
-			filtered = append(filtered, *inc)
+		} else {
+			inc.Confirmed = inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs
 		}
 	}
-	allIncidents = filtered
 
 	// Enrich counter incidents with affected interface names
 	enrichDeviceIncidentsWithInterfaces(ctx, envDB(ctx), allIncidents)
@@ -1381,21 +1372,17 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter by min duration
+	// Set Confirmed flag based on min duration
 	minDurationSecs := int64(detectParams.MinDuration.Seconds())
-	filtered := allIncidents[:0]
 	for i := range allIncidents {
 		inc := &allIncidents[i]
 		if inc.IsOngoing {
 			startTime, _ := time.Parse(time.RFC3339, inc.StartedAt)
 			inc.Confirmed = time.Since(startTime) >= detectParams.MinDuration
-			filtered = append(filtered, *inc)
-		} else if inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
-			inc.Confirmed = true
-			filtered = append(filtered, *inc)
+		} else {
+			inc.Confirmed = inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs
 		}
 	}
-	allIncidents = filtered
 
 	enrichDeviceIncidentsWithInterfaces(ctx, envDB(ctx), allIncidents)
 
@@ -1512,19 +1499,15 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	}
 
 	minDurationSecs := int64(detectParams.MinDuration.Seconds())
-	filtered := allIncidents[:0]
 	for i := range allIncidents {
 		inc := &allIncidents[i]
 		if inc.IsOngoing {
 			startTime, _ := time.Parse(time.RFC3339, inc.StartedAt)
 			inc.Confirmed = time.Since(startTime) >= detectParams.MinDuration
-			filtered = append(filtered, *inc)
-		} else if inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs {
-			inc.Confirmed = true
-			filtered = append(filtered, *inc)
+		} else {
+			inc.Confirmed = inc.DurationSeconds == nil || *inc.DurationSeconds >= minDurationSecs
 		}
 	}
-	allIncidents = filtered
 
 	enrichDeviceIncidentsWithInterfaces(ctx, envDB(ctx), allIncidents)
 

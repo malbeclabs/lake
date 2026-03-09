@@ -55,12 +55,6 @@ function formatDuration(seconds: number | undefined): string {
   return hours > 0 ? `${days}d ${hours}h` : `${days}d`
 }
 
-// Client-side confirmed check: ongoing incident is confirmed if elapsed time >= minDuration
-function isConfirmed(incident: { is_ongoing: boolean; started_at: string }, minDurationMin: number): boolean {
-  if (!incident.is_ongoing) return true
-  const elapsedSecs = (Date.now() - new Date(incident.started_at).getTime()) / 1000
-  return elapsedSecs >= minDurationMin * 60
-}
 
 type IncidentScope = 'links' | 'devices'
 
@@ -395,38 +389,38 @@ export function IncidentsPage() {
 
   const displayedActiveIncidents = useMemo(() => {
     if (showDetecting) return sortedActiveIncidents
-    return sortedActiveIncidents.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
-  }, [sortedActiveIncidents, showDetecting, minDuration])
+    return sortedActiveIncidents.filter(i => i.confirmed)
+  }, [sortedActiveIncidents, showDetecting])
 
   const displayedActiveDeviceIncidents = useMemo(() => {
     if (showDetecting) return sortedActiveDeviceIncidents
-    return sortedActiveDeviceIncidents.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
-  }, [sortedActiveDeviceIncidents, showDetecting, minDuration])
+    return sortedActiveDeviceIncidents.filter(i => i.confirmed)
+  }, [sortedActiveDeviceIncidents, showDetecting])
 
   // Compute counts from filtered data (respects showDetecting toggle)
   const filteredByType = useMemo(() => {
     if (scope === 'links') {
       const all = linkData?.active || []
-      const visible = showDetecting ? all : all.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+      const visible = showDetecting ? all : all.filter(i => i.confirmed)
       const byType: Record<string, number> = { packet_loss: 0, errors: 0, discards: 0, carrier: 0, no_data: 0 }
       let ongoing = 0
       for (const i of visible) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
-        if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
+        if (i.is_ongoing && i.confirmed) ongoing++
       }
       return { byType, ongoing }
     } else {
       const all = deviceData?.active || []
-      const visible = showDetecting ? all : all.filter(i => !i.is_ongoing || isConfirmed(i, minDuration))
+      const visible = showDetecting ? all : all.filter(i => i.confirmed)
       const byType: Record<string, number> = { errors: 0, discards: 0, carrier: 0, no_data: 0 }
       let ongoing = 0
       for (const i of visible) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
-        if (i.is_ongoing && isConfirmed(i, minDuration)) ongoing++
+        if (i.is_ongoing && i.confirmed) ongoing++
       }
       return { byType, ongoing }
     }
-  }, [scope, linkData?.active, deviceData?.active, showDetecting, minDuration])
+  }, [scope, linkData?.active, deviceData?.active, showDetecting])
 
   const toggleSort = (field: 'started_at' | 'duration') => {
     if (sortField === field) {
@@ -817,7 +811,7 @@ export function IncidentsPage() {
                       sortField={sortField}
                       sortDir={sortDir}
                       toggleSort={toggleSort}
-                      minDuration={minDuration}
+
                     />
                   ) : (
                     <ActiveDeviceIncidentsTable
@@ -825,7 +819,7 @@ export function IncidentsPage() {
                       sortField={sortField}
                       sortDir={sortDir}
                       toggleSort={toggleSort}
-                      minDuration={minDuration}
+
                     />
                   )}
                 </>
@@ -870,13 +864,11 @@ function ActiveIncidentsTable({
   sortField,
   sortDir,
   toggleSort,
-  minDuration,
 }: {
   incidents: LinkIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'duration') => void
-  minDuration: number
 }) {
   // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -963,7 +955,7 @@ function ActiveIncidentsTable({
                 }
               </td>
               <td className="px-4 py-3">
-                {incident.is_ongoing && isConfirmed(incident, minDuration) ? (
+                {incident.is_ongoing && incident.confirmed ? (
                   <span className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -1095,13 +1087,11 @@ function ActiveDeviceIncidentsTable({
   sortField,
   sortDir,
   toggleSort,
-  minDuration,
 }: {
   incidents: DeviceIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'duration') => void
-  minDuration: number
 }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
@@ -1180,7 +1170,7 @@ function ActiveDeviceIncidentsTable({
                 }
               </td>
               <td className="px-4 py-3">
-                {incident.is_ongoing && isConfirmed(incident, minDuration) ? (
+                {incident.is_ongoing && incident.confirmed ? (
                   <span className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
