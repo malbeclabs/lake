@@ -427,6 +427,10 @@ function SummaryCard({
   )
 }
 
+const PANEL_MIN_WIDTH = 240
+const PANEL_MAX_WIDTH = 640
+const PANEL_DEFAULT_WIDTH = 320
+
 export function PathLatencyPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const optimizeParam = searchParams.get('optimize') as PathOptimizeMode | null
@@ -503,6 +507,38 @@ export function PathLatencyPage() {
   }, [setSearchParams])
 
   const showLoading = useDelayedLoading(connectivityLoading)
+
+  const [panelWidth, setPanelWidth] = useState(PANEL_DEFAULT_WIDTH)
+  const isDragging = useRef(false)
+  const dragStartX = useRef(0)
+  const dragStartWidth = useRef(0)
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    dragStartX.current = e.clientX
+    dragStartWidth.current = panelWidth
+
+    const onMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = dragStartX.current - ev.clientX
+      const newWidth = Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, dragStartWidth.current + delta))
+      setPanelWidth(newWidth)
+    }
+
+    const onUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [panelWidth])
 
   const { data: pathLatencyData, isLoading: pathLatencyLoading } = useQuery({
     queryKey: ['metro-path-latency', optimizeMode],
@@ -760,16 +796,29 @@ export function PathLatencyPage() {
 
         {/* Detail panel */}
         {selectedPathLatency && selectedCell && (
-          <div className="w-80 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
-            <PathLatencyDetail
-              fromCode={selectedPathLatency.fromMetroCode}
-              toCode={selectedPathLatency.toMetroCode}
-              pathLatency={selectedPathLatency}
-              pathDetail={pathDetailData ?? null}
-              isLoadingDetail={pathDetailLoading}
-              onClose={() => setSelectedCell(null)}
-            />
-          </div>
+          <>
+            {/* Drag handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 transition-colors group relative"
+              title="Drag to resize"
+            >
+              <div className="absolute inset-y-0 -left-1 -right-1" />
+            </div>
+            <div
+              className="flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden"
+              style={{ width: panelWidth }}
+            >
+              <PathLatencyDetail
+                fromCode={selectedPathLatency.fromMetroCode}
+                toCode={selectedPathLatency.toMetroCode}
+                pathLatency={selectedPathLatency}
+                pathDetail={pathDetailData ?? null}
+                isLoadingDetail={pathDetailLoading}
+                onClose={() => setSelectedCell(null)}
+              />
+            </div>
+          </>
         )}
       </div>
 
