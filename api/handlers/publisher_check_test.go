@@ -237,6 +237,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	assert.True(t, pub1.PublishingRetransmitted)
 	assert.Equal(t, uint64(1), pub1.LeaderSlots)
 	assert.Equal(t, uint64(2), pub1.TotalSlots)
+	assert.Equal(t, "Validator 1", pub1.ValidatorName)
 	assert.Equal(t, "Jito", pub1.ValidatorClient)
 	assert.Equal(t, "2.2.3", pub1.ValidatorVersion)
 	assert.True(t, pub1.ValidatorVersionOk)
@@ -248,6 +249,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	assert.True(t, pub2.MulticastConnected)
 	assert.False(t, pub2.PublishingLeaderShreds)
 	assert.True(t, pub2.PublishingRetransmitted)
+	assert.Equal(t, "", pub2.ValidatorName)
 	assert.Equal(t, uint64(1), pub2.TotalSlots)
 
 	// Third publisher (5B lamports) — connected but NOT publishing
@@ -261,6 +263,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	assert.Equal(t, uint64(0), pub3.LeaderSlots)
 	assert.Equal(t, uint64(0), pub3.TotalUniqueShreds)
 	assert.Equal(t, "AMS", pub3.DZMetroCode)
+	assert.Equal(t, "Validator 3", pub3.ValidatorName)
 	assert.Equal(t, "Agave", pub3.ValidatorClient)
 	assert.Equal(t, "2.1.0", pub3.ValidatorVersion)
 	assert.True(t, pub3.ValidatorVersionOk)
