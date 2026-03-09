@@ -16,6 +16,8 @@ type SortField =
   | 'client_ip'
   | 'dz_user_pubkey'
   | 'vote_pubkey'
+  | 'validator_name'
+  | 'activated_stake'
   | 'dz_device_code'
   | 'dz_metro_code'
   | 'publishing_leader_shreds'
@@ -26,6 +28,19 @@ type SortField =
 type SortDirection = 'asc' | 'desc'
 
 type PublishingFilter = 'all' | 'publishing' | 'not_publishing'
+
+function formatStake(lamports: number): string {
+  if (lamports === 0) return ''
+  const sol = lamports / 1e9
+  if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M`
+  if (sol >= 1e3) return `${(sol / 1e3).toFixed(0)}K`
+  return sol.toLocaleString(undefined, { maximumFractionDigits: 0 })
+}
+
+function formatStakeExact(lamports: number): string {
+  if (lamports === 0) return '0 SOL'
+  return `${(lamports / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 })} SOL`
+}
 
 export function PublisherCheckPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -111,10 +126,9 @@ export function PublisherCheckPage() {
     })
   }, [setSearchParams])
 
-  // Fetch data — pass the server-side filter (for IP/DZ ID matching)
   const { data, isLoading, error } = useQuery({
-    queryKey: ['publisher-check', activeFilter, epochs],
-    queryFn: () => fetchPublisherCheck(activeFilter || undefined, epochs),
+    queryKey: ['publisher-check', epochs],
+    queryFn: () => fetchPublisherCheck(undefined, epochs),
     refetchInterval: 30000,
   })
 
@@ -133,21 +147,35 @@ export function PublisherCheckPage() {
         case 'client_ip': cmp = a.client_ip.localeCompare(b.client_ip); break
         case 'dz_user_pubkey': cmp = a.dz_user_pubkey.localeCompare(b.dz_user_pubkey); break
         case 'vote_pubkey': cmp = a.vote_pubkey.localeCompare(b.vote_pubkey); break
+        case 'validator_name': cmp = a.validator_name.localeCompare(b.validator_name); break
+        case 'activated_stake': cmp = Number(a.activated_stake) - Number(b.activated_stake); break
         case 'dz_device_code': cmp = a.dz_device_code.localeCompare(b.dz_device_code); break
         case 'dz_metro_code': cmp = a.dz_metro_code.localeCompare(b.dz_metro_code); break
         case 'publishing_leader_shreds': cmp = Number(a.publishing_leader_shreds) - Number(b.publishing_leader_shreds); break
         case 'publishing_retransmitted': cmp = Number(a.publishing_retransmitted) - Number(b.publishing_retransmitted); break
         case 'leader_slots': cmp = a.leader_slots - b.leader_slots; break
         case 'validator_client': cmp = `${a.validator_client} ${a.validator_version}`.localeCompare(`${b.validator_client} ${b.validator_version}`); break
-        default: cmp = Number(a.activated_stake) - Number(b.activated_stake)
+        default: cmp = 0
       }
       return sortDirection === 'asc' ? cmp : -cmp
     })
   }, [data?.publishers, sortField, sortDirection, isPublishing])
 
+  const searchFilteredPublishers = useMemo(() => {
+    if (!activeFilter) return sortedPublishers
+    const q = activeFilter.toLowerCase()
+    return sortedPublishers.filter(pub =>
+      pub.publisher_ip.toLowerCase().includes(q) ||
+      pub.client_ip.toLowerCase().includes(q) ||
+      pub.dz_user_pubkey.toLowerCase().includes(q) ||
+      pub.vote_pubkey.toLowerCase().includes(q) ||
+      pub.validator_name.toLowerCase().includes(q)
+    )
+  }, [sortedPublishers, activeFilter])
+
   const nonBackupPublishers = useMemo(() =>
-    showBackups ? sortedPublishers : sortedPublishers.filter(pub => !pub.is_backup),
-  [sortedPublishers, showBackups])
+    showBackups ? searchFilteredPublishers : searchFilteredPublishers.filter(pub => !pub.is_backup),
+  [searchFilteredPublishers, showBackups])
 
   const filteredPublishers = useMemo(() => {
     if (publishingFilter === 'all') return nonBackupPublishers
@@ -209,7 +237,7 @@ export function PublisherCheckPage() {
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Filter by IP or DZ ID..."
+                  placeholder="Search by name, Vote ID, IP, or DZ ID..."
                   value={filterInput}
                   onChange={(e) => setFilterInput(e.target.value)}
                   className="pl-8 pr-3 py-1.5 text-sm border border-border rounded-md bg-background w-64 focus:outline-none focus:ring-1 focus:ring-accent"
@@ -333,6 +361,12 @@ export function PublisherCheckPage() {
                   <th className={thClass} onClick={() => handleSort('vote_pubkey')}>
                     Vote ID<SortIcon field="vote_pubkey" />
                   </th>
+                  <th className={thClass} onClick={() => handleSort('validator_name')}>
+                    Name<SortIcon field="validator_name" />
+                  </th>
+                  <th className={thClass} onClick={() => handleSort('activated_stake')}>
+                    Stake<SortIcon field="activated_stake" />
+                  </th>
                   <th className={thClass} onClick={() => handleSort('dz_device_code')}>
                     Device<SortIcon field="dz_device_code" />
                   </th>
@@ -356,7 +390,7 @@ export function PublisherCheckPage() {
               <tbody>
                 {pagedPublishers.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={13} className="px-4 py-12 text-center text-muted-foreground">
                       {activeFilter ? 'No publishers found for this filter' : 'No publishers found'}
                     </td>
                   </tr>
@@ -396,6 +430,12 @@ export function PublisherCheckPage() {
                             {pub.vote_pubkey.slice(0, 12)}...
                           </button>
                         ) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm max-w-[200px] truncate" title={pub.validator_name}>
+                        {pub.validator_name || '\u2014'}
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums" title={formatStakeExact(pub.activated_stake)}>
+                        {pub.activated_stake ? formatStake(pub.activated_stake) : '\u2014'}
                       </td>
                       <td className="px-4 py-3 text-sm">{pub.dz_device_code || '—'}</td>
                       <td className="px-4 py-3 text-sm">{pub.dz_metro_code || '—'}</td>
