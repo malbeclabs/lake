@@ -1968,7 +1968,7 @@ function DeviceIssuesFilterCard({
     { filter: 'interface_errors', label: 'Interface Errors', color: 'bg-fuchsia-500', description: 'Device experiencing interface errors.' },
     { filter: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-600', description: 'Device experiencing FCS (Frame Check Sequence) errors.' },
     { filter: 'discards', label: 'Discards', color: 'bg-rose-500', description: 'Device experiencing interface discards.' },
-    { filter: 'carrier_transitions', label: 'Link Flapping', color: 'bg-orange-500', description: 'Device experiencing carrier state changes (link up/down).' },
+    { filter: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-orange-500', description: 'Device experiencing carrier state changes (link up/down).' },
     { filter: 'drained', label: 'Drained', color: 'bg-slate-500 dark:bg-slate-600', description: 'Device is soft-drained, hard-drained, or suspended.' },
     { filter: 'no_issues', label: 'No Issues', color: 'bg-cyan-500', description: 'Device with no detected issues in the time range.' },
   ]

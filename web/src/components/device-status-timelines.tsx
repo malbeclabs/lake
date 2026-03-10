@@ -776,7 +776,7 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
                 )}
                 {issueReasons.includes('carrier_transitions') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-500/15 text-orange-600 dark:text-orange-400">
-                    Link Flapping
+                    Carrier Transitions
                   </span>
                 )}
                 {issueReasons.includes('drained') && (
