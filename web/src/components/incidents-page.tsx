@@ -922,6 +922,49 @@ export function IncidentsPage() {
   )
 }
 
+type GroupedLinkIncident = {
+  link_pk: string
+  link_code: string
+  link_type: string
+  side_a_metro: string
+  side_z_metro: string
+  contributor_code: string
+  is_drained: boolean
+  started_at: string
+  is_ongoing: boolean
+  duration_seconds?: number
+  incidents: LinkIncident[]
+}
+
+function groupIncidentsByLink(incidents: LinkIncident[]): GroupedLinkIncident[] {
+  const groups = new Map<string, LinkIncident[]>()
+  for (const inc of incidents) {
+    const existing = groups.get(inc.link_pk)
+    if (existing) existing.push(inc)
+    else groups.set(inc.link_pk, [inc])
+  }
+  return Array.from(groups.values()).map((incs) => {
+    const earliest = incs.reduce((a, b) =>
+      new Date(a.started_at).getTime() < new Date(b.started_at).getTime() ? a : b
+    )
+    const anyOngoing = incs.some(i => i.is_ongoing)
+    const maxDuration = anyOngoing ? undefined : Math.max(...incs.map(i => i.duration_seconds || 0))
+    return {
+      link_pk: earliest.link_pk,
+      link_code: earliest.link_code,
+      link_type: earliest.link_type,
+      side_a_metro: earliest.side_a_metro,
+      side_z_metro: earliest.side_z_metro,
+      contributor_code: earliest.contributor_code,
+      is_drained: incs.some(i => i.is_drained),
+      started_at: earliest.started_at,
+      is_ongoing: anyOngoing,
+      duration_seconds: maxDuration,
+      incidents: incs,
+    }
+  })
+}
+
 function ActiveIncidentsTable({
   incidents,
   sortField,
@@ -936,6 +979,8 @@ function ActiveIncidentsTable({
   // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
+
+  const grouped = useMemo(() => groupIncidentsByLink(incidents), [incidents])
 
   return (
     <div className="overflow-hidden">
@@ -966,58 +1011,65 @@ function ActiveIncidentsTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
-          {incidents.map((incident) => (
-            <tr key={incident.id} className="hover:bg-muted/30">
-              <td className="px-4 py-3">
-                <Link
-                  to={`/dz/links/${encodeURIComponent(incident.link_pk)}`}
-                  className="text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  {incident.link_code}
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-                <div className="text-xs text-muted-foreground">{incident.contributor_code} · {incident.link_type}</div>
-              </td>
-              <td className="px-4 py-3">
-                <span className="font-mono">
-                  {incident.side_a_metro} &rarr; {incident.side_z_metro}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <IncidentTypeBadge type={incident.incident_type} />
-                  {incident.is_drained && <DrainedBadge />}
-                  {incident.incident_type === 'packet_loss' && incident.peak_loss_pct != null && (
-                    <span className="text-xs text-muted-foreground">
-                      ({incident.peak_loss_pct.toFixed(0)}%)
-                    </span>
-                  )}
-                  {incident.peak_count != null && incident.incident_type !== 'packet_loss' && (
-                    <span className="text-xs text-muted-foreground">
-                      ({incident.peak_count})
-                    </span>
-                  )}
-                </div>
-                {incident.affected_interfaces && incident.affected_interfaces.length > 0 && (
-                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">
-                    {incident.affected_interfaces.join(', ')}
+          {grouped.map((group) => {
+            const allInterfaces = Array.from(new Set(group.incidents.flatMap(i => i.affected_interfaces || [])))
+            return (
+              <tr key={group.link_pk} className="hover:bg-muted/30">
+                <td className="px-4 py-3">
+                  <Link
+                    to={`/dz/links/${encodeURIComponent(group.link_pk)}`}
+                    className="text-primary hover:underline inline-flex items-center gap-1"
+                  >
+                    {group.link_code}
+                    <ExternalLink className="h-3 w-3" />
+                  </Link>
+                  <div className="text-xs text-muted-foreground">{group.contributor_code} · {group.link_type}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="font-mono">
+                    {group.side_a_metro} &rarr; {group.side_z_metro}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {group.incidents.map((incident) => (
+                      <span key={incident.id} className="inline-flex items-center gap-1">
+                        <IncidentTypeBadge type={incident.incident_type} />
+                        {incident.incident_type === 'packet_loss' && incident.peak_loss_pct != null && (
+                          <span className="text-xs text-muted-foreground">
+                            ({incident.peak_loss_pct.toFixed(0)}%)
+                          </span>
+                        )}
+                        {incident.peak_count != null && incident.incident_type !== 'packet_loss' && (
+                          <span className="text-xs text-muted-foreground">
+                            ({incident.peak_count})
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                    {group.is_drained && <DrainedBadge />}
                   </div>
-                )}
-              </td>
-              <td className="px-4 py-3">
-                <div>{formatTimeAgo(incident.started_at)}</div>
-                <div className="text-xs text-muted-foreground">
-                  {formatTimestamp(incident.started_at)}
-                </div>
-              </td>
-              <td className="px-4 py-3">
-                {incident.is_ongoing
-                  ? formatDuration(Math.floor((renderTimestamp - new Date(incident.started_at).getTime()) / 1000))
-                  : formatDuration(incident.duration_seconds)
-                }
-              </td>
-            </tr>
-          ))}
+                  {allInterfaces.length > 0 && (
+                    <div className="text-xs text-muted-foreground mt-0.5 font-mono">
+                      {allInterfaces.join(', ')}
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <div>{formatTimeAgo(group.started_at)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatTimestamp(group.started_at)}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  {group.is_ongoing
+                    ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
+                    : formatDuration(group.duration_seconds)
+                  }
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
