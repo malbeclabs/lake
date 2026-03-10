@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -246,8 +247,8 @@ func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
 	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
 	require.NoError(t, err, "failed to create test database")
 
-	// Run migrations
-	err = chmigrations.RunMigrations(ctx, slog.Default(), chmigrations.MigrationConfig{
+	// Run migrations (use discard logger to avoid noisy output in CI)
+	err = chmigrations.RunMigrations(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), chmigrations.MigrationConfig{
 		Addr:     db.addr,
 		Database: databaseName,
 		Username: db.cfg.Username,

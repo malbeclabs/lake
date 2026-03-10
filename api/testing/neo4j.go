@@ -3,6 +3,7 @@ package apitesting
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -156,8 +157,8 @@ func SetupTestNeo4jWithData(t *testing.T, db *Neo4jDB, seedFunc func(ctx context
 	_, err = result.Consume(ctx)
 	require.NoError(t, err, "failed to consume clear result")
 
-	// Run migrations
-	err = neo4j.RunMigrations(ctx, slog.Default(), neo4j.MigrationConfig{
+	// Run migrations (use discard logger to avoid noisy output in CI)
+	err = neo4j.RunMigrations(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), neo4j.MigrationConfig{
 		URI:      db.boltURL,
 		Database: neo4j.DefaultDatabase,
 		Username: db.cfg.Username,

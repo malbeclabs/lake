@@ -3,6 +3,7 @@ package neo4jtesting
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -113,7 +114,7 @@ func newTestClient(t *testing.T, db *DB, readOnly bool) (neo4j.Client, error) {
 	session.Close(t.Context())
 
 	// Run migrations to initialize schema
-	if err := neo4j.RunMigrations(t.Context(), slog.Default(), neo4j.MigrationConfig{
+	if err := neo4j.RunMigrations(t.Context(), slog.New(slog.NewTextHandler(io.Discard, nil)), neo4j.MigrationConfig{
 		URI:      db.boltURL,
 		Database: neo4j.DefaultDatabase,
 		Username: db.cfg.Username,

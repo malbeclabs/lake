@@ -130,6 +130,7 @@ func SetupTestDB(t *testing.T, db *DB) {
 	err = goose.SetDialect("postgres")
 	require.NoError(t, err, "failed to set goose dialect")
 
+	goose.SetLogger(goose.NopLogger())
 	err = goose.Up(sqlDB, "migrations")
 	require.NoError(t, err, "failed to run migrations")
 	sqlDB.Close()
