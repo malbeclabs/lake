@@ -16,6 +16,13 @@ import (
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 )
 
+// Set at build time via ldflags.
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -24,6 +31,7 @@ func main() {
 }
 
 func run() error {
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	verboseFlag := flag.Bool("verbose", false, "enable verbose (debug) logging")
 
 	// ClickHouse configuration
@@ -100,6 +108,11 @@ func run() error {
 	remoteClickhousePasswordFlag := flag.String("remote-clickhouse-password", "", "Remote ClickHouse password (or set REMOTE_CH_PASSWORD env var)")
 
 	flag.Parse()
+
+	if *versionFlag {
+		fmt.Printf("lake-admin %s (commit %s, built %s)\n", version, commit, date)
+		return nil
+	}
 
 	// Load .env file. godotenv does not override existing env vars, so
 	// explicitly set env vars take precedence.
