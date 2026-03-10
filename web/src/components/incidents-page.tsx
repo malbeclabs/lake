@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams, useNavigate, useLocation, Link } from 'react-router-dom'
-import { ShieldAlert, Settings, ExternalLink, Info, Download, ChevronDown } from 'lucide-react'
+import { ShieldAlert, Settings, ExternalLink, Info, Download, ChevronDown, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   fetchLinkIncidents,
@@ -24,6 +24,19 @@ const timeRanges: { value: IncidentTimeRange; label: string }[] = [
   { value: '7d', label: '7d' },
   { value: '30d', label: '30d' },
 ]
+
+function RelativeTime({ timestamp }: { timestamp: number }) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 10000)
+    return () => clearInterval(id)
+  }, [])
+  const seconds = Math.floor((Date.now() - timestamp) / 1000)
+  if (seconds < 5) return <>just now</>
+  if (seconds < 60) return <>{seconds}s ago</>
+  const minutes = Math.floor(seconds / 60)
+  return <>{minutes}m ago</>
+}
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -326,6 +339,7 @@ export function IncidentsPage() {
       filter: filterParam || undefined,
     }),
     refetchInterval: 60000,
+    placeholderData: keepPreviousData,
     enabled: scope === 'links',
   })
 
@@ -343,11 +357,16 @@ export function IncidentsPage() {
       link_interfaces: showLinkInterfaces || undefined,
     }),
     refetchInterval: 60000,
+    placeholderData: keepPreviousData,
     enabled: scope === 'devices',
   })
 
-  const isLoading = scope === 'links' ? linkQuery.isLoading : deviceQuery.isLoading
-  const error = scope === 'links' ? linkQuery.error : deviceQuery.error
+  const activeQuery = scope === 'links' ? linkQuery : deviceQuery
+  const isLoading = activeQuery.isLoading
+  const isFetching = activeQuery.isFetching
+  const error = activeQuery.error
+  const hasData = activeQuery.data != null
+  const dataUpdatedAt = activeQuery.dataUpdatedAt
   const linkData = linkQuery.data
   const deviceData = deviceQuery.data
 
@@ -685,9 +704,7 @@ export function IncidentsPage() {
           </div>
         )}
 
-        {/* Link interfaces toggle is rendered inline with "Show detecting" in the Active view header */}
-
-        {isLoading ? <IncidentsContentSkeleton /> : error ? (
+        {isLoading ? <IncidentsContentSkeleton /> : error && !hasData ? (
           <div className="flex flex-col items-center justify-center py-12 text-center border border-border rounded-lg">
             <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">Unable to load incidents</h3>
@@ -695,13 +712,31 @@ export function IncidentsPage() {
               {(error as Error).message || 'Something went wrong. The API server may be unavailable.'}
             </p>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => activeQuery.refetch()}
               className="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted transition-colors"
             >
               Retry
             </button>
           </div>
         ) : (<>
+        {/* Data freshness indicator */}
+        <div className="flex items-center gap-2 mb-4 text-xs text-muted-foreground">
+          <button
+            onClick={() => activeQuery.refetch()}
+            className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors"
+            title="Refresh now"
+          >
+            <RefreshCw className={cn('h-3 w-3', isFetching && 'animate-spin')} />
+            {dataUpdatedAt ? (
+              <span>Updated <RelativeTime timestamp={dataUpdatedAt} /></span>
+            ) : (
+              <span>Refreshing...</span>
+            )}
+          </button>
+          {error && (
+            <span className="text-yellow-600 dark:text-yellow-400">· Refresh failed, showing previous data</span>
+          )}
+        </div>
         {/* Type stat cards — clickable multi-select filters */}
         <div className={`grid gap-3 mb-6 ${scope === 'links' ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
           {([
