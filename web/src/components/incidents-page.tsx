@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { useSearchParams, useNavigate, useLocation, Link } from 'react-router-dom'
-import { ShieldAlert, Settings, ExternalLink, Info, Download } from 'lucide-react'
+import { ShieldAlert, Settings, ExternalLink, Info, Download, ChevronDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import {
   fetchLinkIncidents,
   fetchDeviceIncidents,
@@ -116,6 +117,45 @@ function IncidentTypeBadge({ type }: { type: string }) {
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${c.className}`}>
       {c.label}
     </span>
+  )
+}
+
+function IncidentSection({
+  title,
+  count,
+  defaultOpen = true,
+  children,
+}: {
+  title: string
+  count: number
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <div className="border border-border rounded-lg bg-card overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+      >
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+            !open && '-rotate-90'
+          )}
+        />
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
+          {count}
+        </span>
+      </button>
+      {open && count > 0 && (
+        <div className="px-4 pb-4">
+          {children}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -356,14 +396,11 @@ export function IncidentsPage() {
   // Sort state for active view
   const [sortField, setSortField] = useState<'started_at' | 'duration'>('started_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [pinOngoing, setPinOngoing] = useState(true)
-  const [showDetecting, setShowDetecting] = useState(true)
-  const [showTransient, setShowTransient] = useState(true)
 
   // Generic sort helper for incidents of either type
   type SortableIncident = { started_at: string; is_ongoing: boolean; duration_seconds?: number }
   const sortIncidents = <T extends SortableIncident>(items: T[]): T[] => {
-    const compare = (a: T, b: T) => {
+    return [...items].sort((a, b) => {
       if (sortField === 'started_at') {
         const aTime = new Date(a.started_at).getTime()
         const bTime = new Date(b.started_at).getTime()
@@ -373,74 +410,73 @@ export function IncidentsPage() {
         const bDur = b.is_ongoing ? Infinity : (b.duration_seconds || 0)
         return sortDir === 'asc' ? aDur - bDur : bDur - aDur
       }
-    }
-    if (!pinOngoing) return [...items].sort(compare)
-    const ongoing = items.filter(i => i.is_ongoing).sort(compare)
-    const notOngoing = items.filter(i => !i.is_ongoing).sort(compare)
-    return [...ongoing, ...notOngoing]
-  }
-
-  const sortedActiveIncidents = useMemo(
-    () => sortIncidents(activeIncidents),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeIncidents, sortField, sortDir, pinOngoing],
-  )
-
-  const sortedActiveDeviceIncidents = useMemo(
-    () => sortIncidents(activeDeviceIncidents),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activeDeviceIncidents, sortField, sortDir, pinOngoing],
-  )
-
-  const filterByVisibility = <T extends { confirmed: boolean; is_ongoing: boolean }>(items: T[]): T[] => {
-    return items.filter(i => {
-      if (i.confirmed) return true
-      if (i.is_ongoing) return showDetecting
-      return showTransient
     })
   }
 
-  const displayedActiveIncidents = useMemo(() => {
-    return filterByVisibility(sortedActiveIncidents)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedActiveIncidents, showDetecting, showTransient])
+  // Split link incidents by status category
+  type IncidentStatus = 'ongoing' | 'detecting' | 'resolved' | 'transient'
+  const getStatus = (i: { is_ongoing: boolean; confirmed: boolean }): IncidentStatus => {
+    if (i.is_ongoing && i.confirmed) return 'ongoing'
+    if (i.is_ongoing) return 'detecting'
+    if (i.confirmed) return 'resolved'
+    return 'transient'
+  }
 
-  const displayedActiveDeviceIncidents = useMemo(() => {
-    return filterByVisibility(sortedActiveDeviceIncidents)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortedActiveDeviceIncidents, showDetecting, showTransient])
-
-  // Compute counts from filtered data (respects showDetecting/showTransient toggles)
-  const filteredByType = useMemo(() => {
-    const filterVisible = <T extends { confirmed: boolean; is_ongoing: boolean }>(items: T[]): T[] => {
-      return items.filter(i => {
-        if (i.confirmed) return true
-        if (i.is_ongoing) return showDetecting
-        return showTransient
-      })
+  const splitByStatus = <T extends { is_ongoing: boolean; confirmed: boolean; started_at: string; duration_seconds?: number }>(items: T[]) => {
+    const ongoing: T[] = []
+    const detecting: T[] = []
+    const resolved: T[] = []
+    const transient: T[] = []
+    for (const i of items) {
+      switch (getStatus(i)) {
+        case 'ongoing': ongoing.push(i); break
+        case 'detecting': detecting.push(i); break
+        case 'resolved': resolved.push(i); break
+        case 'transient': transient.push(i); break
+      }
     }
+    return {
+      ongoing: sortIncidents(ongoing),
+      detecting: sortIncidents(detecting),
+      resolved: sortIncidents(resolved),
+      transient: sortIncidents(transient),
+    }
+  }
+
+  const linkIncidentsByStatus = useMemo(
+    () => splitByStatus(activeIncidents),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeIncidents, sortField, sortDir],
+  )
+
+  const deviceIncidentsByStatus = useMemo(
+    () => splitByStatus(activeDeviceIncidents),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeDeviceIncidents, sortField, sortDir],
+  )
+
+  // Compute counts from all active data (no toggle filtering)
+  const filteredByType = useMemo(() => {
     if (scope === 'links') {
       const all = linkData?.active || []
-      const visible = filterVisible(all)
       const byType: Record<string, number> = { packet_loss: 0, errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0 }
       let ongoing = 0
-      for (const i of visible) {
+      for (const i of all) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
         if (i.is_ongoing && i.confirmed) ongoing++
       }
       return { byType, ongoing }
     } else {
       const all = deviceData?.active || []
-      const visible = filterVisible(all)
       const byType: Record<string, number> = { errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0 }
       let ongoing = 0
-      for (const i of visible) {
+      for (const i of all) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
         if (i.is_ongoing && i.confirmed) ongoing++
       }
       return { byType, ongoing }
     }
-  }, [scope, linkData?.active, deviceData?.active, showDetecting, showTransient])
+  }, [scope, linkData?.active, deviceData?.active])
 
   const toggleSort = (field: 'started_at' | 'duration') => {
     if (sortField === field) {
@@ -745,129 +781,71 @@ export function IncidentsPage() {
                   </div>
                 )
               }
+              const byStatus = scope === 'links' ? linkIncidentsByStatus : deviceIncidentsByStatus
+              const sections: { key: string; title: string; defaultOpen: boolean; incidents: (LinkIncident | DeviceIncident)[] }[] = [
+                { key: 'ongoing', title: 'Ongoing', defaultOpen: true, incidents: byStatus.ongoing },
+                { key: 'detecting', title: 'Detecting', defaultOpen: true, incidents: byStatus.detecting },
+                { key: 'resolved', title: 'Resolved', defaultOpen: true, incidents: byStatus.resolved },
+                { key: 'transient', title: 'Transient', defaultOpen: false, incidents: byStatus.transient },
+              ]
               return (
                 <>
-                  <div className="flex items-center flex-wrap gap-6 mb-3">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={pinOngoing}
-                      onClick={() => setPinOngoing(!pinOngoing)}
-                      className="flex items-center gap-2 text-sm text-muted-foreground"
-                    >
-                      <span
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                          pinOngoing ? 'bg-primary' : 'bg-muted-foreground/30'
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
-                            pinOngoing ? 'translate-x-4' : 'translate-x-0.5'
-                          }`}
-                        />
-                      </span>
-                      Pin ongoing to top
-                    </button>
-                    <div className="flex items-center gap-6 ml-auto">
+                  {scope === 'devices' && (
+                    <div className="flex items-center gap-6 mb-3 justify-end">
                       <button
                         type="button"
                         role="switch"
-                        aria-checked={showDetecting}
-                        onClick={() => setShowDetecting(!showDetecting)}
+                        aria-checked={showLinkInterfaces}
+                        onClick={() => updateParams({ link_interfaces: showLinkInterfaces ? undefined : 'true' })}
                         className="flex items-center gap-2 text-sm text-muted-foreground"
                       >
                         <span
                           className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                            showDetecting ? 'bg-primary' : 'bg-muted-foreground/30'
+                            showLinkInterfaces ? 'bg-primary' : 'bg-muted-foreground/30'
                           }`}
                         >
                           <span
                             className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
-                              showDetecting ? 'translate-x-4' : 'translate-x-0.5'
+                              showLinkInterfaces ? 'translate-x-4' : 'translate-x-0.5'
                             }`}
                           />
                         </span>
-                        Show detecting
+                        Show link interfaces
                         <span className="relative group">
                           <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
                           <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                            Above threshold but under min duration
+                            Include interfaces already tracked in the Links view
                           </span>
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={showTransient}
-                        onClick={() => setShowTransient(!showTransient)}
-                        className="flex items-center gap-2 text-sm text-muted-foreground"
-                      >
-                        <span
-                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                            showTransient ? 'bg-primary' : 'bg-muted-foreground/30'
-                          }`}
-                        >
-                          <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
-                              showTransient ? 'translate-x-4' : 'translate-x-0.5'
-                            }`}
-                          />
-                        </span>
-                        Show transient
-                        <span className="relative group">
-                          <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
-                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                            Resolved incidents shorter than min duration
-                          </span>
-                        </span>
-                      </button>
-                      {scope === 'devices' && (
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={showLinkInterfaces}
-                          onClick={() => updateParams({ link_interfaces: showLinkInterfaces ? undefined : 'true' })}
-                          className="flex items-center gap-2 text-sm text-muted-foreground"
-                        >
-                          <span
-                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                              showLinkInterfaces ? 'bg-primary' : 'bg-muted-foreground/30'
-                            }`}
-                          >
-                            <span
-                              className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
-                                showLinkInterfaces ? 'translate-x-4' : 'translate-x-0.5'
-                              }`}
-                            />
-                          </span>
-                          Show link interfaces
-                          <span className="relative group">
-                            <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
-                            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                              Include interfaces already tracked in the Links view
-                            </span>
-                          </span>
-                        </button>
-                      )}
                     </div>
-                  </div>
-                  {scope === 'links' ? (
-                    <ActiveIncidentsTable
-                      incidents={displayedActiveIncidents}
-                      sortField={sortField}
-                      sortDir={sortDir}
-                      toggleSort={toggleSort}
-
-                    />
-                  ) : (
-                    <ActiveDeviceIncidentsTable
-                      incidents={displayedActiveDeviceIncidents}
-                      sortField={sortField}
-                      sortDir={sortDir}
-                      toggleSort={toggleSort}
-
-                    />
                   )}
+                  <div className="flex flex-col gap-3">
+                    {sections.map(({ key, title, defaultOpen, incidents: sectionIncidents }) => (
+                      <IncidentSection
+                        key={key}
+                        title={title}
+                        count={sectionIncidents.length}
+                        defaultOpen={defaultOpen}
+                      >
+                        {sectionIncidents.length === 0 ? null : scope === 'links' ? (
+                          <ActiveIncidentsTable
+                            incidents={sectionIncidents as LinkIncident[]}
+                            sortField={sortField}
+                            sortDir={sortDir}
+                            toggleSort={toggleSort}
+                          />
+                        ) : (
+                          <ActiveDeviceIncidentsTable
+                            incidents={sectionIncidents as DeviceIncident[]}
+                            sortField={sortField}
+                            sortDir={sortDir}
+                            toggleSort={toggleSort}
+                          />
+                        )}
+                      </IncidentSection>
+                    ))}
+                  </div>
                 </>
               )
             })()}
@@ -921,7 +899,7 @@ function ActiveIncidentsTable({
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
+    <div className="overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-muted/50">
           <tr>
@@ -946,7 +924,6 @@ function ActiveIncidentsTable({
                 <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
               )}
             </th>
-            <th className="text-left px-4 py-3 font-medium">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -999,28 +976,6 @@ function ActiveIncidentsTable({
                   ? formatDuration(Math.floor((renderTimestamp - new Date(incident.started_at).getTime()) / 1000))
                   : formatDuration(incident.duration_seconds)
                 }
-              </td>
-              <td className="px-4 py-3">
-                {incident.is_ongoing && incident.confirmed ? (
-                  <span className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                    </span>
-                    Ongoing
-                  </span>
-                ) : incident.is_ongoing ? (
-                  <span className="inline-flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400">
-                    <span className="relative flex h-2 w-2">
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
-                    </span>
-                    Detecting
-                  </span>
-                ) : incident.confirmed ? (
-                  <span className="text-muted-foreground">Resolved</span>
-                ) : (
-                  <span className="text-muted-foreground/60">Transient</span>
-                )}
               </td>
             </tr>
           ))}
@@ -1145,7 +1100,7 @@ function ActiveDeviceIncidentsTable({
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
+    <div className="overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-muted/50">
           <tr>
@@ -1170,7 +1125,6 @@ function ActiveDeviceIncidentsTable({
                 <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
               )}
             </th>
-            <th className="text-left px-4 py-3 font-medium">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -1216,28 +1170,6 @@ function ActiveDeviceIncidentsTable({
                   ? formatDuration(Math.floor((renderTimestamp - new Date(incident.started_at).getTime()) / 1000))
                   : formatDuration(incident.duration_seconds)
                 }
-              </td>
-              <td className="px-4 py-3">
-                {incident.is_ongoing && incident.confirmed ? (
-                  <span className="inline-flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                    </span>
-                    Ongoing
-                  </span>
-                ) : incident.is_ongoing ? (
-                  <span className="inline-flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400">
-                    <span className="relative flex h-2 w-2">
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-yellow-500"></span>
-                    </span>
-                    Detecting
-                  </span>
-                ) : incident.confirmed ? (
-                  <span className="text-muted-foreground">Resolved</span>
-                ) : (
-                  <span className="text-muted-foreground/60">Transient</span>
-                )}
               </td>
             </tr>
           ))}
