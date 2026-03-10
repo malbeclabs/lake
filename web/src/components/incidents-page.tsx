@@ -151,12 +151,7 @@ function IncidentSection({
         <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
           {count}
         </span>
-        <span className="relative group" onClick={(e) => e.stopPropagation()}>
-          <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
-          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-            {description}
-          </span>
-        </span>
+        <span className="text-xs text-muted-foreground">{description}</span>
       </button>
       {open && count > 0 && (
         <div className="px-4 pb-4 overflow-hidden">
