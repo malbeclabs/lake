@@ -752,21 +752,19 @@ func pairCounterIncidentsCompleted(buckets []counterBucket, linkMeta map[string]
 				peakValue = b.Value
 				consecutiveBuckets = 1
 			} else if !aboveThreshold && prevAbove && activeIncident != nil {
-				if consecutiveBuckets >= dp.minBuckets() {
-					prevBucket := linkBuckets[i-1]
-					endedAt := prevBucket.Bucket.Add(dp.bucketSize()).UTC().Format(time.RFC3339)
-					activeIncident.EndedAt = &endedAt
-					peak := peakValue
-					activeIncident.PeakCount = &peak
-					activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
+				prevBucket := linkBuckets[i-1]
+				endedAt := prevBucket.Bucket.Add(dp.bucketSize()).UTC().Format(time.RFC3339)
+				activeIncident.EndedAt = &endedAt
+				peak := peakValue
+				activeIncident.PeakCount = &peak
+				activeIncident.Severity = incidentSeverity(incidentType, 0, peakValue)
 
-					startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
-					endTime := prevBucket.Bucket.Add(dp.bucketSize())
-					durationSecs := int64(endTime.Sub(startTime).Seconds())
-					activeIncident.DurationSeconds = &durationSecs
+				startTime, _ := time.Parse(time.RFC3339, activeIncident.StartedAt)
+				endTime := prevBucket.Bucket.Add(dp.bucketSize())
+				durationSecs := int64(endTime.Sub(startTime).Seconds())
+				activeIncident.DurationSeconds = &durationSecs
 
-					incidents = append(incidents, *activeIncident)
-				}
+				incidents = append(incidents, *activeIncident)
 				activeIncident = nil
 				peakValue = 0
 				consecutiveBuckets = 0
@@ -779,7 +777,7 @@ func pairCounterIncidentsCompleted(buckets []counterBucket, linkMeta map[string]
 		}
 
 		// Handle incident active at end of window
-		if activeIncident != nil && consecutiveBuckets >= dp.minBuckets() {
+		if activeIncident != nil {
 			lastBucket := linkBuckets[len(linkBuckets)-1]
 			peak := peakValue
 			activeIncident.PeakCount = &peak
@@ -1154,7 +1152,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	activeSummary := LinkIncidentsSummary{
 		Total:   len(activeIncidents),
 		Ongoing: 0,
-		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "discards": 0, "carrier": 0, "no_data": 0},
+		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "fcs": 0, "discards": 0, "carrier": 0, "no_data": 0},
 	}
 	for _, inc := range activeIncidents {
 		if inc.IsOngoing {
@@ -1583,6 +1581,18 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 
 	g.Go(func() error {
 		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 1,
+			"sum(greatest(0, coalesce(in_fcs_errors_delta, 0)))", "fcs", linkMeta, detectParams)
+		if err != nil {
+			return fmt.Errorf("fcs: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	g.Go(func() error {
+		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 1,
 			"sum(greatest(0, coalesce(carrier_transitions_delta, 0)))", "carrier", linkMeta, detectParams)
 		if err != nil {
 			return fmt.Errorf("carrier: %w", err)
@@ -1647,7 +1657,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	activeSummary := LinkIncidentsSummary{
 		Total:   len(activeIncidents),
 		Ongoing: 0,
-		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "discards": 0, "carrier": 0, "no_data": 0},
+		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "fcs": 0, "discards": 0, "carrier": 0, "no_data": 0},
 	}
 	for _, inc := range activeIncidents {
 		if inc.IsOngoing {

@@ -98,8 +98,12 @@ function IncidentTypeBadge({ type }: { type: string }) {
       label: 'discards',
       className: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
     },
+    fcs: {
+      label: 'fcs errors',
+      className: 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200',
+    },
     carrier: {
-      label: 'carrier',
+      label: 'carrier transitions',
       className: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
     },
     no_data: {
@@ -354,6 +358,7 @@ export function IncidentsPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [pinOngoing, setPinOngoing] = useState(true)
   const [showDetecting, setShowDetecting] = useState(true)
+  const [showTransient, setShowTransient] = useState(true)
 
   // Generic sort helper for incidents of either type
   type SortableIncident = { started_at: string; is_ongoing: boolean; duration_seconds?: number }
@@ -387,22 +392,37 @@ export function IncidentsPage() {
     [activeDeviceIncidents, sortField, sortDir, pinOngoing],
   )
 
+  const filterByVisibility = <T extends { confirmed: boolean; is_ongoing: boolean }>(items: T[]): T[] => {
+    return items.filter(i => {
+      if (i.confirmed) return true
+      if (i.is_ongoing) return showDetecting
+      return showTransient
+    })
+  }
+
   const displayedActiveIncidents = useMemo(() => {
-    if (showDetecting) return sortedActiveIncidents
-    return sortedActiveIncidents.filter(i => i.confirmed)
-  }, [sortedActiveIncidents, showDetecting])
+    return filterByVisibility(sortedActiveIncidents)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedActiveIncidents, showDetecting, showTransient])
 
   const displayedActiveDeviceIncidents = useMemo(() => {
-    if (showDetecting) return sortedActiveDeviceIncidents
-    return sortedActiveDeviceIncidents.filter(i => i.confirmed)
-  }, [sortedActiveDeviceIncidents, showDetecting])
+    return filterByVisibility(sortedActiveDeviceIncidents)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedActiveDeviceIncidents, showDetecting, showTransient])
 
-  // Compute counts from filtered data (respects showDetecting toggle)
+  // Compute counts from filtered data (respects showDetecting/showTransient toggles)
   const filteredByType = useMemo(() => {
+    const filterVisible = <T extends { confirmed: boolean; is_ongoing: boolean }>(items: T[]): T[] => {
+      return items.filter(i => {
+        if (i.confirmed) return true
+        if (i.is_ongoing) return showDetecting
+        return showTransient
+      })
+    }
     if (scope === 'links') {
       const all = linkData?.active || []
-      const visible = showDetecting ? all : all.filter(i => i.confirmed)
-      const byType: Record<string, number> = { packet_loss: 0, errors: 0, discards: 0, carrier: 0, no_data: 0 }
+      const visible = filterVisible(all)
+      const byType: Record<string, number> = { packet_loss: 0, errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0 }
       let ongoing = 0
       for (const i of visible) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
@@ -411,8 +431,8 @@ export function IncidentsPage() {
       return { byType, ongoing }
     } else {
       const all = deviceData?.active || []
-      const visible = showDetecting ? all : all.filter(i => i.confirmed)
-      const byType: Record<string, number> = { errors: 0, discards: 0, carrier: 0, no_data: 0 }
+      const visible = filterVisible(all)
+      const byType: Record<string, number> = { errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0 }
       let ongoing = 0
       for (const i of visible) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
@@ -420,7 +440,7 @@ export function IncidentsPage() {
       }
       return { byType, ongoing }
     }
-  }, [scope, linkData?.active, deviceData?.active, showDetecting])
+  }, [scope, linkData?.active, deviceData?.active, showDetecting, showTransient])
 
   const toggleSort = (field: 'started_at' | 'duration') => {
     if (sortField === field) {
@@ -650,7 +670,7 @@ export function IncidentsPage() {
             { key: 'errors', label: 'Errors' },
             { key: 'fcs', label: 'FCS Errors' },
             { key: 'discards', label: 'Discards' },
-            { key: 'carrier', label: 'Carrier' },
+            { key: 'carrier', label: 'Carrier Transitions' },
             { key: 'no_data', label: 'No Data' },
           ] as const).map(({ key, label }) => {
             const count = filteredByType.byType[key] || 0
@@ -772,6 +792,32 @@ export function IncidentsPage() {
                           <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
                           <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
                             Above threshold but under min duration
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={showTransient}
+                        onClick={() => setShowTransient(!showTransient)}
+                        className="flex items-center gap-2 text-sm text-muted-foreground"
+                      >
+                        <span
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            showTransient ? 'bg-primary' : 'bg-muted-foreground/30'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                              showTransient ? 'translate-x-4' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </span>
+                        Show transient
+                        <span className="relative group">
+                          <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                            Resolved incidents shorter than min duration
                           </span>
                         </span>
                       </button>
