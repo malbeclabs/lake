@@ -1012,7 +1012,23 @@ function ActiveIncidentsTable({
         </thead>
         <tbody className="divide-y divide-border">
           {grouped.map((group) => {
-            const allInterfaces = Array.from(new Set(group.incidents.flatMap(i => i.affected_interfaces || [])))
+            // Aggregate incidents by type: one badge per type with combined peak values
+            const byType = new Map<string, { peakLossPct?: number; peakCount?: number }>()
+            const allInterfaces = new Set<string>()
+            for (const inc of group.incidents) {
+              for (const iface of inc.affected_interfaces || []) allInterfaces.add(iface)
+              const existing = byType.get(inc.incident_type)
+              if (existing) {
+                if (inc.peak_loss_pct != null) existing.peakLossPct = Math.max(existing.peakLossPct ?? 0, inc.peak_loss_pct)
+                if (inc.peak_count != null) existing.peakCount = (existing.peakCount ?? 0) + inc.peak_count
+              } else {
+                byType.set(inc.incident_type, {
+                  peakLossPct: inc.peak_loss_pct ?? undefined,
+                  peakCount: inc.peak_count ?? undefined,
+                })
+              }
+            }
+            const interfaces = Array.from(allInterfaces)
             return (
               <tr key={group.link_pk} className="hover:bg-muted/30">
                 <td className="px-4 py-3">
@@ -1032,26 +1048,26 @@ function ActiveIncidentsTable({
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    {group.incidents.map((incident) => (
-                      <span key={incident.id} className="inline-flex items-center gap-1">
-                        <IncidentTypeBadge type={incident.incident_type} />
-                        {incident.incident_type === 'packet_loss' && incident.peak_loss_pct != null && (
+                    {Array.from(byType.entries()).map(([type, agg]) => (
+                      <span key={type} className="inline-flex items-center gap-1">
+                        <IncidentTypeBadge type={type} />
+                        {type === 'packet_loss' && agg.peakLossPct != null && (
                           <span className="text-xs text-muted-foreground">
-                            ({incident.peak_loss_pct.toFixed(0)}%)
+                            ({agg.peakLossPct.toFixed(0)}%)
                           </span>
                         )}
-                        {incident.peak_count != null && incident.incident_type !== 'packet_loss' && (
+                        {agg.peakCount != null && type !== 'packet_loss' && (
                           <span className="text-xs text-muted-foreground">
-                            ({incident.peak_count})
+                            ({agg.peakCount})
                           </span>
                         )}
                       </span>
                     ))}
                     {group.is_drained && <DrainedBadge />}
                   </div>
-                  {allInterfaces.length > 0 && (
+                  {interfaces.length > 0 && (
                     <div className="text-xs text-muted-foreground mt-0.5 font-mono">
-                      {allInterfaces.join(', ')}
+                      {interfaces.join(', ')}
                     </div>
                   )}
                 </td>
