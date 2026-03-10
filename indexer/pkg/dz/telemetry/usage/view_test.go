@@ -1133,7 +1133,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -1208,7 +1208,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		// No alreadyWritten entries for this key (global maxTime is ahead)
 		alreadyWritten := MaxTimestampsByKey{}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, err := view.Store().convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First row is consumed as baseline, so we get 2 rows
 		require.Len(t, usage, 2)
