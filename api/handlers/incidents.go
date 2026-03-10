@@ -919,7 +919,7 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 	}
 
 	errorsThreshold := q.Get("errors_threshold")
-	if errorsThreshold != "" && errorsThreshold != "10" {
+	if errorsThreshold != "" && errorsThreshold != "1" {
 		return false
 	}
 
@@ -929,7 +929,7 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 	}
 
 	discardsThreshold := q.Get("discards_threshold")
-	if discardsThreshold != "" && discardsThreshold != "10" {
+	if discardsThreshold != "" && discardsThreshold != "1" {
 		return false
 	}
 
@@ -975,9 +975,9 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	thresholdStr := r.URL.Query().Get("threshold")
 	threshold := parseThreshold(thresholdStr)
 
-	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 1)
 	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
-	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
+	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 1)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
 	minDurationMin := parseIntParam(r.URL.Query().Get("min_duration"), 30)
@@ -1204,9 +1204,9 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	thresholdStr := r.URL.Query().Get("threshold")
 	threshold := parseThreshold(thresholdStr)
 
-	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 1)
 	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
-	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
+	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 1)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
 	minDurationMin := parseIntParam(r.URL.Query().Get("min_duration"), 30)
@@ -1556,7 +1556,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	})
 
 	g.Go(func() error {
-		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 10,
+		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 1,
 			"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", linkMeta, detectParams)
 		if err != nil {
 			return fmt.Errorf("errors: %w", err)
@@ -1568,7 +1568,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	})
 
 	g.Go(func() error {
-		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 10,
+		incidents, err := fetchCounterIncidents(gCtx, envDB(gCtx), duration, 1,
 			"sum(greatest(0, coalesce(in_discards_delta, 0))) + sum(greatest(0, coalesce(out_discards_delta, 0)))", "discards", linkMeta, detectParams)
 		if err != nil {
 			return fmt.Errorf("discards: %w", err)

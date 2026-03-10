@@ -122,11 +122,13 @@ function IncidentTypeBadge({ type }: { type: string }) {
 
 function IncidentSection({
   title,
+  description,
   count,
   defaultOpen = true,
   children,
 }: {
   title: string
+  description: string
   count: number
   defaultOpen?: boolean
   children: React.ReactNode
@@ -134,10 +136,10 @@ function IncidentSection({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div className="border border-border rounded-lg bg-card overflow-hidden">
+    <div className="border border-border rounded-lg bg-card">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors rounded-t-lg"
       >
         <ChevronDown
           className={cn(
@@ -149,9 +151,15 @@ function IncidentSection({
         <span className="px-1.5 py-0.5 text-xs rounded-full bg-muted-foreground/10 text-muted-foreground tabular-nums">
           {count}
         </span>
+        <span className="relative group" onClick={(e) => e.stopPropagation()}>
+          <Info className="h-3.5 w-3.5 text-muted-foreground/50" />
+          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 text-xs bg-popover text-popover-foreground border border-border rounded shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+            {description}
+          </span>
+        </span>
       </button>
       {open && count > 0 && (
-        <div className="px-4 pb-4">
+        <div className="px-4 pb-4 overflow-hidden">
           {children}
         </div>
       )}
@@ -212,9 +220,9 @@ export function IncidentsPage() {
   // Parse URL params with defaults
   const range = (searchParams.get('range') as IncidentTimeRange) || '24h'
   const threshold = parseInt(searchParams.get('threshold') || '10') || 10
-  const errorsThreshold = parseInt(searchParams.get('errors_threshold') || '10') || 10
+  const errorsThreshold = parseInt(searchParams.get('errors_threshold') || '1') || 1
   const fcsThreshold = parseInt(searchParams.get('fcs_threshold') || '1') || 1
-  const discardsThreshold = parseInt(searchParams.get('discards_threshold') || '10') || 10
+  const discardsThreshold = parseInt(searchParams.get('discards_threshold') || '1') || 1
   const carrierThreshold = parseInt(searchParams.get('carrier_threshold') || '1') || 1
   const typeParam = searchParams.get('type') || ''
   const selectedTypes = useMemo(() => {
@@ -297,9 +305,9 @@ export function IncidentsPage() {
     switch (key) {
       case 'range': return '24h'
       case 'threshold': return '10'
-      case 'errors_threshold': return '10'
+      case 'errors_threshold': return '1'
       case 'fcs_threshold': return '1'
-      case 'discards_threshold': return '10'
+      case 'discards_threshold': return '1'
       case 'carrier_threshold': return '1'
       case 'min_duration': return '30'
       case 'coalesce_gap': return '180'
@@ -782,11 +790,11 @@ export function IncidentsPage() {
                 )
               }
               const byStatus = scope === 'links' ? linkIncidentsByStatus : deviceIncidentsByStatus
-              const sections: { key: string; title: string; defaultOpen: boolean; incidents: (LinkIncident | DeviceIncident)[] }[] = [
-                { key: 'ongoing', title: 'Ongoing', defaultOpen: true, incidents: byStatus.ongoing },
-                { key: 'detecting', title: 'Detecting', defaultOpen: true, incidents: byStatus.detecting },
-                { key: 'resolved', title: 'Resolved', defaultOpen: true, incidents: byStatus.resolved },
-                { key: 'transient', title: 'Transient', defaultOpen: false, incidents: byStatus.transient },
+              const sections: { key: string; title: string; description: string; defaultOpen: boolean; incidents: (LinkIncident | DeviceIncident)[] }[] = [
+                { key: 'ongoing', title: 'Ongoing', description: 'Confirmed active incidents', defaultOpen: true, incidents: byStatus.ongoing },
+                { key: 'detecting', title: 'Detecting', description: 'Recently started incidents not yet confirmed', defaultOpen: true, incidents: byStatus.detecting },
+                { key: 'resolved', title: 'Resolved', description: 'Confirmed incidents that have ended', defaultOpen: true, incidents: byStatus.resolved },
+                { key: 'transient', title: 'Transient', description: 'Brief incidents that ended before being confirmed', defaultOpen: true, incidents: byStatus.transient },
               ]
               return (
                 <>
@@ -821,10 +829,11 @@ export function IncidentsPage() {
                     </div>
                   )}
                   <div className="flex flex-col gap-3">
-                    {sections.map(({ key, title, defaultOpen, incidents: sectionIncidents }) => (
+                    {sections.map(({ key, title, description, defaultOpen, incidents: sectionIncidents }) => (
                       <IncidentSection
                         key={key}
                         title={title}
+                        description={description}
                         count={sectionIncidents.length}
                         defaultOpen={defaultOpen}
                       >

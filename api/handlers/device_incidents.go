@@ -994,12 +994,12 @@ func isDefaultDeviceIncidentsRequest(r *http.Request) bool {
 	}
 
 	errorsThreshold := q.Get("errors_threshold")
-	if errorsThreshold != "" && errorsThreshold != "10" {
+	if errorsThreshold != "" && errorsThreshold != "1" {
 		return false
 	}
 
 	discardsThreshold := q.Get("discards_threshold")
-	if discardsThreshold != "" && discardsThreshold != "10" {
+	if discardsThreshold != "" && discardsThreshold != "1" {
 		return false
 	}
 
@@ -1045,9 +1045,9 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 	duration := parseTimeRange(timeRange)
 
-	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 1)
 	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
-	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
+	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 1)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
 	minDurationMin := parseIntParam(r.URL.Query().Get("min_duration"), 30)
@@ -1253,9 +1253,9 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	duration := parseTimeRange(timeRange)
 
-	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 10)
+	errorsThreshold := parseIntParam(r.URL.Query().Get("errors_threshold"), 1)
 	fcsThreshold := parseIntParam(r.URL.Query().Get("fcs_threshold"), 1)
-	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 10)
+	discardsThreshold := parseIntParam(r.URL.Query().Get("discards_threshold"), 1)
 	carrierThreshold := parseIntParam(r.URL.Query().Get("carrier_threshold"), 1)
 
 	minDurationMin := parseIntParam(r.URL.Query().Get("min_duration"), 30)
@@ -1447,7 +1447,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	defaultLinkFilter := "AND ic.link_pk = ''"
 
 	g.Go(func() error {
-		incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, 10,
+		incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, 1,
 			"sum(greatest(0, coalesce(in_errors_delta, 0))) + sum(greatest(0, coalesce(out_errors_delta, 0)))", "errors", deviceMeta, detectParams, defaultLinkFilter)
 		if err != nil {
 			return fmt.Errorf("errors: %w", err)
@@ -1459,7 +1459,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	})
 
 	g.Go(func() error {
-		incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, 10,
+		incidents, err := fetchDeviceCounterIncidents(gCtx, envDB(gCtx), duration, 1,
 			"sum(greatest(0, coalesce(in_discards_delta, 0))) + sum(greatest(0, coalesce(out_discards_delta, 0)))", "discards", deviceMeta, detectParams, defaultLinkFilter)
 		if err != nil {
 			return fmt.Errorf("discards: %w", err)
