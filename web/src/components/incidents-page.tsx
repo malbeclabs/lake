@@ -873,6 +873,7 @@ export function IncidentsPage() {
                             sortField={sortField}
                             sortDir={sortDir}
                             toggleSort={toggleSort}
+                            coalesceGapMinutes={coalesceGap}
                           />
                         ) : (
                           <ActiveDeviceIncidentsTable
@@ -936,33 +937,70 @@ type GroupedLinkIncident = {
   incidents: LinkIncident[]
 }
 
-function groupIncidentsByLink(incidents: LinkIncident[]): GroupedLinkIncident[] {
-  const groups = new Map<string, LinkIncident[]>()
+function groupIncidentsByLink(incidents: LinkIncident[], coalesceGapMinutes: number): GroupedLinkIncident[] {
+  const gapMs = coalesceGapMinutes * 60 * 1000
+
+  // First group by link
+  const byLink = new Map<string, LinkIncident[]>()
   for (const inc of incidents) {
-    const existing = groups.get(inc.link_pk)
+    const existing = byLink.get(inc.link_pk)
     if (existing) existing.push(inc)
-    else groups.set(inc.link_pk, [inc])
+    else byLink.set(inc.link_pk, [inc])
   }
-  return Array.from(groups.values()).map((incs) => {
-    const earliest = incs.reduce((a, b) =>
-      new Date(a.started_at).getTime() < new Date(b.started_at).getTime() ? a : b
-    )
-    const anyOngoing = incs.some(i => i.is_ongoing)
-    const maxDuration = anyOngoing ? undefined : Math.max(...incs.map(i => i.duration_seconds || 0))
-    return {
-      link_pk: earliest.link_pk,
-      link_code: earliest.link_code,
-      link_type: earliest.link_type,
-      side_a_metro: earliest.side_a_metro,
-      side_z_metro: earliest.side_z_metro,
-      contributor_code: earliest.contributor_code,
-      is_drained: incs.some(i => i.is_drained),
-      started_at: earliest.started_at,
-      is_ongoing: anyOngoing,
-      duration_seconds: maxDuration,
-      incidents: incs,
+
+  const result: GroupedLinkIncident[] = []
+  for (const incs of byLink.values()) {
+    // Sort by start time
+    incs.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime())
+
+    // Cluster into temporal groups: incidents overlap or are within coalesceGap of each other
+    const clusters: LinkIncident[][] = []
+    for (const inc of incs) {
+      const incStart = new Date(inc.started_at).getTime()
+      // Try to add to the last cluster
+      if (clusters.length > 0) {
+        const lastCluster = clusters[clusters.length - 1]
+        // Find the latest end time in the cluster
+        let clusterEnd = -Infinity
+        for (const c of lastCluster) {
+          if (c.is_ongoing) {
+            clusterEnd = Infinity
+            break
+          }
+          const end = c.ended_at ? new Date(c.ended_at).getTime() : new Date(c.started_at).getTime() + (c.duration_seconds || 0) * 1000
+          if (end > clusterEnd) clusterEnd = end
+        }
+        if (incStart <= clusterEnd + gapMs) {
+          lastCluster.push(inc)
+          continue
+        }
+      }
+      clusters.push([inc])
     }
-  })
+
+    // Convert each cluster to a grouped incident
+    for (const cluster of clusters) {
+      const earliest = cluster.reduce((a, b) =>
+        new Date(a.started_at).getTime() < new Date(b.started_at).getTime() ? a : b
+      )
+      const anyOngoing = cluster.some(i => i.is_ongoing)
+      const maxDuration = anyOngoing ? undefined : Math.max(...cluster.map(i => i.duration_seconds || 0))
+      result.push({
+        link_pk: earliest.link_pk,
+        link_code: earliest.link_code,
+        link_type: earliest.link_type,
+        side_a_metro: earliest.side_a_metro,
+        side_z_metro: earliest.side_z_metro,
+        contributor_code: earliest.contributor_code,
+        is_drained: cluster.some(i => i.is_drained),
+        started_at: earliest.started_at,
+        is_ongoing: anyOngoing,
+        duration_seconds: maxDuration,
+        incidents: cluster,
+      })
+    }
+  }
+  return result
 }
 
 function ActiveIncidentsTable({
@@ -970,17 +1008,32 @@ function ActiveIncidentsTable({
   sortField,
   sortDir,
   toggleSort,
+  coalesceGapMinutes = 180,
 }: {
   incidents: LinkIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'duration') => void
+  coalesceGapMinutes?: number
 }) {
   // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
 
-  const grouped = useMemo(() => groupIncidentsByLink(incidents), [incidents])
+  const grouped = useMemo(() => {
+    const groups = groupIncidentsByLink(incidents, coalesceGapMinutes)
+    return groups.sort((a, b) => {
+      if (sortField === 'started_at') {
+        const aTime = new Date(a.started_at).getTime()
+        const bTime = new Date(b.started_at).getTime()
+        return sortDir === 'asc' ? aTime - bTime : bTime - aTime
+      } else {
+        const aDur = a.is_ongoing ? Infinity : (a.duration_seconds || 0)
+        const bDur = b.is_ongoing ? Infinity : (b.duration_seconds || 0)
+        return sortDir === 'asc' ? aDur - bDur : bDur - aDur
+      }
+    })
+  }, [incidents, coalesceGapMinutes, sortField, sortDir])
 
   return (
     <div className="overflow-hidden">
