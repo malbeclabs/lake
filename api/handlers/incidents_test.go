@@ -212,14 +212,17 @@ func TestPairCounterIncidentsCompleted(t *testing.T) {
 		CoalesceGap: 30 * time.Minute,
 	}
 
-	t.Run("single bucket spike discarded", func(t *testing.T) {
+	t.Run("single bucket spike returned as short incident", func(t *testing.T) {
 		buckets := []counterBucket{
 			{LinkPK: "pk-1", Bucket: bucket(0), Value: 0},
 			{LinkPK: "pk-1", Bucket: bucket(5 * time.Minute), Value: 50},
 			{LinkPK: "pk-1", Bucket: bucket(10 * time.Minute), Value: 0},
 		}
 		got := pairCounterIncidentsCompleted(buckets, meta, 10, "errors", nil, dp)
-		assert.Empty(t, got)
+		require.Len(t, got, 1)
+		assert.Equal(t, "errors", got[0].IncidentType)
+		assert.Equal(t, int64(50), *got[0].PeakCount)
+		assert.False(t, got[0].IsOngoing)
 	})
 
 	t.Run("two consecutive buckets above threshold recorded", func(t *testing.T) {
@@ -237,10 +240,10 @@ func TestPairCounterIncidentsCompleted(t *testing.T) {
 		assert.False(t, got[0].IsOngoing)
 	})
 
-	t.Run("min duration 30m requires 6 buckets", func(t *testing.T) {
+	t.Run("short incident under 30m min duration still returned", func(t *testing.T) {
 		dp30 := incidentDetectionParams{MinDuration: 30 * time.Minute, CoalesceGap: 30 * time.Minute}
 
-		// Only 3 consecutive buckets above threshold — should be discarded with 30m min
+		// Only 3 consecutive buckets above threshold — returned as short incident
 		buckets := []counterBucket{
 			{LinkPK: "pk-1", Bucket: bucket(0), Value: 0},
 			{LinkPK: "pk-1", Bucket: bucket(5 * time.Minute), Value: 15},
@@ -249,7 +252,9 @@ func TestPairCounterIncidentsCompleted(t *testing.T) {
 			{LinkPK: "pk-1", Bucket: bucket(20 * time.Minute), Value: 0},
 		}
 		got := pairCounterIncidentsCompleted(buckets, meta, 10, "errors", nil, dp30)
-		assert.Empty(t, got, "3 consecutive buckets should not meet 30m min duration")
+		require.Len(t, got, 1)
+		assert.Equal(t, int64(25), *got[0].PeakCount)
+		assert.False(t, got[0].IsOngoing)
 	})
 
 	t.Run("six consecutive buckets meets 30m min", func(t *testing.T) {

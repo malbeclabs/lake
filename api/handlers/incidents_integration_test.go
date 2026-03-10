@@ -458,11 +458,11 @@ func TestGetLinkIncidents_MinDurationFilter(t *testing.T) {
 	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
 
-	// Should NOT find the short incident with 30m min_duration
+	// Short incident should be returned but not confirmed with 30m min_duration
 	for _, inc := range resp.Active {
 		if inc.IncidentType == "errors" && inc.LinkCode == "NYC-LAX-001" && !inc.IsOngoing {
-			if inc.DurationSeconds != nil {
-				assert.True(t, *inc.DurationSeconds >= 1800, "completed incidents should be >= 30m with min_duration=30")
+			if inc.DurationSeconds != nil && *inc.DurationSeconds < 1800 {
+				assert.False(t, inc.Confirmed, "short completed incidents should not be confirmed with min_duration=30")
 			}
 		}
 	}

@@ -26,12 +26,12 @@ const timeRanges: { value: IncidentTimeRange; label: string }[] = [
 ]
 
 function RelativeTime({ timestamp }: { timestamp: number }) {
-  const [, setTick] = useState(0)
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 10000)
+    const id = setInterval(() => setNow(Date.now()), 10000)
     return () => clearInterval(id)
   }, [])
-  const seconds = Math.floor((Date.now() - timestamp) / 1000)
+  const seconds = Math.floor((now - timestamp) / 1000)
   if (seconds < 5) return <>just now</>
   if (seconds < 60) return <>{seconds}s ago</>
   const minutes = Math.floor(seconds / 60)
