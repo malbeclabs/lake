@@ -23,7 +23,7 @@ export function LinkDetailsHeader({ link }: LinkDetailsProps) {
         link
       </div>
       <div className="text-sm font-medium min-w-0 flex-1">
-        <EntityLink to={`/dz/links/${link.pk}`}>
+        <EntityLink to={`/dz/links/${link.pk}`} state={{ backLabel: 'topology' }}>
           {link.code}
         </EntityLink>
       </div>

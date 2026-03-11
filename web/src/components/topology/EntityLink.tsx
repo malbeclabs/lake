@@ -5,11 +5,12 @@ interface EntityLinkProps {
   children: React.ReactNode
   className?: string
   title?: string
+  state?: Record<string, unknown>
 }
 
 // Entity link component - normal color styling with hover underline
 // Supports cmd/ctrl-click to open in new tab
-export function EntityLink({ to, children, className = '', title }: EntityLinkProps) {
+export function EntityLink({ to, children, className = '', title, state }: EntityLinkProps) {
   const navigate = useNavigate()
 
   const handleClick = (e: React.MouseEvent) => {
@@ -18,7 +19,7 @@ export function EntityLink({ to, children, className = '', title }: EntityLinkPr
       window.open(to, '_blank')
       e.preventDefault()
     } else {
-      navigate(to)
+      navigate(to, { state })
       e.preventDefault()
     }
   }

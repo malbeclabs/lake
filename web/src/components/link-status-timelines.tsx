@@ -581,7 +581,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
           {/* Link info */}
           <div className="flex-shrink-0 w-52 sm:w-60 lg:w-68">
             <div className="flex items-center gap-1.5">
-              <Link to={`/dz/links/${link.pk}`} className="font-mono text-sm truncate hover:underline" title={link.code} onClick={(e) => e.stopPropagation()}>
+              <Link to={`/dz/links/${link.pk}`} state={{ backLabel: 'status' }} className="font-mono text-sm truncate hover:underline" title={link.code} onClick={(e) => e.stopPropagation()}>
                 {link.code}
               </Link>
               <LinkInfoPopover link={link} criticality={criticalityMap?.get(link.code)} />
