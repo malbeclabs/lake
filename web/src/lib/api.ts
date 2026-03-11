@@ -4569,6 +4569,42 @@ export interface PublisherCheckResponse {
   publishers: PublisherCheckItem[]
 }
 
+// Ledger telemetry for a Solana-compatible chain (DZ or Solana)
+export interface LedgerResponse {
+  epoch: number
+  slot_index: number
+  slots_in_epoch: number
+  epoch_pct: number
+  epoch_eta_sec: number
+  absolute_slot: number
+  block_height: number
+  transaction_count: number
+  skip_rate: number
+  tps: number
+  total_supply: number
+  circulating_supply: number
+  inflation_total: number
+  inflation_validator: number
+  inflation_foundation: number
+  active_validators: number
+  delinquent_validators: number
+  total_stake_sol: number
+  node_version: string
+  error?: string
+}
+
+export async function fetchDZLedger(): Promise<LedgerResponse> {
+  const res = await apiFetch('/api/dz/ledger')
+  if (!res.ok) throw new Error('Failed to fetch DZ ledger')
+  return res.json()
+}
+
+export async function fetchSolanaLedger(): Promise<LedgerResponse> {
+  const res = await apiFetch('/api/solana/ledger')
+  if (!res.ok) throw new Error('Failed to fetch Solana ledger')
+  return res.json()
+}
+
 export async function fetchPublisherCheck(q?: string, epochs?: number): Promise<PublisherCheckResponse> {
   const params = new URLSearchParams()
   if (q) params.set('q', q)

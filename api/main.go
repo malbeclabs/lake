@@ -454,12 +454,14 @@ func main() {
 		r.Get("/api/dz/tenants", handlers.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", handlers.GetTenant)
 		r.Get("/api/dz/field-values", handlers.GetFieldValues)
+		r.Get("/api/dz/ledger", handlers.GetDZLedger)
 
 		// Solana entity routes
 		r.Get("/api/solana/validators", handlers.GetValidators)
 		r.Get("/api/solana/validators/{vote_pubkey}", handlers.GetValidator)
 		r.Get("/api/solana/gossip-nodes", handlers.GetGossipNodes)
 		r.Get("/api/solana/gossip-nodes/{pubkey}", handlers.GetGossipNode)
+		r.Get("/api/solana/ledger", handlers.GetSolanaLedger)
 
 		// Stake analytics routes
 		r.Get("/api/stake/overview", handlers.GetStakeOverview)
