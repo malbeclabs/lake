@@ -4605,6 +4605,26 @@ export async function fetchSolanaLedger(): Promise<LedgerResponse> {
   return res.json()
 }
 
+export interface ValidatorPerfGroup {
+  validator_count: number
+  avg_vote_lag: number
+  avg_skip_rate: number
+  delinquent_count: number
+  total_stake_sol: number
+}
+
+export interface ValidatorPerfResponse {
+  on_dz: ValidatorPerfGroup
+  off_dz: ValidatorPerfGroup
+  error?: string
+}
+
+export async function fetchValidatorPerformance(): Promise<ValidatorPerfResponse> {
+  const res = await apiFetch('/api/solana/validator-performance')
+  if (!res.ok) throw new Error('Failed to fetch validator performance')
+  return res.json()
+}
+
 export async function fetchPublisherCheck(q?: string, epochs?: number): Promise<PublisherCheckResponse> {
   const params = new URLSearchParams()
   if (q) params.set('q', q)

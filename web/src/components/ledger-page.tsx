@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { BookOpen } from 'lucide-react'
 import { PageHeader } from './page-header'
-import { fetchDZLedger, fetchSolanaLedger, type LedgerResponse } from '@/lib/api'
+import { fetchDZLedger, fetchSolanaLedger, fetchStakeOverview, fetchValidatorPerformance, type LedgerResponse, type StakeOverview, type ValidatorPerfResponse } from '@/lib/api'
 
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -115,6 +115,92 @@ function ChainState({ data }: { data: LedgerResponse | undefined }) {
   )
 }
 
+function DZOnSolana({ stake }: { stake: StakeOverview | undefined }) {
+  const formatDelta = (val: number) => {
+    const sign = val >= 0 ? '+' : ''
+    return `${sign}${val.toFixed(2)}%`
+  }
+  const deltaColor = (val: number) =>
+    val > 0 ? 'text-green-600 dark:text-green-400' : val < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'
+
+  return (
+    <Card title="Solana on DoubleZero">
+      <div className="grid grid-cols-2 gap-4 sm:gap-6 md:grid-cols-4">
+        <Metric
+          label="Validators on DZ"
+          value={stake ? formatNumber(stake.validator_count) : <Skeleton />}
+        />
+        <Metric
+          label="DZ Stake"
+          value={stake ? `${formatSOL(stake.dz_stake_sol)} SOL` : <Skeleton />}
+        />
+        <Metric
+          label="Stake Share"
+          value={stake ? `${stake.stake_share_pct.toFixed(2)}%` : <Skeleton />}
+          sub={stake ? (
+            <span className="flex gap-2">
+              <span className={deltaColor(stake.share_change_24h)}>24h {formatDelta(stake.share_change_24h)}</span>
+              <span className={deltaColor(stake.share_change_7d)}>7d {formatDelta(stake.share_change_7d)}</span>
+            </span>
+          ) : undefined}
+        />
+        <Metric
+          label="DZ Stake Change (24h)"
+          value={stake ? `${stake.dz_stake_change_24h >= 0 ? '+' : ''}${formatSOL(Math.abs(stake.dz_stake_change_24h))} SOL` : <Skeleton />}
+        />
+      </div>
+    </Card>
+  )
+}
+
+function ValidatorPerformance({ perf }: { perf: ValidatorPerfResponse | undefined }) {
+  const dz = perf?.on_dz
+  const nonDz = perf?.off_dz
+
+  return (
+    <Card title="Validator Performance (24h)">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-muted-foreground uppercase tracking-wider">
+              <th className="text-left pb-3 font-medium"></th>
+              <th className="text-right pb-3 font-medium">On DZ</th>
+              <th className="text-right pb-3 font-medium">Off DZ</th>
+            </tr>
+          </thead>
+          <tbody className="tabular-nums">
+            <tr className="border-t border-border/50">
+              <td className="py-2.5 text-muted-foreground">Validators</td>
+              <td className="py-2.5 text-right font-medium">{dz ? formatNumber(dz.validator_count) : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">{nonDz ? formatNumber(nonDz.validator_count) : <Skeleton />}</td>
+            </tr>
+            <tr className="border-t border-border/50">
+              <td className="py-2.5 text-muted-foreground">Avg Skip Rate</td>
+              <td className="py-2.5 text-right font-medium">{dz ? `${dz.avg_skip_rate.toFixed(2)}%` : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">{nonDz ? `${nonDz.avg_skip_rate.toFixed(2)}%` : <Skeleton />}</td>
+            </tr>
+            <tr className="border-t border-border/50">
+              <td className="py-2.5 text-muted-foreground">Avg Vote Lag</td>
+              <td className="py-2.5 text-right font-medium">{dz ? `${dz.avg_vote_lag.toFixed(2)} slots` : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">{nonDz ? `${nonDz.avg_vote_lag.toFixed(2)} slots` : <Skeleton />}</td>
+            </tr>
+            <tr className="border-t border-border/50">
+              <td className="py-2.5 text-muted-foreground">Delinquent</td>
+              <td className="py-2.5 text-right font-medium">{dz ? formatNumber(dz.delinquent_count) : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">{nonDz ? formatNumber(nonDz.delinquent_count) : <Skeleton />}</td>
+            </tr>
+            <tr className="border-t border-border/50">
+              <td className="py-2.5 text-muted-foreground">Total Stake</td>
+              <td className="py-2.5 text-right font-medium">{dz ? `${formatSOL(dz.total_stake_sol)} SOL` : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">{nonDz ? `${formatSOL(nonDz.total_stake_sol)} SOL` : <Skeleton />}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
 function LedgerDashboard({ data, full = false }: { data: LedgerResponse | undefined; full?: boolean }) {
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -213,11 +299,27 @@ export function SolanaLedgerPage() {
     refetchInterval: 30_000,
   })
 
+  const { data: stake } = useQuery({
+    queryKey: ['stake-overview'],
+    queryFn: fetchStakeOverview,
+    refetchInterval: 60_000,
+  })
+
+  const { data: validatorPerf } = useQuery({
+    queryKey: ['validator-performance'],
+    queryFn: fetchValidatorPerformance,
+    refetchInterval: 60_000,
+  })
+
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-5xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader icon={BookOpen} title="Solana Ledger" />
-        <LedgerDashboard data={data} full />
+        <div className="space-y-4 sm:space-y-6">
+          <LedgerDashboard data={data} full />
+          <DZOnSolana stake={stake} />
+          <ValidatorPerformance perf={validatorPerf} />
+        </div>
       </div>
     </div>
   )

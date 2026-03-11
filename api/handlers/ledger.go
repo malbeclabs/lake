@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/solana"
 	"golang.org/x/sync/errgroup"
 )
@@ -242,4 +243,106 @@ func GetDZLedger(w http.ResponseWriter, r *http.Request) {
 // GetSolanaLedger returns ledger telemetry for Solana.
 func GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
 	getLedger(w, r, getSolanaRPCURL(), solanaLedgerCache)
+}
+
+// ValidatorPerfGroup holds aggregated performance metrics for a group of validators.
+type ValidatorPerfGroup struct {
+	ValidatorCount  int     `json:"validator_count"`
+	AvgVoteLag      float64 `json:"avg_vote_lag"`
+	AvgSkipRate     float64 `json:"avg_skip_rate"`
+	DelinquentCount int     `json:"delinquent_count"`
+	TotalStakeSOL   float64 `json:"total_stake_sol"`
+}
+
+// ValidatorPerfResponse compares DZ vs non-DZ validator performance.
+type ValidatorPerfResponse struct {
+	OnDZ  ValidatorPerfGroup `json:"on_dz"`
+	OffDZ ValidatorPerfGroup `json:"off_dz"`
+	Error string             `json:"error,omitempty"`
+}
+
+var validatorPerfCache = &ledgerCache{}
+
+const validatorPerfQuery = `
+SELECT
+	dz_status,
+	count(*) AS validator_count,
+	round(avg(avg_vote_lag_slots), 2) AS avg_vote_lag,
+	round(avg(skip_rate_pct), 2) AS avg_skip_rate,
+	countIf(is_delinquent) AS delinquent_count,
+	round(sum(activated_stake_sol), 0) AS total_stake_sol
+FROM solana_validators_performance_current
+GROUP BY dz_status
+`
+
+// GetValidatorPerformance returns aggregated validator performance comparing DZ vs non-DZ.
+func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
+	cache := validatorPerfCache
+
+	cache.mu.RLock()
+	if time.Now().Before(cache.expires) && cache.data != nil {
+		data := cache.data
+		cache.mu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
+	}
+	cache.mu.RUnlock()
+
+	ctx := r.Context()
+	rows, err := config.DB.Query(ctx, validatorPerfQuery)
+	if err != nil {
+		log.Printf("validator performance query error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var resp ValidatorPerfResponse
+	for rows.Next() {
+		var (
+			dzStatus       string
+			validatorCount int
+			avgVoteLag     float64
+			avgSkipRate    float64
+			delinquentCnt  int
+			totalStakeSOL  float64
+		)
+		if err := rows.Scan(&dzStatus, &validatorCount, &avgVoteLag, &avgSkipRate, &delinquentCnt, &totalStakeSOL); err != nil {
+			log.Printf("validator performance scan error: %v", err)
+			continue
+		}
+		group := ValidatorPerfGroup{
+			ValidatorCount:  validatorCount,
+			AvgVoteLag:      avgVoteLag,
+			AvgSkipRate:     avgSkipRate,
+			DelinquentCount: delinquentCnt,
+			TotalStakeSOL:   totalStakeSOL,
+		}
+		switch dzStatus {
+		case "on_dz":
+			resp.OnDZ = group
+		case "off_dz":
+			resp.OffDZ = group
+		}
+	}
+
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("validator performance marshal error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: "internal error"})
+		return
+	}
+
+	cache.mu.Lock()
+	cache.data = encoded
+	cache.expires = time.Now().Add(ledgerCacheTTL)
+	cache.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(encoded)
 }
