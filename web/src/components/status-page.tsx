@@ -1060,7 +1060,7 @@ function TopLinkUtilization({ links }: { links: StatusResponse['links']['top_uti
           return (
             <div key={link.pk} className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
-                <Link to={`/dz/links/${link.pk}`} className="font-mono text-xs truncate hover:underline" title={link.code}>{link.code}</Link>
+                <Link to={`/dz/links/${link.pk}`} state={{ backLabel: 'status' }} className="font-mono text-xs truncate hover:underline" title={link.code}>{link.code}</Link>
                 <div className="text-[10px] text-muted-foreground">{link.side_a_metro} - {link.side_z_metro}</div>
               </div>
               <div className="text-xs text-muted-foreground tabular-nums w-16 text-right">
@@ -1196,7 +1196,7 @@ function DisabledLinksTable({
             {allLinks.map((link, idx) => (
               <tr key={`${link.code}-${idx}`} id={`disabled-link-${link.code}`} className="border-b border-border last:border-b-0">
                 <td className="px-4 py-2.5">
-                  <Link to={`/dz/links/${link.pk}`} className="font-mono text-sm hover:underline">{link.code}</Link>
+                  <Link to={`/dz/links/${link.pk}`} state={{ backLabel: 'status' }} className="font-mono text-sm hover:underline">{link.code}</Link>
                   <span className="text-xs text-muted-foreground ml-2">{link.link_type}</span>
                 </td>
                 <td className="px-4 py-2.5 text-sm text-muted-foreground">{link.side_a_metro} - {link.side_z_metro}</td>
@@ -1377,7 +1377,7 @@ function InterfaceIssuesTable({
                   <td className="px-4 py-2.5 text-sm">
                     {issue.link_code && issue.link_pk ? (
                       <div>
-                        <Link to={`/dz/links/${issue.link_pk}`} className="font-mono hover:underline">{issue.link_code}</Link>
+                        <Link to={`/dz/links/${issue.link_pk}`} state={{ backLabel: 'status' }} className="font-mono hover:underline">{issue.link_code}</Link>
                         <span className="text-xs text-muted-foreground ml-1">
                           ({issue.link_type} side {issue.link_side})
                         </span>

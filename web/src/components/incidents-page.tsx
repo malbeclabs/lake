@@ -1087,6 +1087,7 @@ function ActiveIncidentsTable({
                 <td className="px-4 py-3">
                   <Link
                     to={`/dz/links/${encodeURIComponent(group.link_pk)}`}
+                    state={{ backLabel: 'incidents' }}
                     className="text-primary hover:underline inline-flex items-center gap-1"
                   >
                     {group.link_code}
@@ -1166,6 +1167,7 @@ function DrainedLinksTable({ drainedLinks }: { drainedLinks: DrainedLinkInfo[] }
               <td className="px-4 py-3 truncate">
                 <Link
                   to={`/dz/links/${encodeURIComponent(dl.link_pk)}`}
+                  state={{ backLabel: 'incidents' }}
                   className="text-primary hover:underline inline-flex items-center gap-1 max-w-full"
                   title={dl.link_code}
                 >

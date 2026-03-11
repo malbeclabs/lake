@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Cable, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchLink } from '@/lib/api'
@@ -17,6 +17,8 @@ import { useDocumentTitle } from '@/hooks/use-document-title'
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const backLabel = (location.state as { backLabel?: string } | null)?.backLabel ?? 'links'
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [bucket, setBucket] = useState<BucketSize>('auto')
 
@@ -75,11 +77,11 @@ export function LinkDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
         <button
-          onClick={() => navigate('/dz/links')}
+          onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/dz/links')}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to links
+          Back to {backLabel}
         </button>
 
         {/* Header */}
