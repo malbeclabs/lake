@@ -147,8 +147,8 @@ type Supply struct {
 		Slot uint64 `json:"slot"`
 	} `json:"context"`
 	Value struct {
-		Total         uint64 `json:"total"`
-		Circulating   uint64 `json:"circulating"`
+		Total          uint64 `json:"total"`
+		Circulating    uint64 `json:"circulating"`
 		NonCirculating uint64 `json:"nonCirculating"`
 	} `json:"value"`
 }
@@ -181,7 +181,7 @@ func (c *Client) GetInflationRate(ctx context.Context) (*InflationRate, error) {
 
 // Version is the result of getVersion.
 type Version struct {
-	SolanaCore string `json:"solana-core"`
+	SolanaCore string  `json:"solana-core"`
 	FeatureSet *uint64 `json:"feature-set,omitempty"`
 }
 

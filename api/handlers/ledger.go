@@ -36,9 +36,9 @@ type LedgerResponse struct {
 	EpochETASec  float64 `json:"epoch_eta_sec"`
 
 	// Chain state
-	AbsoluteSlot     uint64 `json:"absolute_slot"`
-	BlockHeight      uint64 `json:"block_height"`
-	TransactionCount uint64 `json:"transaction_count"`
+	AbsoluteSlot     uint64  `json:"absolute_slot"`
+	BlockHeight      uint64  `json:"block_height"`
+	TransactionCount uint64  `json:"transaction_count"`
 	SkipRate         float64 `json:"skip_rate"`
 
 	// TPS (average over recent samples)
@@ -87,7 +87,7 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 		data := cache.data
 		cache.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
+		_, _ = w.Write(data)
 		return
 	}
 	cache.mu.RUnlock()
@@ -96,12 +96,12 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 	client := solana.NewClient(rpcURL)
 
 	var (
-		epochInfo  *solana.EpochInfo
+		epochInfo   *solana.EpochInfo
 		perfSamples []solana.PerformanceSample
-		supply     *solana.Supply
-		inflation  *solana.InflationRate
-		version    *solana.Version
-		voteAccts  *solana.VoteAccountsResult
+		supply      *solana.Supply
+		inflation   *solana.InflationRate
+		version     *solana.Version
+		voteAccts   *solana.VoteAccountsResult
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -146,7 +146,7 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 		log.Printf("ledger RPC error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
+		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
 		return
 	}
 
@@ -221,7 +221,7 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 		log.Printf("ledger marshal error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(LedgerResponse{Error: "internal error"})
+		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: "internal error"})
 		return
 	}
 
@@ -231,7 +231,7 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 	cache.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(encoded)
+	_, _ = w.Write(encoded)
 }
 
 // GetDZLedger returns ledger telemetry for the DZ chain.
