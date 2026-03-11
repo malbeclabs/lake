@@ -747,8 +747,8 @@ export function LinkStatusTimelines({
         : (link.issue_reasons ?? [])
       const hasIssues = issueReasons.length > 0
 
-      // When no_data filter is off, exclude links that have no_data as an issue
-      if (!noDataSelected && issueReasons.includes('no_data')) {
+      // When no_data filter is off, exclude links whose only issue is no_data
+      if (!noDataSelected && issueReasons.length === 1 && issueReasons[0] === 'no_data') {
         return false
       }
 
