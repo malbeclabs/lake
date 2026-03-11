@@ -82,7 +82,7 @@ func getSolanaRPCURL() string {
 }
 
 func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *ledgerCache) {
-	// Check cache first
+	// Check cache first (read lock)
 	cache.mu.RLock()
 	if time.Now().Before(cache.expires) && cache.data != nil {
 		data := cache.data
@@ -92,6 +92,17 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 		return
 	}
 	cache.mu.RUnlock()
+
+	// Acquire write lock and double-check to prevent thundering herd
+	cache.mu.Lock()
+	if time.Now().Before(cache.expires) && cache.data != nil {
+		data := cache.data
+		cache.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
+	}
+	cache.mu.Unlock()
 
 	ctx := r.Context()
 	client := solana.NewClient(rpcURL)
@@ -288,6 +299,17 @@ func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cache.mu.RUnlock()
+
+	// Double-check after write lock to prevent thundering herd
+	cache.mu.Lock()
+	if time.Now().Before(cache.expires) && cache.data != nil {
+		data := cache.data
+		cache.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
+	}
+	cache.mu.Unlock()
 
 	ctx := r.Context()
 	rows, err := config.DB.Query(ctx, validatorPerfQuery)

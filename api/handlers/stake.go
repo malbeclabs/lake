@@ -13,6 +13,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var stakeOverviewCache = &ledgerCache{}
+
 type StakeOverview struct {
 	// Current values
 	DZStakeSol     float64 `json:"dz_stake_sol"`
@@ -50,6 +52,18 @@ type StakeHistoryResponse struct {
 }
 
 func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
+	cache := stakeOverviewCache
+
+	cache.mu.RLock()
+	if time.Now().Before(cache.expires) && cache.data != nil {
+		data := cache.data
+		cache.mu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
+	}
+	cache.mu.RUnlock()
+
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -211,10 +225,25 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 	overview.DZStakeChange7d = overview.DZStakeSol - overview.DZStakeSol7dAgo
 	overview.ShareChange7d = overview.StakeSharePct - overview.StakeSharePct7dAgo
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(overview); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+	encoded, encErr := json.Marshal(overview)
+	if encErr != nil {
+		log.Printf("stake overview marshal error: %v", encErr)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(StakeOverview{Error: "internal error"})
+		return
 	}
+
+	// Only cache successful responses
+	if err == nil {
+		cache.mu.Lock()
+		cache.data = encoded
+		cache.expires = time.Now().Add(ledgerCacheTTL)
+		cache.mu.Unlock()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(encoded)
 }
 
 func GetStakeHistory(w http.ResponseWriter, r *http.Request) {

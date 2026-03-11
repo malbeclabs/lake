@@ -279,6 +279,7 @@ export function DZLedgerPage() {
   const { data } = useQuery({
     queryKey: ['dz-ledger'],
     queryFn: fetchDZLedger,
+    staleTime: 30_000,
     refetchInterval: 30_000,
   })
 
@@ -296,18 +297,21 @@ export function SolanaOverviewPage() {
   const { data } = useQuery({
     queryKey: ['solana-ledger'],
     queryFn: fetchSolanaLedger,
+    staleTime: 30_000,
     refetchInterval: 30_000,
   })
 
   const { data: stake } = useQuery({
     queryKey: ['stake-overview'],
     queryFn: fetchStakeOverview,
+    staleTime: 60_000,
     refetchInterval: 60_000,
   })
 
   const { data: validatorPerf } = useQuery({
     queryKey: ['validator-performance'],
     queryFn: fetchValidatorPerformance,
+    staleTime: 60_000,
     refetchInterval: 60_000,
   })
 
