@@ -90,6 +90,11 @@ func Load() error {
 
 	cfg.Password = os.Getenv("CLICKHOUSE_PASSWORD")
 
+	// CLICKHOUSE_USE_REMOTE=true switches to the remote proxy database (lake).
+	if os.Getenv("CLICKHOUSE_USE_REMOTE") == "true" {
+		cfg.Database = "lake"
+	}
+
 	if db := os.Getenv("CLICKHOUSE_SHREDDER_DB"); db != "" {
 		ShredderDB = db
 	}

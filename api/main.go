@@ -210,7 +210,13 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 
 func main() {
 	metricsAddrFlag := flag.String("metrics-addr", defaultMetricsAddr, "Address to listen on for prometheus metrics")
+	useRemoteFlag := flag.Bool("use-remote", false, "Use remote proxy database (e.g., lake_remote) instead of local data")
 	flag.Parse()
+
+	// Set env var so config.Load() picks it up (flag takes precedence over env)
+	if *useRemoteFlag {
+		os.Setenv("CLICKHOUSE_USE_REMOTE", "true")
+	}
 
 	log.Printf("Starting lake-api version=%s commit=%s date=%s", version, commit, date)
 	handlers.SetBuildInfo(version, commit, date)

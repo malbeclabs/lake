@@ -54,7 +54,30 @@ echo "  GEOIP_CITY_DB_PATH=$GEOIP_DIR/GeoLite2-City.mmdb"
 echo "  GEOIP_ASN_DB_PATH=$GEOIP_DIR/GeoLite2-ASN.mmdb"
 echo ""
 
-# Step 4: Check for bun
+# Step 4: Set up remote proxy tables (if credentials are configured)
+if [[ -f .env ]]; then
+    set -a
+    source .env
+    set +a
+fi
+
+if [[ -n "${REMOTE_CH_HOST:-}" && -n "${REMOTE_CH_USER:-}" && -n "${REMOTE_CH_PASSWORD:-}" ]]; then
+    echo "=== Setting up remote proxy tables ==="
+    local_addr="${CLICKHOUSE_ADDR_TCP:-localhost:9100}"
+    go run ./admin/cmd/admin/ \
+        --clickhouse-addr "$local_addr" \
+        --setup-remote-tables \
+        --remote-clickhouse-addr "$REMOTE_CH_HOST" \
+        --remote-clickhouse-user "$REMOTE_CH_USER" \
+        --remote-clickhouse-password "$REMOTE_CH_PASSWORD"
+    echo ""
+else
+    echo "=== Skipping remote proxy tables (REMOTE_CH_HOST/USER/PASSWORD not set) ==="
+    echo "To use remote data, add REMOTE_CH_* vars to .env and re-run this script."
+    echo ""
+fi
+
+# Step 5: Check dependencies
 echo "=== Checking dependencies ==="
 if ! command -v bun &> /dev/null; then
     echo "bun is not installed. Install it with:"
@@ -72,7 +95,7 @@ else
 fi
 echo ""
 
-# Step 5: Print next steps
+# Step 6: Print next steps
 echo "=== Setup complete! ==="
 echo ""
 echo "Next steps:"

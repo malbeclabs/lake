@@ -149,6 +149,8 @@ The control center will be at http://localhost:5174.
 
 For testing the UI with real production data without running the full indexer, you can set up proxy tables that forward queries from your local ClickHouse to a remote ClickHouse Cloud instance.
 
+Proxy tables are created in a separate `lake` database to keep them isolated from local data tables in the `default` database. Existing non-proxy tables are never overwritten unless you pass `--force`.
+
 1. Add remote credentials to `.env`:
    ```bash
    REMOTE_CH_HOST=your-instance.us-east-1.aws.clickhouse.cloud
@@ -156,18 +158,21 @@ For testing the UI with real production data without running the full indexer, y
    REMOTE_CH_PASSWORD=your-password
    ```
 
-2. Run the admin command:
+2. Run the setup command:
    ```bash
-   go run ./admin/cmd/admin/ --clickhouse-addr localhost:9100 --setup-remote-tables=all
+   go run ./admin/cmd/admin/ --clickhouse-addr localhost:9100 --setup-remote-tables
    ```
 
-This creates local proxy tables using ClickHouse `remoteSecure()` that transparently forward reads to the remote instance:
-- `all` mode discovers all tables in the remote `lake` database and creates local proxies, plus creates proxies for external service tables (e.g., `shredder.publisher_shred_stats`, `shredder_qa.publisher_shred_stats`)
-- `external` mode only creates the external service proxies (used in k8s staging/PR preview environments)
+3. Point the API server at the remote database:
+   ```bash
+   go run ./api/main.go --use-remote
+   ```
 
-The API and web UI work as normal — they query local ClickHouse which forwards to remote. No code changes needed.
+The command discovers all tables in the remote `lake` database and creates local proxies in a `lake` database, plus proxies for external service tables (e.g., shredder).
 
-Set `CLICKHOUSE_SHREDDER_DB` to control which shredder database the publisher check queries use (default: `shredder`). For example, set `CLICKHOUSE_SHREDDER_DB=shredder_qa` to use the QA environment.
+Options:
+- `--remote-clickhouse-database` / `REMOTE_CH_DATABASE` — remote database to discover from (default: `lake`)
+- `--force` — overwrite existing non-proxy tables
 
 To add proxies for additional external tables, add entries to `externalRemoteTables` in `admin/internal/admin/setup_remote_tables.go`.
 
