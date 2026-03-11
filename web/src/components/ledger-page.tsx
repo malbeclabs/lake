@@ -292,7 +292,7 @@ export function DZLedgerPage() {
   )
 }
 
-export function SolanaLedgerPage() {
+export function SolanaOverviewPage() {
   const { data } = useQuery({
     queryKey: ['solana-ledger'],
     queryFn: fetchSolanaLedger,
@@ -314,7 +314,7 @@ export function SolanaLedgerPage() {
   return (
     <div className="flex-1 overflow-auto">
       <div className="max-w-5xl mx-auto px-4 sm:px-8 py-8">
-        <PageHeader icon={BookOpen} title="Solana Ledger" />
+        <PageHeader icon={BookOpen} title="Solana Overview" />
         <div className="space-y-4 sm:space-y-6">
           <LedgerDashboard data={data} full />
           <DZOnSolana stake={stake} />

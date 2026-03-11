@@ -90,7 +90,7 @@ export function Sidebar() {
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isValidatorsRoute = location.pathname === '/solana/validators'
   const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
-  const isSolanaLedgerRoute = location.pathname === '/solana/ledger'
+  const isSolanaOverviewRoute = location.pathname === '/solana/overview'
 
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const userPref = localStorage.getItem('sidebar-user-collapsed')
@@ -542,9 +542,9 @@ export function Sidebar() {
               <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Solana</span>
             </div>
             <div className="space-y-1">
-              <Link to="/solana/ledger" className={navItemClass(isSolanaLedgerRoute)}>
+              <Link to="/solana/overview" className={navItemClass(isSolanaOverviewRoute)}>
                 <BookOpen className="h-4 w-4" />
-                Ledger
+                Overview
               </Link>
               <Link to="/solana/validators" className={navItemClass(isValidatorsRoute)}>
                 <Landmark className="h-4 w-4" />

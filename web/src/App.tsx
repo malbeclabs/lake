@@ -58,7 +58,7 @@ import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-pa
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
 import { StakePage } from '@/components/stake-page'
-import { DZLedgerPage, SolanaLedgerPage } from '@/components/ledger-page'
+import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
 import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
 import { TermsPage } from '@/components/terms-page'
@@ -695,7 +695,7 @@ function AppContent() {
             <Route path="/dz/publisher-check" element={<PublisherCheckPage />} />
 
             {/* Solana entity routes */}
-            <Route path="/solana/ledger" element={<SolanaLedgerPage />} />
+            <Route path="/solana/overview" element={<SolanaOverviewPage />} />
             <Route path="/solana/validators" element={<ValidatorsPage />} />
             <Route path="/solana/validators/:vote_pubkey" element={<ValidatorDetailPage />} />
             <Route path="/solana/gossip-nodes" element={<GossipNodesPage />} />
