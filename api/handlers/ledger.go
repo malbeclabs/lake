@@ -1,30 +1,16 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/solana"
 	"golang.org/x/sync/errgroup"
-)
-
-// ledgerCache holds a cached LedgerResponse for a given RPC URL.
-type ledgerCache struct {
-	mu      sync.RWMutex
-	data    []byte // pre-encoded JSON
-	expires time.Time
-}
-
-const ledgerCacheTTL = 60 * time.Second
-
-var (
-	dzLedgerCache     = &ledgerCache{}
-	solanaLedgerCache = &ledgerCache{}
 )
 
 // LedgerResponse contains ledger/chain telemetry for a Solana-compatible chain.
@@ -81,30 +67,8 @@ func getSolanaRPCURL() string {
 	return solana.GetRPCURL()
 }
 
-func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *ledgerCache) {
-	// Check cache first (read lock)
-	cache.mu.RLock()
-	if time.Now().Before(cache.expires) && cache.data != nil {
-		data := cache.data
-		cache.mu.RUnlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(data)
-		return
-	}
-	cache.mu.RUnlock()
-
-	// Acquire write lock and double-check to prevent thundering herd
-	cache.mu.Lock()
-	if time.Now().Before(cache.expires) && cache.data != nil {
-		data := cache.data
-		cache.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(data)
-		return
-	}
-	cache.mu.Unlock()
-
-	ctx := r.Context()
+// fetchLedgerData fetches ledger telemetry from the given RPC URL.
+func fetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error) {
 	client := solana.NewClient(rpcURL)
 
 	var (
@@ -155,11 +119,7 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 	})
 
 	if err := g.Wait(); err != nil {
-		log.Printf("ledger RPC error: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
-		return
+		return nil, err
 	}
 
 	// Compute TPS from performance samples
@@ -200,7 +160,7 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 		totalStakeLamports += v.ActivatedStake
 	}
 
-	resp := LedgerResponse{
+	return &LedgerResponse{
 		Epoch:        epochInfo.Epoch,
 		SlotIndex:    epochInfo.SlotIndex,
 		SlotsInEpoch: epochInfo.SlotsInEpoch,
@@ -226,34 +186,59 @@ func getLedger(w http.ResponseWriter, r *http.Request, rpcURL string, cache *led
 		TotalStakeSOL:        float64(totalStakeLamports) / 1e9,
 
 		NodeVersion: version.SolanaCore,
-	}
-
-	encoded, err := json.Marshal(resp)
-	if err != nil {
-		log.Printf("ledger marshal error: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: "internal error"})
-		return
-	}
-
-	cache.mu.Lock()
-	cache.data = encoded
-	cache.expires = time.Now().Add(ledgerCacheTTL)
-	cache.mu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(encoded)
+	}, nil
 }
 
 // GetDZLedger returns ledger telemetry for the DZ chain.
 func GetDZLedger(w http.ResponseWriter, r *http.Request) {
-	getLedger(w, r, getDZLedgerRPCURL(), dzLedgerCache)
+	if statusCache != nil {
+		if resp := statusCache.GetDZLedger(); resp != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchLedgerData(ctx, getDZLedgerRPCURL())
+	if err != nil {
+		log.Printf("DZ ledger RPC error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // GetSolanaLedger returns ledger telemetry for Solana.
 func GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
-	getLedger(w, r, getSolanaRPCURL(), solanaLedgerCache)
+	if statusCache != nil {
+		if resp := statusCache.GetSolanaLedger(); resp != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchLedgerData(ctx, getSolanaRPCURL())
+	if err != nil {
+		log.Printf("Solana ledger RPC error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // ValidatorPerfGroup holds aggregated performance metrics for a group of validators.
@@ -272,8 +257,6 @@ type ValidatorPerfResponse struct {
 	Error string             `json:"error,omitempty"`
 }
 
-var validatorPerfCache = &ledgerCache{}
-
 const validatorPerfQuery = `
 SELECT
 	dz_status,
@@ -286,39 +269,11 @@ FROM solana_validators_performance_current
 GROUP BY dz_status
 `
 
-// GetValidatorPerformance returns aggregated validator performance comparing DZ vs non-DZ.
-func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
-	cache := validatorPerfCache
-
-	cache.mu.RLock()
-	if time.Now().Before(cache.expires) && cache.data != nil {
-		data := cache.data
-		cache.mu.RUnlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(data)
-		return
-	}
-	cache.mu.RUnlock()
-
-	// Double-check after write lock to prevent thundering herd
-	cache.mu.Lock()
-	if time.Now().Before(cache.expires) && cache.data != nil {
-		data := cache.data
-		cache.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(data)
-		return
-	}
-	cache.mu.Unlock()
-
-	ctx := r.Context()
+// fetchValidatorPerfData fetches aggregated validator performance data.
+func fetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error) {
 	rows, err := config.DB.Query(ctx, validatorPerfQuery)
 	if err != nil {
-		log.Printf("validator performance query error: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: err.Error()})
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -351,20 +306,31 @@ func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	encoded, err := json.Marshal(resp)
+	return &resp, nil
+}
+
+// GetValidatorPerformance returns aggregated validator performance comparing DZ vs non-DZ.
+func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
+	if statusCache != nil {
+		if resp := statusCache.GetValidatorPerf(); resp != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchValidatorPerfData(ctx)
 	if err != nil {
-		log.Printf("validator performance marshal error: %v", err)
+		log.Printf("validator performance query error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: "internal error"})
+		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: err.Error()})
 		return
 	}
 
-	cache.mu.Lock()
-	cache.data = encoded
-	cache.expires = time.Now().Add(ledgerCacheTTL)
-	cache.mu.Unlock()
-
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(encoded)
+	_ = json.NewEncoder(w).Encode(resp)
 }

@@ -34,6 +34,10 @@ type StatusCache struct {
 	deviceIncidents   *DeviceIncidentsResponse             // default 24h device incidents
 	latencyComparison *LatencyComparisonResponse           // DZ vs Internet latency comparison
 	metroPathLatency  map[string]*MetroPathLatencyResponse // keyed by optimize strategy (hops, latency, bandwidth)
+	dzLedger          *LedgerResponse
+	solanaLedger      *LedgerResponse
+	validatorPerf     *ValidatorPerfResponse
+	stakeOverview     *StakeOverview
 
 	// Refresh intervals
 	statusInterval      time.Duration
@@ -41,6 +45,7 @@ type StatusCache struct {
 	timelineInterval    time.Duration
 	incidentsInterval   time.Duration
 	performanceInterval time.Duration // for latency comparison and metro path latency
+	ledgerInterval      time.Duration // for ledger, validator perf, and stake overview
 
 	// Last refresh times (for observability)
 	statusLastRefresh            time.Time
@@ -51,6 +56,7 @@ type StatusCache struct {
 	deviceIncidentsLastRefresh   time.Time
 	latencyComparisonLastRefresh time.Time
 	metroPathLatencyLastRefresh  time.Time
+	ledgerLastRefresh            time.Time
 
 	// Context for cancellation
 	ctx    context.Context
@@ -84,7 +90,7 @@ type refreshEntry struct {
 }
 
 // NewStatusCache creates a new cache with the specified refresh intervals.
-func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval time.Duration) *StatusCache {
+func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval, ledgerInterval time.Duration) *StatusCache {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StatusCache{
 		linkHistory:         make(map[string]*LinkHistoryResponse),
@@ -95,6 +101,7 @@ func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incid
 		timelineInterval:    timelineInterval,
 		incidentsInterval:   incidentsInterval,
 		performanceInterval: performanceInterval,
+		ledgerInterval:      ledgerInterval,
 		ctx:                 ctx,
 		cancel:              cancel,
 	}
@@ -103,8 +110,8 @@ func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incid
 // Start begins the background refresh loop.
 // It performs an initial refresh synchronously to ensure cache is warm before returning.
 func (c *StatusCache) Start() {
-	log.Printf("Starting status cache with intervals: status=%v, linkHistory=%v, timeline=%v, incidents=%v, performance=%v",
-		c.statusInterval, c.linkHistoryInterval, c.timelineInterval, c.incidentsInterval, c.performanceInterval)
+	log.Printf("Starting status cache with intervals: status=%v, linkHistory=%v, timeline=%v, incidents=%v, performance=%v, ledger=%v",
+		c.statusInterval, c.linkHistoryInterval, c.timelineInterval, c.incidentsInterval, c.performanceInterval, c.ledgerInterval)
 
 	// Initial refresh (synchronous to ensure cache is warm)
 	c.refreshStatus()
@@ -115,6 +122,10 @@ func (c *StatusCache) Start() {
 	c.refreshDeviceIncidents()
 	c.refreshLatencyComparison()
 	c.refreshMetroPathLatency()
+	c.refreshDZLedger()
+	c.refreshSolanaLedger()
+	c.refreshValidatorPerf()
+	c.refreshStakeOverview()
 
 	// Start a single coordinated refresh loop
 	c.wg.Add(1)
@@ -140,6 +151,10 @@ func (c *StatusCache) refreshLoop() {
 		{"device history", c.linkHistoryInterval, c.refreshDeviceHistory},
 		{"latency comparison", c.performanceInterval, c.refreshLatencyComparison},
 		{"metro path latency", c.performanceInterval, c.refreshMetroPathLatency},
+		{"dz ledger", c.ledgerInterval, c.refreshDZLedger},
+		{"solana ledger", c.ledgerInterval, c.refreshSolanaLedger},
+		{"validator perf", c.ledgerInterval, c.refreshValidatorPerf},
+		{"stake overview", c.ledgerInterval, c.refreshStakeOverview},
 	}
 
 	// Track when each refresh last ran. Initialized to now since Start()
@@ -479,6 +494,107 @@ func (c *StatusCache) refreshMetroPathLatency() {
 	log.Printf("Metro path latency cache refreshed in %v (%d strategies)", time.Since(start), len(strategies))
 }
 
+// GetDZLedger returns the cached DZ ledger response.
+func (c *StatusCache) GetDZLedger() *LedgerResponse {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dzLedger
+}
+
+// GetSolanaLedger returns the cached Solana ledger response.
+func (c *StatusCache) GetSolanaLedger() *LedgerResponse {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.solanaLedger
+}
+
+// GetValidatorPerf returns the cached validator performance response.
+func (c *StatusCache) GetValidatorPerf() *ValidatorPerfResponse {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.validatorPerf
+}
+
+// GetStakeOverview returns the cached stake overview response.
+func (c *StatusCache) GetStakeOverview() *StakeOverview {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.stakeOverview
+}
+
+func (c *StatusCache) refreshDZLedger() {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchLedgerData(ctx, getDZLedgerRPCURL())
+	if err != nil {
+		log.Printf("DZ ledger cache refresh error: %v (keeping stale data)", err)
+		return
+	}
+
+	c.mu.Lock()
+	c.dzLedger = resp
+	c.ledgerLastRefresh = time.Now()
+	c.mu.Unlock()
+
+	log.Printf("DZ ledger cache refreshed in %v", time.Since(start))
+}
+
+func (c *StatusCache) refreshSolanaLedger() {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchLedgerData(ctx, getSolanaRPCURL())
+	if err != nil {
+		log.Printf("Solana ledger cache refresh error: %v (keeping stale data)", err)
+		return
+	}
+
+	c.mu.Lock()
+	c.solanaLedger = resp
+	c.mu.Unlock()
+
+	log.Printf("Solana ledger cache refreshed in %v", time.Since(start))
+}
+
+func (c *StatusCache) refreshValidatorPerf() {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchValidatorPerfData(ctx)
+	if err != nil {
+		log.Printf("Validator perf cache refresh error: %v (keeping stale data)", err)
+		return
+	}
+
+	c.mu.Lock()
+	c.validatorPerf = resp
+	c.mu.Unlock()
+
+	log.Printf("Validator perf cache refreshed in %v", time.Since(start))
+}
+
+func (c *StatusCache) refreshStakeOverview() {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
+	defer cancel()
+
+	resp, err := fetchStakeOverviewData(ctx)
+	if err != nil {
+		log.Printf("Stake overview cache refresh error: %v (keeping stale data)", err)
+		return
+	}
+
+	c.mu.Lock()
+	c.stakeOverview = resp
+	c.mu.Unlock()
+
+	log.Printf("Stake overview cache refreshed in %v", time.Since(start))
+}
+
 func linkHistoryCacheKey(timeRange string, buckets int) string {
 	return timeRange + ":" + strconv.Itoa(buckets)
 }
@@ -499,6 +615,7 @@ func InitStatusCache() {
 		30*time.Second,  // Timeline refresh every 30s
 		60*time.Second,  // Incidents refresh every 60s
 		120*time.Second, // Performance (latency comparison, metro path latency) refresh every 120s
+		60*time.Second,  // Ledger (DZ/Solana ledger, validator perf, stake overview) refresh every 60s
 	)
 	statusCache.Start()
 }
