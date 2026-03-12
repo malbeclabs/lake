@@ -7,7 +7,6 @@ import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
-import { OperationalStateTimeline } from '@/components/operational-state-timeline'
 import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
@@ -135,9 +134,6 @@ export function DeviceDetailPage() {
 
         {/* Status row */}
         <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
-
-        {/* Operational state timeline */}
-        <OperationalStateTimeline entityType="device" entityPk={device.pk} timeRange={timeRangeToString(timeRange)} />
 
         {/* Interface charts (traffic + health) */}
         <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} className="rounded-lg border border-border p-4" />

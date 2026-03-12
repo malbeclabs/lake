@@ -594,13 +594,13 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
             <div className="text-xs text-muted-foreground">
               {link.link_type}{link.contributor && ` · ${link.contributor}`} · {link.side_a_metro} ↔ {link.side_z_metro}
             </div>
-            {(link.is_down || link.drained || link.provisioning || issueReasons.length > 0) && (
+            {(link.is_down || link.drain_status || link.provisioning || issueReasons.length > 0) && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {link.is_down && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Down</span>
                 )}
-                {link.drained && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Drained</span>
+                {link.drain_status && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">{link.drain_status === 'hard-drained' ? 'Hard Drained' : 'Soft Drained'}</span>
                 )}
                 {link.provisioning && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-blue-500/15 text-blue-700 dark:bg-blue-400/20 dark:text-blue-300">Provisioning</span>
@@ -760,7 +760,7 @@ export function LinkStatusTimelines({
       }
 
       // Hide currently drained links unless showDrained is enabled
-      if (link.drained && !showDrained) {
+      if (link.drain_status && !showDrained) {
         return false
       }
 
@@ -804,7 +804,7 @@ export function LinkStatusTimelines({
 
   const drainedCount = useMemo(() => {
     if (!data?.links) return 0
-    return data.links.filter(link => link.drained).length
+    return data.links.filter(link => link.drain_status).length
   }, [data?.links])
 
   const provisioningCount = useMemo(() => {

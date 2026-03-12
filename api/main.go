@@ -422,8 +422,6 @@ func main() {
 		r.Get("/api/status/devices/{pk}/interface-history", handlers.GetDeviceInterfaceHistory)
 		r.Get("/api/status/devices/{pk}/history", handlers.GetSingleDeviceHistory)
 		r.Get("/api/status/links/{pk}/history", handlers.GetSingleLinkHistory)
-		r.Get("/api/status/links/{pk}/state-timeline", handlers.GetLinkStateTimeline)
-		r.Get("/api/status/devices/{pk}/state-timeline", handlers.GetDeviceStateTimeline)
 		r.Get("/api/timeline", handlers.GetTimeline)
 		r.Get("/api/timeline/bounds", handlers.GetTimelineBounds)
 

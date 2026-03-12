@@ -50,9 +50,26 @@ const statusLabels: Record<string, string> = {
   disabled: 'Disabled',
 }
 
-// Diagonal stripe pattern for drained cells — grey dominates with health color peeking through
-const drainedStripeStyle: React.CSSProperties = {
-  backgroundImage: 'repeating-linear-gradient(135deg, rgba(120,120,120,0.9), rgba(120,120,120,0.9) 5px, transparent 5px, transparent 7px)',
+// Hard-drained: dark stripes over health color
+const hardDrainedStripeStyle: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, rgba(60,60,60,0.85), rgba(60,60,60,0.85) 5px, transparent 5px, transparent 7px)',
+}
+
+// Soft-drained: light/white stripes over health color
+const softDrainedStripeStyle: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.6), rgba(255,255,255,0.6) 5px, transparent 5px, transparent 7px)',
+}
+
+function getDrainStripeStyle(drainStatus?: string): React.CSSProperties | undefined {
+  if (drainStatus === 'hard-drained') return hardDrainedStripeStyle
+  if (drainStatus === 'soft-drained') return softDrainedStripeStyle
+  return undefined
+}
+
+function getDrainLabel(drainStatus?: string): string | null {
+  if (drainStatus === 'hard-drained') return 'Hard Drained'
+  if (drainStatus === 'soft-drained') return 'Soft Drained'
+  return null
 }
 
 // Thresholds matching backend classification and methodology
@@ -175,7 +192,8 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
       <div className="flex gap-[2px]">
         {hours.map((hour, index) => {
           const effectiveStatus = getEffectiveStatus(hour, committedRttUs)
-          const isDrained = hour.drained === true
+          const drainStatus = hour.drain_status || ''
+          const drainLabel = getDrainLabel(drainStatus)
           return (
           <div
             key={hour.hour}
@@ -185,7 +203,7 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
           >
             <div
               className={`w-full h-6 rounded-sm ${statusColors[effectiveStatus]} cursor-pointer transition-opacity hover:opacity-80`}
-              style={isDrained ? drainedStripeStyle : undefined}
+              style={getDrainStripeStyle(drainStatus)}
             />
 
             {/* Tooltip */}
@@ -203,7 +221,7 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
                     'text-muted-foreground'
                   }`}>
                     {statusLabels[effectiveStatus] || effectiveStatus}
-                    {isDrained && <span className="text-muted-foreground ml-1">(Drained)</span>}
+                    {drainLabel && <span className="text-muted-foreground ml-1">({drainLabel})</span>}
                   </div>
                   {/* Reasons */}
                   {(() => {
