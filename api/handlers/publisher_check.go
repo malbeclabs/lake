@@ -68,7 +68,7 @@ type PublisherCheckItem struct {
 type PublisherCheckResponse struct {
 	Epoch             uint64               `json:"epoch"`
 	TotalNetworkStake int64                `json:"total_network_stake"`
-	Publishers        []PublisherCheckItem  `json:"publishers"`
+	Publishers        []PublisherCheckItem `json:"publishers"`
 }
 
 // GetPublisherCheck returns publisher status for all publishers in the current epoch,
