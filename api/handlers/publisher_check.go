@@ -66,8 +66,9 @@ type PublisherCheckItem struct {
 
 // PublisherCheckResponse is the response for the publisher check endpoint.
 type PublisherCheckResponse struct {
-	Epoch      uint64               `json:"epoch"`
-	Publishers []PublisherCheckItem `json:"publishers"`
+	Epoch             uint64               `json:"epoch"`
+	TotalNetworkStake int64                `json:"total_network_stake"`
+	Publishers        []PublisherCheckItem  `json:"publishers"`
 }
 
 // GetPublisherCheck returns publisher status for all publishers in the current epoch,
@@ -243,9 +244,19 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		publishers = []PublisherCheckItem{}
 	}
 
+	var totalNetworkStake int64
+	err = envDB(ctx).QueryRow(ctx,
+		`SELECT COALESCE(SUM(activated_stake_lamports), 0)
+		 FROM solana_vote_accounts_current
+		 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake)
+	if err != nil {
+		log.Printf("PublisherCheck: total network stake query error: %v", err)
+	}
+
 	resp := PublisherCheckResponse{
-		Epoch:      epoch,
-		Publishers: publishers,
+		Epoch:             epoch,
+		TotalNetworkStake: totalNetworkStake,
+		Publishers:        publishers,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

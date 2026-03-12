@@ -186,8 +186,24 @@ export function PublisherCheckPage() {
   }, [nonBackupPublishers, publishingFilter])
 
   const publishingCount = useMemo(() =>
-    nonBackupPublishers.filter(p => p.publishing_leader_shreds && !p.publishing_retransmitted).length,
+    nonBackupPublishers.filter(p => p.publishing_leader_shreds).length,
   [nonBackupPublishers])
+
+  const totalPublisherStake = useMemo(() =>
+    nonBackupPublishers.reduce((sum, p) => sum + p.activated_stake, 0),
+  [nonBackupPublishers])
+
+  const publishingStake = useMemo(() =>
+    nonBackupPublishers.filter(p => p.publishing_leader_shreds).reduce((sum, p) => sum + p.activated_stake, 0),
+  [nonBackupPublishers])
+
+  const totalNetworkStake = data?.total_network_stake ?? 0
+
+  const formatStakePct = (stake: number) => {
+    if (!totalNetworkStake) return formatStake(stake)
+    const pct = (stake / totalNetworkStake) * 100
+    return `${pct.toFixed(1)}%`
+  }
 
   const pagedPublishers = useMemo(
     () => filteredPublishers.slice(offset, offset + PAGE_SIZE),
@@ -267,10 +283,20 @@ export function PublisherCheckPage() {
             <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
               <span className="text-muted-foreground">Total Publishers</span>{' '}
               <span className="font-medium">{nonBackupPublishers.length}</span>
+              {totalPublisherStake > 0 && (
+                <span className="ml-1.5 text-muted-foreground" title={formatStakeExact(totalPublisherStake)}>
+                  ({formatStakePct(totalPublisherStake)} of stake)
+                </span>
+              )}
             </div>
             <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
               <span className="text-muted-foreground">Publishing Shreds</span>{' '}
               <span className="font-medium">{publishingCount}</span>
+              {publishingStake > 0 && (
+                <span className="ml-1.5 text-muted-foreground" title={formatStakeExact(publishingStake)}>
+                  ({formatStakePct(publishingStake)} of stake)
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
