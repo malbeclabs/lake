@@ -138,8 +138,8 @@ function DZOnSolana({ stake }: { stake: StakeOverview | undefined }) {
           value={stake ? `${stake.stake_share_pct.toFixed(2)}%` : <Skeleton />}
           sub={stake ? (
             <span className="flex gap-2">
-              <span className={deltaColor(stake.share_change_24h)}>24h {formatDelta(stake.share_change_24h)}</span>
-              <span className={deltaColor(stake.share_change_7d)}>7d {formatDelta(stake.share_change_7d)}</span>
+              <span className={deltaColor()}>24h {formatDelta(stake.share_change_24h)}</span>
+              <span className={deltaColor()}>7d {formatDelta(stake.share_change_7d)}</span>
             </span>
           ) : undefined}
         />
