@@ -120,7 +120,7 @@ function DZOnSolana({ stake }: { stake: StakeOverview | undefined }) {
     const sign = val >= 0 ? '+' : ''
     return `${sign}${val.toFixed(2)}%`
   }
-  const deltaColor = (_val: number) => 'text-muted-foreground'
+  const deltaColor = () => 'text-muted-foreground'
 
   return (
     <Card title="Solana on DoubleZero">
