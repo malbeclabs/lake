@@ -1018,10 +1018,8 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		return rows.Err()
 	})
 
-	// Non-activated links (including delay-override drained and provisioning)
+	// Drained links (soft-drained or hard-drained)
 	g.Go(func() error {
-		// 1000ms delay override in nanoseconds indicates soft-drained
-		const delayOverrideSoftDrainedNs = 1_000_000_000
 		query := `
 			SELECT
 				l.pk,
@@ -1029,22 +1027,19 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				l.link_type,
 				ma.code as side_a_metro,
 				mz.code as side_z_metro,
-				CASE
-					WHEN l.committed_rtt_ns = ? THEN 'provisioning'
-					WHEN l.status = 'activated' AND l.isis_delay_override_ns = ? THEN 'soft-drained'
-					ELSE l.status
-				END as status,
+				l.status,
 				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since
 			FROM dz_links_current l
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-			WHERE l.status != 'activated' OR l.isis_delay_override_ns = ? OR l.committed_rtt_ns = ?
+			WHERE l.status IN ('soft-drained', 'hard-drained')
+			  AND l.committed_rtt_ns != ?
 			ORDER BY l.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs, delayOverrideSoftDrainedNs, delayOverrideSoftDrainedNs, committedRttProvisioningNs)
+		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}

@@ -115,14 +115,14 @@ function getStatusReasons(status: StatusResponse): string[] {
     .filter(([s]) => s !== 'activated')
     .reduce((sum, [, count]) => sum + count, 0)
   const nonActivatedLinks = Object.entries(status.network.links_by_status)
-    .filter(([s]) => s !== 'activated' && s !== 'provisioning')
+    .filter(([s]) => s === 'soft-drained' || s === 'hard-drained')
     .reduce((sum, [, count]) => sum + count, 0)
 
   if (nonActivatedDevices > 0) {
     reasons.push(`${nonActivatedDevices} device${nonActivatedDevices > 1 ? 's' : ''} not activated`)
   }
   if (nonActivatedLinks > 0) {
-    reasons.push(`${nonActivatedLinks} Link${nonActivatedLinks > 1 ? 's' : ''} Not Active`)
+    reasons.push(`${nonActivatedLinks} Drained Link${nonActivatedLinks > 1 ? 's' : ''}`)
   }
 
   return reasons
@@ -342,7 +342,7 @@ function IssueDetails({
       )}
       {nonActivatedLinks.length > 0 && (
         <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">Links Not Active</div>
+          <div className="text-sm font-medium text-muted-foreground mb-2">Drained Links</div>
           <div className="space-y-2">
             {nonActivatedLinks.map((link, idx) => (
               <button
