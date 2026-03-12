@@ -3394,3 +3394,198 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		BucketCount:   bucketCount,
 	}, nil
 }
+
+// StateSegment represents a period of time where an entity had a specific operational status.
+type StateSegment struct {
+	Status string `json:"status"`
+	Start  string `json:"start"`
+	End    string `json:"end"`
+}
+
+// StateTimelineResponse is the response for state timeline endpoints.
+type StateTimelineResponse struct {
+	Segments   []StateSegment `json:"segments"`
+	RangeStart string         `json:"range_start"`
+	RangeEnd   string         `json:"range_end"`
+}
+
+// parseTimeRangeHours returns the number of hours for the given time range string.
+func parseTimeRangeHours(timeRange string) int {
+	switch timeRange {
+	case "1h":
+		return 1
+	case "3h":
+		return 3
+	case "6h":
+		return 6
+	case "12h":
+		return 12
+	case "3d":
+		return 3 * 24
+	case "7d":
+		return 7 * 24
+	default:
+		return 24
+	}
+}
+
+// GetLinkStateTimeline returns the operational state timeline for a single link.
+func GetLinkStateTimeline(w http.ResponseWriter, r *http.Request) {
+	linkPK := chi.URLParam(r, "pk")
+	if linkPK == "" {
+		http.Error(w, "missing link pk", http.StatusBadRequest)
+		return
+	}
+
+	timeRange := r.URL.Query().Get("range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+
+	totalHours := parseTimeRangeHours(timeRange)
+	now := time.Now().UTC()
+	rangeStart := now.Add(-time.Duration(totalHours) * time.Hour)
+
+	resp, err := fetchStateTimeline(r.Context(), "dim_dz_links_history", "pk", linkPK, rangeStart, now)
+	if err != nil {
+		log.Printf("Error fetching link state timeline: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("JSON encoding error: %v", err)
+	}
+}
+
+// GetDeviceStateTimeline returns the operational state timeline for a single device.
+func GetDeviceStateTimeline(w http.ResponseWriter, r *http.Request) {
+	devicePK := chi.URLParam(r, "pk")
+	if devicePK == "" {
+		http.Error(w, "missing device pk", http.StatusBadRequest)
+		return
+	}
+
+	timeRange := r.URL.Query().Get("range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+
+	totalHours := parseTimeRangeHours(timeRange)
+	now := time.Now().UTC()
+	rangeStart := now.Add(-time.Duration(totalHours) * time.Hour)
+
+	resp, err := fetchStateTimeline(r.Context(), "dim_dz_devices_history", "pk", devicePK, rangeStart, now)
+	if err != nil {
+		log.Printf("Error fetching device state timeline: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("JSON encoding error: %v", err)
+	}
+}
+
+// fetchStateTimeline queries the history table for state transitions and builds segments.
+func fetchStateTimeline(ctx context.Context, table, pkColumn, pkValue string, rangeStart, rangeEnd time.Time) (*StateTimelineResponse, error) {
+	// Get the baseline status: the latest snapshot before the range start.
+	baselineQuery := fmt.Sprintf(`
+		SELECT argMax(status, snapshot_ts) as status
+		FROM %s
+		WHERE %s = ? AND snapshot_ts <= ? AND is_deleted = 0
+	`, table, pkColumn)
+
+	var baselineStatus string
+	if err := envDB(ctx).QueryRow(ctx, baselineQuery, pkValue, rangeStart).Scan(&baselineStatus); err != nil {
+		baselineStatus = ""
+	}
+
+	// Get all status changes within the range.
+	changesQuery := fmt.Sprintf(`
+		WITH ordered AS (
+			SELECT
+				snapshot_ts,
+				status,
+				lagInFrame(status, 1) OVER (ORDER BY snapshot_ts, ingested_at, op_id) as prev_status
+			FROM %s
+			WHERE %s = ? AND snapshot_ts > ? AND snapshot_ts <= ? AND is_deleted = 0
+			ORDER BY snapshot_ts, ingested_at, op_id
+		)
+		SELECT snapshot_ts, status
+		FROM ordered
+		WHERE prev_status = '' OR status != prev_status
+		ORDER BY snapshot_ts
+	`, table, pkColumn)
+
+	rows, err := envDB(ctx).Query(ctx, changesQuery, pkValue, rangeStart, rangeEnd)
+	if err != nil {
+		return nil, fmt.Errorf("state timeline query error: %w", err)
+	}
+	defer rows.Close()
+
+	type transition struct {
+		ts     time.Time
+		status string
+	}
+	var transitions []transition
+	for rows.Next() {
+		var t transition
+		if err := rows.Scan(&t.ts, &t.status); err != nil {
+			return nil, fmt.Errorf("state timeline scan error: %w", err)
+		}
+		transitions = append(transitions, t)
+	}
+
+	// Build segments.
+	fmtTime := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	rangeStartStr := fmtTime(rangeStart)
+	rangeEndStr := fmtTime(rangeEnd)
+
+	var segments []StateSegment
+
+	if len(transitions) == 0 {
+		// No changes in range — the whole range is the baseline status.
+		if baselineStatus != "" {
+			segments = append(segments, StateSegment{
+				Status: baselineStatus,
+				Start:  rangeStartStr,
+				End:    rangeEndStr,
+			})
+		}
+	} else {
+		// First segment: from range start to first transition.
+		firstStatus := baselineStatus
+		if firstStatus == "" {
+			firstStatus = transitions[0].status
+		}
+		if fmtTime(transitions[0].ts) != rangeStartStr {
+			segments = append(segments, StateSegment{
+				Status: firstStatus,
+				Start:  rangeStartStr,
+				End:    fmtTime(transitions[0].ts),
+			})
+		}
+
+		// Middle segments: between transitions.
+		for i, t := range transitions {
+			end := rangeEnd
+			if i+1 < len(transitions) {
+				end = transitions[i+1].ts
+			}
+			segments = append(segments, StateSegment{
+				Status: t.status,
+				Start:  fmtTime(t.ts),
+				End:    fmtTime(end),
+			})
+		}
+	}
+
+	return &StateTimelineResponse{
+		Segments:   segments,
+		RangeStart: rangeStartStr,
+		RangeEnd:   rangeEndStr,
+	}, nil
+}

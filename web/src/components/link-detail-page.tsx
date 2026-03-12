@@ -6,6 +6,7 @@ import { fetchLink } from '@/lib/api'
 import { LinkInfoContent } from '@/components/shared/LinkInfoContent'
 import { linkDetailToInfo } from '@/components/shared/link-info-converters'
 import { SingleLinkStatusRow } from '@/components/single-link-status-row'
+import { OperationalStateTimeline } from '@/components/operational-state-timeline'
 import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
 import { LatencyCharts } from '@/components/topology/LatencyCharts'
 import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
@@ -112,6 +113,9 @@ export function LinkDetailPage() {
 
         {/* Status row */}
         <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
+
+        {/* Operational state timeline */}
+        <OperationalStateTimeline entityType="link" entityPk={link.pk} timeRange={timeRangeToString(timeRange)} />
 
         {/* Link status charts (packet loss, interface issues) */}
         <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} className="rounded-lg border border-border p-4" />

@@ -4638,3 +4638,34 @@ export async function fetchPublisherCheck(q?: string, epochs?: number): Promise<
   }
   return res.json()
 }
+
+// State timeline types
+export interface StateSegment {
+  status: string
+  start: string
+  end: string
+}
+
+export interface StateTimelineResponse {
+  segments: StateSegment[]
+  range_start: string
+  range_end: string
+}
+
+export async function fetchLinkStateTimeline(linkPk: string, timeRange?: string): Promise<StateTimelineResponse> {
+  const params = new URLSearchParams()
+  if (timeRange) params.set('range', timeRange)
+  const qs = params.toString()
+  const res = await fetchWithRetry(`/api/status/links/${encodeURIComponent(linkPk)}/state-timeline${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch link state timeline')
+  return res.json()
+}
+
+export async function fetchDeviceStateTimeline(devicePk: string, timeRange?: string): Promise<StateTimelineResponse> {
+  const params = new URLSearchParams()
+  if (timeRange) params.set('range', timeRange)
+  const qs = params.toString()
+  const res = await fetchWithRetry(`/api/status/devices/${encodeURIComponent(devicePk)}/state-timeline${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch device state timeline')
+  return res.json()
+}
