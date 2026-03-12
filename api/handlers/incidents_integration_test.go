@@ -27,6 +27,7 @@ func setupIncidentsTables(t *testing.T) {
 			status String,
 			link_type String,
 			bandwidth_bps Nullable(Int64),
+			committed_rtt_ns Int64 DEFAULT 0,
 			side_a_pk Nullable(String),
 			side_z_pk Nullable(String),
 			contributor_pk Nullable(String),
