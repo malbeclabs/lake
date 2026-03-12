@@ -243,10 +243,10 @@ func GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
 
 // ValidatorPerfGroup holds aggregated performance metrics for a group of validators.
 type ValidatorPerfGroup struct {
-	ValidatorCount  int     `json:"validator_count"`
+	ValidatorCount  uint64  `json:"validator_count"`
 	AvgVoteLag      float64 `json:"avg_vote_lag"`
 	AvgSkipRate     float64 `json:"avg_skip_rate"`
-	DelinquentCount int     `json:"delinquent_count"`
+	DelinquentCount uint64  `json:"delinquent_count"`
 	TotalStakeSOL   float64 `json:"total_stake_sol"`
 }
 
@@ -281,10 +281,10 @@ func fetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error)
 	for rows.Next() {
 		var (
 			dzStatus       string
-			validatorCount int
+			validatorCount uint64
 			avgVoteLag     float64
 			avgSkipRate    float64
-			delinquentCnt  int
+			delinquentCnt  uint64
 			totalStakeSOL  float64
 		)
 		if err := rows.Scan(&dzStatus, &validatorCount, &avgVoteLag, &avgSkipRate, &delinquentCnt, &totalStakeSOL); err != nil {
