@@ -1523,7 +1523,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   const visibleLinks = useMemo(() => {
     if (!filteredLinkHistory?.links) return []
     return filteredLinkHistory.links.filter((link: LinkHistory) => {
-      if (link.drained && !showDrained) return false
+      if (link.drain_status && !showDrained) return false
       if (link.provisioning && !showProvisioning) return false
       return true
     })

@@ -1086,7 +1086,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 // Link history types for status timeline
 type LinkHourStatus struct {
 	Hour         string  `json:"hour"`
-	Status       string  `json:"status"` // "healthy", "degraded", "unhealthy", "no_data"
+	Status       string  `json:"status"`                 // "healthy", "degraded", "unhealthy", "no_data"
 	DrainStatus  string  `json:"drain_status,omitempty"` // "", "soft-drained", "hard-drained"
 	AvgLatencyUs float64 `json:"avg_latency_us"`
 	AvgLossPct   float64 `json:"avg_loss_pct"`
@@ -3491,4 +3491,3 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		BucketCount:   bucketCount,
 	}, nil
 }
-
