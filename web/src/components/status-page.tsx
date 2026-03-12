@@ -1147,7 +1147,7 @@ function DisabledLinksTable({
     const linkMap = new Map<string, DisabledLinkRow>()
 
     for (const link of drainedLinks || []) {
-      const reason = link.status === 'hard-drained' ? 'hard drained' : 'soft drained'
+      const reason = link.status === 'provisioning' ? 'provisioning' : link.status === 'hard-drained' ? 'hard drained' : 'soft drained'
       linkMap.set(link.code, {
         pk: link.pk,
         code: link.code,
@@ -1170,6 +1170,7 @@ function DisabledLinksTable({
   if (allLinks.length === 0) return null
 
   const reasonColors: Record<string, string> = {
+    'provisioning': 'text-blue-600 dark:text-blue-400',
     'soft drained': 'text-amber-600 dark:text-amber-400',
     'hard drained': 'text-orange-600 dark:text-orange-400',
     'isis delay override': 'text-amber-600 dark:text-amber-400',
