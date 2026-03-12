@@ -1083,7 +1083,7 @@ function ActiveIncidentsTable({
             }
             const interfaces = Array.from(allInterfaces)
             return (
-              <tr key={group.link_pk} className="hover:bg-muted/30">
+              <tr key={`${group.link_pk}-${group.started_at}`} className="hover:bg-muted/30">
                 <td className="px-4 py-3">
                   <Link
                     to={`/dz/links/${encodeURIComponent(group.link_pk)}`}
