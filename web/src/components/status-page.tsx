@@ -115,7 +115,7 @@ function getStatusReasons(status: StatusResponse): string[] {
     .filter(([s]) => s !== 'activated')
     .reduce((sum, [, count]) => sum + count, 0)
   const nonActivatedLinks = Object.entries(status.network.links_by_status)
-    .filter(([s]) => s !== 'activated')
+    .filter(([s]) => s !== 'activated' && s !== 'provisioning')
     .reduce((sum, [, count]) => sum + count, 0)
 
   if (nonActivatedDevices > 0) {
@@ -1444,6 +1444,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions'])
   const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy'])
   const [showDrained, setShowDrained] = useState(false)
+  const [showProvisioning, setShowProvisioning] = useState(false)
 
   // Get search filters from URL
   const searchFilters = useStatusFilters()
@@ -1517,12 +1518,15 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     return worstStatus
   }
 
-  // Filter out drained links when showDrained is off, so counts reflect visibility
+  // Filter out drained/provisioning links when toggles are off, so counts reflect visibility
   const visibleLinks = useMemo(() => {
     if (!filteredLinkHistory?.links) return []
-    if (showDrained) return filteredLinkHistory.links
-    return filteredLinkHistory.links.filter((link: LinkHistory) => !link.drained)
-  }, [filteredLinkHistory, showDrained])
+    return filteredLinkHistory.links.filter((link: LinkHistory) => {
+      if (link.drained && !showDrained) return false
+      if (link.provisioning && !showProvisioning) return false
+      return true
+    })
+  }, [filteredLinkHistory, showDrained, showProvisioning])
 
   // Calculate health counts from link history (based on most recent bucket status)
   const healthCounts = useMemo(() => {
@@ -1764,7 +1768,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 
       {/* Link Status History */}
       <div id="link-status-history" className="mb-8 scroll-mt-8">
-        <LinkStatusTimelines timeRange={timeRange} onTimeRangeChange={setTimeRange} issueFilters={issueFilters} healthFilters={healthFilters} showDrained={showDrained} onShowDrainedChange={setShowDrained} linksWithIssues={linksWithIssues} linksWithHealth={linksWithHealth} criticalityMap={criticalityMap} />
+        <LinkStatusTimelines timeRange={timeRange} onTimeRangeChange={setTimeRange} issueFilters={issueFilters} healthFilters={healthFilters} showDrained={showDrained} onShowDrainedChange={setShowDrained} showProvisioning={showProvisioning} onShowProvisioningChange={setShowProvisioning} linksWithIssues={linksWithIssues} linksWithHealth={linksWithHealth} criticalityMap={criticalityMap} />
       </div>
 
       {/* Disabled Links */}

@@ -1369,6 +1369,7 @@ export interface LinkHistory {
   committed_rtt_us: number
   is_down?: boolean
   drained?: boolean
+  provisioning?: boolean
   hours: LinkHourStatus[]
   issue_reasons: string[] // "packet_loss", "high_latency", "no_data", "interface_errors", "fcs_errors", "discards", "carrier_transitions", "down"
 }

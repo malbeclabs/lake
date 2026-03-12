@@ -235,6 +235,7 @@ ORDER BY origin_metro, target_metro;
 - **Connected stake**: `SUM(activated_stake_lamports)` for validators connected to DZ
 - **Stake share**: Percentage of total Solana stake on DZ = `connected_stake / total_network_stake * 100`
 - **Soft-drain signal**: `isis_delay_override_ns = 1000000000`
+- **Provisioning link**: `committed_rtt_ns = 1000000000` (1000ms sentinel — link not yet operational)
 - **Link types**: WAN (inter-metro), DZX (intra-metro)
 
 **For "network state" or "network summary" questions**, include:
@@ -255,7 +256,7 @@ SELECT code, status, metro_pk FROM dz_devices_current WHERE status = 'drained';
 ```
 
 **For "network health" questions**, check and list:
-1. Link issues from `dz_links_health_current` - **query individual rows** with code, loss_pct, and boolean flags (is_down, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark). Do NOT aggregate into counts — list each affected link by code.
+1. Link issues from `dz_links_health_current` - **query individual rows** with code, loss_pct, and boolean flags (is_down, is_provisioning, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark). Do NOT aggregate into counts — list each affected link by code.
 2. Drained devices - **MUST list specific device codes**
 3. Interface errors from `fact_dz_device_interface_counters` - include device code and **actual numeric counts**
 
@@ -640,6 +641,7 @@ ORDER BY stake_sol DESC
 **`dz_links_health_current` columns:**
 | Column | Description |
 |--------|-------------|
+| `is_provisioning` | Link has committed_rtt_ns = 1000ms (placeholder, not yet operational) |
 | `is_soft_drained` | Link status is 'soft-drained' |
 | `is_hard_drained` | Link status is 'hard-drained' |
 | `is_isis_soft_drained` | ISIS delay override set to 1000ms |
@@ -653,9 +655,9 @@ ORDER BY stake_sol DESC
 ```sql
 -- Links with current issues
 SELECT code, side_a_metro, side_z_metro, status, loss_pct,
-       is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark, is_down
+       is_provisioning, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark, is_down
 FROM dz_links_health_current
-WHERE is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark OR is_down;
+WHERE is_provisioning OR is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark OR is_down;
 
 -- Links with issues in a specific metro
 SELECT code, status, loss_pct, is_dark, is_down

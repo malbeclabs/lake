@@ -196,6 +196,10 @@ const (
 	LossCriticalPct    = 10.0 // 10% - Severe (unhealthy)
 	UtilWarningPct     = 70.0 // 70%
 	UtilCriticalPct    = 90.0 // 90%
+
+	// committedRttProvisioningNs is the sentinel committed_rtt_ns value (1000ms)
+	// that indicates a link is still being provisioned and not yet operational.
+	committedRttProvisioningNs = 1_000_000_000
 )
 
 func GetStatus(w http.ResponseWriter, r *http.Request) {
@@ -465,8 +469,12 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 
 	// Link status breakdown
 	g.Go(func() error {
-		query := `SELECT status, COUNT(*) as cnt FROM dz_links_current GROUP BY status`
-		rows, err := envDB(ctx).Query(ctx, query)
+		query := `SELECT
+			CASE WHEN committed_rtt_ns = ? THEN 'provisioning' ELSE status END as effective_status,
+			COUNT(*) as cnt
+		FROM dz_links_current
+		GROUP BY effective_status`
+		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
@@ -546,8 +554,9 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				AND traffic_direct.link_pk IS NULL
 			WHERE l.status = 'activated'
 				AND l.isis_delay_override_ns != ?
+				AND l.committed_rtt_ns != ?
 		`
-		rows, err := envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs)
+		rows, err := envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
@@ -780,10 +789,11 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			WHERE lls.last_seen < now() - INTERVAL 15 MINUTE
 			  AND lls.last_seen >= now() - INTERVAL 30 DAY
 			  AND l.status NOT IN ('soft-drained', 'hard-drained')
+			  AND l.committed_rtt_ns != ?
 			ORDER BY lls.last_seen DESC
 			LIMIT 10
 		`
-		noDataRows, err := envDB(ctx).Query(ctx, noDataQuery)
+		noDataRows, err := envDB(ctx).Query(ctx, noDataQuery, committedRttProvisioningNs)
 		if err == nil {
 			defer noDataRows.Close()
 			for noDataRows.Next() {
@@ -1008,7 +1018,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		return rows.Err()
 	})
 
-	// Non-activated links (including delay-override drained)
+	// Non-activated links (including delay-override drained and provisioning)
 	g.Go(func() error {
 		// 1000ms delay override in nanoseconds indicates soft-drained
 		const delayOverrideSoftDrainedNs = 1_000_000_000
@@ -1020,6 +1030,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				ma.code as side_a_metro,
 				mz.code as side_z_metro,
 				CASE
+					WHEN l.committed_rtt_ns = ? THEN 'provisioning'
 					WHEN l.status = 'activated' AND l.isis_delay_override_ns = ? THEN 'soft-drained'
 					ELSE l.status
 				END as status,
@@ -1029,11 +1040,11 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-			WHERE l.status != 'activated' OR l.isis_delay_override_ns = ?
+			WHERE l.status != 'activated' OR l.isis_delay_override_ns = ? OR l.committed_rtt_ns = ?
 			ORDER BY l.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs, delayOverrideSoftDrainedNs)
+		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs, delayOverrideSoftDrainedNs, delayOverrideSoftDrainedNs, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
@@ -1112,6 +1123,7 @@ type LinkHistory struct {
 	CommittedRttUs float64          `json:"committed_rtt_us"`
 	IsDown         bool             `json:"is_down"`
 	Drained        bool             `json:"drained,omitempty"`
+	Provisioning   bool             `json:"provisioning,omitempty"`
 	Hours          []LinkHourStatus `json:"hours"`
 	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization"
 }
@@ -1242,6 +1254,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			dz.code as side_z_device,
 			l.bandwidth_bps,
 			l.committed_rtt_ns / 1000.0 as committed_rtt_us,
+			l.committed_rtt_ns,
 			l.isis_delay_override_ns,
 			l.status
 		FROM dz_links_current l
@@ -1270,6 +1283,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		sideZDevice     string
 		bandwidthBps    int64
 		committedRttUs  float64
+		committedRttNs  int64
 		delayOverrideNs int64
 		status          string
 	}
@@ -1278,7 +1292,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	for linkRows.Next() {
 		var pk string
 		var meta linkMeta
-		if err := linkRows.Scan(&pk, &meta.code, &meta.linkType, &meta.contributor, &meta.sideAMetro, &meta.sideZMetro, &meta.sideADevice, &meta.sideZDevice, &meta.bandwidthBps, &meta.committedRttUs, &meta.delayOverrideNs, &meta.status); err != nil {
+		if err := linkRows.Scan(&pk, &meta.code, &meta.linkType, &meta.contributor, &meta.sideAMetro, &meta.sideZMetro, &meta.sideADevice, &meta.sideZDevice, &meta.bandwidthBps, &meta.committedRttUs, &meta.committedRttNs, &meta.delayOverrideNs, &meta.status); err != nil {
 			return nil, fmt.Errorf("link scan error: %w", err)
 		}
 		linkMap[pk] = meta
@@ -1671,6 +1685,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	for pk, meta := range linkMap {
 		// Check if link is currently drained (by status or delay override)
 		isCurrentlyDrained := meta.status == "soft-drained" || meta.status == "hard-drained" || meta.delayOverrideNs == delayOverrideSoftDrainedNs
+		isProvisioning := meta.committedRttNs == committedRttProvisioningNs
 
 		// Track issue reasons for this link
 		issueReasons := make(map[string]bool)
@@ -1913,6 +1928,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 			CommittedRttUs: responseCommittedRtt,
 			IsDown:         isDown,
 			Drained:        linkIsDrained,
+			Provisioning:   isProvisioning,
 			Hours:          hourStatuses,
 			IssueReasons:   issueReasonsList,
 		})

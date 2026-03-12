@@ -167,11 +167,12 @@ func fetchLinkMetadataWithStatus(ctx context.Context, conn driver.Conn, filters 
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
-		WHERE 1=1
+		WHERE l.committed_rtt_ns != $1
 	`)
 
 	var args []any
-	argIdx := 1
+	args = append(args, committedRttProvisioningNs)
+	argIdx := 2
 
 	for _, f := range filters {
 		switch f.Type {

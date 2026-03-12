@@ -18,6 +18,8 @@ interface LinkStatusTimelinesProps {
   healthFilters?: string[]
   showDrained?: boolean
   onShowDrainedChange?: (show: boolean) => void
+  showProvisioning?: boolean
+  onShowProvisioningChange?: (show: boolean) => void
   linksWithIssues?: Map<string, string[]>  // Map of link code -> issue reasons (from filter time range)
   linksWithHealth?: Map<string, string>    // Map of link code -> health status (from filter time range)
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>  // Map of link code -> criticality level
@@ -592,13 +594,16 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
             <div className="text-xs text-muted-foreground">
               {link.link_type}{link.contributor && ` · ${link.contributor}`} · {link.side_a_metro} ↔ {link.side_z_metro}
             </div>
-            {(link.is_down || link.drained || issueReasons.length > 0) && (
+            {(link.is_down || link.drained || link.provisioning || issueReasons.length > 0) && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {link.is_down && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Down</span>
                 )}
                 {link.drained && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Drained</span>
+                )}
+                {link.provisioning && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-blue-500/15 text-blue-700 dark:bg-blue-400/20 dark:text-blue-300">Provisioning</span>
                 )}
                 {issueReasons.includes('packet_loss') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' }}>Loss</span>
@@ -680,6 +685,8 @@ export function LinkStatusTimelines({
   healthFilters = ['healthy', 'degraded', 'unhealthy'],
   showDrained = false,
   onShowDrainedChange,
+  showProvisioning = false,
+  onShowProvisioningChange,
   linksWithIssues,
   linksWithHealth,
   criticalityMap,
@@ -757,6 +764,11 @@ export function LinkStatusTimelines({
         return false
       }
 
+      // Hide provisioning links unless showProvisioning is enabled
+      if (link.provisioning && !showProvisioning) {
+        return false
+      }
+
       const matchesIssue = hasIssues
         ? issueReasons.some(reason => issueTypesSelected.includes(reason))
         : noIssuesSelected
@@ -788,11 +800,16 @@ export function LinkStatusTimelines({
       return bIndex - aIndex
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, linksWithIssues, linksWithHealth])
+  }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, showProvisioning, linksWithIssues, linksWithHealth])
 
   const drainedCount = useMemo(() => {
     if (!data?.links) return 0
     return data.links.filter(link => link.drained).length
+  }, [data?.links])
+
+  const provisioningCount = useMemo(() => {
+    if (!data?.links) return 0
+    return data.links.filter(link => link.provisioning).length
   }, [data?.links])
 
   if (isLoading) {
@@ -850,6 +867,21 @@ export function LinkStatusTimelines({
                 )}
               </div>
               <span className={showDrained ? 'text-foreground' : 'text-muted-foreground'}>Drained ({drainedCount})</span>
+            </button>
+          )}
+          {onShowProvisioningChange && (
+            <button
+              onClick={() => onShowProvisioningChange(!showProvisioning)}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-border bg-background/50 transition-colors hover:bg-muted/50"
+            >
+              <div className={`w-3 h-3 rounded-sm transition-colors ${showProvisioning ? 'bg-primary' : 'bg-muted-foreground/20 border border-muted-foreground/30'}`}>
+                {showProvisioning && (
+                  <svg viewBox="0 0 12 12" className="w-3 h-3 text-primary-foreground">
+                    <path d="M3.5 6L5.5 8L8.5 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </div>
+              <span className={showProvisioning ? 'text-foreground' : 'text-muted-foreground'}>Provisioning ({provisioningCount})</span>
             </button>
           )}
           {onTimeRangeChange && (
