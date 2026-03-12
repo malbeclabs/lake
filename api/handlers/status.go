@@ -3172,19 +3172,25 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			}
 		}
 
-		// Determine status
+		// Determine status using the same classification as the multi-link endpoint
 		if hs.Samples == 0 {
 			hs.Status = "no_data"
-		} else if hs.AvgLossPct >= LossCriticalPct {
-			hs.Status = "unhealthy"
-		} else if hs.AvgLossPct >= LossWarningPct {
-			hs.Status = "degraded"
-		} else if committedRttUs > 0 && hs.AvgLatencyUs > committedRttUs*2 {
-			hs.Status = "unhealthy"
-		} else if committedRttUs > 0 && hs.AvgLatencyUs > committedRttUs*1.5 {
-			hs.Status = "degraded"
 		} else {
-			hs.Status = "healthy"
+			hs.Status = classifyLinkStatus(hs.AvgLatencyUs, hs.AvgLossPct, committedRttUs)
+		}
+
+		// Upgrade status based on interface issues (same thresholds as multi-link endpoint)
+		const InterfaceUnhealthyThreshold = uint64(100)
+		totalErrors := hs.SideAInErrors + hs.SideAOutErrors + hs.SideZInErrors + hs.SideZOutErrors
+		totalDiscards := hs.SideAInDiscards + hs.SideAOutDiscards + hs.SideZInDiscards + hs.SideZOutDiscards
+		totalCarrier := hs.SideACarrierTransitions + hs.SideZCarrierTransitions
+
+		if totalErrors >= InterfaceUnhealthyThreshold || totalDiscards >= InterfaceUnhealthyThreshold || totalCarrier >= InterfaceUnhealthyThreshold {
+			if hs.Status == "healthy" || hs.Status == "degraded" {
+				hs.Status = "unhealthy"
+			}
+		} else if (totalErrors > 0 || totalDiscards > 0 || totalCarrier > 0) && hs.Status == "healthy" {
+			hs.Status = "degraded"
 		}
 
 		hourStatuses = append(hourStatuses, hs)
