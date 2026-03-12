@@ -360,16 +360,27 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 					0
 				) AS pct
 			),
+			gossip_at_time AS (
+				SELECT
+					entity_id,
+					argMax(gossip_ip, snapshot_ts) as gossip_ip,
+					argMax(pubkey, snapshot_ts) as pubkey
+				FROM dim_solana_gossip_nodes_history
+				WHERE snapshot_ts <= (SELECT ts FROM historical_ts)
+				GROUP BY entity_id
+				HAVING gossip_ip != ''
+			),
 			historical_share AS (
 				SELECT COALESCE(
-					(SELECT SUM(va.activated_stake_lamports)
+					(SELECT SUM(stake) FROM (
+					 SELECT DISTINCT va.node_pubkey, va.activated_stake_lamports AS stake
 					 FROM dim_dz_users_history u
-					 JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
+					 JOIN gossip_at_time gn ON u.client_ip = gn.gossip_ip
 					 JOIN dim_solana_vote_accounts_history va ON gn.pubkey = va.node_pubkey
 					 WHERE u.status = 'activated'
 					   AND va.activated_stake_lamports > 0
 					   AND u.snapshot_ts = (SELECT max(snapshot_ts) FROM dim_dz_users_history WHERE snapshot_ts <= (SELECT ts FROM historical_ts))
-					   AND va.snapshot_ts = (SELECT ts FROM historical_ts))
+					   AND va.snapshot_ts = (SELECT ts FROM historical_ts)))
 					* 100.0 / NULLIF((SELECT SUM(activated_stake_lamports) FROM dim_solana_vote_accounts_history
 					  WHERE activated_stake_lamports > 0
 					    AND snapshot_ts = (SELECT ts FROM historical_ts)), 0),

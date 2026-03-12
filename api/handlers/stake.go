@@ -110,23 +110,36 @@ func fetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 				GROUP BY entity_id
 				HAVING status = 'activated' AND client_ip != ''
 			),
+			gossip_at_time AS (
+				SELECT
+					entity_id,
+					argMax(gossip_ip, snapshot_ts) as gossip_ip,
+					argMax(pubkey, snapshot_ts) as pubkey
+				FROM dim_solana_gossip_nodes_history
+				WHERE snapshot_ts <= (SELECT ts FROM target_ts)
+				GROUP BY entity_id
+				HAVING gossip_ip != ''
+			),
 			validators_at_time AS (
 				SELECT
 					node_pubkey,
 					argMax(activated_stake_lamports, snapshot_ts) as stake
 				FROM dim_solana_vote_accounts_history
 				WHERE snapshot_ts <= (SELECT ts FROM target_ts)
-				  AND activated_stake_lamports > 0
 				GROUP BY node_pubkey
+				HAVING stake > 0
 			),
 			total_stake AS (
 				SELECT COALESCE(SUM(stake), 0) as total FROM validators_at_time
 			),
 			dz_stake AS (
-				SELECT COALESCE(SUM(v.stake), 0) as dz_total
-				FROM users_at_time u
-				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
-				JOIN validators_at_time v ON gn.pubkey = v.node_pubkey
+				SELECT COALESCE(SUM(stake), 0) as dz_total
+				FROM (
+					SELECT DISTINCT v.node_pubkey, v.stake
+					FROM users_at_time u
+					JOIN gossip_at_time gn ON u.client_ip = gn.gossip_ip
+					JOIN validators_at_time v ON gn.pubkey = v.node_pubkey
+				)
 			)
 			SELECT
 				dz.dz_total / 1e9,
@@ -156,23 +169,36 @@ func fetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 				GROUP BY entity_id
 				HAVING status = 'activated' AND client_ip != ''
 			),
+			gossip_at_time AS (
+				SELECT
+					entity_id,
+					argMax(gossip_ip, snapshot_ts) as gossip_ip,
+					argMax(pubkey, snapshot_ts) as pubkey
+				FROM dim_solana_gossip_nodes_history
+				WHERE snapshot_ts <= (SELECT ts FROM target_ts)
+				GROUP BY entity_id
+				HAVING gossip_ip != ''
+			),
 			validators_at_time AS (
 				SELECT
 					node_pubkey,
 					argMax(activated_stake_lamports, snapshot_ts) as stake
 				FROM dim_solana_vote_accounts_history
 				WHERE snapshot_ts <= (SELECT ts FROM target_ts)
-				  AND activated_stake_lamports > 0
 				GROUP BY node_pubkey
+				HAVING stake > 0
 			),
 			total_stake AS (
 				SELECT COALESCE(SUM(stake), 0) as total FROM validators_at_time
 			),
 			dz_stake AS (
-				SELECT COALESCE(SUM(v.stake), 0) as dz_total
-				FROM users_at_time u
-				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
-				JOIN validators_at_time v ON gn.pubkey = v.node_pubkey
+				SELECT COALESCE(SUM(stake), 0) as dz_total
+				FROM (
+					SELECT DISTINCT v.node_pubkey, v.stake
+					FROM users_at_time u
+					JOIN gossip_at_time gn ON u.client_ip = gn.gossip_ip
+					JOIN validators_at_time v ON gn.pubkey = v.node_pubkey
+				)
 			)
 			SELECT
 				dz.dz_total / 1e9,
