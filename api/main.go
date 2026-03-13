@@ -41,6 +41,11 @@ var (
 	// shuttingDown is set to true when shutdown signal is received.
 	// Readiness probe checks this to immediately return 503.
 	shuttingDown atomic.Bool
+
+	// dbHealthy tracks ClickHouse connectivity in the background so the
+	// readiness probe never blocks on a synchronous ping.
+	dbHealthy   atomic.Bool
+	dbHealthErr atomic.Value // stores string
 )
 
 const (
@@ -269,6 +274,32 @@ func main() {
 	defer config.ClosePostgres()
 	defer config.Close() // Close ClickHouse connection
 
+	// Start background DB health checker so the readiness probe never
+	// blocks on a synchronous ClickHouse ping.
+	dbHealthy.Store(true) // assume healthy until first check
+	dbHealthCtx, dbHealthCancel := context.WithCancel(context.Background())
+	defer dbHealthCancel()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-dbHealthCtx.Done():
+				return
+			case <-ticker.C:
+				pingCtx, pingCancel := context.WithTimeout(dbHealthCtx, 3*time.Second)
+				if err := config.DB.Ping(pingCtx); err != nil {
+					dbHealthy.Store(false)
+					dbHealthErr.Store(err.Error())
+				} else {
+					dbHealthy.Store(true)
+					dbHealthErr.Store("")
+				}
+				pingCancel()
+			}
+		}
+	}()
+
 	// Load Neo4j (optional - log warning if unavailable)
 	if err := config.LoadNeo4j(); err != nil {
 		log.Printf("Warning: Neo4j not available: %v", err)
@@ -384,20 +415,16 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		// Immediately fail if shutting down
 		if shuttingDown.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("shutting down"))
 			return
 		}
 
-		// Check database connectivity
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-
-		if err := config.DB.Ping(ctx); err != nil {
+		if !dbHealthy.Load() {
+			errMsg, _ := dbHealthErr.Load().(string)
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("database connection failed: " + err.Error()))
+			_, _ = w.Write([]byte("database connection failed: " + errMsg))
 			return
 		}
 
