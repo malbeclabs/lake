@@ -1087,7 +1087,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 type LinkHourStatus struct {
 	Hour         string  `json:"hour"`
 	Status       string  `json:"status"`                 // "healthy", "degraded", "unhealthy", "no_data"
-	Collecting   bool    `json:"collecting,omitempty"`    // true for the current incomplete bucket
+	Collecting   bool    `json:"collecting,omitempty"`   // true for the current incomplete bucket
 	DrainStatus  string  `json:"drain_status,omitempty"` // "", "soft-drained", "hard-drained"
 	AvgLatencyUs float64 `json:"avg_latency_us"`
 	AvgLossPct   float64 `json:"avg_loss_pct"`
@@ -2026,7 +2026,7 @@ func determineOverallStatus(resp *StatusResponse) string {
 // Device history types for status timeline
 type DeviceHourStatus struct {
 	Hour               string  `json:"hour"`
-	Status             string  `json:"status"`              // "healthy", "degraded", "unhealthy", "no_data", "disabled"
+	Status             string  `json:"status"`               // "healthy", "degraded", "unhealthy", "no_data", "disabled"
 	Collecting         bool    `json:"collecting,omitempty"` // true for the current incomplete bucket
 	CurrentUsers       int32   `json:"current_users"`
 	MaxUsers           int32   `json:"max_users"`
