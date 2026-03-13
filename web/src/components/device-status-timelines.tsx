@@ -158,7 +158,9 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
   return (
     <div className="relative">
       <div className="flex gap-[2px]">
-        {hours.map((hour, index) => (
+        {hours.map((hour, index) => {
+          const prevStatus = index > 0 ? hours[index - 1].status : undefined
+          return (
           <div
             key={hour.hour}
             className="relative flex-1 min-w-0"
@@ -168,10 +170,10 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
             <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
               <div className={`absolute inset-0 ${
                 hour.collecting && hour.status === 'no_data'
-                  ? 'bg-transparent border border-gray-200/40 dark:border-gray-700/40'
+                  ? (prevStatus && prevStatus !== 'no_data' ? statusColors[prevStatus] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                   : statusColors[hour.status]
               }`} />
-              {hour.collecting && hour.status !== 'no_data' && (
+              {hour.collecting && (hour.status !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
               )}
             </div>
@@ -256,7 +258,8 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
 
       {/* Time labels */}

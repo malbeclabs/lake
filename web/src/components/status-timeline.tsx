@@ -189,6 +189,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
           const effectiveStatus = getEffectiveStatus(hour, committedRttUs)
           const drainStatus = hour.drain_status || ''
           const drainLabel = getDrainLabel(drainStatus)
+          const prevStatus = index > 0 ? getEffectiveStatus(hours[index - 1], committedRttUs) : undefined
           return (
           <div
             key={hour.hour}
@@ -200,12 +201,12 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
               <div
                 className={`absolute inset-0 ${
                   hour.collecting && effectiveStatus === 'no_data'
-                    ? 'bg-transparent border border-gray-200/40 dark:border-gray-700/40'
+                    ? (prevStatus && prevStatus !== 'no_data' ? statusColors[prevStatus] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                     : statusColors[effectiveStatus]
                 }`}
                 style={getDrainStripeStyle(drainStatus)}
               />
-              {hour.collecting && effectiveStatus !== 'no_data' && (
+              {hour.collecting && (effectiveStatus !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
               )}
             </div>
