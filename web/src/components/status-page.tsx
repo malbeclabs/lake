@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
@@ -1469,6 +1469,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     queryFn: () => fetchLinkHistory(timeRange, buckets),
     refetchInterval: 60_000,
     staleTime: timeRange === '24h' ? 30_000 : 0,
+    placeholderData: keepPreviousData,
   })
 
   // Apply search filters to link history
@@ -2193,6 +2194,7 @@ function DevicesContent({ status }: { status: StatusResponse }) {
     queryFn: () => fetchDeviceHistory(timeRange, buckets),
     refetchInterval: 60_000,
     staleTime: timeRange === '24h' ? 30_000 : 0,
+    placeholderData: keepPreviousData,
   })
 
   // Fetch interface issues for the selected time range

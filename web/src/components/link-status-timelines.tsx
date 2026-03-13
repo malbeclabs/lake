@@ -1,7 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { fetchLinkHistory } from '@/lib/api'
 import type { LinkHistory, LinkHourStatus } from '@/lib/api'
@@ -743,11 +743,12 @@ export function LinkStatusTimelines({
   ]
   const buckets = useBucketCount()
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['link-history', timeRange, buckets],
     queryFn: () => fetchLinkHistory(timeRange, buckets),
     refetchInterval: 60_000, // Refresh every minute
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 
   // Helper to check if a link matches health filters
@@ -854,9 +855,9 @@ export function LinkStatusTimelines({
     return data.links.filter(link => link.provisioning).length
   }, [data?.links])
 
-  const showSkeleton = useDelayedLoading(isLoading)
+  const showSkeleton = useDelayedLoading(isLoading && !data)
 
-  if (isLoading) {
+  if (isLoading && !data) {
     return showSkeleton ? <LinkTimelineSkeleton /> : null
   }
 
@@ -883,9 +884,12 @@ export function LinkStatusTimelines({
   }
 
   return (
-    <div className="border border-border rounded-lg">
+    <div className={`border border-border rounded-lg transition-opacity${isFetching && !isLoading ? ' opacity-60' : ''}`}>
       <div className="px-4 py-2.5 bg-muted/50 border-b border-border flex items-center gap-2 rounded-t-lg">
-        <History className="h-4 w-4 text-muted-foreground" />
+        {isFetching && !isLoading
+          ? <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+          : <History className="h-4 w-4 text-muted-foreground" />
+        }
         <h3 className="font-medium">
           Link Status History
           <span className="text-sm text-muted-foreground font-normal ml-1">
