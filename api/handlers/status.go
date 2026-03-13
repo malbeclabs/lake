@@ -1029,7 +1029,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		return rows.Err()
 	})
 
-	// Drained links (soft-drained or hard-drained)
+	// Drained and provisioning links
 	g.Go(func() error {
 		query := `
 			SELECT
@@ -1038,7 +1038,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				l.link_type,
 				ma.code as side_a_metro,
 				mz.code as side_z_metro,
-				l.status,
+				CASE WHEN l.committed_rtt_ns = ? THEN 'provisioning' ELSE l.status END as effective_status,
 				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since
 			FROM dz_links_current l
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
@@ -1046,11 +1046,11 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 			WHERE l.status IN ('soft-drained', 'hard-drained')
-			  AND l.committed_rtt_ns != ?
+			   OR l.committed_rtt_ns = ?
 			ORDER BY l.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
+		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
