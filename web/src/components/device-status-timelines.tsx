@@ -123,9 +123,16 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
             onMouseEnter={() => setHoveredIndex(index)}
             onMouseLeave={() => setHoveredIndex(null)}
           >
-            <div
-              className={`w-full h-6 rounded-sm ${statusColors[hour.status]} cursor-pointer transition-opacity hover:opacity-80`}
-            />
+            <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
+              <div className={`absolute inset-0 ${
+                hour.collecting && hour.status === 'no_data'
+                  ? 'bg-transparent border border-gray-200/40 dark:border-gray-700/40'
+                  : statusColors[hour.status]
+              }`} />
+              {hour.collecting && hour.status !== 'no_data' && (
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
+              )}
+            </div>
 
             {/* Tooltip */}
             {hoveredIndex === index && (
@@ -141,6 +148,7 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
                     'text-muted-foreground'
                   }`}>
                     {statusLabels[hour.status]}
+                    {hour.collecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
                   </div>
                   {hour.status !== 'no_data' && (
                     <div className="space-y-1 text-muted-foreground">

@@ -169,13 +169,8 @@ function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string
   return reasons
 }
 
-export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes = 60, timeRange = '24h' }: StatusTimelineProps) {
+export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, timeRange = '24h' }: StatusTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-
-  // Drop trailing no_data buckets — they're still being collected
-  const hours = rawHours.length > 0 && rawHours[rawHours.length - 1].status === 'no_data'
-    ? rawHours.slice(0, -1)
-    : rawHours
 
   const timeLabels: Record<string, string> = {
     '1h': '1h ago',
@@ -201,10 +196,19 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
             onMouseEnter={() => setHoveredIndex(index)}
             onMouseLeave={() => setHoveredIndex(null)}
           >
-            <div
-              className={`w-full h-6 rounded-sm ${statusColors[effectiveStatus]} cursor-pointer transition-opacity hover:opacity-80`}
-              style={getDrainStripeStyle(drainStatus)}
-            />
+            <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
+              <div
+                className={`absolute inset-0 ${
+                  hour.collecting && effectiveStatus === 'no_data'
+                    ? 'bg-transparent border border-gray-200/40 dark:border-gray-700/40'
+                    : statusColors[effectiveStatus]
+                }`}
+                style={getDrainStripeStyle(drainStatus)}
+              />
+              {hour.collecting && effectiveStatus !== 'no_data' && (
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
+              )}
+            </div>
 
             {/* Tooltip */}
             {hoveredIndex === index && (
@@ -221,6 +225,7 @@ export function StatusTimeline({ hours: rawHours, committedRttUs, bucketMinutes 
                     'text-muted-foreground'
                   }`}>
                     {statusLabels[effectiveStatus] || effectiveStatus}
+                    {hour.collecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
                     {drainLabel && <span className="text-muted-foreground ml-1">({drainLabel})</span>}
                   </div>
                   {/* Reasons */}

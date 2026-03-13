@@ -1327,6 +1327,7 @@ export async function fetchStatus(): Promise<StatusResponse> {
 export interface LinkHourStatus {
   hour: string
   status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'disabled'
+  collecting?: boolean
   drain_status?: string
   avg_latency_us: number
   avg_loss_pct: number
@@ -1420,6 +1421,7 @@ export async function fetchSingleLinkHistory(linkPk: string, timeRange?: string,
 export interface DeviceHourStatus {
   hour: string
   status: 'healthy' | 'degraded' | 'unhealthy' | 'no_data' | 'disabled'
+  collecting?: boolean
   drain_status?: string
   current_users: number
   max_users: number
