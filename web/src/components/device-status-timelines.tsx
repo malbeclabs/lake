@@ -888,7 +888,7 @@ export function DeviceStatusTimelines({
   ]
   const buckets = useBucketCount()
 
-  const { data, isLoading, isFetching, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['device-history', timeRange, buckets],
     queryFn: () => fetchDeviceHistory(timeRange, buckets),
     refetchInterval: 60_000, // Refresh every minute
@@ -994,9 +994,9 @@ export function DeviceStatusTimelines({
   }
 
   return (
-    <div id="device-status-history" className={`border border-border rounded-lg transition-opacity${isFetching && !isLoading ? ' opacity-60' : ''}`}>
+    <div id="device-status-history" className={`border border-border rounded-lg transition-opacity${isPlaceholderData ? ' opacity-60' : ''}`}>
       <div className="px-4 py-2.5 bg-muted/50 border-b border-border flex items-center gap-2 rounded-t-lg">
-        {isFetching && !isLoading
+        {isPlaceholderData
           ? <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
           : <History className="h-4 w-4 text-muted-foreground" />
         }

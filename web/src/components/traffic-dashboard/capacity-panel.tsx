@@ -59,7 +59,7 @@ export function CapacityPanel() {
     limit: 10,
   }), [state, sortField, sortDir])
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData } = useQuery({
     queryKey: ['dashboard-capacity', params],
     queryFn: () => fetchDashboardTop(params),
     staleTime: 60_000,
@@ -80,7 +80,7 @@ export function CapacityPanel() {
           No data available
         </div>
       ) : (
-        <div className={cn('overflow-x-auto transition-opacity', isFetching && 'opacity-50')}>
+        <div className={cn('overflow-x-auto transition-opacity', isPlaceholderData && 'opacity-50')}>
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border">

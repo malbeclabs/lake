@@ -743,7 +743,7 @@ export function LinkStatusTimelines({
   ]
   const buckets = useBucketCount()
 
-  const { data, isLoading, isFetching, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['link-history', timeRange, buckets],
     queryFn: () => fetchLinkHistory(timeRange, buckets),
     refetchInterval: 60_000, // Refresh every minute
@@ -884,9 +884,9 @@ export function LinkStatusTimelines({
   }
 
   return (
-    <div className={`border border-border rounded-lg transition-opacity${isFetching && !isLoading ? ' opacity-60' : ''}`}>
+    <div className={`border border-border rounded-lg transition-opacity${isPlaceholderData ? ' opacity-60' : ''}`}>
       <div className="px-4 py-2.5 bg-muted/50 border-b border-border flex items-center gap-2 rounded-t-lg">
-        {isFetching && !isLoading
+        {isPlaceholderData
           ? <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
           : <History className="h-4 w-4 text-muted-foreground" />
         }

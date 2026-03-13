@@ -75,7 +75,7 @@ export function BurstinessPanel() {
     min_bps: minBps,
   }), [state, sortField, sortDir, limit, minBps])
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData } = useQuery({
     queryKey: ['dashboard-burstiness', params],
     queryFn: () => fetchDashboardBurstiness(params),
     staleTime: 30_000,
@@ -97,7 +97,7 @@ export function BurstinessPanel() {
         </div>
       ) : (
         <>
-          <div className={cn('overflow-x-auto transition-opacity', isFetching && 'opacity-50')}>
+          <div className={cn('overflow-x-auto transition-opacity', isPlaceholderData && 'opacity-50')}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border">

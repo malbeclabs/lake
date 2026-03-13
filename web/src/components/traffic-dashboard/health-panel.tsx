@@ -53,7 +53,7 @@ export function HealthPanel() {
     limit,
   }), [state, sortField, sortDir, limit])
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData } = useQuery({
     queryKey: ['dashboard-health', params],
     queryFn: () => fetchDashboardHealth(params),
     staleTime: 30_000,
@@ -75,7 +75,7 @@ export function HealthPanel() {
         </div>
       ) : (
         <>
-          <div className={cn('overflow-x-auto transition-opacity', isFetching && 'opacity-50')}>
+          <div className={cn('overflow-x-auto transition-opacity', isPlaceholderData && 'opacity-50')}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border">
