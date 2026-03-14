@@ -1795,9 +1795,13 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 				status := classifyLinkStatus(stats.avgLatency, stats.lossPct, committedRtt)
 
 				// If only one direction is reporting, the missing side likely
-				// can't send probes — treat as unhealthy.
+				// can't send probes. For completed buckets, treat as unhealthy.
+				// For the collecting bucket, treat as no_data since we don't
+				// have enough data to classify health yet.
 				if drainStatus == "" && (stats.sideA == nil) != (stats.sideZ == nil) {
-					if status == "healthy" || status == "degraded" {
+					if isCollecting {
+						status = "no_data"
+					} else if status == "healthy" || status == "degraded" {
 						status = "unhealthy"
 					}
 				}
@@ -1924,12 +1928,18 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 
 		// Check if there are any no_data buckets (missing telemetry)
+		// Also check for per-side missing data (one side has samples, the other doesn't)
 		// Skip the collecting bucket since it may not have data yet
 		for _, h := range hourStatuses {
 			if h.Collecting {
 				continue
 			}
 			if h.Status == "no_data" {
+				issueReasons["no_data"] = true
+				break
+			}
+			// Per-side: bucket has data overall but one side is missing
+			if h.Samples > 0 && (h.SideASamples == 0 || h.SideZSamples == 0) {
 				issueReasons["no_data"] = true
 				break
 			}
@@ -2395,7 +2405,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 					CarrierTransitions: stats.carrierTransitions,
 				})
 			} else {
-				// No interface data for this bucket.
+				// No interface data for this bucket — show as no_data.
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
 					Hour:       key,
 					Status:     "no_data",
@@ -3201,10 +3211,14 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		} else {
 			hs.Status = classifyLinkStatus(hs.AvgLatencyUs, hs.AvgLossPct, committedRttUs)
 
-			// If only one direction is reporting in a completed bucket,
-			// the missing side likely can't send probes — treat as unhealthy.
+			// If only one direction is reporting, the missing side likely
+			// can't send probes. For completed buckets, treat as unhealthy.
+			// For the collecting bucket, treat as no_data since we don't
+			// have enough data to classify health yet.
 			if hs.DrainStatus == "" && bs != nil && (bs.sideA == nil) != (bs.sideZ == nil) {
-				if hs.Status == "healthy" || hs.Status == "degraded" {
+				if hs.Collecting {
+					hs.Status = "no_data"
+				} else if hs.Status == "healthy" || hs.Status == "degraded" {
 					hs.Status = "unhealthy"
 				}
 			}
@@ -3494,10 +3508,10 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 				CarrierTransitions: stats.carrierTransitions,
 			})
 		} else {
-			// No interface data - show as healthy (no errors)
+			// No interface data for this bucket — show as no_data.
 			hourStatuses = append(hourStatuses, DeviceHourStatus{
 				Hour:       key,
-				Status:     "healthy",
+				Status:     "no_data",
 				Collecting: isCollecting,
 				MaxUsers:   maxUsers,
 			})

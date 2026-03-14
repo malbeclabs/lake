@@ -87,9 +87,15 @@ export function StatusAppendix() {
 
             <div className="border border-border rounded-lg p-4">
               <h3 className="font-medium mb-2">4. No Data</h3>
-              <p className="text-sm text-muted-foreground">
-                No telemetry samples received for the link. Could indicate: link down, monitoring failure,
-                or connectivity issue.
+              <p className="text-sm text-muted-foreground mb-2">
+                Telemetry is missing for the link. This is triggered in two scenarios:
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-1 ml-5 list-disc">
+                <li><strong>Fully missing:</strong> No telemetry samples received from either side of the link.</li>
+                <li><strong>One-sided:</strong> Only one direction (A-Side or Z-Side) is reporting data. The missing side likely cannot send probes, indicating a partial outage.</li>
+              </ul>
+              <p className="text-sm text-muted-foreground mt-2">
+                Could indicate: link down, monitoring failure, or connectivity issue on one or both sides.
               </p>
             </div>
 
@@ -156,7 +162,7 @@ export function StatusAppendix() {
               <ul className="text-sm text-muted-foreground space-y-1 ml-5">
                 <li>Severe packet loss (&ge; 10%)</li>
                 <li>Severe latency (&ge; 50% over committed RTT)</li>
-                <li>No telemetry data</li>
+                <li>No telemetry data (fully missing or one-sided)</li>
                 <li>Link down (100% packet loss in last 5 minutes)</li>
               </ul>
             </div>
@@ -233,7 +239,7 @@ export function StatusAppendix() {
             <div className="flex items-start gap-3">
               <div className="w-4 h-4 rounded-sm bg-transparent border border-gray-200 dark:border-gray-700 flex-shrink-0 mt-0.5" />
               <div className="text-sm text-muted-foreground">
-                <strong className="text-foreground">No Data</strong> — No telemetry received for this time bucket (often the most recent bucket waiting for data)
+                <strong className="text-foreground">No Data</strong> — No telemetry received for this time bucket, or only one side is reporting. The in-progress bucket shows as No Data when one side hasn't reported yet.
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -335,7 +341,7 @@ export function StatusAppendix() {
             </div>
             <div className="flex items-start gap-3">
               <span className="text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
-              <div className="text-sm text-muted-foreground">No telemetry received for this link</div>
+              <div className="text-sm text-muted-foreground">Telemetry fully missing or only one side reporting</div>
             </div>
             <div className="flex items-start gap-3">
               <span className="text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
