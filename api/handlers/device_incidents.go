@@ -593,30 +593,17 @@ func fetchCurrentNoDataDevices(ctx context.Context, conn driver.Conn, deviceMeta
 		return nil, nil
 	}
 
+	// Only check origin_device_pk — if the device itself stopped sending
+	// probes it's no_data, even if other devices can still reach it as a target.
 	query := `
-		WITH device_last_seen AS (
-			SELECT
-				device_pk,
-				max(last_seen) as last_seen
-			FROM (
-				SELECT origin_device_pk as device_pk, max(event_ts) as last_seen
-				FROM fact_dz_device_link_latency
-				WHERE event_ts >= now() - INTERVAL 30 DAY
-				  AND origin_device_pk IN ($1)
-				GROUP BY origin_device_pk
-				UNION ALL
-				SELECT target_device_pk as device_pk, max(event_ts) as last_seen
-				FROM fact_dz_device_link_latency
-				WHERE event_ts >= now() - INTERVAL 30 DAY
-				  AND target_device_pk IN ($1)
-				GROUP BY target_device_pk
-			)
-			GROUP BY device_pk
-		)
-		SELECT dls.device_pk, dls.last_seen
-		FROM device_last_seen dls
-		WHERE dls.last_seen < now() - INTERVAL 15 MINUTE
-		  AND dls.last_seen >= now() - INTERVAL 30 DAY
+		SELECT
+			origin_device_pk as device_pk,
+			max(event_ts) as last_seen
+		FROM fact_dz_device_link_latency
+		WHERE event_ts >= now() - INTERVAL 30 DAY
+		  AND origin_device_pk IN ($1)
+		GROUP BY origin_device_pk
+		HAVING last_seen < now() - INTERVAL 15 MINUTE
 	`
 
 	rows, err := conn.Query(ctx, query, devicePKs)
@@ -677,19 +664,13 @@ func findCompletedDeviceNoDataEvents(ctx context.Context, conn driver.Conn, dura
 		return nil, nil
 	}
 
+	// Only check origin — if the device stopped sending probes, that's a gap,
+	// even if other devices can still reach it as a target.
 	query := `
-		SELECT device_pk, bucket
-		FROM (
-			SELECT origin_device_pk as device_pk, toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket
-			FROM fact_dz_device_link_latency
-			WHERE event_ts >= now() - INTERVAL $1 SECOND
-			  AND origin_device_pk IN ($2)
-			UNION ALL
-			SELECT target_device_pk as device_pk, toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket
-			FROM fact_dz_device_link_latency
-			WHERE event_ts >= now() - INTERVAL $1 SECOND
-			  AND target_device_pk IN ($2)
-		)
+		SELECT origin_device_pk as device_pk, toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket
+		FROM fact_dz_device_link_latency
+		WHERE event_ts >= now() - INTERVAL $1 SECOND
+		  AND origin_device_pk IN ($2)
 		GROUP BY device_pk, bucket
 		ORDER BY device_pk, bucket
 	`
