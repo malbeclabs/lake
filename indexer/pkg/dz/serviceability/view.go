@@ -24,11 +24,13 @@ type Contributor struct {
 
 var (
 	contributorNamesByCode = map[string]string{
+		"allnodes": "Allnodes",
 		"jump_":    "Jump Crypto",
 		"dgt":      "Distributed Global",
 		"cherry":   "Cherry Servers",
 		"cdrw":     "Cumberland/DRW",
 		"glxy":     "Galaxy",
+		"infiber":  "InFiber",
 		"laconic":  "Laconic",
 		"latitude": "Latitude",
 		"rox":      "RockawayX",
