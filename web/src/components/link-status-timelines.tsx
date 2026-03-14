@@ -829,7 +829,7 @@ export function LinkStatusTimelines({
         if (!link.hours) return -1
         for (let i = link.hours.length - 1; i >= 0; i--) {
           const status = link.hours[i].status
-          if (status === 'unhealthy' || status === 'degraded') {
+          if (status === 'unhealthy' || status === 'degraded' || status === 'no_data') {
             return i
           }
         }

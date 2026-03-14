@@ -953,7 +953,7 @@ export function DeviceStatusTimelines({
         if (!device.hours) return -1
         for (let i = device.hours.length - 1; i >= 0; i--) {
           const status = device.hours[i].status
-          if (status === 'unhealthy' || status === 'degraded' || status === 'disabled') {
+          if (status === 'unhealthy' || status === 'degraded' || status === 'disabled' || status === 'no_data') {
             return i
           }
         }
