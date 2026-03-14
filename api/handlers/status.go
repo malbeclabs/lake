@@ -2396,14 +2396,9 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 				})
 			} else {
 				// No interface data for this bucket.
-				// The collecting bucket may not have data yet — show as healthy.
-				noDataStatus := "no_data"
-				if isCollecting {
-					noDataStatus = "healthy"
-				}
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
 					Hour:       key,
-					Status:     noDataStatus,
+					Status:     "no_data",
 					Collecting: isCollecting,
 					MaxUsers:   meta.maxUsers,
 				})
