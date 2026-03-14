@@ -798,8 +798,14 @@ export function LinkStatusTimelines({
       const hasIssues = issueReasons.length > 0
 
       // When no_data filter is off, exclude links whose only issue is no_data
+      // UNLESS the link has non-healthy buckets (unhealthy/degraded from missing data)
       if (!noDataSelected && issueReasons.length === 1 && issueReasons[0] === 'no_data') {
-        return false
+        const hasNonHealthyBuckets = link.hours?.some(h =>
+          !h.collecting && (h.status === 'unhealthy' || h.status === 'degraded')
+        )
+        if (!hasNonHealthyBuckets) {
+          return false
+        }
       }
 
       // Hide currently drained links unless showDrained is enabled
@@ -813,7 +819,10 @@ export function LinkStatusTimelines({
       }
 
       const matchesIssue = hasIssues
-        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+        ? issueReasons.some(reason => issueTypesSelected.includes(reason)) ||
+          (issueReasons.length === 1 && issueReasons[0] === 'no_data' && link.hours?.some(h =>
+            !h.collecting && (h.status === 'unhealthy' || h.status === 'degraded')
+          ))
         : noIssuesSelected
 
       // Must match at least one health filter

@@ -1798,7 +1798,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 				// can't send probes. For completed buckets, treat as unhealthy.
 				// For the collecting bucket, treat as no_data since we don't
 				// have enough data to classify health yet.
-				if drainStatus == "" && (stats.sideA == nil) != (stats.sideZ == nil) {
+				// Skip for hard-drained links (fully offline), but still apply
+				// for soft-drained links since their health color is visible.
+				if drainStatus != "hard-drained" && (stats.sideA == nil) != (stats.sideZ == nil) {
 					if isCollecting {
 						status = "no_data"
 					} else if status == "healthy" || status == "degraded" {
