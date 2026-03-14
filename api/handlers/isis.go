@@ -1852,6 +1852,20 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 		response.Connectivity = append(response.Connectivity, connReverse)
 	}
 
+	// Filter metros to only those that appear in at least one connectivity pair
+	connectedMetros := make(map[string]bool)
+	for _, conn := range response.Connectivity {
+		connectedMetros[conn.FromMetroPK] = true
+		connectedMetros[conn.ToMetroPK] = true
+	}
+	filtered := make([]MetroInfo, 0, len(response.Metros))
+	for _, m := range response.Metros {
+		if connectedMetros[m.PK] {
+			filtered = append(filtered, m)
+		}
+	}
+	response.Metros = filtered
+
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil) // Reuse existing metric for now
 
