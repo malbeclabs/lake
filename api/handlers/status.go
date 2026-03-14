@@ -1794,10 +1794,9 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 				}
 				status := classifyLinkStatus(stats.avgLatency, stats.lossPct, committedRtt)
 
-				// If only one direction is reporting in a completed bucket,
-				// the missing side likely can't send probes — treat as unhealthy.
-				// Skip the collecting bucket since it may not have both directions yet.
-				if !isCollecting && drainStatus == "" && (stats.sideA == nil) != (stats.sideZ == nil) {
+				// If only one direction is reporting, the missing side likely
+				// can't send probes — treat as unhealthy.
+				if drainStatus == "" && (stats.sideA == nil) != (stats.sideZ == nil) {
 					if status == "healthy" || status == "degraded" {
 						status = "unhealthy"
 					}
@@ -3209,8 +3208,7 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 
 			// If only one direction is reporting in a completed bucket,
 			// the missing side likely can't send probes — treat as unhealthy.
-			// Skip the collecting bucket since it may not have both directions yet.
-			if !hs.Collecting && hs.DrainStatus == "" && bs != nil && (bs.sideA == nil) != (bs.sideZ == nil) {
+			if hs.DrainStatus == "" && bs != nil && (bs.sideA == nil) != (bs.sideZ == nil) {
 				if hs.Status == "healthy" || hs.Status == "degraded" {
 					hs.Status = "unhealthy"
 				}
