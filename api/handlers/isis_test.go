@@ -56,11 +56,9 @@ func TestGetMetroConnectivity_FiltersMetrosWithoutMaxUsers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, response.Error)
 
-	// Only NYC should be in the metros list (LAX has max_users = 0)
-	assert.Len(t, response.Metros, 1)
-	assert.Equal(t, "NYC", response.Metros[0].Code)
-
-	// No connectivity since only one metro qualifies
+	// No metros should be returned — LAX is filtered by max_users=0,
+	// and NYC is filtered because it has no connectivity to any other metro
+	assert.Empty(t, response.Metros)
 	assert.Empty(t, response.Connectivity)
 }
 
