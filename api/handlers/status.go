@@ -2415,6 +2415,24 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 			}
 		}
 
+		// Check for no_data buckets (missing interface counters)
+		for _, h := range hourStatuses {
+			if h.Collecting {
+				continue
+			}
+			if h.Status == "no_data" {
+				issueReasons["no_data"] = true
+				break
+			}
+		}
+
+		// Rebuild issue reasons list after no_data check
+		issueReasonsList = nil
+		for reason := range issueReasons {
+			issueReasonsList = append(issueReasonsList, reason)
+		}
+		sort.Strings(issueReasonsList)
+
 		devices = append(devices, DeviceHistory{
 			PK:           pk,
 			Code:         meta.code,

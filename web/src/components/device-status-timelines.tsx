@@ -837,6 +837,9 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
                     Drained
                   </span>
                 )}
+                {issueReasons.includes('no_data') && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
+                )}
               </div>
             )}
           </div>
@@ -938,9 +941,13 @@ export function DeviceStatusTimelines({
         : (device.issue_reasons ?? [])
       const hasIssues = issueReasons.length > 0
 
-      const matchesIssue = hasIssues
-        ? issueReasons.some(reason => issueTypesSelected.includes(reason))
-        : noIssuesSelected
+      // Devices with only no_data are shown based on health filter (no separate issue toggle)
+      const hasOnlyNoData = issueReasons.length === 1 && issueReasons[0] === 'no_data'
+      const matchesIssue = hasOnlyNoData
+        ? true
+        : hasIssues
+          ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+          : noIssuesSelected
 
       const matchesHealth = deviceMatchesHealthFilters(device)
 

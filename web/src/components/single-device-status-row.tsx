@@ -79,12 +79,14 @@ export function SingleDeviceStatusRow({ devicePk, timeRange = '24h' }: SingleDev
   const hasAnyDiscards = data.hours.some(h => h.in_discards > 0 || h.out_discards > 0)
   const hasAnyCarrier = data.hours.some(h => h.carrier_transitions > 0)
   const hasAnyDrained = data.issue_reasons?.includes('drained') ?? false
+  const hasAnyNoData = data.hours.some(h => h.status === 'no_data')
 
   if (hasAnyErrors) issueReasons.push('interface_errors')
   if (hasAnyFcsErrors) issueReasons.push('fcs_errors')
   if (hasAnyDiscards) issueReasons.push('discards')
   if (hasAnyCarrier) issueReasons.push('carrier_transitions')
   if (hasAnyDrained) issueReasons.push('drained')
+  if (hasAnyNoData) issueReasons.push('no_data')
 
   // Convert device hours to link hour format for StatusTimeline
   const linkHours = data.hours.map(deviceHourToLinkHour)
@@ -108,6 +110,9 @@ export function SingleDeviceStatusRow({ devicePk, timeRange = '24h' }: SingleDev
           )}
           {issueReasons.includes('drained') && (
             <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(156, 163, 175, 0.15)', color: '#6b7280' }}>Drained</span>
+          )}
+          {issueReasons.includes('no_data') && (
+            <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
           )}
         </div>
       )}

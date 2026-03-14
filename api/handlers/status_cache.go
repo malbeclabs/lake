@@ -113,19 +113,34 @@ func (c *StatusCache) Start() {
 	log.Printf("Starting status cache with intervals: status=%v, linkHistory=%v, timeline=%v, incidents=%v, performance=%v, ledger=%v",
 		c.statusInterval, c.linkHistoryInterval, c.timelineInterval, c.incidentsInterval, c.performanceInterval, c.ledgerInterval)
 
-	// Initial refresh (synchronous to ensure cache is warm)
-	c.refreshStatus()
-	c.refreshLinkHistory()
-	c.refreshDeviceHistory()
-	c.refreshTimeline()
-	c.refreshIncidents()
-	c.refreshDeviceIncidents()
-	c.refreshLatencyComparison()
-	c.refreshMetroPathLatency()
-	c.refreshDZLedger()
-	c.refreshSolanaLedger()
-	c.refreshValidatorPerf()
-	c.refreshStakeOverview()
+	// Initial refresh (concurrent to reduce startup time, but cache is warm before returning)
+	start := time.Now()
+	g, _ := errgroup.WithContext(c.ctx)
+	// Use higher concurrency at startup since no API requests are competing
+	// for the connection pool yet. Keep it moderate to avoid saturating
+	// ClickHouse CPU/IO which causes query timeouts.
+	g.SetLimit(4)
+	for _, fn := range []func(){
+		c.refreshStatus,
+		c.refreshLinkHistory,
+		c.refreshDeviceHistory,
+		c.refreshTimeline,
+		c.refreshIncidents,
+		c.refreshDeviceIncidents,
+		c.refreshLatencyComparison,
+		c.refreshMetroPathLatency,
+		c.refreshDZLedger,
+		c.refreshSolanaLedger,
+		c.refreshValidatorPerf,
+		c.refreshStakeOverview,
+	} {
+		g.Go(func() error {
+			fn()
+			return nil
+		})
+	}
+	_ = g.Wait()
+	log.Printf("All caches warmed in %v", time.Since(start).Round(time.Millisecond))
 
 	// Start a single coordinated refresh loop
 	c.wg.Add(1)
