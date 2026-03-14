@@ -32,7 +32,9 @@ func setupLinksTables(t *testing.T) {
 			side_a_iface_name Nullable(String),
 			side_a_ip Nullable(String),
 			side_z_iface_name Nullable(String),
-			side_z_ip Nullable(String)
+			side_z_ip Nullable(String),
+			committed_rtt_ns Nullable(Int64),
+			isis_delay_override_ns Nullable(Int64)
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
@@ -93,7 +95,8 @@ func setupLinksTables(t *testing.T) {
 			rtt_us Float64,
 			ipdv_us Float64,
 			loss UInt8,
-			direction Nullable(String)
+			direction Nullable(String),
+			origin_device_pk String DEFAULT ''
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
