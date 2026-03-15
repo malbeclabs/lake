@@ -1355,6 +1355,8 @@ export interface LinkHourStatus {
   // Utilization (traffic rate / capacity)
   utilization_in_pct?: number
   utilization_out_pct?: number
+  // Device-specific: no latency probes detected
+  no_probes?: boolean
 }
 
 export interface LinkHistory {
@@ -1432,6 +1434,7 @@ export interface DeviceHourStatus {
   in_discards: number
   out_discards: number
   carrier_transitions: number
+  no_probes?: boolean
 }
 
 export interface DeviceHistory {

@@ -2062,6 +2062,7 @@ type DeviceHourStatus struct {
 	OutDiscards        uint64  `json:"out_discards"`
 	CarrierTransitions uint64  `json:"carrier_transitions"`
 	DrainStatus        string  `json:"drain_status,omitempty"` // "", "soft-drained", "hard-drained", "suspended"
+	NoProbes           bool    `json:"no_probes,omitempty"`    // true when device has interface data but no latency probes
 }
 
 type DeviceHistory struct {
@@ -2257,6 +2258,46 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		return nil, fmt.Errorf("interface rows iteration error: %w", err)
 	}
 
+	// Get latency probe presence per device per bucket.
+	// Used to detect devices that have interface data but aren't sending probes.
+	probeQuery := `
+		SELECT
+			origin_device_pk,
+			` + bucketInterval + ` as bucket,
+			count(*) as samples
+		FROM fact_dz_device_link_latency
+		WHERE event_ts > now() - INTERVAL ? HOUR
+		GROUP BY origin_device_pk, bucket
+		ORDER BY origin_device_pk, bucket
+	`
+	probeRows, err := envDB(ctx).Query(ctx, probeQuery, totalHours)
+	if err != nil {
+		return nil, fmt.Errorf("device probe query error: %w", err)
+	}
+	defer probeRows.Close()
+
+	type deviceBucketProbeKey struct {
+		devicePK string
+		bucket   string
+	}
+	deviceProbes := make(map[deviceBucketProbeKey]bool)
+
+	for probeRows.Next() {
+		var devicePK string
+		var bucket time.Time
+		var samples uint64
+		if err := probeRows.Scan(&devicePK, &bucket, &samples); err != nil {
+			return nil, fmt.Errorf("probe scan error: %w", err)
+		}
+		if samples > 0 {
+			key := deviceBucketProbeKey{devicePK: devicePK, bucket: bucket.UTC().Format(time.RFC3339)}
+			deviceProbes[key] = true
+		}
+	}
+	if err := probeRows.Err(); err != nil {
+		return nil, fmt.Errorf("probe rows iteration error: %w", err)
+	}
+
 	// Get historical device status per bucket
 	var historyBucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
@@ -2394,6 +2435,18 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 			// Check if we have interface data for this bucket
 			if stats, ok := bucketMap[key]; ok {
 				status := classifyDeviceStatus(stats.inErrors+stats.outErrors+stats.inFcsErrors, stats.inDiscards+stats.outDiscards, stats.carrierTransitions)
+
+				// If device has interface data but no latency probes, mark unhealthy.
+				// Skip collecting bucket since probes may not have arrived yet.
+				probeKey := deviceBucketProbeKey{devicePK: pk, bucket: key}
+				noProbes := !isCollecting && !deviceProbes[probeKey]
+				if noProbes {
+					if status == "healthy" || status == "degraded" {
+						status = "unhealthy"
+					}
+					issueReasons["no_probes"] = true
+				}
+
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
 					Hour:               key,
 					Status:             status,
@@ -2405,6 +2458,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 					InDiscards:         stats.inDiscards,
 					OutDiscards:        stats.outDiscards,
 					CarrierTransitions: stats.carrierTransitions,
+					NoProbes:           noProbes,
 				})
 			} else {
 				// No interface data for this bucket — show as no_data.
@@ -3446,6 +3500,34 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		}
 	}
 
+	// Get latency probe presence per bucket for this device
+	probeQuery := `
+		SELECT
+			` + bucketInterval + ` as bucket,
+			count(*) as samples
+		FROM fact_dz_device_link_latency
+		WHERE origin_device_pk = ? AND event_ts > now() - INTERVAL ? HOUR
+		GROUP BY bucket
+		ORDER BY bucket
+	`
+	probeRows, err := envDB(ctx).Query(ctx, probeQuery, devicePK, totalHours)
+	if err != nil {
+		return nil, fmt.Errorf("device probe query error: %w", err)
+	}
+	defer probeRows.Close()
+
+	deviceProbes := make(map[string]bool)
+	for probeRows.Next() {
+		var bucket time.Time
+		var samples uint64
+		if err := probeRows.Scan(&bucket, &samples); err != nil {
+			return nil, fmt.Errorf("probe scan error: %w", err)
+		}
+		if samples > 0 {
+			deviceProbes[bucket.UTC().Format(time.RFC3339)] = true
+		}
+	}
+
 	// Get historical device status per bucket
 	var historyBucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
@@ -3515,6 +3597,16 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 		// Check if we have interface data for this bucket
 		if stats, ok := bucketMap[key]; ok {
 			deviceStatus := classifyDeviceStatus(stats.inErrors+stats.outErrors+stats.inFcsErrors, stats.inDiscards+stats.outDiscards, stats.carrierTransitions)
+
+			// If device has interface data but no latency probes, mark unhealthy.
+			noProbes := !isCollecting && !deviceProbes[key]
+			if noProbes {
+				if deviceStatus == "healthy" || deviceStatus == "degraded" {
+					deviceStatus = "unhealthy"
+				}
+				issueReasons["no_probes"] = true
+			}
+
 			hourStatuses = append(hourStatuses, DeviceHourStatus{
 				Hour:               key,
 				Status:             deviceStatus,
@@ -3526,6 +3618,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 				InDiscards:         stats.inDiscards,
 				OutDiscards:        stats.outDiscards,
 				CarrierTransitions: stats.carrierTransitions,
+				NoProbes:           noProbes,
 			})
 		} else {
 			// No interface data for this bucket — show as no_data.

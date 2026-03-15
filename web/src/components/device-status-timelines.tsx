@@ -241,10 +241,15 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
                           </span>
                         </div>
                       )}
+                      {hour.no_probes && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-red-500">Not sending latency probes</span>
+                        </div>
+                      )}
                       {hour.in_errors === 0 && hour.out_errors === 0 &&
                        hour.in_fcs_errors === 0 &&
                        hour.in_discards === 0 && hour.out_discards === 0 &&
-                       hour.carrier_transitions === 0 && hour.max_users === 0 && (
+                       hour.carrier_transitions === 0 && !hour.no_probes && hour.max_users === 0 && (
                         <div className="text-xs">No issues detected</div>
                       )}
                     </div>
@@ -941,8 +946,8 @@ export function DeviceStatusTimelines({
         : (device.issue_reasons ?? [])
       const hasIssues = issueReasons.length > 0
 
-      // Devices with only no_data are shown based on health filter (no separate issue toggle)
-      const hasOnlyNoData = issueReasons.length === 1 && issueReasons[0] === 'no_data'
+      // Devices with only no_data or no_probes are shown based on health filter (no separate issue toggle)
+      const hasOnlyNoData = issueReasons.length > 0 && issueReasons.every(r => r === 'no_data' || r === 'no_probes')
       const matchesIssue = hasOnlyNoData
         ? true
         : hasIssues

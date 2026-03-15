@@ -51,6 +51,7 @@ function deviceHourToLinkHour(hour: DeviceHourStatus) {
     side_z_out_discards: 0,
     side_a_carrier_transitions: hour.carrier_transitions,
     side_z_carrier_transitions: 0,
+    no_probes: hour.no_probes,
   }
 }
 

@@ -127,6 +127,10 @@ function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string
 
   if (hour.status === 'no_data') return reasons
 
+  if (hour.no_probes) {
+    reasons.push('Not sending latency probes')
+  }
+
   // Check packet loss (using severity terms from methodology)
   if (hour.avg_loss_pct >= LOSS_EXTENDED_PCT) {
     reasons.push('Extended packet loss (≥95%)')
