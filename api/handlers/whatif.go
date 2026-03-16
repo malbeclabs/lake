@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -77,7 +77,7 @@ func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		log.Printf("Simulate link removal codes query error: %v", err)
+		slog.Error("simulate link removal codes query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -124,15 +124,15 @@ func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		log.Printf("Simulate link removal disconnect query error: %v", err)
+		slog.Error("simulate link removal disconnect query error", "error", err)
 		response.Error = "failed to query disconnect impact"
 	} else {
 		disconnectRecords, err := disconnectResult.Collect(ctx)
 		if err != nil {
-			log.Printf("Simulate link removal disconnect collect error: %v", err)
+			slog.Error("simulate link removal disconnect collect error", "error", err)
 			response.Error = "failed to query disconnect impact"
 		} else {
-			log.Printf("Simulate link removal disconnect query returned %d records", len(disconnectRecords))
+			slog.Debug("simulate link removal disconnect query returned records", "count", len(disconnectRecords))
 			for _, record := range disconnectRecords {
 				pk, _ := record.Get("pk")
 				code, _ := record.Get("code")
@@ -212,12 +212,12 @@ func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		log.Printf("Simulate link removal affected paths query error: %v", err)
+		slog.Error("simulate link removal affected paths query error", "error", err)
 		response.Error = "failed to query affected paths"
 	} else {
 		affectedRecords, err := affectedResult.Collect(ctx)
 		if err != nil {
-			log.Printf("Simulate link removal affected paths collect error: %v", err)
+			slog.Error("simulate link removal affected paths collect error", "error", err)
 			response.Error = "failed to query affected paths"
 		} else {
 			for _, record := range affectedRecords {
@@ -251,8 +251,10 @@ func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("Simulate link removal: %s -> %s, disconnected=%d, affectedPaths=%d, partition=%v in %v",
-		response.SourceCode, response.TargetCode, response.DisconnectedCount, response.AffectedPathCount, response.CausesPartition, duration)
+	slog.Debug("simulate link removal complete",
+		"source", response.SourceCode, "target", response.TargetCode,
+		"disconnected", response.DisconnectedCount, "affected_paths", response.AffectedPathCount,
+		"partition", response.CausesPartition, "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -350,7 +352,7 @@ func GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		log.Printf("Simulate link addition codes query error: %v", err)
+		slog.Error("simulate link addition codes query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -493,12 +495,12 @@ func GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 		"metric":    int64(metric),
 	})
 	if err != nil {
-		log.Printf("Simulate link addition improved paths query error: %v", err)
+		slog.Error("simulate link addition improved paths query error", "error", err)
 		response.Error = "failed to query improved paths: " + err.Error()
 	} else {
 		improvedRecords, err := improvedResult.Collect(ctx)
 		if err != nil {
-			log.Printf("Simulate link addition improved paths collect error: %v", err)
+			slog.Error("simulate link addition improved paths collect error", "error", err)
 			response.Error = "failed to query improved paths: " + err.Error()
 		} else {
 			for _, record := range improvedRecords {
@@ -536,8 +538,9 @@ func GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("Simulate link addition: %s -> %s (metric=%d), improvedPaths=%d, redundancyGains=%d in %v",
-		response.SourceCode, response.TargetCode, metric, response.ImprovedPathCount, response.RedundancyCount, duration)
+	slog.Debug("simulate link addition complete",
+		"source", response.SourceCode, "target", response.TargetCode, "metric", metric,
+		"improved_paths", response.ImprovedPathCount, "redundancy_gains", response.RedundancyCount, "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -639,8 +642,9 @@ func PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("What-if removal: %d devices, %d links, totalPaths=%d, totalDisconnected=%d in %v",
-		len(req.Devices), len(req.Links), response.TotalAffectedPaths, response.TotalDisconnected, duration)
+	slog.Debug("what-if removal complete",
+		"devices", len(req.Devices), "links", len(req.Links),
+		"total_paths", response.TotalAffectedPaths, "total_disconnected", response.TotalDisconnected, "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -681,7 +685,7 @@ func analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK s
 
 	result, err := session.Run(ctx, infoCypher, map[string]any{"devicePK": devicePK})
 	if err != nil {
-		log.Printf("Device removal info query error: %v", err)
+		slog.Error("device removal info query error", "error", err)
 		item.Code = devicePK
 		return item
 	}
@@ -717,7 +721,7 @@ func analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK s
 
 	neighborsResult, err := session.Run(ctx, neighborsCypher, map[string]any{"devicePK": devicePK})
 	if err != nil {
-		log.Printf("Device removal neighbors query error: %v", err)
+		slog.Error("device removal neighbors query error", "error", err)
 		return item
 	}
 
@@ -865,7 +869,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 
 	var sideAPK, sideZPK, sideACode, sideZCode string
 	if err := envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
-		log.Printf("Link lookup error for %s: %v", linkPK, err)
+		slog.Error("link lookup error", "link_pk", linkPK, "error", err)
 		item.Code = "Link not found"
 		return item
 	}
@@ -898,7 +902,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		log.Printf("Link disconnect check error: %v", err)
+		slog.Error("link disconnect check error", "error", err)
 	} else if degResult.Next(ctx) {
 		record := degResult.Record()
 		sourceDegree, _ := record.Get("sourceDegree")
@@ -929,7 +933,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		log.Printf("Link metric query error: %v", err)
+		slog.Error("link metric query error", "error", err)
 		return item
 	}
 	if linkMetricResult.Next(ctx) {
@@ -957,7 +961,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		log.Printf("Link src neighbors query error: %v", err)
+		slog.Error("link src neighbors query error", "error", err)
 		return item
 	}
 
@@ -986,7 +990,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		log.Printf("Link tgt neighbors query error: %v", err)
+		slog.Error("link tgt neighbors query error", "error", err)
 		return item
 	}
 

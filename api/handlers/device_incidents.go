@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -1014,7 +1014,7 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				log.Printf("Error encoding cached device incidents response: %v", err)
+				slog.Error("failed to encode cached device incidents response", "error", err)
 			}
 			return
 		}
@@ -1142,7 +1142,7 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := g.Wait(); err != nil {
-		log.Printf("Error fetching device incidents: %v", err)
+		slog.Error("failed to fetch device incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch device incidents: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1416,7 +1416,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 
 	deviceMeta, err := fetchDeviceMetadata(ctx, envDB(ctx), filters)
 	if err != nil {
-		log.Printf("Cache: Failed to fetch device metadata for incidents: %v", err)
+		slog.Error("cache: failed to fetch device metadata for incidents", "error", err)
 		return nil
 	}
 
@@ -1475,7 +1475,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	})
 
 	if err := g.Wait(); err != nil {
-		log.Printf("Cache: Failed to fetch device incidents: %v", err)
+		slog.Error("cache: failed to fetch device incidents", "error", err)
 		return nil
 	}
 

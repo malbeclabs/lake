@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -46,7 +46,7 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(stats); err != nil {
-				log.Printf("JSON encoding error: %v", err)
+				slog.Error("failed to encode response", "error", err)
 			}
 			return
 		}
@@ -185,12 +185,12 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Stats query error: %v", err)
+		slog.Error("stats query failed", "error", err)
 		stats.Error = err.Error()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(stats); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

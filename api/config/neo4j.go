@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"os"
 	"time"
@@ -36,7 +35,7 @@ func LoadNeo4j() error {
 
 	password := os.Getenv("NEO4J_PASSWORD")
 
-	log.Printf("Connecting to Neo4j (read-only): uri=%s, database=%s, username=%s", uri, Neo4jDatabase, username)
+	slog.Info("connecting to Neo4j (read-only)", "uri", uri, "database", Neo4jDatabase, "username", username)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -47,7 +46,7 @@ func LoadNeo4j() error {
 	}
 
 	Neo4jClient = client
-	log.Printf("Connected to Neo4j successfully (read-only)")
+	slog.Info("connected to Neo4j (read-only)")
 
 	return nil
 }

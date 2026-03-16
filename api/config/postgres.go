@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -69,8 +69,7 @@ func LoadPostgres() error {
 		pgCfg.Username, pgCfg.Password, pgCfg.Host, pgCfg.Port, pgCfg.Database, sslMode,
 	)
 
-	log.Printf("Connecting to PostgreSQL: host=%s, port=%s, database=%s, username=%s",
-		pgCfg.Host, pgCfg.Port, pgCfg.Database, pgCfg.Username)
+	slog.Info("connecting to PostgreSQL", "host", pgCfg.Host, "port", pgCfg.Port, "database", pgCfg.Database, "username", pgCfg.Username)
 
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
@@ -95,7 +94,7 @@ func LoadPostgres() error {
 	}
 
 	PgPool = pool
-	log.Printf("Connected to PostgreSQL successfully")
+	slog.Info("connected to PostgreSQL")
 
 	// Run migrations only if explicitly enabled
 	if os.Getenv("POSTGRES_RUN_MIGRATIONS") == "true" {
@@ -107,10 +106,23 @@ func LoadPostgres() error {
 	return nil
 }
 
+// slogGooseLogger adapts slog to the goose.Logger interface.
+type slogGooseLogger struct{}
+
+func (*slogGooseLogger) Fatalf(format string, v ...any) {
+	slog.Error(fmt.Sprintf(format, v...))
+	os.Exit(1)
+}
+
+func (*slogGooseLogger) Printf(format string, v ...any) {
+	slog.Info(fmt.Sprintf(format, v...))
+}
+
 // runMigrations runs database migrations using goose
 func runMigrations(connStr string) error {
-	log.Printf("Running PostgreSQL migrations...")
+	slog.Info("running PostgreSQL migrations")
 
+	goose.SetLogger(&slogGooseLogger{})
 	goose.SetBaseFS(EmbedMigrations)
 
 	db, err := sql.Open("pgx", connStr)
@@ -127,7 +139,7 @@ func runMigrations(connStr string) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	log.Printf("PostgreSQL migrations completed")
+	slog.Info("PostgreSQL migrations completed")
 	return nil
 }
 

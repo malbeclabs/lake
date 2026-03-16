@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -120,7 +120,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	countQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE 1=1` + whereFilter
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
-		log.Printf("GossipNodes count error: %v", err)
+		slog.Error("gossip nodes count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -129,7 +129,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	onDZCountQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE on_dz = true` + whereFilter
 	var onDZCount uint64
 	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
-		log.Printf("GossipNodes on_dz count error: %v", err)
+		slog.Warn("gossip nodes on_dz count query failed", "error", err)
 		onDZCount = 0
 	}
 
@@ -137,7 +137,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	validatorCountQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE is_validator = true` + whereFilter
 	var validatorCount uint64
 	if err := envDB(ctx).QueryRow(ctx, validatorCountQuery, filterArgs...).Scan(&validatorCount); err != nil {
-		log.Printf("GossipNodes validator count error: %v", err)
+		slog.Warn("gossip nodes validator count query failed", "error", err)
 		validatorCount = 0
 	}
 
@@ -157,7 +157,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("GossipNodes query error: %v", err)
+		slog.Error("gossip nodes query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -179,7 +179,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 			&n.StakeSol,
 			&n.IsValidator,
 		); err != nil {
-			log.Printf("GossipNodes scan error: %v", err)
+			slog.Error("gossip nodes row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -187,7 +187,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("GossipNodes rows error: %v", err)
+		slog.Error("gossip nodes rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -208,7 +208,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -315,13 +315,13 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("GossipNode query error: %v", err)
+		slog.Error("gossip node query failed", "error", err, "pubkey", pubkey)
 		http.Error(w, "gossip node not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(node); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

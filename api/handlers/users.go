@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -39,7 +39,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	countQuery := `SELECT count(*) FROM dz_users_current`
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		log.Printf("Users count error: %v", err)
+		slog.Error("users count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -93,7 +93,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Users query error: %v", err)
+		slog.Error("users query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -118,7 +118,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 			&u.InBps,
 			&u.OutBps,
 		); err != nil {
-			log.Printf("Users scan error: %v", err)
+			slog.Error("users row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -126,7 +126,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Users rows error: %v", err)
+		slog.Error("users rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -145,7 +145,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -286,14 +286,14 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("User query error: %v", err)
+		slog.Error("user query failed", "error", err, "pk", pk)
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(user); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -385,7 +385,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("UserTraffic query error: %v", err)
+		slog.Error("user traffic query failed", "error", err, "pk", pk)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -395,7 +395,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var p UserTrafficPoint
 		if err := rows.Scan(&p.Time, &p.TunnelID, &p.InBps, &p.OutBps, &p.InPps, &p.OutPps); err != nil {
-			log.Printf("UserTraffic scan error: %v", err)
+			slog.Error("user traffic row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -403,7 +403,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("UserTraffic rows error: %v", err)
+		slog.Error("user traffic rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -414,7 +414,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(points); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -499,7 +499,7 @@ func GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("UserMulticastGroups query error: %v", err)
+		slog.Error("user multicast groups query failed", "error", err, "pk", pk)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -509,7 +509,7 @@ func GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var g UserMulticastGroup
 		if err := rows.Scan(&g.GroupPK, &g.GroupCode, &g.MulticastIP, &g.Mode, &g.Status, &g.PublisherCount, &g.SubscriberCount); err != nil {
-			log.Printf("UserMulticastGroups scan error: %v", err)
+			slog.Error("user multicast groups row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -517,7 +517,7 @@ func GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("UserMulticastGroups rows error: %v", err)
+		slog.Error("user multicast groups rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -528,6 +528,6 @@ func GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(groups); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -275,7 +275,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Field values query error: %v\nQuery: %s", err, query)
+		slog.Error("field values query failed", "error", err, "query", query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -285,7 +285,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var val string
 		if err := rows.Scan(&val); err != nil {
-			log.Printf("Field values scan error: %v", err)
+			slog.Error("field values scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -293,7 +293,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Field values rows error: %v", err)
+		slog.Error("field values rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -304,6 +304,6 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(FieldValuesResponse{Values: values}); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

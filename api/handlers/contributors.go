@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -32,7 +32,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 	countQuery := `SELECT count(*) FROM dz_contributors_current`
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		log.Printf("Contributors count error: %v", err)
+		slog.Error("contributors count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -86,7 +86,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Contributors query error: %v", err)
+		slog.Error("contributors query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -104,7 +104,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 			&c.SideZDevices,
 			&c.LinkCount,
 		); err != nil {
-			log.Printf("Contributors scan error: %v", err)
+			slog.Error("contributors row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -112,7 +112,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Contributors rows error: %v", err)
+		slog.Error("contributors rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -131,7 +131,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -247,13 +247,13 @@ func GetContributor(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Contributor query error: %v", err)
+		slog.Error("contributor query failed", "error", err, "pk", pk)
 		http.Error(w, "contributor not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(contributor); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

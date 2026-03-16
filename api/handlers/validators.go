@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -208,7 +208,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	countQuery := baseQuery + `SELECT count(DISTINCT vote_pubkey) FROM validators_data WHERE 1=1` + whereFilter
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
-		log.Printf("Validators count error: %v", err)
+		slog.Error("validators count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -217,7 +217,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	onDZCountQuery := baseQuery + `SELECT count(DISTINCT vote_pubkey) FROM validators_data WHERE on_dz = true` + whereFilter
 	var onDZCount uint64
 	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
-		log.Printf("Validators on_dz count error: %v", err)
+		slog.Warn("validators on_dz count query failed", "error", err)
 		onDZCount = 0
 	}
 
@@ -257,7 +257,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Validators query error: %v", err)
+		slog.Error("validators query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -283,7 +283,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 			&v.Version,
 			&v.SoftwareClient,
 		); err != nil {
-			log.Printf("Validators scan error: %v", err)
+			slog.Error("validators row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -291,7 +291,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Validators rows error: %v", err)
+		slog.Error("validators rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -311,7 +311,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -475,13 +475,13 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Validator query error: %v", err)
+		slog.Error("validator query failed", "error", err, "vote_pubkey", votePubkey)
 		http.Error(w, "validator not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(validator); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"io"
-	"log"
 	"log/slog"
 	"mime"
 	"net"
@@ -81,7 +80,7 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 	cacheDir := filepath.Join(os.TempDir(), "lake-asset-cache")
 	if assetBucketURL != "" {
 		if err := os.MkdirAll(cacheDir, 0755); err != nil {
-			log.Printf("Warning: failed to create asset cache dir: %v", err)
+			slog.Warn("failed to create asset cache dir", "error", err)
 		}
 	}
 
@@ -128,7 +127,7 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 		url := strings.TrimSuffix(assetBucketURL, "/") + "/" + assetName
 		resp, err := http.Get(url)
 		if err != nil {
-			log.Printf("Failed to fetch asset from bucket: %v", err)
+			slog.Error("failed to fetch asset from bucket", "error", err)
 			return ""
 		}
 		defer resp.Body.Close()
@@ -139,24 +138,24 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 
 		// Write to cache
 		if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
-			log.Printf("Failed to create cache subdir: %v", err)
+			slog.Error("failed to create cache subdir", "error", err)
 			return ""
 		}
 
 		f, err := os.Create(cachePath)
 		if err != nil {
-			log.Printf("Failed to create cache file: %v", err)
+			slog.Error("failed to create cache file", "error", err)
 			return ""
 		}
 		defer f.Close()
 
 		if _, err := io.Copy(f, resp.Body); err != nil {
-			log.Printf("Failed to write cache file: %v", err)
+			slog.Error("failed to write cache file", "error", err)
 			os.Remove(cachePath)
 			return ""
 		}
 
-		log.Printf("Cached asset from bucket: %s", assetName)
+		slog.Info("cached asset from bucket", "asset", assetName)
 		return cachePath
 	}
 
@@ -223,7 +222,7 @@ func main() {
 		os.Setenv("CLICKHOUSE_USE_REMOTE", "true")
 	}
 
-	log.Printf("Starting lake-api version=%s commit=%s date=%s", version, commit, date)
+	slog.Info("starting lake-api", "version", version, "commit", commit, "date", date)
 	handlers.SetBuildInfo(version, commit, date)
 
 	// Load .env files if they exist
@@ -255,21 +254,23 @@ func main() {
 			TracesSampleRate: tracesSampleRate,
 		})
 		if err != nil {
-			log.Printf("Warning: Sentry initialization failed: %v", err)
+			slog.Warn("Sentry initialization failed", "error", err)
 		} else {
-			log.Printf("Sentry initialized (env=%s, release=%s)", sentryEnv, release)
+			slog.Info("Sentry initialized", "env", sentryEnv, "release", release)
 			defer sentry.Flush(2 * time.Second)
 		}
 	}
 
 	// Load configuration
 	if err := config.Load(); err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
 	}
 
 	// Load PostgreSQL
 	if err := config.LoadPostgres(); err != nil {
-		log.Fatalf("Failed to load PostgreSQL: %v", err)
+		slog.Error("failed to load PostgreSQL", "error", err)
+		os.Exit(1)
 	}
 	defer config.ClosePostgres()
 	defer config.Close() // Close ClickHouse connection
@@ -302,7 +303,7 @@ func main() {
 
 	// Load Neo4j (optional - log warning if unavailable)
 	if err := config.LoadNeo4j(); err != nil {
-		log.Printf("Warning: Neo4j not available: %v", err)
+		slog.Warn("Neo4j not available", "error", err)
 	} else {
 		defer func() { _ = config.CloseNeo4j() }()
 	}
@@ -317,15 +318,15 @@ func main() {
 		metrics.BuildInfo.WithLabelValues(version, commit, date).Set(1)
 		listener, err := net.Listen("tcp", *metricsAddrFlag)
 		if err != nil {
-			log.Printf("Failed to start prometheus metrics server listener: %v", err)
+			slog.Error("failed to start Prometheus metrics server listener", "error", err)
 		} else {
-			log.Printf("Prometheus metrics server listening on %s", listener.Addr().String())
+			slog.Info("Prometheus metrics server listening", "addr", listener.Addr().String())
 			mux := http.NewServeMux()
 			mux.Handle("/metrics", promhttp.Handler())
 			metricsServer = &http.Server{Handler: mux}
 			go func() {
 				if err := metricsServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-					log.Printf("Metrics server error: %v", err)
+					slog.Error("metrics server error", "error", err)
 				}
 			}()
 		}
@@ -605,9 +606,9 @@ func main() {
 	// (allows serving old assets after deploys while users still have old index.html cached)
 	assetBucketURL := os.Getenv("ASSET_BUCKET_URL")
 	if _, err := os.Stat(webDir); err == nil {
-		log.Printf("Serving static files from %s", webDir)
+		slog.Info("serving static files", "dir", webDir)
 		if assetBucketURL != "" {
-			log.Printf("Asset bucket fallback enabled: %s", assetBucketURL)
+			slog.Info("asset bucket fallback enabled", "url", assetBucketURL)
 		}
 		r.Get("/*", spaHandler(webDir, assetBucketURL))
 	}
@@ -639,9 +640,10 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("API server starting on :%s", port)
+		slog.Info("API server starting", "port", port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+			slog.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -679,14 +681,14 @@ func main() {
 
 	// Wait for shutdown signal
 	sig := <-shutdown
-	log.Printf("Received signal %v, shutting down gracefully...", sig)
+	slog.Info("received signal, shutting down gracefully", "signal", sig)
 
 	// Immediately mark as shutting down so readiness probe returns 503
 	shuttingDown.Store(true)
 
 	// Stop Slack bot if running (before cancelling server context)
 	if slackEventHandler != nil {
-		log.Println("Stopping Slack bot...")
+		slog.Info("stopping Slack bot...")
 		shutdownComplete := slackEventHandler.StopAcceptingNew()
 		waitDone := make(chan struct{})
 		go func() {
@@ -695,9 +697,9 @@ func main() {
 		}()
 		select {
 		case <-waitDone:
-			log.Println("Slack bot stopped gracefully")
+			slog.Info("Slack bot stopped gracefully")
 		case <-time.After(30 * time.Second):
-			log.Println("Slack bot shutdown timed out")
+			slog.Warn("Slack bot shutdown timed out")
 		}
 	}
 
@@ -713,17 +715,17 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("Graceful shutdown error: %v", err)
+		slog.Error("graceful shutdown error", "error", err)
 	} else {
-		log.Println("Server stopped gracefully")
+		slog.Info("server stopped gracefully")
 	}
 
 	// Shutdown metrics server
 	if metricsServer != nil {
 		if err := metricsServer.Shutdown(ctx); err != nil {
-			log.Printf("Metrics server shutdown error: %v", err)
+			slog.Error("metrics server shutdown error", "error", err)
 		} else {
-			log.Println("Metrics server stopped gracefully")
+			slog.Info("metrics server stopped gracefully")
 		}
 	}
 }
@@ -736,7 +738,7 @@ func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 	modeFlag := ""
 	cfg, err := slackbot.LoadFromEnv(modeFlag, "", "", false, false)
 	if err != nil {
-		log.Printf("Slack bot config error: %v (bot will not start)", err)
+		slog.Error("Slack bot config error, bot will not start", "error", err)
 		return nil
 	}
 
@@ -744,7 +746,7 @@ func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 	slackClient := slackbot.NewClient(cfg.BotToken, cfg.AppToken, slog.Default())
 	botUserID, err := slackClient.Initialize(ctx)
 	if err != nil {
-		log.Printf("Slack auth test failed, continuing anyway: %v", err)
+		slog.Warn("Slack auth test failed, continuing anyway", "error", err)
 	}
 	cfg.BotUserID = botUserID
 
@@ -784,24 +786,24 @@ func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 
 		go func() {
 			if err := client.Run(); err != nil {
-				log.Printf("Slack socket mode client error: %v", err)
+				slog.Error("Slack socket mode client error", "error", err)
 			}
 		}()
 
 		go func() {
 			if err := eventHandler.HandleSocketMode(ctx, client); err != nil {
-				log.Printf("Slack socket mode handler stopped: %v", err)
+				slog.Info("Slack socket mode handler stopped", "error", err)
 			}
 		}()
 
-		log.Println("Slack bot started in socket mode")
+		slog.Info("Slack bot started in socket mode")
 	} else {
 		// HTTP mode: add /slack/events route to the existing router
 		r.Post("/slack/events", func(w http.ResponseWriter, r *http.Request) {
 			eventHandler.HandleHTTP(w, r, cfg.SigningSecret)
 		})
 
-		log.Println("Slack bot started in HTTP mode (route: /slack/events)")
+		slog.Info("Slack bot started in HTTP mode", "route", "/slack/events")
 	}
 
 	return eventHandler
@@ -831,7 +833,7 @@ func (s *pgInstallationStore) GetSlackInstallation(ctx context.Context, teamID s
 func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 	signingSecret := os.Getenv("SLACK_SIGNING_SECRET")
 	if signingSecret == "" {
-		log.Printf("SLACK_SIGNING_SECRET is required for multi-tenant mode (bot will not start)")
+		slog.Error("SLACK_SIGNING_SECRET is required for multi-tenant mode, bot will not start")
 		return nil
 	}
 
@@ -879,6 +881,6 @@ func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux) *slackbot.EventHa
 		eventHandler.HandleHTTPMultiTenant(w, r)
 	})
 
-	log.Println("Slack bot started in multi-tenant HTTP mode (route: /slack/events)")
+	slog.Info("Slack bot started in multi-tenant HTTP mode", "route", "/slack/events")
 	return eventHandler
 }

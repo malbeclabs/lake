@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -179,7 +179,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic query error: %v", err)
+		slog.Error("traffic query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -215,7 +215,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic mean query error: %v", err)
+		slog.Error("traffic mean query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -227,7 +227,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		var device, intf string
 		var meanIn, meanOut float64
 		if err := meanRows.Scan(&device, &intf, &meanIn, &meanOut); err != nil {
-			log.Printf("Traffic mean row scan error: %v", err)
+			slog.Error("traffic mean row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -261,7 +261,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var point TrafficPoint
 		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps); err != nil {
-			log.Printf("Traffic row scan error: %v", err)
+			slog.Error("traffic row scan error", "error", err)
 			// Already started writing — can't send HTTP error. Log and break.
 			scanErr = err
 			break
@@ -271,7 +271,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		}
 		pointJSON, err := json.Marshal(point)
 		if err != nil {
-			log.Printf("Traffic point encode error: %v", err)
+			slog.Error("failed to encode traffic point", "error", err)
 			scanErr = err
 			break
 		}
@@ -281,7 +281,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	if scanErr == nil {
 		if err := rows.Err(); err != nil {
-			log.Printf("Rows iteration error: %v", err)
+			slog.Error("rows iteration error", "error", err)
 		}
 	}
 
@@ -388,7 +388,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Discards query error: %v", err)
+		slog.Error("discards query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -401,7 +401,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var point DiscardsPoint
 		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InDiscards, &point.OutDiscards); err != nil {
-			log.Printf("Discards row scan error: %v", err)
+			slog.Error("discards row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -433,7 +433,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Rows error: %v", err)
+		slog.Error("rows error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -456,7 +456,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 

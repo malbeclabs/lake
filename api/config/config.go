@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -117,7 +117,7 @@ func Load() error {
 
 	secure := os.Getenv("CLICKHOUSE_SECURE") == "true"
 
-	log.Printf("Connecting to ClickHouse: addr=%s, database=%s, username=%s, secure=%v, shredder_db=%s", cfg.Addr, cfg.Database, cfg.Username, secure, ShredderDB)
+	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", ShredderDB)
 
 	// Create connection pool
 	opts := &clickhouse.Options{
@@ -152,7 +152,7 @@ func Load() error {
 	}
 
 	DB = conn
-	log.Printf("Connected to ClickHouse successfully")
+	slog.Info("connected to ClickHouse")
 
 	// Create a dedicated health-check connection with a tiny pool so that
 	// readiness probes are never blocked by cache refresh connection storms.
@@ -179,7 +179,7 @@ func Load() error {
 		return fmt.Errorf("failed to ping clickhouse health connection: %w", err)
 	}
 	HealthDB = healthConn
-	log.Printf("Health-check ClickHouse connection ready")
+	slog.Info("health-check ClickHouse connection ready")
 
 	// Create connections for each env database
 	EnvDBs = map[string]driver.Conn{
@@ -215,7 +215,7 @@ func Load() error {
 		}
 		pingCancel()
 		EnvDBs[env] = envConn
-		log.Printf("Connected to ClickHouse for %s (database=%s)", env, dbName)
+		slog.Info("connected to ClickHouse", "env", env, "database", dbName)
 	}
 
 	return nil

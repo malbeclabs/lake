@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"time"
@@ -192,7 +192,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			if err := json.Unmarshal([]byte(interfacesJSON), &d.Interfaces); err != nil {
-				log.Printf("failed to parse interfaces JSON for device %s: %v", d.PK, err)
+				slog.Error("failed to parse interfaces JSON", "device_pk", d.PK, "error", err)
 				d.Interfaces = []DeviceInterface{}
 			}
 			devices = append(devices, d)
@@ -375,7 +375,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		log.Printf("Topology query error: %v", err)
+		slog.Error("topology query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 	}
 
@@ -395,7 +395,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -560,7 +560,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
-		log.Printf("Traffic query error: %v", err)
+		slog.Error("traffic query error", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
 		return
@@ -571,7 +571,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		var p TrafficDataPoint
 		var avgIn, avgOut, peakIn, peakOut *float64
 		if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-			log.Printf("Traffic scan error: %v", err)
+			slog.Error("traffic scan error", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
 			return
@@ -629,7 +629,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 
 		intfRows, intfErr := envDB(ctx).Query(ctx, intfQuery, pk)
 		if intfErr != nil {
-			log.Printf("Interface traffic query error: %v", intfErr)
+			slog.Error("interface traffic query error", "error", intfErr)
 		} else {
 			defer intfRows.Close()
 			var intfPoints []InterfaceTrafficDataPoint
@@ -637,7 +637,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 				var p InterfaceTrafficDataPoint
 				var avgIn, avgOut, peakIn, peakOut *float64
 				if err := intfRows.Scan(&p.Time, &p.Intf, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-					log.Printf("Interface traffic scan error: %v", err)
+					slog.Error("interface traffic scan error", "error", err)
 					break
 				}
 				if avgIn != nil {
@@ -847,7 +847,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := envDB(ctx).Query(ctx, query, pk, pk)
 	if err != nil {
-		log.Printf("Latency query error: pk=%s err=%v", pk, err)
+		slog.Error("latency query error", "pk", pk, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 		return
@@ -859,7 +859,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		var p LinkLatencyDataPoint
 		var avgRtt, p95Rtt, avgJitter, lossPct, avgRttAtoZ, p95RttAtoZ, avgRttZtoA, p95RttZtoA, jitterAtoZ, jitterZtoA *float64
 		if err := rows.Scan(&p.Time, &avgRtt, &p95Rtt, &avgJitter, &lossPct, &avgRttAtoZ, &p95RttAtoZ, &avgRttZtoA, &p95RttZtoA, &jitterAtoZ, &jitterZtoA); err != nil {
-			log.Printf("Latency scan error: %v", err)
+			slog.Error("latency scan error", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 			return
@@ -901,7 +901,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, rows.Err())
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Latency rows iteration error: pk=%s err=%v", pk, err)
+		slog.Error("latency rows iteration error", "pk", pk, "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(LinkLatencyResponse{Error: dberror.UserMessage(err)})
 		return
@@ -913,7 +913,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(LinkLatencyResponse{Points: points}); err != nil {
-		log.Printf("Latency encode error: pk=%s err=%v", pk, err)
+		slog.Error("failed to encode response", "pk", pk, "error", err)
 	}
 }
 
@@ -997,7 +997,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Latency comparison query error: %v", err)
+		slog.Error("latency comparison query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -1029,7 +1029,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 			&lc.RttImprovementPct,
 			&lc.JitterImprovementPct,
 		); err != nil {
-			log.Printf("Latency comparison scan error: %v", err)
+			slog.Error("latency comparison scan error", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
@@ -1046,7 +1046,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Latency comparison rows error: %v", err)
+		slog.Error("latency comparison rows error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -1316,7 +1316,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Latency history query error: %v", err)
+		slog.Error("latency history query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -1334,7 +1334,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			&p.InetAvgJitterMs,
 			&p.InetSampleCount,
 		); err != nil {
-			log.Printf("Latency history scan error: %v", err)
+			slog.Error("latency history scan error", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
@@ -1342,7 +1342,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Latency history rows error: %v", err)
+		slog.Error("latency history rows error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}

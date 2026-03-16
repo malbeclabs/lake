@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -96,7 +96,7 @@ func GetISISTopology(w http.ResponseWriter, r *http.Request) {
 
 	deviceRecords, err := runNeo4jQuery(deviceCypher)
 	if err != nil {
-		log.Printf("ISIS topology device query error: %v", err)
+		slog.Error("ISIS topology device query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -136,7 +136,7 @@ func GetISISTopology(w http.ResponseWriter, r *http.Request) {
 
 	adjRecords, err := runNeo4jQuery(adjCypher)
 	if err != nil {
-		log.Printf("ISIS topology adjacency query error: %v", err)
+		slog.Error("ISIS topology adjacency query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -229,7 +229,7 @@ func asUint32Slice(v any) []uint32 {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -312,14 +312,14 @@ func GetISISPath(w http.ResponseWriter, r *http.Request) {
 		"to_pk":   toPK,
 	})
 	if err != nil {
-		log.Printf("ISIS path query error: %v", err)
+		slog.Error("ISIS path query error", "error", err)
 		writeJSON(w, PathResponse{Error: "Failed to find path: " + err.Error()})
 		return
 	}
 
 	record, err := result.Single(ctx)
 	if err != nil {
-		log.Printf("ISIS path no result: %v", err)
+		slog.Error("ISIS path no result", "error", err)
 		writeJSON(w, PathResponse{Error: "No path found between devices"})
 		return
 	}
@@ -422,7 +422,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 
 	configuredResult, err := session.Run(ctx, configuredCypher, nil)
 	if err != nil {
-		log.Printf("Topology compare configured query error: %v", err)
+		slog.Error("topology compare configured query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -430,7 +430,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 
 	configuredRecords, err := configuredResult.Collect(ctx)
 	if err != nil {
-		log.Printf("Topology compare configured collect error: %v", err)
+		slog.Error("topology compare configured collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -530,7 +530,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 
 	extraResult, err := session.Run(ctx, extraCypher, nil)
 	if err != nil {
-		log.Printf("Topology compare extra query error: %v", err)
+		slog.Error("topology compare extra query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -538,7 +538,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 
 	extraRecords, err := extraResult.Collect(ctx)
 	if err != nil {
-		log.Printf("Topology compare extra collect error: %v", err)
+		slog.Error("topology compare extra collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -567,7 +567,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	countCypher := `MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count`
 	countResult, err := session.Run(ctx, countCypher, nil)
 	if err != nil {
-		log.Printf("Topology compare count query error: %v", err)
+		slog.Error("topology compare count query error", "error", err)
 	} else {
 		if countRecord, err := countResult.Single(ctx); err == nil {
 			count, _ := countRecord.Get("count")
@@ -662,7 +662,7 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	deviceCypher := `MATCH (d:Device {pk: $pk}) RETURN d.code AS code`
 	deviceResult, err := session.Run(ctx, deviceCypher, map[string]any{"pk": devicePK})
 	if err != nil {
-		log.Printf("Failure impact device query error: %v", err)
+		slog.Error("failure impact device query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -709,7 +709,7 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 		"device_pk": devicePK,
 	})
 	if err != nil {
-		log.Printf("Failure impact query error: %v", err)
+		slog.Error("failure impact query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -717,7 +717,7 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 
 	impactRecords, err := impactResult.Collect(ctx)
 	if err != nil {
-		log.Printf("Failure impact collect error: %v", err)
+		slog.Error("failure impact collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -759,12 +759,12 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	`
 	metroResult, err := session.Run(ctx, metroCypher, map[string]any{})
 	if err != nil {
-		log.Printf("Failure impact metro query error: %v", err)
+		slog.Error("failure impact metro query error", "error", err)
 		// Don't fail the whole response, just log the error
 	} else {
 		metroRecords, err := metroResult.Collect(ctx)
 		if err != nil {
-			log.Printf("Failure impact metro collect error: %v", err)
+			slog.Error("failure impact metro collect error", "error", err)
 		} else {
 			for _, record := range metroRecords {
 				metroPK, _ := record.Get("metro_pk")
@@ -851,12 +851,12 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 		"device_pk": devicePK,
 	})
 	if err != nil {
-		log.Printf("Failure impact affected paths query error: %v", err)
+		slog.Error("failure impact affected paths query error", "error", err)
 		// Don't fail the whole response, just log the error
 	} else {
 		affectedRecords, err := affectedResult.Collect(ctx)
 		if err != nil {
-			log.Printf("Failure impact affected paths collect error: %v", err)
+			slog.Error("failure impact affected paths collect error", "error", err)
 		} else {
 			for _, record := range affectedRecords {
 				fromPK, _ := record.Get("from_pk")
@@ -888,8 +888,7 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("Failure impact: %s, unreachable=%d, affectedPaths=%d, metrosImpacted=%d in %v",
-		response.DeviceCode, response.UnreachableCount, response.AffectedPathCount, len(response.MetroImpact), duration)
+	slog.Info("failure impact", "device", response.DeviceCode, "unreachable", response.UnreachableCount, "affected_paths", response.AffectedPathCount, "metros_impacted", len(response.MetroImpact), "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -1015,7 +1014,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 		"to_pk":   toPK,
 	})
 	if err != nil {
-		log.Printf("ISIS multi-path query error: %v", err)
+		slog.Error("ISIS multi-path query error", "error", err)
 		response.Error = "Failed to find paths: " + err.Error()
 		writeJSON(w, response)
 		return
@@ -1023,7 +1022,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	records, err := result.Collect(ctx)
 	if err != nil {
-		log.Printf("ISIS multi-path collect error: %v", err)
+		slog.Error("ISIS multi-path collect error", "error", err)
 		response.Error = "Failed to collect paths: " + err.Error()
 		writeJSON(w, response)
 		return
@@ -1072,7 +1071,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich paths with measured latency from ClickHouse
 	if err := enrichPathsWithMeasuredLatency(ctx, &response); err != nil {
-		log.Printf("enrichPathsWithMeasuredLatency error: %v", err)
+		slog.Error("enrichPathsWithMeasuredLatency error", "error", err)
 		response.Error = fmt.Sprintf("failed to enrich paths with measured latency: %v", err)
 	}
 
@@ -1116,7 +1115,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
-	log.Printf("ISIS multi-path query (%s mode) returned %d paths in %v", pathMode, len(response.Paths), duration)
+	slog.Info("ISIS multi-path query completed", "mode", pathMode, "paths", len(response.Paths), "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -1317,7 +1316,7 @@ func GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 
 	result, err := session.Run(ctx, cypher, nil)
 	if err != nil {
-		log.Printf("Critical links query error: %v", err)
+		slog.Error("critical links query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1325,7 +1324,7 @@ func GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 
 	records, err := result.Collect(ctx)
 	if err != nil {
-		log.Printf("Critical links collect error: %v", err)
+		slog.Error("critical links collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1379,8 +1378,7 @@ func GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 			importantCount++
 		}
 	}
-	log.Printf("Critical links query returned %d links (%d critical, %d important) in %v",
-		len(response.Links), criticalCount, importantCount, duration)
+	slog.Info("critical links query completed", "links", len(response.Links), "critical", criticalCount, "important", importantCount, "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -1451,7 +1449,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	leafResult, err := session.Run(ctx, leafCypher, nil)
 	if err != nil {
-		log.Printf("Redundancy report leaf devices query error: %v", err)
+		slog.Error("redundancy report leaf devices query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1459,7 +1457,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	leafRecords, err := leafResult.Collect(ctx)
 	if err != nil {
-		log.Printf("Redundancy report leaf devices collect error: %v", err)
+		slog.Error("redundancy report leaf devices collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1509,7 +1507,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	criticalResult, err := session.Run(ctx, criticalLinksCypher, nil)
 	if err != nil {
-		log.Printf("Redundancy report critical links query error: %v", err)
+		slog.Error("redundancy report critical links query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1517,7 +1515,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	criticalRecords, err := criticalResult.Collect(ctx)
 	if err != nil {
-		log.Printf("Redundancy report critical links collect error: %v", err)
+		slog.Error("redundancy report critical links collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1561,7 +1559,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	singleExitResult, err := session.Run(ctx, singleExitCypher, nil)
 	if err != nil {
-		log.Printf("Redundancy report single-exit metros query error: %v", err)
+		slog.Error("redundancy report single-exit metros query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1569,7 +1567,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	singleExitRecords, err := singleExitResult.Collect(ctx)
 	if err != nil {
-		log.Printf("Redundancy report single-exit metros collect error: %v", err)
+		slog.Error("redundancy report single-exit metros collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1637,8 +1635,7 @@ func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("Redundancy report returned %d issues (%d critical, %d warning, %d info) in %v",
-		len(response.Issues), criticalCount, warningCount, infoCount, duration)
+	slog.Info("redundancy report completed", "issues", len(response.Issues), "critical", criticalCount, "warning", warningCount, "info", infoCount, "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -1708,7 +1705,7 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 	`
 	chRows, err := config.DB.Query(ctx, chQuery)
 	if err != nil {
-		log.Printf("Metro connectivity ClickHouse query error: %v", err)
+		slog.Error("metro connectivity ClickHouse query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -1734,7 +1731,7 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 	metroRecords, err := runNeo4jQuery(metroCypher)
 	if err != nil {
-		log.Printf("Metro connectivity metro query error: %v", err)
+		slog.Error("metro connectivity metro query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -1788,7 +1785,7 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 	connRecords, err := runNeo4jQuery(connectivityCypher)
 	if err != nil {
-		log.Printf("Metro connectivity query error: %v", err)
+		slog.Error("metro connectivity query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -1869,8 +1866,7 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil) // Reuse existing metric for now
 
-	log.Printf("Metro connectivity returned %d metros, %d connections in %v",
-		len(response.Metros), len(response.Connectivity), duration)
+	slog.Info("metro connectivity completed", "metros", len(response.Metros), "connections", len(response.Connectivity), "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -2013,7 +2009,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 	result, err := session.Run(ctx, cypher, nil)
 	if err != nil {
-		log.Printf("Metro path latency query error: %v", err)
+		slog.Error("metro path latency query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -2021,7 +2017,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 	records, err := result.Collect(ctx)
 	if err != nil {
-		log.Printf("Metro path latency collect error: %v", err)
+		slog.Error("metro path latency collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -2085,7 +2081,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := safeQueryRows(ctx, internetQuery)
 	if err != nil {
-		log.Printf("Metro path latency internet query error: %v", err)
+		slog.Error("metro path latency internet query error", "error", err)
 		response.Error = "failed to fetch internet latency data"
 		writeJSON(w, response)
 		return
@@ -2146,8 +2142,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("Metro path latency (%s) returned %d paths in %v",
-		optimize, len(response.Paths), duration)
+	slog.Info("metro path latency completed", "optimize", optimize, "paths", len(response.Paths), "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -2363,8 +2358,7 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 	response.Summary.MaxImprovementPct = maxImprovement
 
 	duration := time.Since(start)
-	log.Printf("fetchMetroPathLatencyData (%s) returned %d paths in %v",
-		optimize, len(response.Paths), duration)
+	slog.Info("fetchMetroPathLatencyData completed", "optimize", optimize, "paths", len(response.Paths), "duration", duration)
 
 	return response, nil
 }
@@ -2472,7 +2466,7 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 		"to":   toCode,
 	})
 	if err != nil {
-		log.Printf("Metro path detail query error: %v", err)
+		slog.Error("metro path detail query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -2480,7 +2474,7 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 
 	records, err := result.Collect(ctx)
 	if err != nil {
-		log.Printf("Metro path detail collect error: %v", err)
+		slog.Error("metro path detail collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -2868,8 +2862,7 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("Maintenance impact analyzed %d devices, %d links in %v",
-		len(req.Devices), len(req.Links), duration)
+	slog.Info("maintenance impact analyzed", "devices", len(req.Devices), "links", len(req.Links), "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -2926,7 +2919,7 @@ func analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devic
 		"devicePKs": devicePKs,
 	})
 	if err != nil {
-		log.Printf("Batch device impact query error: %v", err)
+		slog.Error("batch device impact query error", "error", err)
 		// Fallback to individual queries
 		for _, pk := range devicePKs {
 			items = append(items, analyzeDeviceImpact(ctx, session, pk))
@@ -3230,7 +3223,7 @@ func computeAffectedPathsFast(ctx context.Context, session neo4j.Session,
 		"limit":            limit * 2, // Get more candidates, we'll filter
 	})
 	if err != nil {
-		log.Printf("Error computing affected paths: %v", err)
+		slog.Error("error computing affected paths", "error", err)
 		return result
 	}
 
@@ -3372,7 +3365,7 @@ func computeAffectedMetrosFast(ctx context.Context, session neo4j.Session,
 		"offlineDevicePKs": offlineDevicePKs,
 	})
 	if err != nil {
-		log.Printf("Error computing affected metros fast: %v", err)
+		slog.Error("error computing affected metros fast", "error", err)
 		return result
 	}
 
@@ -3578,7 +3571,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 		"toPK":   toMetroPK,
 	})
 	if err != nil {
-		log.Printf("Metro device paths metro query error: %v", err)
+		slog.Error("metro device paths metro query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -3586,7 +3579,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	record, err := result.Single(ctx)
 	if err != nil {
-		log.Printf("Metro device paths metro query no result: %v", err)
+		slog.Error("metro device paths metro query no result", "error", err)
 		response.Error = "One or both metros not found"
 		writeJSON(w, response)
 		return
@@ -3800,7 +3793,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 			multiPathResp.Paths[i] = pair.BestPath
 		}
 		if err := enrichPathsWithMeasuredLatency(ctx, multiPathResp); err != nil {
-			log.Printf("enrichPathsWithMeasuredLatency error for metro paths: %v", err)
+			slog.Error("enrichPathsWithMeasuredLatency error for metro paths", "error", err)
 		} else {
 			// Copy enriched paths back
 			for i := range response.DevicePairs {
@@ -3858,8 +3851,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	log.Printf("GetMetroDevicePaths %s->%s (%s mode): %d pairs in %v",
-		response.FromMetroCode, response.ToMetroCode, mode, response.TotalPairs, duration)
+	slog.Info("GetMetroDevicePaths completed", "from", response.FromMetroCode, "to", response.ToMetroCode, "mode", mode, "pairs", response.TotalPairs, "duration", duration)
 
 	writeJSON(w, response)
 }

@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -33,7 +33,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 	countQuery := `SELECT count(*) FROM dz_metros_current`
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		log.Printf("Metros count error: %v", err)
+		slog.Error("metros count query failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -72,7 +72,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Metros query error: %v", err)
+		slog.Error("metros query failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -90,7 +90,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 			&m.DeviceCount,
 			&m.UserCount,
 		); err != nil {
-			log.Printf("Metros scan error: %v", err)
+			slog.Error("metros row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
@@ -98,7 +98,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Metros rows error: %v", err)
+		slog.Error("metros rows iteration failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -117,7 +117,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -226,13 +226,13 @@ func GetMetro(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Metro query error: %v", err)
+		slog.Error("metro query failed", "error", err, "pk", pk)
 		http.Error(w, "metro not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(metro); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

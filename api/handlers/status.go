@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -209,7 +209,7 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				log.Printf("JSON encoding error: %v", err)
+				slog.Error("failed to encode response", "error", err)
 			}
 			return
 		}
@@ -224,7 +224,7 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -1073,7 +1073,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Status query error: %v", err)
+		slog.Error("status query error", "error", err)
 		resp.Error = err.Error()
 	}
 
@@ -1164,7 +1164,7 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				log.Printf("JSON encoding error: %v", err)
+				slog.Error("failed to encode response", "error", err)
 			}
 			return
 		}
@@ -1184,14 +1184,14 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchLinkHistoryData(ctx, timeRange, requestedBuckets)
 	if err != nil {
-		log.Printf("fetchLinkHistoryData error: %v", err)
+		slog.Error("fetchLinkHistoryData error", "error", err)
 		http.Error(w, "Failed to fetch link history", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -1588,7 +1588,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 
 	statusRows, err := safeQueryRows(ctx, statusHistoryQuery, totalHours)
 	if err != nil {
-		log.Printf("Link status history query error: %v", err)
+		slog.Error("link status history query error", "error", err)
 	}
 
 	// Also fetch the most recent status BEFORE the time range for each link.
@@ -1601,7 +1601,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	`
 	baselineRows, baselineErr := safeQueryRows(ctx, baselineQuery, totalHours)
 	if baselineErr != nil {
-		log.Printf("Link status baseline query error: %v", baselineErr)
+		slog.Warn("link status baseline query error", "error", baselineErr)
 	}
 	linkBaselineStatus := make(map[string]string) // linkPK -> status before time range
 	if baselineRows != nil {
@@ -1609,13 +1609,13 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		for baselineRows.Next() {
 			var linkPK, status string
 			if err := baselineRows.Scan(&linkPK, &status); err != nil {
-				log.Printf("baseline scan error: %v", err)
+				slog.Error("baseline scan error", "error", err)
 				break
 			}
 			linkBaselineStatus[linkPK] = status
 		}
 		if err := baselineRows.Err(); err != nil {
-			log.Printf("baseline rows iteration error: %v", err)
+			slog.Error("baseline rows iteration error", "error", err)
 		}
 	}
 
@@ -1664,19 +1664,19 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	downQuery := `SELECT pk FROM dz_links_health_current WHERE is_down = true`
 	downRows, downErr := envDB(ctx).Query(ctx, downQuery)
 	if downErr != nil {
-		log.Printf("is_down query error (non-fatal): %v", downErr)
+		slog.Warn("is_down query error", "error", downErr)
 	} else {
 		defer downRows.Close()
 		for downRows.Next() {
 			var pk string
 			if err := downRows.Scan(&pk); err != nil {
-				log.Printf("is_down scan error: %v", err)
+				slog.Error("is_down scan error", "error", err)
 				break
 			}
 			downLinkPKs[pk] = true
 		}
 		if err := downRows.Err(); err != nil {
-			log.Printf("is_down rows iteration error: %v", err)
+			slog.Error("is_down rows iteration error", "error", err)
 		}
 	}
 
@@ -1994,8 +1994,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		BucketCount:   bucketCount,
 	}
 
-	log.Printf("fetchLinkHistoryData completed in %v (range=%s, buckets=%d, links=%d)",
-		time.Since(start), timeRange, bucketCount, len(links))
+	slog.Info("fetchLinkHistoryData completed", "duration", time.Since(start), "range", timeRange, "buckets", bucketCount, "links", len(links))
 
 	return resp, nil
 }
@@ -2104,7 +2103,7 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				log.Printf("JSON encoding error: %v", err)
+				slog.Error("failed to encode response", "error", err)
 			}
 			return
 		}
@@ -2117,14 +2116,14 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchDeviceHistoryData(ctx, timeRange, requestedBuckets)
 	if err != nil {
-		log.Printf("fetchDeviceHistoryData error: %v", err)
+		slog.Error("fetchDeviceHistoryData error", "error", err)
 		http.Error(w, "Failed to fetch device history", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -2319,7 +2318,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 
 	statusRows, err := safeQueryRows(ctx, statusHistoryQuery, totalHours)
 	if err != nil {
-		log.Printf("Device status history query error: %v", err)
+		slog.Error("device status history query error", "error", err)
 	}
 
 	// Build map of device status per bucket
@@ -2513,8 +2512,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 		BucketCount:   bucketCount,
 	}
 
-	log.Printf("fetchDeviceHistoryData completed in %v (range=%s, buckets=%d, devices=%d)",
-		time.Since(start), timeRange, bucketCount, len(devices))
+	slog.Info("fetchDeviceHistoryData completed", "duration", time.Since(start), "range", timeRange, "buckets", bucketCount, "devices", len(devices))
 
 	return resp, nil
 }
@@ -2572,7 +2570,7 @@ func GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 
 	issues, err := fetchInterfaceIssuesData(ctx, duration)
 	if err != nil {
-		log.Printf("Error fetching interface issues: %v", err)
+		slog.Error("error fetching interface issues", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -2715,7 +2713,7 @@ func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchDeviceInterfaceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
 	if err != nil {
-		log.Printf("Error fetching device interface history: %v", err)
+		slog.Error("error fetching device interface history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -2925,7 +2923,7 @@ func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchSingleLinkHistoryData(ctx, linkPK, timeRange, requestedBuckets)
 	if err != nil {
-		log.Printf("Error fetching single link history: %v", err)
+		slog.Error("error fetching single link history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -2937,7 +2935,7 @@ func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -3368,7 +3366,7 @@ func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchSingleDeviceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
 	if err != nil {
-		log.Printf("Error fetching single device history: %v", err)
+		slog.Error("error fetching single device history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -3380,7 +3378,7 @@ func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -3548,7 +3546,7 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 
 	statusRows, err := envDB(ctx).Query(ctx, statusHistoryQuery, devicePK, totalHours)
 	if err != nil {
-		log.Printf("Device status history query error: %v", err)
+		slog.Error("device status history query error", "error", err)
 		// Non-fatal - continue without historical status
 	}
 

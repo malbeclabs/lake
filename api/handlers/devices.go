@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -40,7 +40,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 	countQuery := `SELECT count(*) FROM dz_devices_current`
 	var total uint64
 	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		log.Printf("Devices count error: %v", err)
+		slog.Error("devices count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -117,7 +117,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Devices query error: %v", err)
+		slog.Error("devices query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -143,7 +143,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 			&d.PeakInBps,
 			&d.PeakOutBps,
 		); err != nil {
-			log.Printf("Devices scan error: %v", err)
+			slog.Error("devices row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -151,7 +151,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Devices rows error: %v", err)
+		slog.Error("devices rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -170,7 +170,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
 
@@ -328,19 +328,19 @@ func GetDevice(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("Device query error: %v", err)
+		slog.Error("device query failed", "error", err, "pk", pk)
 		http.Error(w, "device not found", http.StatusNotFound)
 		return
 	}
 
 	// Parse interfaces JSON
 	if err := json.Unmarshal([]byte(interfacesJSON), &device.Interfaces); err != nil {
-		log.Printf("failed to parse interfaces JSON for device %s: %v", device.PK, err)
+		slog.Warn("failed to parse interfaces JSON", "device_pk", device.PK, "error", err)
 		device.Interfaces = []DeviceInterface{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(device); err != nil {
-		log.Printf("JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }

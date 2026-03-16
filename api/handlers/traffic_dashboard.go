@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -795,7 +795,7 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic dashboard health query error: %v\nQuery: %s", err, query)
+		slog.Error("traffic dashboard health query error", "error", err, "query", query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -807,7 +807,7 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.TotalErrors, &e.TotalDiscards, &e.TotalFcsErrors,
 			&e.TotalCarrierTransitions, &e.TotalEvents, &e.ContributorCode); err != nil {
-			log.Printf("Traffic dashboard health row scan error: %v", err)
+			slog.Error("traffic dashboard health row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -880,7 +880,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic dashboard stress query error: %v\nQuery: %s", err, query)
+		slog.Error("traffic dashboard stress query error", "error", err, "query", query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -908,7 +908,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 			var p50In, p95In, maxIn, p50Out, p95Out, maxOut float64
 			var sc, tc uint64
 			if err := rows.Scan(&ts, &gk, &gl, &p50In, &p95In, &maxIn, &p50Out, &p95Out, &maxOut, &sc, &tc); err != nil {
-				log.Printf("Traffic dashboard stress row scan error: %v", err)
+				slog.Error("traffic dashboard stress row scan error", "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -973,7 +973,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 			var p50In, p95In, maxIn, p50Out, p95Out, maxOut float64
 			var sc, tc uint64
 			if err := rows.Scan(&ts, &p50In, &p95In, &maxIn, &p50Out, &p95Out, &maxOut, &sc, &tc); err != nil {
-				log.Printf("Traffic dashboard stress row scan error: %v", err)
+				slog.Error("traffic dashboard stress row scan error", "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -1076,7 +1076,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic dashboard top query error: %v\nQuery: %s", err, query)
+		slog.Error("traffic dashboard top query error", "error", err, "query", query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1089,7 +1089,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 			&e.LinkType, &e.ContributorCode, &e.BandwidthBps,
 			&e.MaxUtil, &e.AvgUtil, &e.P95Util,
 			&e.MaxInBps, &e.MaxOutBps); err != nil {
-			log.Printf("Traffic dashboard top row scan error: %v", err)
+			slog.Error("traffic dashboard top row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1159,7 +1159,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic dashboard drilldown query error: %v\nQuery: %s", err, query)
+		slog.Error("traffic dashboard drilldown query error", "error", err, "query", query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1171,7 +1171,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 		var p DrilldownPoint
 		var inDisc, outDisc int64
 		if err := rows.Scan(&p.Time, &p.Intf, &p.InBps, &p.OutBps, &inDisc, &outDisc, &p.InPps, &p.OutPps); err != nil {
-			log.Printf("Traffic dashboard drilldown row scan error: %v", err)
+			slog.Error("traffic dashboard drilldown row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1300,7 +1300,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("Traffic dashboard burstiness query error: %v\nQuery: %s", err, query)
+		slog.Error("traffic dashboard burstiness query error", "error", err, "query", query)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1312,7 +1312,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.BandwidthBps, &e.P50Util, &e.P99Util, &e.Burstiness,
 			&e.PctTimeStressed, &e.P50Bps, &e.P99Bps, &e.PeakDirection, &e.ContributorCode); err != nil {
-			log.Printf("Traffic dashboard burstiness row scan error: %v", err)
+			slog.Error("traffic dashboard burstiness row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

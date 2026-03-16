@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -1108,7 +1108,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				log.Printf("Error encoding cached incidents response: %v", err)
+				slog.Error("failed to encode cached incidents response", "error", err)
 			}
 			return
 		}
@@ -1250,7 +1250,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := g.Wait(); err != nil {
-		log.Printf("Error fetching incidents: %v", err)
+		slog.Error("failed to fetch incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch incidents: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1684,7 +1684,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 
 	linkMeta, err := fetchLinkMetadataWithStatus(ctx, envDB(ctx), filters)
 	if err != nil {
-		log.Printf("Cache: Failed to fetch link metadata for incidents: %v", err)
+		slog.Error("cache: failed to fetch link metadata for incidents", "error", err)
 		return nil
 	}
 
@@ -1764,7 +1764,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	})
 
 	if err := g.Wait(); err != nil {
-		log.Printf("Cache: Failed to fetch incidents: %v", err)
+		slog.Error("cache: failed to fetch incidents", "error", err)
 		return nil
 	}
 

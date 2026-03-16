@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -109,7 +109,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	err := envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE code = 'bebop' LIMIT 1`).Scan(&bebopPK)
 	if err != nil {
-		log.Printf("PublisherCheck: bebop group not found: %v", err)
+		slog.Error("publisher check: bebop group not found", "error", err)
 		writeJSON(w, PublisherCheckResponse{Publishers: []PublisherCheckItem{}})
 		return
 	}
@@ -207,7 +207,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		log.Printf("PublisherCheck query error: %v", err)
+		slog.Error("publisher check query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -244,7 +244,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			&p.ValidatorVersion,
 			&p.ValidatorName,
 		); err != nil {
-			log.Printf("PublisherCheck scan error: %v", err)
+			slog.Error("publisher check scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -270,7 +270,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("PublisherCheck rows error: %v", err)
+		slog.Error("publisher check rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -285,7 +285,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		 FROM solana_vote_accounts_current
 		 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake)
 	if err != nil {
-		log.Printf("PublisherCheck: total network stake query error: %v", err)
+		slog.Error("publisher check: total network stake query failed", "error", err)
 	}
 
 	resp := PublisherCheckResponse{
@@ -297,6 +297,6 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("PublisherCheck JSON encoding error: %v", err)
+		slog.Error("failed to encode response", "error", err)
 	}
 }
