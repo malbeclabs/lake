@@ -288,7 +288,7 @@ func main() {
 				return
 			case <-ticker.C:
 				pingCtx, pingCancel := context.WithTimeout(dbHealthCtx, 3*time.Second)
-				if err := config.DB.Ping(pingCtx); err != nil {
+				if err := config.HealthDB.Ping(pingCtx); err != nil {
 					dbHealthy.Store(false)
 					dbHealthErr.Store(err.Error())
 				} else {

@@ -15,6 +15,11 @@ import (
 // DB is the global ClickHouse connection pool (mainnet-beta)
 var DB driver.Conn
 
+// HealthDB is a separate single-connection pool used exclusively for health
+// checks (/readyz). Keeping it isolated from the main pool prevents cache
+// refresh storms from starving the readiness probe.
+var HealthDB driver.Conn
+
 // ShredderDB is the ClickHouse database name for shredder tables (default: "shredder").
 var ShredderDB = "shredder"
 
@@ -149,6 +154,33 @@ func Load() error {
 	DB = conn
 	log.Printf("Connected to ClickHouse successfully")
 
+	// Create a dedicated health-check connection with a tiny pool so that
+	// readiness probes are never blocked by cache refresh connection storms.
+	healthOpts := &clickhouse.Options{
+		Addr: []string{cfg.Addr},
+		Auth: clickhouse.Auth{
+			Database: cfg.Database,
+			Username: cfg.Username,
+			Password: cfg.Password,
+		},
+		DialTimeout:     5 * time.Second,
+		MaxOpenConns:    2,
+		MaxIdleConns:    1,
+		ConnMaxLifetime: 10 * time.Minute,
+	}
+	if secure {
+		healthOpts.TLS = &tls.Config{}
+	}
+	healthConn, err := clickhouse.Open(healthOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create clickhouse health connection: %w", err)
+	}
+	if err := healthConn.Ping(ctx); err != nil {
+		return fmt.Errorf("failed to ping clickhouse health connection: %w", err)
+	}
+	HealthDB = healthConn
+	log.Printf("Health-check ClickHouse connection ready")
+
 	// Create connections for each env database
 	EnvDBs = map[string]driver.Conn{
 		"mainnet-beta": DB,
@@ -191,6 +223,9 @@ func Load() error {
 
 // Close closes all ClickHouse connection pools
 func Close() error {
+	if HealthDB != nil {
+		_ = HealthDB.Close()
+	}
 	for env, conn := range EnvDBs {
 		if env == "mainnet-beta" {
 			continue // closed below as DB
