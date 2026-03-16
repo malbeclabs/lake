@@ -41,6 +41,21 @@ type EdgeScoreboardNode struct {
 	TotalSlots    uint64                              `json:"total_slots"`
 	SlotsObserved uint64                              `json:"slots_observed"`
 	LastUpdated   time.Time                           `json:"last_updated"`
+	GossipPubkey  string                              `json:"gossip_pubkey,omitempty"`
+	GossipIP      string                              `json:"gossip_ip,omitempty"`
+	ASN           int64                               `json:"asn,omitempty"`
+	ASNOrg        string                              `json:"asn_org,omitempty"`
+	City          string                              `json:"city,omitempty"`
+	Country       string                              `json:"country,omitempty"`
+}
+
+// edgeNodeIPs maps edge node IDs to their known IP addresses.
+var edgeNodeIPs = map[string]string{
+	"slc-qa-bm1":  "64.130.33.90",
+	"ams-mn-bm1":  "23.109.62.84",
+	"fra-mn-bm1":  "198.13.138.107",
+	"tyo-mn-bm1":  "208.91.107.71",
+	"sin-mn-bm1":  "177.54.154.15",
 }
 
 // EdgeScoreboardSlotRace holds per-slot per-feed win data for recent slots.
@@ -52,17 +67,28 @@ type EdgeScoreboardSlotRace struct {
 	WinPct    float64 `json:"win_pct"`
 }
 
+// EdgeScoreboardLeader holds leader validator info for a slot.
+type EdgeScoreboardLeader struct {
+	Name    string `json:"name,omitempty"`
+	Pubkey  string `json:"pubkey"`
+	IP      string `json:"ip,omitempty"`
+	ASNOrg  string `json:"asn_org,omitempty"`
+	City    string `json:"city,omitempty"`
+	Country string `json:"country,omitempty"`
+}
+
 // EdgeScoreboardResponse is the response for the edge scoreboard endpoint.
 type EdgeScoreboardResponse struct {
-	Window          string                    `json:"window"`
-	GeneratedAt     time.Time                 `json:"generated_at"`
-	CurrentEpoch    uint64                    `json:"current_epoch"`
-	CurrentSlot     uint64                    `json:"current_slot"`
-	TotalSlots      uint64                    `json:"total_slots"`
-	DZSlots         uint64                    `json:"dz_slots"`
-	CompletenessPct float64                   `json:"completeness_pct"`
-	Nodes           []EdgeScoreboardNode      `json:"nodes"`
-	RecentSlots     []EdgeScoreboardSlotRace  `json:"recent_slots"`
+	Window          string                           `json:"window"`
+	GeneratedAt     time.Time                        `json:"generated_at"`
+	CurrentEpoch    uint64                           `json:"current_epoch"`
+	CurrentSlot     uint64                           `json:"current_slot"`
+	TotalSlots      uint64                           `json:"total_slots"`
+	DZSlots         uint64                           `json:"dz_slots"`
+	CompletenessPct float64                          `json:"completeness_pct"`
+	Nodes           []EdgeScoreboardNode             `json:"nodes"`
+	RecentSlots     []EdgeScoreboardSlotRace         `json:"recent_slots"`
+	SlotLeaders     map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 }
 
 // validWindows maps window parameter values to ClickHouse interval expressions.
@@ -84,10 +110,16 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		window = "24h"
 	}
 
+	// Excluded nodes — fra-mn-bm2 produces unreliable race data
+	excludedNodes := []string{"fra-mn-bm2"}
+
 	interval := validWindows[window]
 	var timeFilter string
 	if interval != "" {
 		timeFilter = fmt.Sprintf("AND event_ts >= now() - INTERVAL %s", interval)
+	}
+	for _, n := range excludedNodes {
+		timeFilter += fmt.Sprintf(" AND node_id != '%s'", n)
 	}
 
 	shredderDB := fmt.Sprintf("`%s`", config.ShredderDB)
@@ -407,6 +439,62 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Query 4b: Resolve edge node IPs to gossip pubkeys and geo/ASN details.
+	type gossipInfo struct {
+		pubkey  string
+		ip      string
+		asn     int64
+		asnOrg  string
+		city    string
+		country string
+	}
+	gossipByNode := make(map[string]*gossipInfo)
+
+	// Collect IPs for nodes we have data for
+	var lookupIPs []string
+	ipToNode := make(map[string]string)
+	for nodeID := range nodeSlots {
+		if ip, ok := edgeNodeIPs[nodeID]; ok {
+			lookupIPs = append(lookupIPs, ip)
+			ipToNode[ip] = nodeID
+		}
+	}
+
+	if len(lookupIPs) > 0 {
+		query4b := `
+			SELECT
+				g.ip,
+				COALESCE(gn.pubkey, ''),
+				g.asn,
+				g.asn_org,
+				g.city,
+				g.country
+			FROM geoip_records_current g
+			LEFT JOIN solana_gossip_nodes_current gn ON gn.gossip_ip = g.ip
+			WHERE g.ip IN (?)
+		`
+		start = time.Now()
+		rows4b, err := envDB(ctx).Query(ctx, query4b, lookupIPs)
+		duration = time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+		if err != nil {
+			log.Printf("EdgeScoreboard query4b error: %v", err)
+			// Non-fatal: gossip enrichment is optional
+		} else {
+			defer rows4b.Close()
+			for rows4b.Next() {
+				var gi gossipInfo
+				if err := rows4b.Scan(&gi.ip, &gi.pubkey, &gi.asn, &gi.asnOrg, &gi.city, &gi.country); err != nil {
+					log.Printf("EdgeScoreboard query4b scan error: %v", err)
+					break
+				}
+				if nodeID, ok := ipToNode[gi.ip]; ok {
+					gossipByNode[nodeID] = &gi
+				}
+			}
+		}
+	}
+
 	// Query 5: Recent slot-level race data (last 100 slots across all nodes)
 	// Returns per-slot per-feed win percentage for a time-series chart.
 	var recentSlots []EdgeScoreboardSlotRace
@@ -472,6 +560,122 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		recentSlots = []EdgeScoreboardSlotRace{}
 	}
 
+	// Query 6: Resolve leader validators for recent slots.
+	slotLeaders := make(map[string]*EdgeScoreboardLeader)
+
+	if len(recentSlots) > 0 && globalMaxEpoch > 0 {
+		// Leader schedule uses epoch-relative slot indices (0–431999).
+		// Convert absolute slots to epoch-relative for the query,
+		// then map results back using the absolute slot as the key.
+		const slotsPerEpoch uint64 = 432_000
+		epochStart := globalMaxEpoch * slotsPerEpoch
+
+		slotSet := make(map[uint64]bool)
+		for _, sr := range recentSlots {
+			slotSet[sr.Slot] = true
+		}
+		relativeSlots := make([]uint64, 0, len(slotSet))
+		relToAbs := make(map[uint64]uint64) // epoch-relative -> absolute
+		for s := range slotSet {
+			rel := s - epochStart
+			relativeSlots = append(relativeSlots, rel)
+			relToAbs[rel] = s
+		}
+
+		// Step 1: Resolve slot -> leader pubkey
+		query6a := fmt.Sprintf(`
+			SELECT
+				arrayJoin(JSONExtract(slots, 'Array(UInt64)')) AS slot,
+				node_pubkey
+			FROM solana_leader_schedule_current
+			WHERE epoch = %d
+			HAVING slot IN (?)
+		`, globalMaxEpoch)
+
+		start = time.Now()
+		rows6a, err := envDB(ctx).Query(ctx, query6a, relativeSlots)
+		duration = time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+
+		// slot -> pubkey mapping
+		slotPubkeys := make(map[uint64]string)
+		pubkeySet := make(map[string]bool)
+		if err != nil {
+			log.Printf("EdgeScoreboard query6a error: %v", err)
+		} else {
+			defer rows6a.Close()
+			for rows6a.Next() {
+				var relSlot uint64
+				var pubkey string
+				if err := rows6a.Scan(&relSlot, &pubkey); err != nil {
+					log.Printf("EdgeScoreboard query6a scan error: %v", err)
+					break
+				}
+				absSlot := relToAbs[relSlot]
+				slotPubkeys[absSlot] = pubkey
+				pubkeySet[pubkey] = true
+			}
+		}
+
+		// Step 2: Enrich unique pubkeys with name/ip/geo
+		if len(pubkeySet) > 0 {
+			pubkeys := make([]string, 0, len(pubkeySet))
+			for pk := range pubkeySet {
+				pubkeys = append(pubkeys, pk)
+			}
+
+			query6b := `
+				SELECT
+					v.account,
+					COALESCE(v.name, ''),
+					COALESCE(v.ip, ''),
+					COALESCE(g.asn_org, ''),
+					COALESCE(g.city, ''),
+					COALESCE(g.country, '')
+				FROM validatorsapp_validators_current v
+				LEFT JOIN geoip_records_current g ON g.ip = v.ip
+				WHERE v.account IN (?)
+			`
+
+			start = time.Now()
+			rows6b, err := envDB(ctx).Query(ctx, query6b, pubkeys)
+			duration = time.Since(start)
+			metrics.RecordClickHouseQuery(duration, err)
+
+			type leaderInfo struct {
+				name, ip, asnOrg, city, country string
+			}
+			infoByPubkey := make(map[string]*leaderInfo)
+			if err != nil {
+				log.Printf("EdgeScoreboard query6b error: %v", err)
+			} else {
+				defer rows6b.Close()
+				for rows6b.Next() {
+					var pubkey string
+					var li leaderInfo
+					if err := rows6b.Scan(&pubkey, &li.name, &li.ip, &li.asnOrg, &li.city, &li.country); err != nil {
+						log.Printf("EdgeScoreboard query6b scan error: %v", err)
+						break
+					}
+					infoByPubkey[pubkey] = &li
+				}
+			}
+
+			// Assemble slot leaders
+			for absSlot, pubkey := range slotPubkeys {
+				leader := &EdgeScoreboardLeader{Pubkey: pubkey}
+				if li, ok := infoByPubkey[pubkey]; ok {
+					leader.Name = li.name
+					leader.IP = li.ip
+					leader.ASNOrg = li.asnOrg
+					leader.City = li.city
+					leader.Country = li.country
+				}
+				slotLeaders[fmt.Sprintf("%d", absSlot)] = leader
+			}
+		}
+	}
+
 	// Assemble response
 	var totalSlots, dzSlots uint64
 	nodes := make([]EdgeScoreboardNode, 0, len(nodeSlots))
@@ -494,6 +698,15 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 			node.MetroName = m.name
 			node.Latitude = m.latitude
 			node.Longitude = m.longitude
+		}
+
+		if gi, ok := gossipByNode[nodeID]; ok {
+			node.GossipPubkey = gi.pubkey
+			node.GossipIP = gi.ip
+			node.ASN = gi.asn
+			node.ASNOrg = gi.asnOrg
+			node.City = gi.city
+			node.Country = gi.country
 		}
 
 		if si, ok := stakeByMetro[loc]; ok {
@@ -529,6 +742,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		CompletenessPct: completenessPct,
 		Nodes:           nodes,
 		RecentSlots:     recentSlots,
+		SlotLeaders:     slotLeaders,
 	}
 
 	writeJSON(w, resp)

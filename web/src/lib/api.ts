@@ -4678,6 +4678,12 @@ export interface EdgeScoreboardNode {
   total_slots: number
   slots_observed: number
   last_updated: string
+  gossip_pubkey?: string
+  gossip_ip?: string
+  asn?: number
+  asn_org?: string
+  city?: string
+  country?: string
 }
 
 export interface EdgeScoreboardResponse {
@@ -4690,6 +4696,16 @@ export interface EdgeScoreboardResponse {
   completeness_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
+  slot_leaders?: Record<string, EdgeScoreboardLeader>
+}
+
+export interface EdgeScoreboardLeader {
+  name?: string
+  pubkey: string
+  ip?: string
+  asn_org?: string
+  city?: string
+  country?: string
 }
 
 export interface EdgeScoreboardSlotRace {
@@ -4700,9 +4716,9 @@ export interface EdgeScoreboardSlotRace {
   win_pct: number
 }
 
-export async function fetchEdgeScoreboard(window: string = '24h'): Promise<EdgeScoreboardResponse> {
+export async function fetchEdgeScoreboard(window: string = '1h'): Promise<EdgeScoreboardResponse> {
   const params = new URLSearchParams()
-  if (window !== '24h') params.set('window', window)
+  if (window !== '1h') params.set('window', window)
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/edge/scoreboard${qs ? `?${qs}` : ''}`)
   if (!res.ok) {

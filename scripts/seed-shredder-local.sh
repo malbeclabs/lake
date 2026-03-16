@@ -73,7 +73,7 @@ echo "==> Fetching${LIMIT:+ $LIMIT} rows from remote shredder_qa.slot_feed_races
 # Export from remote as TSV
 curl -sS "https://${REMOTE_HOST}:${REMOTE_PORT}/?database=${REMOTE_DB}" \
   --user "${REMOTE_USER}:${REMOTE_PASS}" \
-  --data-binary "SELECT event_ts, ingested_at, node_id, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won, lead_time_p50_ms, lead_time_p95_ms FROM slot_feed_races ORDER BY event_ts DESC ${LIMIT_CLAUSE} FORMAT TabSeparated" \
+  --data-binary "SELECT event_ts, ingested_at, node_id, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won, lead_time_p50_ms, lead_time_p95_ms FROM slot_feed_races WHERE event_ts >= now() - INTERVAL 1 HOUR ORDER BY event_ts DESC ${LIMIT_CLAUSE} FORMAT TabSeparated" \
   > /tmp/slot_feed_races.tsv
 
 ROWS=$(wc -l < /tmp/slot_feed_races.tsv | tr -d ' ')

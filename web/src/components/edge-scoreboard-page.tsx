@@ -1,6 +1,6 @@
-import { useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import { Trophy, Info } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import maplibregl from 'maplibre-gl'
@@ -8,10 +8,11 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import {
   fetchEdgeScoreboard,
   type EdgeScoreboardNode,
-  type EdgeScoreboardFeedStats,
   type EdgeScoreboardSlotRace,
+  type EdgeScoreboardLeader,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
 
 const VALID_WINDOWS = ['1h', '24h', '7d', '30d', 'all'] as const
@@ -39,23 +40,6 @@ function formatStake(sol: number): string {
   if (sol >= 1_000_000) return `${(sol / 1_000_000).toFixed(1)}M SOL`
   if (sol >= 1_000) return `${(sol / 1_000).toFixed(0)}K SOL`
   return `${sol.toFixed(0)} SOL`
-}
-
-/**
- * Get the tightest Edge lead time across all losers (min p50/p95).
- * Each lead time is already aggregated via quantile() on the server.
- * We pick the minimum across competitors — the closest race — as the
- * representative summary value. This avoids averaging percentiles.
- */
-function getDzLead(feed: EdgeScoreboardFeedStats | undefined): { p50: number; p95: number } {
-  if (!feed?.lead_times?.length) return { p50: 0, p95: 0 }
-  let minP50 = Infinity
-  let minP95 = Infinity
-  for (const lt of feed.lead_times) {
-    if (lt.p50_ms < minP50) minP50 = lt.p50_ms
-    if (lt.p95_ms < minP95) minP95 = lt.p95_ms
-  }
-  return { p50: minP50 === Infinity ? 0 : minP50, p95: minP95 === Infinity ? 0 : minP95 }
 }
 
 function Skeleton({ className }: { className?: string }) {
@@ -113,7 +97,7 @@ function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
     <div className="rounded-lg border border-border bg-card p-4 mb-6">
       <div className="flex items-center justify-between mb-2">
         <div className="text-sm font-medium">
-          Epoch {epoch.toLocaleString()}
+          Solana Epoch {epoch.toLocaleString()}
         </div>
         <div className="text-sm text-muted-foreground tabular-nums">
           Slot {slotInEpoch.toLocaleString()} / {SLOTS_PER_EPOCH.toLocaleString()} ({pct.toFixed(1)}%)
@@ -129,8 +113,131 @@ function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
   )
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function WinRateTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg">
+      <div className="text-[#e5e5e5] font-medium mb-1.5">{label}</div>
+      <table className="border-spacing-0">
+        <thead>
+          <tr className="text-[#777]">
+            <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
+            <th className="pr-3 py-0.5 text-right font-normal">Win %</th>
+            <th className="py-0.5 text-right font-normal">Shreds</th>
+          </tr>
+        </thead>
+        <tbody>
+          {payload.map((entry: any) => {
+            const feed = entry.dataKey ?? ''
+            const shreds = entry.payload?.[`${feed}_shreds`] ?? 0
+            return (
+              <tr key={feed}>
+                <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[feed] ?? '#6b7280' }}>
+                  {FEED_LABELS[feed] ?? feed}
+                </td>
+                <td className="pr-3 py-0.5 text-right font-mono text-[#e5e5e5]">
+                  {Number(entry.value ?? 0).toFixed(1)}%
+                </td>
+                <td className="py-0.5 text-right font-mono text-[#999]">
+                  {Number(shreds).toLocaleString()}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function makeSlotRaceTooltip(slotLeaders?: Record<string, EdgeScoreboardLeader>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return function SlotRaceTooltip({ active, payload }: any) {
+    if (!active || !payload?.length) return null
+    const slot = payload[0]?.payload?.slot
+    const leader = slot != null ? slotLeaders?.[String(slot)] : undefined
+    return (
+      <div className="bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg">
+        {slot != null && <div className="text-[#e5e5e5] font-medium mb-1.5 font-mono">Slot {slot.toLocaleString()}</div>}
+        {leader && (
+          <div className="mb-1.5 text-[#999] border-b border-[#333] pb-1.5">
+            <div className="text-[#e5e5e5]">{leader.name || leader.pubkey.slice(0, 8) + '...'}</div>
+            {leader.ip && <div><span className="text-[#666]">IP </span><span className="font-mono">{leader.ip}</span></div>}
+            {leader.asn_org && <div><span className="text-[#666]">Host </span>{leader.asn_org}</div>}
+            {leader.city && <div><span className="text-[#666]">Loc </span>{leader.city}{leader.country ? `, ${leader.country}` : ''}</div>}
+          </div>
+        )}
+        <table className="border-spacing-0">
+          <thead>
+            <tr className="text-[#777]">
+              <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
+              <th className="py-0.5 text-right font-normal">Win %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payload.map((entry: any) => {
+              const feed = entry.dataKey ?? ''
+              return (
+                <tr key={feed}>
+                  <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[feed] ?? '#6b7280' }}>
+                    {FEED_LABELS[feed] ?? feed}
+                  </td>
+                  <td className="py-0.5 text-right font-mono text-[#e5e5e5]">
+                    {(entry.value ?? 0).toFixed(1)}%
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+}
+
 /** Height per node row shared between Win Rate and Recent Slots charts. */
 const NODE_ROW_HEIGHT = 72
+
+function NodeLabel({ node }: { node: EdgeScoreboardNode }) {
+  const [show, setShow] = useState(false)
+  const hasGossip = !!node.gossip_pubkey
+
+  return (
+    <div
+      className="relative w-12 shrink-0 text-xs text-muted-foreground text-right pr-2 cursor-pointer"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {hasGossip ? (
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-accent transition-colors">
+          {node.location}
+        </Link>
+      ) : (
+        node.location
+      )}
+      {show && (node.gossip_ip || node.asn_org) && (
+        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap text-left text-foreground">
+          {node.gossip_ip && (
+            <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
+          )}
+          {node.asn_org && (
+            <div className="flex gap-2"><span className="text-muted-foreground">Host</span><span>{node.asn_org}</span></div>
+          )}
+          {node.asn != null && node.asn > 0 && (
+            <div className="flex gap-2"><span className="text-muted-foreground">ASN</span><span>AS{node.asn}</span></div>
+          )}
+          {node.city && (
+            <div className="flex gap-2"><span className="text-muted-foreground">Location</span><span>{node.city}{node.country ? `, ${node.country}` : ''}</span></div>
+          )}
+          {hasGossip && (
+            <div className="flex gap-2"><span className="text-muted-foreground">Pubkey</span><span className="font-mono">{node.gossip_pubkey!.slice(0, 8)}...{node.gossip_pubkey!.slice(-4)}</span></div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   const chartData = useMemo(() => {
@@ -155,7 +262,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
           row[`${f}_shreds`] = n.feeds[f]?.shreds_won ?? 0
           row[`${f}_raw`] = n.feeds[f]?.win_rate_pct ?? 0
         }
-        return { nodeId: n.node_id, location: n.location, data: [row] }
+        return { node: n, data: [row] }
       })
 
     return { nodeRows, feeds }
@@ -177,24 +284,14 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         </div>
       </div>
       {chartData.nodeRows.map(nr => (
-        <div key={nr.nodeId} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
-          <div className="w-12 shrink-0 text-xs text-muted-foreground text-right pr-2">{nr.location}</div>
+        <div key={nr.node.node_id} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
+          <NodeLabel node={nr.node} />
           <div className="flex-1 h-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={nr.data} layout="vertical" barSize={62} margin={{ top: 2, right: 24, bottom: 2, left: 0 }}>
                 <XAxis type="number" domain={[0, 100]} hide />
                 <YAxis type="category" hide dataKey="location" />
-                <Tooltip
-                  formatter={(value: number | string | undefined, name?: string, props?: { payload?: Record<string, number> }) => {
-                    const shreds = props?.payload?.[`${name}_shreds`] ?? 0
-                    return [
-                      `${Number(value ?? 0).toFixed(1)}% (${Number(shreds).toLocaleString()} shreds)`,
-                      FEED_LABELS[name ?? ''] ?? name ?? '',
-                    ]
-                  }}
-                  contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #333', borderRadius: '6px', color: '#e5e5e5' }}
-                  wrapperStyle={{ zIndex: 10 }}
-                />
+                <Tooltip content={WinRateTooltip} wrapperStyle={{ zIndex: 10 }} />
                 {chartData.feeds.map((f, i) => (
                   <Bar
                     key={f}
@@ -227,7 +324,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   )
 }
 
-function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; nodes: EdgeScoreboardNode[] }) {
+function RecentSlotsChart({ slots, nodes, slotLeaders }: { slots: EdgeScoreboardSlotRace[]; nodes: EdgeScoreboardNode[]; slotLeaders?: Record<string, EdgeScoreboardLeader> }) {
   const chartData = useMemo(() => {
     if (!slots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
 
@@ -263,7 +360,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
           for (const f of feeds) row[f] = feedPcts[f] ?? 0
           return row
         })
-        return { nodeId: n.node_id, location: n.location, data }
+        return { node: n, data }
       })
 
     return { nodeCharts, feeds, slotCount: slotNumbers.length }
@@ -292,24 +389,14 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
         </div>
       </div>
       {nodeCharts.map(nc => (
-        <div key={nc.nodeId} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
-          <div className="w-12 shrink-0 text-xs text-muted-foreground text-right pr-2">{nc.location}</div>
+        <div key={nc.node.node_id} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
+          <NodeLabel node={nc.node} />
           <div className="flex-1 h-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={nc.data} margin={{ top: 6, right: 0, bottom: 6, left: 0 }}>
                 <XAxis dataKey="idx" hide />
                 <YAxis domain={[0, 100]} hide allowDataOverflow />
-                <Tooltip
-                  formatter={(value: number | undefined, name?: string) => [
-                    `${(value ?? 0).toFixed(1)}%`,
-                    FEED_LABELS[name ?? ''] ?? name ?? '',
-                  ]}
-                  labelFormatter={(_label: string, payload: ReadonlyArray<{ payload?: Record<string, number> }>) =>
-                    payload[0]?.payload?.slot ? `Slot ${payload[0].payload.slot.toLocaleString()}` : ''
-                  }
-                  contentStyle={{ backgroundColor: '#1a1a2e', border: '1px solid #333', borderRadius: '6px', color: '#e5e5e5' }}
-                  wrapperStyle={{ zIndex: 10 }}
-                />
+                <Tooltip content={makeSlotRaceTooltip(slotLeaders)} wrapperStyle={{ zIndex: 10 }} />
                 {feeds.map(f => (
                   <Bar key={f} dataKey={f} stackId="s" fill={FEED_COLORS[f] ?? '#6b7280'} />
                 ))}
@@ -328,6 +415,7 @@ function RecentSlotsChart({ slots, nodes }: { slots: EdgeScoreboardSlotRace[]; n
 function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
+  const { resolvedTheme } = useTheme()
 
   const nodesWithCoords = useMemo(() =>
     nodes.filter(n => n.latitude !== 0 || n.longitude !== 0),
@@ -341,6 +429,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
       mapRef.current = null
     }
 
+    const tileVariant = resolvedTheme === 'dark' ? 'dark_all' : 'light_all'
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: {
@@ -348,7 +437,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         sources: {
           carto: {
             type: 'raster',
-            tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+            tiles: [`https://a.basemaps.cartocdn.com/${tileVariant}/{z}/{x}/{y}.png`],
             tileSize: 256,
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
           },
@@ -402,7 +491,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
       map.remove()
       mapRef.current = null
     }
-  }, [nodesWithCoords])
+  }, [nodesWithCoords, resolvedTheme])
 
   if (nodesWithCoords.length === 0) return null
 
@@ -417,7 +506,7 @@ export function EdgeScoreboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   const rawWindow = searchParams.get('window')
-  const window: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '24h'
+  const window: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['edge-scoreboard', window],
@@ -429,7 +518,7 @@ export function EdgeScoreboardPage() {
   const setWindow = (w: TimeWindow) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (w === '24h') p.delete('window')
+      if (w === '1h') p.delete('window')
       else p.set('window', w)
       return p
     })
@@ -441,25 +530,50 @@ export function EdgeScoreboardPage() {
 
     let dzShredsWon = 0
     let dzTotalShreds = 0
-    let weightedLeadP50 = 0
-    let weightedLeadP95 = 0
     let totalSlots = 0
+
+    // Per-competitor weighted lead times
+    const competitors = ['jito', 'turbine', 'pipe'] as const
+    const weightedP50: Record<string, number> = {}
+    const weightedP95: Record<string, number> = {}
+    const competitorSlots: Record<string, number> = {}
+    for (const c of competitors) {
+      weightedP50[c] = 0
+      weightedP95[c] = 0
+      competitorSlots[c] = 0
+    }
 
     for (const node of data.nodes) {
       const dz = node.feeds['dz']
       if (!dz) continue
       dzShredsWon += dz.shreds_won
       dzTotalShreds += dz.total_shreds
-      const lead = getDzLead(dz)
-      weightedLeadP50 += lead.p50 * node.slots_observed
-      weightedLeadP95 += lead.p95 * node.slots_observed
       totalSlots += node.slots_observed
+
+      if (dz.lead_times) {
+        for (const lt of dz.lead_times) {
+          if (lt.loser_feed in weightedP50) {
+            weightedP50[lt.loser_feed] += lt.p50_ms * node.slots_observed
+            weightedP95[lt.loser_feed] += lt.p95_ms * node.slots_observed
+            competitorSlots[lt.loser_feed] += node.slots_observed
+          }
+        }
+      }
+    }
+
+    const leads: Record<string, { p50: number; p95: number }> = {}
+    for (const c of competitors) {
+      if (competitorSlots[c] > 0) {
+        leads[c] = {
+          p50: weightedP50[c] / competitorSlots[c],
+          p95: weightedP95[c] / competitorSlots[c],
+        }
+      }
     }
 
     return {
       winRate: dzTotalShreds > 0 ? (dzShredsWon / dzTotalShreds) * 100 : 0,
-      leadP50: totalSlots > 0 ? weightedLeadP50 / totalSlots : 0,
-      leadP95: totalSlots > 0 ? weightedLeadP95 / totalSlots : 0,
+      leads,
       totalSlots,
       avgCompleteness:
         data.nodes.length > 0
@@ -527,13 +641,14 @@ export function EdgeScoreboardPage() {
           }
         />
 
-        {/* Completeness banner */}
-        <div className="mb-6 rounded-lg bg-amber-500/10 border border-amber-500/20 px-4 py-3 text-sm text-amber-200">
+        {/* Completeness info */}
+        <div className="mb-6 rounded-lg bg-muted/50 border border-border px-4 py-3 text-sm text-muted-foreground">
           <div className="flex items-start gap-2">
-            <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
-            <span>
-              <span className="font-medium text-amber-500">Completeness</span> — Edge delivers leader shreds only. Completeness measures the percentage of total leader slots observed by each edge node during the selected window.
-            </span>
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <div className="space-y-1.5">
+              <div><a href="https://doublezero.xyz/dz-edge" target="_blank" rel="noopener noreferrer" className="font-medium text-foreground hover:underline">Edge</a> delivers Solana leader shreds only and publishers are encouraged to not send retransmit shreds. Completeness measures the percentage of total leader slots observed by each edge node during the selected window.</div>
+              <div><Link to="/dz/publisher-check" className="font-medium text-foreground hover:underline">Publisher Check</Link> tracks the publishers contributing to Solana shreds over Edge.</div>
+            </div>
           </div>
         </div>
 
@@ -544,12 +659,18 @@ export function EdgeScoreboardPage() {
 
         {/* Summary cards */}
         {globalStats && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
             <SummaryCard label="Edge Completeness" value={formatPct(globalStats.avgCompleteness)} />
             <SummaryCard label="Edge Win Rate" value={formatPct(globalStats.winRate)} />
-            <SummaryCard label="Edge Lead (p50)" value={formatMs(globalStats.leadP50)} />
-            <SummaryCard label="Edge Lead (p95)" value={formatMs(globalStats.leadP95)} />
-            <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} />
+            {Object.entries(globalStats.leads).map(([competitor, lead]) => (
+              <SummaryCard
+                key={competitor}
+                label={`vs ${FEED_LABELS[competitor] ?? competitor}`}
+                value={formatMs(lead.p50)}
+                sub={`p95: ${formatMs(lead.p95)}`}
+              />
+            ))}
+            <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
           </div>
         )}
 
@@ -557,7 +678,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} />
           </div>
         )}
 
@@ -593,19 +714,23 @@ export function EdgeScoreboardPage() {
               </tbody>
             </table>
           </div>
+        </div>
+
         {/* Map */}
         {data?.nodes && (
           <div className="mt-8">
             <NodeMap nodes={data.nodes} />
           </div>
         )}
-        </div>
       </div>
     </div>
   )
 }
 
 function NodeRow({ node }: { node: EdgeScoreboardNode }) {
+  const [showTooltip, setShowTooltip] = useState(false)
+  const cellRef = useRef<HTMLDivElement>(null)
+  const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
   const completeness = node.total_slots > 0 ? (node.slots_observed / node.total_slots) * 100 : 0
 
@@ -619,13 +744,47 @@ function NodeRow({ node }: { node: EdgeScoreboardNode }) {
 
   const updated = new Date(node.last_updated)
   const timeStr = updated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const hasGossip = !!node.gossip_pubkey
 
   return (
     <tr className="border-b border-border last:border-b-0 hover:bg-muted/50 transition-colors">
       <td className="px-4 py-3">
-        <div className="text-sm font-medium">{node.location}</div>
-        <div className="text-xs text-muted-foreground">{node.metro_name}</div>
-        {node.stake_sol > 0 && <div className="text-xs text-muted-foreground">{formatStake(node.stake_sol)} staked</div>}
+        <div ref={cellRef} className="relative" onMouseEnter={() => {
+          if (cellRef.current) {
+            const rect = cellRef.current.getBoundingClientRect()
+            setTooltipAbove(rect.top > 150)
+          }
+          setShowTooltip(true)
+        }} onMouseLeave={() => setShowTooltip(false)}>
+          {hasGossip ? (
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-accent transition-colors">
+              {node.location}
+            </Link>
+          ) : (
+            <div className="text-sm font-medium">{node.location}</div>
+          )}
+          <div className="text-xs text-muted-foreground">{node.metro_name}</div>
+          {node.stake_sol > 0 && <div className="text-xs text-muted-foreground">{formatStake(node.stake_sol)} staked</div>}
+          {showTooltip && (node.gossip_ip || node.asn_org) && (
+            <div className={cn("absolute left-0 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap", tooltipAbove ? "bottom-full mb-1" : "top-full mt-1")}>
+              {node.gossip_ip && (
+                <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
+              )}
+              {node.asn_org && (
+                <div className="flex gap-2"><span className="text-muted-foreground">Host</span><span>{node.asn_org}</span></div>
+              )}
+              {node.asn != null && node.asn > 0 && (
+                <div className="flex gap-2"><span className="text-muted-foreground">ASN</span><span>AS{node.asn}</span></div>
+              )}
+              {node.city && (
+                <div className="flex gap-2"><span className="text-muted-foreground">Location</span><span>{node.city}{node.country ? `, ${node.country}` : ''}</span></div>
+              )}
+              {hasGossip && (
+                <div className="flex gap-2"><span className="text-muted-foreground">Pubkey</span><span className="font-mono">{node.gossip_pubkey!.slice(0, 8)}...{node.gossip_pubkey!.slice(-4)}</span></div>
+              )}
+            </div>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">{formatPct(completeness)}</td>
       <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
