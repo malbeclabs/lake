@@ -387,6 +387,95 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 	assert.Equal(t, uint64(128), pub.TotalUniqueShreds, "unique_shreds should use max per slot, not sum across hosts")
 }
 
+func TestGetPublisherCheck_MaxSlotInResponse(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	insertPublisherCheckTestData(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
+	rr := httptest.NewRecorder()
+	handlers.GetPublisherCheck(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.PublisherCheckResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	// Test data has slots 1001 and 1002
+	assert.Equal(t, uint64(1002), resp.MaxSlot)
+}
+
+func TestGetPublisherCheck_SlotsParam(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	insertPublisherCheckTestData(t)
+
+	// Insert an old slot (slot 1) that should be excluded when querying last 500 slots
+	ctx := t.Context()
+	err := config.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
+			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
+			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+		VALUES
+			(now(), now(), 'shredder-1', '10.0.0.2', '203.0.113.2', 'nodepub2',
+			 'votepub2', 10000000000, 'dzuser2', 'nyc1', 'NYC',
+			 799, 1, 50, 32, 16, 16, 15, false, 0, 0, true)
+	`)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=500&q=dzuser2", nil)
+	rr := httptest.NewRecorder()
+	handlers.GetPublisherCheck(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.PublisherCheckResponse
+	err = json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	require.Len(t, resp.Publishers, 1)
+
+	pub := resp.Publishers[0]
+	assert.Equal(t, uint64(1), pub.TotalSlots)
+	assert.False(t, pub.PublishingLeaderShreds, "old leader slot should be excluded by slot window")
+	assert.True(t, pub.PublishingRetransmitted)
+}
+
+func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	insertPublisherCheckTestData(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=999", nil)
+	rr := httptest.NewRecorder()
+	handlers.GetPublisherCheck(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.PublisherCheckResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Len(t, resp.Publishers, 3)
+	// Verify slot-mode was activated (max_slot should be set)
+	assert.Equal(t, uint64(1002), resp.MaxSlot, "slot-mode should be active, reporting max_slot")
+}
+
+func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	insertPublisherCheckTestData(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=500&epochs=5", nil)
+	rr := httptest.NewRecorder()
+	handlers.GetPublisherCheck(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.PublisherCheckResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Len(t, resp.Publishers, 3)
+	// Verify slot-mode was used (max_slot confirms slot-based query ran)
+	assert.Equal(t, uint64(1002), resp.MaxSlot, "slots should take precedence over epochs")
+}
+
 func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)

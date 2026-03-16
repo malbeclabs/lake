@@ -67,6 +67,7 @@ type PublisherCheckItem struct {
 // PublisherCheckResponse is the response for the publisher check endpoint.
 type PublisherCheckResponse struct {
 	Epoch             uint64               `json:"epoch"`
+	MaxSlot           uint64               `json:"max_slot"`
 	TotalNetworkStake int64                `json:"total_network_stake"`
 	Publishers        []PublisherCheckItem `json:"publishers"`
 }
@@ -86,6 +87,20 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var slotsParam int
+	if s := r.URL.Query().Get("slots"); s != "" {
+		if parsed, err := strconv.Atoi(s); err == nil {
+			switch parsed {
+			case 100, 500, 1000, 5000:
+				slotsParam = parsed
+			default:
+				slotsParam = 500
+			}
+		} else {
+			slotsParam = 500
+		}
+	}
+
 	start := time.Now()
 
 	// Look up the bebop multicast group PK.
@@ -102,6 +117,21 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	// Build query: start from all bebop publishers (dz_users_current),
 	// LEFT JOIN shred stats and validator info.
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", config.ShredderDB)
+
+	// Build per_slot WHERE clause: slot-based or epoch-based filtering.
+	// When slotsParam > 0, filter by recent slot count (scoped to last 2 epochs for performance).
+	// Otherwise, filter by epoch count.
+	var perSlotWhere string
+	var args []any
+	if slotsParam > 0 {
+		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
+			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
+		args = []any{slotsParam, bebopPK}
+	} else {
+		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
+		args = []any{epochsParam, bebopPK}
+	}
+
 	query := fmt.Sprintf(`
 		WITH current_epoch AS (
 			SELECT max(epoch) AS epoch FROM %s
@@ -115,7 +145,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 				max(unique_shreds) AS unique_shreds,
 				max(needs_repair) AS needs_repair
 			FROM %s
-			WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1
+			%s
 			GROUP BY dz_user_pubkey, slot
 		),
 		stats AS (
@@ -126,7 +156,8 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 				countIf(is_scheduled_leader = true) AS leader_slots,
 				countIf(is_scheduled_leader = false) AS retransmit_slots,
 				sum(unique_shreds) AS total_unique_shreds,
-				countIf(needs_repair = true) AS slots_needing_repair
+				countIf(needs_repair = true) AS slots_needing_repair,
+				max(slot) AS max_slot
 			FROM per_slot
 			GROUP BY dz_user_pubkey
 		)
@@ -145,6 +176,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			COALESCE(s.total_unique_shreds, 0) AS total_unique_shreds,
 			COALESCE(s.slots_needing_repair, 0) AS slots_needing_repair,
 			(SELECT epoch FROM current_epoch) AS epoch,
+			COALESCE(s.max_slot, 0) AS max_slot,
 			if(va.software_client != '', va.software_client, '') AS validator_client,
 			if(va.software_version != '', va.software_version, COALESCE(g.version, '')) AS validator_version,
 			COALESCE(va.name, '') AS validator_name
@@ -157,10 +189,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN validatorsapp_validators_current va ON v.vote_pubkey = va.vote_account
 		WHERE u.status = 'activated'
 			AND has(JSONExtract(u.publishers, 'Array(String)'), ?)
-	`, shredStatsTable, shredStatsTable)
-
-	// Query args: epochsParam for stats CTE, then bebopPK for has() filter
-	args := []any{epochsParam, bebopPK}
+	`, shredStatsTable, shredStatsTable, perSlotWhere)
 	if q != "" {
 		if strings.Contains(q, ".") {
 			query += " AND (u.dz_ip = ? OR u.client_ip = ?)"
@@ -185,6 +214,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var epoch uint64
+	var maxSlot uint64
 	var publishers []PublisherCheckItem
 
 	for rows.Next() {
@@ -192,6 +222,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		var totalSlots, leaderSlots, retransmitSlots uint64
 		var stakeRaw int64
 		var rowEpoch uint64
+		var rowMaxSlot uint64
 
 		if err := rows.Scan(
 			&p.PublisherIP,
@@ -208,6 +239,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			&p.TotalUniqueShreds,
 			&p.SlotsNeedingRepair,
 			&rowEpoch,
+			&rowMaxSlot,
 			&p.ValidatorClient,
 			&p.ValidatorVersion,
 			&p.ValidatorName,
@@ -219,6 +251,9 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 
 		if rowEpoch > epoch {
 			epoch = rowEpoch
+		}
+		if rowMaxSlot > maxSlot {
+			maxSlot = rowMaxSlot
 		}
 		if stakeRaw > 0 {
 			p.ActivatedStake = uint64(stakeRaw)
@@ -255,6 +290,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 
 	resp := PublisherCheckResponse{
 		Epoch:             epoch,
+		MaxSlot:           maxSlot,
 		TotalNetworkStake: totalNetworkStake,
 		Publishers:        publishers,
 	}
