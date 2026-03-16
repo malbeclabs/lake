@@ -4573,6 +4573,7 @@ export interface PublisherCheckItem {
 
 export interface PublisherCheckResponse {
   epoch: number
+  max_slot: number
   total_network_stake: number
   publishers: PublisherCheckItem[]
 }
@@ -4633,10 +4634,14 @@ export async function fetchValidatorPerformance(): Promise<ValidatorPerfResponse
   return res.json()
 }
 
-export async function fetchPublisherCheck(q?: string, epochs?: number): Promise<PublisherCheckResponse> {
+export async function fetchPublisherCheck(q?: string, epochs?: number, slots?: number): Promise<PublisherCheckResponse> {
   const params = new URLSearchParams()
   if (q) params.set('q', q)
-  if (epochs && epochs !== 2) params.set('epochs', String(epochs))
+  if (slots) {
+    params.set('slots', String(slots))
+  } else if (epochs && epochs !== 2) {
+    params.set('epochs', String(epochs))
+  }
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/publisher-check${qs ? `?${qs}` : ''}`)
   if (!res.ok) {

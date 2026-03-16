@@ -27,7 +27,6 @@ type SortField =
 
 type SortDirection = 'asc' | 'desc'
 
-type PublishingFilter = 'all' | 'publishing' | 'not_publishing'
 
 function formatStake(lamports: number): string {
   if (lamports === 0) return ''
@@ -52,9 +51,15 @@ export function PublisherCheckPage() {
   const offset = (page - 1) * PAGE_SIZE
   const sortField = (searchParams.get('sort') || 'activated_stake') as SortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
-  const publishingFilter = (searchParams.get('pub') || 'all') as PublishingFilter
+  const activeFilters = useMemo(() => {
+    const f = searchParams.get('filter')
+    if (!f) return new Set<string>()
+    return new Set(f.split(',').filter(Boolean))
+  }, [searchParams])
   const epochs = parseInt(searchParams.get('epochs') || '2')
   const showBackups = searchParams.get('backups') === 'true'
+  const activeTab = (searchParams.get('tab') || 'epoch') as 'epoch' | 'slots'
+  const slots = parseInt(searchParams.get('slots') || '500')
 
   const setOffset = useCallback((newOffset: number) => {
     setSearchParams(prev => {
@@ -99,10 +104,12 @@ export function PublisherCheckPage() {
     })
   }, [setSearchParams])
 
-  const handlePublishingFilter = useCallback((filter: PublishingFilter) => {
+  const handleToggleFilter = useCallback((filter: string) => {
     setSearchParams(prev => {
       const p = new URLSearchParams(prev)
-      if (filter === 'all') p.delete('pub'); else p.set('pub', filter)
+      const current = new Set((p.get('filter') || '').split(',').filter(Boolean))
+      if (current.has(filter)) current.delete(filter); else current.add(filter)
+      if (current.size === 0) p.delete('filter'); else p.set('filter', [...current].join(','))
       p.delete('page')
       return p
     })
@@ -126,9 +133,30 @@ export function PublisherCheckPage() {
     })
   }, [setSearchParams])
 
+  const handleTabChange = useCallback((tab: 'epoch' | 'slots') => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (tab === 'epoch') p.delete('tab'); else p.set('tab', tab)
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  const handleSlots = useCallback((n: number) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (n === 500) p.delete('slots'); else p.set('slots', String(n))
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ['publisher-check', epochs],
-    queryFn: () => fetchPublisherCheck(undefined, epochs),
+    queryKey: ['publisher-check', activeTab, activeTab === 'epoch' ? epochs : slots],
+    queryFn: () =>
+      activeTab === 'slots'
+        ? fetchPublisherCheck(undefined, undefined, slots)
+        : fetchPublisherCheck(undefined, epochs),
     refetchInterval: 30000,
   })
 
@@ -178,12 +206,14 @@ export function PublisherCheckPage() {
   [searchFilteredPublishers, showBackups])
 
   const filteredPublishers = useMemo(() => {
-    if (publishingFilter === 'all') return nonBackupPublishers
+    if (activeFilters.size === 0) return nonBackupPublishers
     return nonBackupPublishers.filter(pub => {
-      const ok = pub.publishing_leader_shreds && !pub.publishing_retransmitted
-      return publishingFilter === 'publishing' ? ok : !ok
+      if (activeFilters.has('retransmit') && pub.publishing_retransmitted) return true
+      if (activeFilters.has('leader') && pub.publishing_leader_shreds) return true
+      if (activeFilters.has('not-publishing') && !pub.publishing_leader_shreds && !pub.publishing_retransmitted) return true
+      return false
     })
-  }, [nonBackupPublishers, publishingFilter])
+  }, [nonBackupPublishers, activeFilters])
 
   const publishingCount = useMemo(() =>
     nonBackupPublishers.filter(p => p.publishing_leader_shreds).length,
@@ -246,7 +276,15 @@ export function PublisherCheckPage() {
         <PageHeader
           icon={ShieldCheck}
           title="Publisher Check"
-          subtitle={data?.epoch ? `Epoch ${data.epoch}` : undefined}
+          subtitle={
+            activeTab === 'slots'
+              ? data?.max_slot
+                ? `Last ${slots.toLocaleString()} slots (up to #${data.max_slot.toLocaleString()})`
+                : undefined
+              : data?.epoch
+                ? `Epoch ${data.epoch}`
+                : undefined
+          }
           actions={
             <form onSubmit={handleFilterSubmit} className="flex items-center gap-2">
               <div className="relative">
@@ -300,42 +338,84 @@ export function PublisherCheckPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="flex items-center rounded-md border border-border text-sm">
-              {([
-                [1, 'Current Epoch'],
-                [2, 'Last 2 Epochs'],
-                [5, 'Last 5 Epochs'],
-              ] as const).map(([n, label]) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => handleEpochs(n)}
-                  className={cn(
-                    'px-3 py-1.5 transition-colors',
-                    epochs === n
-                      ? 'bg-accent text-accent-foreground'
-                      : 'hover:bg-muted'
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-md border border-border text-sm">
+                {([
+                  ['epoch', 'Epoch'],
+                  ['slots', 'Recent Slots'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => handleTabChange(value)}
+                    className={cn(
+                      'px-3 py-1.5 transition-colors',
+                      activeTab === value
+                        ? 'bg-accent text-accent-foreground'
+                        : 'hover:bg-muted'
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {activeTab === 'epoch' ? (
+                <div className="flex items-center rounded-md border border-border text-sm">
+                  {([
+                    [1, 'Current Epoch'],
+                    [2, 'Last 2 Epochs'],
+                    [5, 'Last 5 Epochs'],
+                  ] as const).map(([n, label]) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => handleEpochs(n)}
+                      className={cn(
+                        'px-3 py-1.5 transition-colors',
+                        epochs === n
+                          ? 'bg-accent text-accent-foreground'
+                          : 'hover:bg-muted'
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center rounded-md border border-border text-sm">
+                  {([100, 500, 1000, 5000] as const).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => handleSlots(n)}
+                      className={cn(
+                        'px-3 py-1.5 transition-colors',
+                        slots === n
+                          ? 'bg-accent text-accent-foreground'
+                          : 'hover:bg-muted'
+                      )}
+                    >
+                      {n.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="flex items-center rounded-md border border-border text-sm">
+            <div className="flex items-center gap-2">
               {([
-                ['all', 'All'],
-                ['publishing', 'Healthy'],
-                ['not_publishing', 'Unhealthy'],
-              ] as const).map(([value, label]) => (
+                ['retransmit', 'Retransmitting', 'bg-red-500/10 border-red-500/50 text-red-400'],
+                ['leader', 'Publishing Leader', ''],
+                ['not-publishing', 'Not Publishing', ''],
+              ] as const).map(([value, label, activeClass]) => (
                 <button
                   key={value}
                   type="button"
-                  onClick={() => handlePublishingFilter(value)}
+                  onClick={() => handleToggleFilter(value)}
                   className={cn(
-                    'px-3 py-1.5 transition-colors',
-                    publishingFilter === value
-                      ? 'bg-accent text-accent-foreground'
-                      : 'hover:bg-muted'
+                    'px-3 py-1.5 text-sm rounded-full border transition-colors',
+                    activeFilters.has(value)
+                      ? activeClass || 'bg-accent text-accent-foreground border-accent'
+                      : 'border-border text-muted-foreground hover:bg-muted'
                   )}
                 >
                   {label}
@@ -361,8 +441,9 @@ export function PublisherCheckPage() {
           <div className="flex items-start gap-2">
             <Info className="h-4 w-4 mt-0.5 shrink-0" />
             <ul className="space-y-1">
-              <li><span className="font-medium text-foreground">Publishing Leader Shreds</span> — Leader shreds have been sent by the validator in the selected epoch range.</li>
-              <li><span className="font-medium text-foreground">No Retransmit Shreds</span> — No retransmit shreds have been sent by the validator. Retransmit shreds are undesirable.</li>
+              <li><span className="font-medium text-foreground">Publishing Leader</span> — Validator has sent leader shreds in the selected time window.</li>
+              <li><span className="font-medium text-foreground">Retransmitting</span> — Validator is sending retransmit shreds. Retransmit shreds are undesirable.</li>
+              <li><span className="font-medium text-foreground">Not Publishing</span> — Validator is connected but has not sent any shreds in the selected time window.</li>
             </ul>
           </div>
         </div>
