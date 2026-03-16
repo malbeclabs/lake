@@ -404,7 +404,7 @@ export function PublisherCheckPage() {
             <div className="flex items-center gap-2">
               {([
                 ['retransmit', 'Retransmitting', 'bg-red-500/10 border-red-500/50 text-red-400'],
-                ['leader', 'Publishing Leader', ''],
+                ['leader', 'Publishing', ''],
                 ['not-publishing', 'Not Publishing', ''],
               ] as const).map(([value, label, activeClass]) => (
                 <button
@@ -441,9 +441,8 @@ export function PublisherCheckPage() {
           <div className="flex items-start gap-2">
             <Info className="h-4 w-4 mt-0.5 shrink-0" />
             <ul className="space-y-1">
-              <li><span className="font-medium text-foreground">Publishing Leader</span> — Validator has sent leader shreds in the selected time window.</li>
-              <li><span className="font-medium text-foreground">Retransmitting</span> — Validator is sending retransmit shreds. Retransmit shreds are undesirable.</li>
-              <li><span className="font-medium text-foreground">Not Publishing</span> — Validator is connected but has not sent any shreds in the selected time window.</li>
+              <li><span className="font-medium text-foreground">Publishing Leader Shreds</span> — Leader shreds have been sent by the validator in the selected epoch range.</li>
+              <li><span className="font-medium text-foreground">No Retransmit Shreds</span> — No retransmit shreds have been sent by the validator. Retransmit shreds are undesirable.</li>
             </ul>
           </div>
         </div>
