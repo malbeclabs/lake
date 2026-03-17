@@ -76,7 +76,7 @@ const validatorFieldPrefixes = [
   { prefix: 'dz:', description: 'Filter by DZ status (yes/no)' },
   { prefix: 'commission:', description: 'Filter by commission % (e.g., >5)' },
   { prefix: 'skip:', description: 'Filter by skip rate % (e.g., >1)' },
-  { prefix: 'client:', description: 'Filter by client (e.g., Jito, Agave, Firedancer)' },
+  { prefix: 'client:', description: 'Filter by client (e.g., Jito Shredstream, Agave, Firedancer)' },
 ]
 
 // Fields that support autocomplete

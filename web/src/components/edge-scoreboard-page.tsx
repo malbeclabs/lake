@@ -82,7 +82,7 @@ const FEED_COLORS: Record<string, string> = {
 
 const FEED_LABELS: Record<string, string> = {
   dz: 'Edge',
-  jito: 'Jito',
+  jito: 'Jito Shredstream',
   turbine: 'Turbine',
   pipe: 'Pipe',
 }
@@ -691,7 +691,7 @@ export function EdgeScoreboardPage() {
                   <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium text-right">Completeness</th>
                   <th className="px-4 py-3 font-medium text-right">Edge Win %</th>
-                  <th className="px-4 py-3 font-medium text-right">vs Jito<span className="block font-normal text-xs">p50 (p95)</span></th>
+                  <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Pipe<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
