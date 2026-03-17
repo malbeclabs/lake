@@ -128,6 +128,7 @@ function WinRateTooltip({ active, payload, label }: any) {
           </tr>
         </thead>
         <tbody>
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
           {payload.map((entry: any) => {
             const feed = entry.dataKey ?? ''
             const shreds = entry.payload?.[`${feed}_shreds`] ?? 0
@@ -176,6 +177,7 @@ function makeSlotRaceTooltip(slotLeaders?: Record<string, EdgeScoreboardLeader>)
             </tr>
           </thead>
           <tbody>
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
             {payload.map((entry: any) => {
               const feed = entry.dataKey ?? ''
               return (
