@@ -437,7 +437,7 @@ type TrafficResponse struct {
 }
 
 func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	itemType := r.URL.Query().Get("type")
@@ -749,7 +749,7 @@ func timeFormatForBucket(_ int) string {
 }
 
 func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	pk := r.URL.Query().Get("pk")
