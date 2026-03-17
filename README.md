@@ -183,7 +183,16 @@ For local-only testing without remote access, seed scripts provide sample data:
 ```bash
 # Publisher check test data (shred stats for ~6 sample publishers)
 clickhouse-client --port 9100 --multiquery < scripts/seed-publisher-shred-stats.sql
+
+# Edge scoreboard race data (requires CLICKHOUSE_SHREDDER_PASSWORD in .env)
+./scripts/seed-shredder-local.sh        # all recent data
+./scripts/seed-shredder-local.sh 10000  # limit to 10k rows
+
+# Validator data from validators.app (requires VALIDATORSAPP_API_KEY in .env)
+./scripts/seed-validatorsapp-local.sh
 ```
+
+The shredder and validators.app seed scripts are also run automatically by `dev-setup.sh` when their credentials are configured in `.env`.
 
 Seed data is mock data with various states (healthy, retransmitting, needs repair) for UI development.
 
