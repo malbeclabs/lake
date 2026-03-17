@@ -14,9 +14,9 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   set +a
 fi
 
-API_KEY="${VALIDATORSAPP_API_KEY:-}"
+API_KEY="${SEED_VALIDATORSAPP_API_KEY:-}"
 if [[ -z "$API_KEY" ]]; then
-  echo "Error: VALIDATORSAPP_API_KEY not set in .env"
+  echo "Error: SEED_VALIDATORSAPP_API_KEY not set in .env"
   exit 1
 fi
 

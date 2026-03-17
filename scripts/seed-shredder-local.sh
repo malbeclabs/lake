@@ -16,14 +16,14 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 fi
 
 # Remote ClickHouse Cloud
-REMOTE_HOST="${CLICKHOUSE_SHREDDER_HOST:-btjr1b5uy8.us-east-1.aws.clickhouse.cloud}"
-REMOTE_PORT="${CLICKHOUSE_SHREDDER_PORT:-8443}"
-REMOTE_DB="${CLICKHOUSE_SHREDDER_DB:-shredder_qa}"
-REMOTE_USER="${CLICKHOUSE_SHREDDER_USER:-shredder_qa}"
-REMOTE_PASS="${CLICKHOUSE_SHREDDER_PASSWORD}"
+REMOTE_HOST="${SEED_CH_SHREDDER_HOST:-btjr1b5uy8.us-east-1.aws.clickhouse.cloud}"
+REMOTE_PORT="${SEED_CH_SHREDDER_PORT:-8443}"
+REMOTE_DB="${SEED_CH_SHREDDER_DB:-shredder_qa}"
+REMOTE_USER="${SEED_CH_SHREDDER_USER:-shredder_qa}"
+REMOTE_PASS="${SEED_CH_SHREDDER_PASSWORD:-}"
 
 if [[ -z "$REMOTE_PASS" ]]; then
-  echo "Error: CLICKHOUSE_SHREDDER_PASSWORD not set in .env"
+  echo "Error: SEED_CH_SHREDDER_PASSWORD not set in .env"
   exit 1
 fi
 

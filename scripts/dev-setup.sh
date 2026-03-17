@@ -78,20 +78,20 @@ else
 fi
 
 # Step 5: Seed local data (optional, requires credentials)
-if [[ -n "${CLICKHOUSE_SHREDDER_PASSWORD:-}" ]]; then
+if [[ -n "${SEED_CH_SHREDDER_PASSWORD:-}" ]]; then
     echo "=== Seeding shredder race data ==="
     "$SCRIPT_DIR/seed-shredder-local.sh" 10000
     echo ""
 else
-    echo "=== Skipping shredder seed (CLICKHOUSE_SHREDDER_PASSWORD not set) ==="
+    echo "=== Skipping shredder seed (SEED_CH_SHREDDER_PASSWORD not set) ==="
 fi
 
-if [[ -n "${VALIDATORSAPP_API_KEY:-}" ]]; then
+if [[ -n "${SEED_VALIDATORSAPP_API_KEY:-}" ]]; then
     echo "=== Seeding validators.app data ==="
     "$SCRIPT_DIR/seed-validatorsapp-local.sh"
     echo ""
 else
-    echo "=== Skipping validators.app seed (VALIDATORSAPP_API_KEY not set) ==="
+    echo "=== Skipping validators.app seed (SEED_VALIDATORSAPP_API_KEY not set) ==="
 fi
 echo ""
 
