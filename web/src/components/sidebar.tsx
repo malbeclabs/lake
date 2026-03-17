@@ -40,8 +40,6 @@ import { useVersionCheck } from '@/hooks/use-version-check'
 import { useAuth } from '@/contexts/AuthContext'
 import { UserPopover } from './auth/UserPopover'
 
-const INTERNAL_DOMAINS = new Set(['malbeclabs.com', 'doublezero.xyz', 'doublezero.us'])
-
 export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -49,7 +47,7 @@ export function Sidebar() {
   const { user } = useAuth()
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
-  const isInternalUser = !!user?.email_domain && INTERNAL_DOMAINS.has(user.email_domain.toLowerCase())
+  const isInternalUser = !!user?.is_internal_user
   const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 

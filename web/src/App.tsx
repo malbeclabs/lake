@@ -91,12 +91,9 @@ const queryClient = new QueryClient({
 })
 
 // Redirect to latest or new query session
-const INTERNAL_DOMAINS = new Set(['malbeclabs.com', 'doublezero.xyz', 'doublezero.us'])
-
 function InternalOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
-  const isInternal = !!user?.email_domain && INTERNAL_DOMAINS.has(user.email_domain.toLowerCase())
-  if (!isInternal) return <Navigate to="/" replace />
+  if (!user?.is_internal_user) return <Navigate to="/" replace />
   return <>{children}</>
 }
 

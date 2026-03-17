@@ -4331,6 +4331,7 @@ export interface Account {
   sol_balance?: number
   sol_balance_updated_at?: string
   is_active: boolean
+  is_internal_user: boolean
   created_at: string
   updated_at: string
   last_login_at?: string

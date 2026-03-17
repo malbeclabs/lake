@@ -37,6 +37,7 @@ type Account struct {
 	SolBalance          *int64     `json:"sol_balance,omitempty"`
 	SolBalanceUpdatedAt *time.Time `json:"sol_balance_updated_at,omitempty"`
 	IsActive            bool       `json:"is_active"`
+	IsInternalUser      bool       `json:"is_internal_user"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
@@ -222,8 +223,22 @@ func GetAccountByToken(ctx context.Context, token string) (*Account, error) {
 	account.SolBalance = solBalance
 	account.SolBalanceUpdatedAt = solBalanceUpdatedAt
 	account.LastLoginAt = lastLoginAt
+	account.IsInternalUser = isInternalDomain(emailDomain)
 
 	return &account, nil
+}
+
+// isInternalDomain checks if the given domain is in the allowed domains list.
+func isInternalDomain(domain *string) bool {
+	if domain == nil {
+		return false
+	}
+	for _, d := range getAllowedDomains() {
+		if strings.EqualFold(strings.TrimSpace(d), *domain) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetQuotaForAccount returns quota info for an account (or anonymous by IP)
