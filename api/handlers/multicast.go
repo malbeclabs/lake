@@ -474,12 +474,12 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, cr.err)
 
 	if cr.err != nil {
-		slog.Error("multicast group members count error", "error", cr.err)
+		slog.Warn("multicast group members count query failed", "error", cr.err)
 		http.Error(w, cr.err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if dr.err != nil {
-		slog.Error("multicast group members data error", "error", dr.err)
+		slog.Warn("multicast group members data query failed", "error", dr.err)
 		http.Error(w, dr.err.Error(), http.StatusInternalServerError)
 		return
 	}

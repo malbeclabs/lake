@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"golang.org/x/sync/errgroup"
 )
@@ -1183,7 +1184,16 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchLinkHistoryData(ctx, timeRange, requestedBuckets)
 	if err != nil {
-		slog.Error("fetchLinkHistoryData error", "error", err)
+		if dberror.IsTransient(err) {
+			cancel()
+			var retryCancel context.CancelFunc
+			ctx, retryCancel = context.WithTimeout(r.Context(), timeout)
+			defer retryCancel()
+			resp, err = fetchLinkHistoryData(ctx, timeRange, requestedBuckets)
+		}
+	}
+	if err != nil {
+		slog.Warn("link history query failed", "error", err)
 		http.Error(w, "Failed to fetch link history", http.StatusInternalServerError)
 		return
 	}
