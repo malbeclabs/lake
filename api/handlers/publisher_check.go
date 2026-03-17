@@ -75,7 +75,36 @@ type PublisherCheckResponse struct {
 
 // GetPublisherCheck returns publisher status for all publishers in the current epoch,
 // optionally filtered by IP address or DZ user pubkey.
+// isDefaultPublisherCheckRequest returns true if the request uses default parameters
+// (no filter, epochs=2, no slots), meaning it can be served from cache.
+func isDefaultPublisherCheckRequest(r *http.Request) bool {
+	q := r.URL.Query()
+	if q.Get("q") != "" {
+		return false
+	}
+	if e := q.Get("epochs"); e != "" && e != "2" {
+		return false
+	}
+	if q.Get("slots") != "" {
+		return false
+	}
+	return true
+}
+
 func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
+	// Try to serve from cache for default requests
+	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) && statusCache != nil {
+		if cached := statusCache.GetPublisherCheck(); cached != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			if err := json.NewEncoder(w).Encode(cached); err != nil {
+				slog.Error("failed to encode response", "error", err)
+			}
+			return
+		}
+	}
+
+	w.Header().Set("X-Cache", "MISS")
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 

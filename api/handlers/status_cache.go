@@ -41,14 +41,16 @@ type StatusCache struct {
 	solanaLedger      *LedgerResponse
 	validatorPerf     *ValidatorPerfResponse
 	stakeOverview     *StakeOverview
+	publisherCheck    *PublisherCheckResponse // default publisher check (no filter, epochs=2)
 
 	// Refresh intervals
-	statusInterval      time.Duration
-	linkHistoryInterval time.Duration
-	timelineInterval    time.Duration
-	incidentsInterval   time.Duration
-	performanceInterval time.Duration // for latency comparison and metro path latency
-	ledgerInterval      time.Duration // for ledger, validator perf, and stake overview
+	statusInterval         time.Duration
+	linkHistoryInterval    time.Duration
+	timelineInterval       time.Duration
+	incidentsInterval      time.Duration
+	performanceInterval    time.Duration // for latency comparison and metro path latency
+	ledgerInterval         time.Duration // for ledger, validator perf, and stake overview
+	publisherCheckInterval time.Duration
 
 	// Last refresh times (for observability)
 	statusLastRefresh            time.Time
@@ -60,6 +62,7 @@ type StatusCache struct {
 	latencyComparisonLastRefresh time.Time
 	metroPathLatencyLastRefresh  time.Time
 	ledgerLastRefresh            time.Time
+	publisherCheckLastRefresh    time.Time
 
 	// Context for cancellation
 	ctx    context.Context
@@ -93,27 +96,28 @@ type refreshEntry struct {
 }
 
 // NewStatusCache creates a new cache with the specified refresh intervals.
-func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval, ledgerInterval time.Duration) *StatusCache {
+func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval, ledgerInterval, publisherCheckInterval time.Duration) *StatusCache {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &StatusCache{
-		linkHistory:         make(map[string]*LinkHistoryResponse),
-		deviceHistory:       make(map[string]*DeviceHistoryResponse),
-		metroPathLatency:    make(map[string]*MetroPathLatencyResponse),
-		statusInterval:      statusInterval,
-		linkHistoryInterval: linkHistoryInterval,
-		timelineInterval:    timelineInterval,
-		incidentsInterval:   incidentsInterval,
-		performanceInterval: performanceInterval,
-		ledgerInterval:      ledgerInterval,
-		ctx:                 ctx,
-		cancel:              cancel,
+		linkHistory:            make(map[string]*LinkHistoryResponse),
+		deviceHistory:          make(map[string]*DeviceHistoryResponse),
+		metroPathLatency:       make(map[string]*MetroPathLatencyResponse),
+		statusInterval:         statusInterval,
+		linkHistoryInterval:    linkHistoryInterval,
+		timelineInterval:       timelineInterval,
+		incidentsInterval:      incidentsInterval,
+		performanceInterval:    performanceInterval,
+		ledgerInterval:         ledgerInterval,
+		publisherCheckInterval: publisherCheckInterval,
+		ctx:                    ctx,
+		cancel:                 cancel,
 	}
 }
 
 // Start begins the background refresh loop.
 // It performs an initial refresh synchronously to ensure cache is warm before returning.
 func (c *StatusCache) Start() {
-	slog.Info("starting status cache", "status_interval", c.statusInterval, "link_history_interval", c.linkHistoryInterval, "timeline_interval", c.timelineInterval, "incidents_interval", c.incidentsInterval, "performance_interval", c.performanceInterval, "ledger_interval", c.ledgerInterval)
+	slog.Info("starting status cache", "status_interval", c.statusInterval, "link_history_interval", c.linkHistoryInterval, "timeline_interval", c.timelineInterval, "incidents_interval", c.incidentsInterval, "performance_interval", c.performanceInterval, "ledger_interval", c.ledgerInterval, "publisher_check_interval", c.publisherCheckInterval)
 
 	// Initial refresh (concurrent to reduce startup time, but cache is warm before returning)
 	start := time.Now()
@@ -135,6 +139,7 @@ func (c *StatusCache) Start() {
 		c.refreshSolanaLedger,
 		c.refreshValidatorPerf,
 		c.refreshStakeOverview,
+		c.refreshPublisherCheck,
 	} {
 		g.Go(func() error {
 			fn()
@@ -172,6 +177,7 @@ func (c *StatusCache) refreshLoop() {
 		{"solana ledger", c.ledgerInterval, c.refreshSolanaLedger},
 		{"validator perf", c.ledgerInterval, c.refreshValidatorPerf},
 		{"stake overview", c.ledgerInterval, c.refreshStakeOverview},
+		{"publisher check", c.publisherCheckInterval, c.refreshPublisherCheck},
 	}
 
 	// Track when each refresh last ran. Initialized to now since Start()
@@ -650,6 +656,32 @@ func (c *StatusCache) refreshStakeOverview() (bool, string) {
 	return true, ""
 }
 
+// GetPublisherCheck returns the cached default publisher check response.
+func (c *StatusCache) GetPublisherCheck() *PublisherCheckResponse {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.publisherCheck
+}
+
+func (c *StatusCache) refreshPublisherCheck() (bool, string) {
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
+	defer cancel()
+
+	resp, err := fetchPublisherCheckData(ctx, "", 2, 0)
+	if err != nil {
+		return false, err.Error()
+	}
+
+	c.mu.Lock()
+	c.publisherCheck = resp
+	c.publisherCheckLastRefresh = time.Now()
+	c.mu.Unlock()
+
+	slog.Debug("publisher check cache refreshed", "duration", time.Since(start), "publishers", len(resp.Publishers))
+	return true, ""
+}
+
 func linkHistoryCacheKey(timeRange string, buckets int) string {
 	return timeRange + ":" + strconv.Itoa(buckets)
 }
@@ -671,6 +703,7 @@ func InitStatusCache() {
 		60*time.Second,  // Incidents refresh every 60s
 		120*time.Second, // Performance (latency comparison, metro path latency) refresh every 120s
 		60*time.Second,  // Ledger (DZ/Solana ledger, validator perf, stake overview) refresh every 60s
+		30*time.Second,  // Publisher check refresh every 30s
 	)
 	statusCache.Start()
 }
