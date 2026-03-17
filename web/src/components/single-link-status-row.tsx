@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { fetchSingleLinkHistory } from '@/lib/api'
 import { StatusTimeline } from './status-timeline'
@@ -39,9 +39,10 @@ export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkSta
     queryFn: () => fetchSingleLinkHistory(linkPk, timeRange, buckets),
     refetchInterval: 60_000,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 
-  if (isLoading) {
+  if (isLoading && !data) {
     return <div className="h-10 animate-pulse bg-muted/50 rounded" />
   }
 

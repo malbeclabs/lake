@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
@@ -68,6 +68,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     queryFn: () => fetchSingleLinkHistory(linkPk, timeRange, bucketCount),
     refetchInterval: 60000,
     retry: false,
+    placeholderData: keepPreviousData,
   })
 
   // Colors
@@ -255,7 +256,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     formatHoveredTime(issuesUPlotData[0] as ArrayLike<number>, issuesHoveredIdx),
     [issuesUPlotData, issuesHoveredIdx])
 
-  if (isLoading) return null
+  if (isLoading && !historyData) return null
   if (error || !historyData?.hours || historyData.hours.length === 0) return null
 
   if (!showPacketLoss && !showInterfaceIssues) {

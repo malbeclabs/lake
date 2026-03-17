@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
@@ -427,11 +427,12 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const transitionChartRef = useRef<HTMLDivElement>(null)
 
   // Traffic data
-  const { data: rawPoints, isLoading: trafficLoading, error: trafficError, isFetching: trafficFetching } = useQuery({
+  const { data: rawPoints, isLoading: trafficLoading, error: trafficError } = useQuery({
     queryKey: ['topology-traffic-interface', entityType, entityPk, effectiveRange, bucket, metric],
     queryFn: () => fetchTrafficHistoryByInterface(entityType, entityPk, effectiveRange, bucket, metric),
     refetchInterval: 60000,
     retry: 2,
+    placeholderData: keepPreviousData,
   })
 
   // Health data (only for devices)
@@ -441,6 +442,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     refetchInterval: 60000,
     retry: false,
     enabled: entityType === 'device',
+    placeholderData: keepPreviousData,
   })
 
   const interfaces = useMemo(() => {
@@ -725,7 +727,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     formatHoveredTime((transitionHealth?.data[0] ?? []) as ArrayLike<number>, transitionHoveredIdx),
     [transitionHealth, transitionHoveredIdx])
 
-  if (trafficLoading || trafficFetching || (entityType === 'device' && healthLoading)) {
+  if ((trafficLoading || (entityType === 'device' && healthLoading)) && !rawPoints) {
     return <div className="h-36 animate-pulse bg-muted/50 rounded" />
   }
 

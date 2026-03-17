@@ -527,6 +527,7 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	breakdown := r.URL.Query().Get("breakdown")
 	var points []TrafficDataPoint
 	var whereColumn string
 
@@ -553,58 +554,63 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		peakOutExpr = "max(out_octets_delta * 8 / nullIf(delta_duration, 0))"
 	}
 
-	query := fmt.Sprintf(`
-		SELECT
-			formatDateTime(%s, '%s') as time_bucket,
-			%s as avg_in,
-			%s as avg_out,
-			%s as peak_in,
-			%s as peak_out
-		FROM fact_dz_device_interface_counters
-		WHERE %s
-			AND %s = $1
-			AND delta_duration > 0
-			AND in_octets_delta >= 0
-			AND out_octets_delta >= 0
-		GROUP BY time_bucket
-		ORDER BY min(event_ts)
-	`, bucketExpr, timeFormat, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
+	// Skip aggregated query when only interface breakdown is needed — the caller
+	// doesn't use the points array and running both queries sequentially under
+	// the same timeout budget causes unnecessary timeouts.
+	if breakdown != "interface" || (itemType != "device" && itemType != "link") {
+		query := fmt.Sprintf(`
+			SELECT
+				formatDateTime(%s, '%s') as time_bucket,
+				%s as avg_in,
+				%s as avg_out,
+				%s as peak_in,
+				%s as peak_out
+			FROM fact_dz_device_interface_counters
+			WHERE %s
+				AND %s = $1
+				AND delta_duration > 0
+				AND in_octets_delta >= 0
+				AND out_octets_delta >= 0
+			GROUP BY time_bucket
+			ORDER BY min(event_ts)
+		`, bucketExpr, timeFormat, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
 
-	rows, err := envDB(ctx).Query(ctx, query, pk)
-	if err != nil {
-		slog.Error("traffic query error", "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var p TrafficDataPoint
-		var avgIn, avgOut, peakIn, peakOut *float64
-		if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-			slog.Error("traffic scan error", "error", err)
+		rows, err := envDB(ctx).Query(ctx, query, pk)
+		if err != nil {
+			slog.Error("traffic query error", "error", err)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
 			return
 		}
-		if avgIn != nil {
-			p.AvgIn = *avgIn
-		}
-		if avgOut != nil {
-			p.AvgOut = *avgOut
-		}
-		if peakIn != nil {
-			p.PeakIn = *peakIn
-		}
-		if peakOut != nil {
-			p.PeakOut = *peakOut
-		}
-		points = append(points, p)
-	}
+		defer rows.Close()
 
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, rows.Err())
+		for rows.Next() {
+			var p TrafficDataPoint
+			var avgIn, avgOut, peakIn, peakOut *float64
+			if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
+				slog.Error("traffic scan error", "error", err)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
+				return
+			}
+			if avgIn != nil {
+				p.AvgIn = *avgIn
+			}
+			if avgOut != nil {
+				p.AvgOut = *avgOut
+			}
+			if peakIn != nil {
+				p.PeakIn = *peakIn
+			}
+			if peakOut != nil {
+				p.PeakOut = *peakOut
+			}
+			points = append(points, p)
+		}
+
+		duration := time.Since(start)
+		metrics.RecordClickHouseQuery(duration, rows.Err())
+	}
 
 	if points == nil {
 		points = []TrafficDataPoint{}
@@ -613,7 +619,6 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 	response := TrafficResponse{Points: points}
 
 	// If breakdown=interface requested and type is device or link, run per-interface query
-	breakdown := r.URL.Query().Get("breakdown")
 	if breakdown == "interface" && (itemType == "device" || itemType == "link") {
 		// For links, prefix intf with link_side ('A:'/'Z:') to distinguish sides
 		// that may share the same interface name (e.g. both sides have Ethernet1/1)

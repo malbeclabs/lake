@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { fetchSingleDeviceHistory, type DeviceHourStatus } from '@/lib/api'
 import { StatusTimeline } from './status-timeline'
@@ -63,9 +63,10 @@ export function SingleDeviceStatusRow({ devicePk, timeRange = '24h' }: SingleDev
     queryFn: () => fetchSingleDeviceHistory(devicePk, timeRange, buckets),
     refetchInterval: 60_000,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
   })
 
-  if (isLoading) {
+  if (isLoading && !data) {
     return <div className="h-10 animate-pulse bg-muted/50 rounded" />
   }
 

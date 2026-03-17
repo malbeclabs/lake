@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
@@ -23,11 +23,12 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
 
   const effectiveRange = timeRange ?? { preset: '24h' as const }
 
-  const { data: latencyData, isLoading, error, isFetching } = useQuery({
+  const { data: latencyData, isLoading, error } = useQuery({
     queryKey: ['topology-latency', linkPk, effectiveRange, bucket],
     queryFn: () => fetchLatencyHistory(linkPk, effectiveRange, bucket),
     refetchInterval: 60000,
     retry: 2,
+    placeholderData: keepPreviousData,
   })
 
   const rttChartRef = useRef<HTMLDivElement>(null)
@@ -254,7 +255,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     formatHoveredTime(jitterUPlotData[0] as ArrayLike<number>, jitterHoveredIdx),
     [jitterUPlotData, jitterHoveredIdx])
 
-  if (isLoading || isFetching) {
+  if (isLoading && !latencyData) {
     return <div className="h-36 animate-pulse bg-muted/50 rounded" />
   }
 
