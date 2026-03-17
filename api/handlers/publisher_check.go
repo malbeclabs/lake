@@ -105,7 +105,9 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	resp, err := fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
-		ctx, cancel = context.WithTimeout(r.Context(), 20*time.Second)
+		var retryCancel context.CancelFunc
+		ctx, retryCancel = context.WithTimeout(r.Context(), 20*time.Second)
+		defer retryCancel()
 		resp, err = fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	}
 

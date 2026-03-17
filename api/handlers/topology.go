@@ -110,7 +110,9 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 	response, err := fetchTopologyData(ctx)
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
-		ctx, cancel = context.WithTimeout(r.Context(), 10*time.Second)
+		var retryCancel context.CancelFunc
+		ctx, retryCancel = context.WithTimeout(r.Context(), 10*time.Second)
+		defer retryCancel()
 		response, err = fetchTopologyData(ctx)
 	}
 
