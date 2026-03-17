@@ -109,11 +109,13 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 
 	response, err := fetchTopologyData(ctx)
 	if err != nil && dberror.IsTransient(err) {
+		cancel()
+		ctx, cancel = context.WithTimeout(r.Context(), 10*time.Second)
 		response, err = fetchTopologyData(ctx)
 	}
 
 	if err != nil {
-		slog.Error("topology query failed", "error", err)
+		slog.Warn("topology query failed", "error", err)
 		response.Error = dberror.UserMessage(err)
 	}
 

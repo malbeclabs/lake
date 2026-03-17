@@ -104,11 +104,13 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	if err != nil && dberror.IsTransient(err) {
+		cancel()
+		ctx, cancel = context.WithTimeout(r.Context(), 20*time.Second)
 		resp, err = fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	}
 
 	if err != nil {
-		slog.Error("publisher check failed", "error", err)
+		slog.Warn("publisher check failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
