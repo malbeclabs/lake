@@ -111,7 +111,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Excluded nodes — fra-mn-bm2 produces unreliable race data
-	excludedNodes := []string{"fra-mn-bm2"}
+	excludedNodes := []string{"fra-mn-bm2", "tyo-mn-bm1"}
 
 	interval := validWindows[window]
 	var timeFilter string
