@@ -624,8 +624,8 @@ func isDefaultTimelineRequest(r *http.Request) bool {
 // GetTimeline returns timeline events across the network
 func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
-	if isMainnet(r.Context()) && isDefaultTimelineRequest(r) && statusCache != nil {
-		if cached := statusCache.GetTimeline(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultTimelineRequest(r) && pageCache != nil {
+		if cached := pageCache.GetTimeline(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {

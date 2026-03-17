@@ -23,9 +23,9 @@ const refreshCheckInterval = 5 * time.Second
 // maxBackoffMultiplier caps exponential backoff at 8x the normal interval.
 const maxBackoffMultiplier = 8
 
-// StatusCache provides periodic background caching for status endpoints.
+// PageCache provides periodic background caching for page endpoints.
 // This ensures fast initial page loads by pre-computing expensive queries.
-type StatusCache struct {
+type PageCache struct {
 	mu sync.RWMutex
 
 	// Cached responses
@@ -95,10 +95,10 @@ type refreshEntry struct {
 	fn       func() (bool, string) // returns (success, errorDetail)
 }
 
-// NewStatusCache creates a new cache with the specified refresh intervals.
-func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval, ledgerInterval, publisherCheckInterval time.Duration) *StatusCache {
+// NewPageCache creates a new cache with the specified refresh intervals.
+func NewPageCache(statusInterval, linkHistoryInterval, timelineInterval, incidentsInterval, performanceInterval, ledgerInterval, publisherCheckInterval time.Duration) *PageCache {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &StatusCache{
+	return &PageCache{
 		linkHistory:            make(map[string]*LinkHistoryResponse),
 		deviceHistory:          make(map[string]*DeviceHistoryResponse),
 		metroPathLatency:       make(map[string]*MetroPathLatencyResponse),
@@ -116,8 +116,8 @@ func NewStatusCache(statusInterval, linkHistoryInterval, timelineInterval, incid
 
 // Start begins the background refresh loop.
 // It performs an initial refresh synchronously to ensure cache is warm before returning.
-func (c *StatusCache) Start() {
-	slog.Info("starting status cache", "status_interval", c.statusInterval, "link_history_interval", c.linkHistoryInterval, "timeline_interval", c.timelineInterval, "incidents_interval", c.incidentsInterval, "performance_interval", c.performanceInterval, "ledger_interval", c.ledgerInterval, "publisher_check_interval", c.publisherCheckInterval)
+func (c *PageCache) Start() {
+	slog.Info("starting page cache", "status_interval", c.statusInterval, "link_history_interval", c.linkHistoryInterval, "timeline_interval", c.timelineInterval, "incidents_interval", c.incidentsInterval, "performance_interval", c.performanceInterval, "ledger_interval", c.ledgerInterval, "publisher_check_interval", c.publisherCheckInterval)
 
 	// Initial refresh (concurrent to reduce startup time, but cache is warm before returning)
 	start := time.Now()
@@ -160,7 +160,7 @@ func (c *StatusCache) Start() {
 //   - Runs due refreshes in priority order (status/timeline first since they gate readyz)
 //   - Limits concurrent refreshes to maxConcurrentRefreshes via errgroup
 //   - Guarantees fair scheduling: all refresh types get turns, not just the frequent ones
-func (c *StatusCache) refreshLoop() {
+func (c *PageCache) refreshLoop() {
 	defer c.wg.Done()
 
 	// Priority-ordered: status and timeline gate readyz, so they run first.
@@ -254,8 +254,8 @@ func (c *StatusCache) refreshLoop() {
 }
 
 // Stop cancels the background refresh goroutines and waits for them to exit.
-func (c *StatusCache) Stop() {
-	slog.Info("stopping status cache")
+func (c *PageCache) Stop() {
+	slog.Info("stopping page cache")
 	c.cancel()
 
 	// Wait for goroutines to exit with a timeout
@@ -267,14 +267,14 @@ func (c *StatusCache) Stop() {
 
 	select {
 	case <-done:
-		slog.Info("status cache stopped")
+		slog.Info("page cache stopped")
 	case <-time.After(cacheStopTimeout):
-		slog.Warn("status cache stop timed out, continuing shutdown")
+		slog.Warn("page cache stop timed out, continuing shutdown")
 	}
 }
 
 // IsReady returns true if the cache has been populated with initial data.
-func (c *StatusCache) IsReady() bool {
+func (c *PageCache) IsReady() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status != nil && c.timeline != nil && c.incidents != nil
@@ -282,7 +282,7 @@ func (c *StatusCache) IsReady() bool {
 
 // GetStatus returns the cached status response.
 // Returns nil if cache is empty (should not happen after Start() completes).
-func (c *StatusCache) GetStatus() *StatusResponse {
+func (c *PageCache) GetStatus() *StatusResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status
@@ -290,7 +290,7 @@ func (c *StatusCache) GetStatus() *StatusResponse {
 
 // GetLinkHistory returns the cached link history response for the given parameters.
 // Returns nil if the specific configuration is not cached.
-func (c *StatusCache) GetLinkHistory(timeRange string, buckets int) *LinkHistoryResponse {
+func (c *PageCache) GetLinkHistory(timeRange string, buckets int) *LinkHistoryResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	key := linkHistoryCacheKey(timeRange, buckets)
@@ -299,7 +299,7 @@ func (c *StatusCache) GetLinkHistory(timeRange string, buckets int) *LinkHistory
 
 // GetDeviceHistory returns the cached device history response for the given parameters.
 // Returns nil if the specific configuration is not cached.
-func (c *StatusCache) GetDeviceHistory(timeRange string, buckets int) *DeviceHistoryResponse {
+func (c *PageCache) GetDeviceHistory(timeRange string, buckets int) *DeviceHistoryResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	key := deviceHistoryCacheKey(timeRange, buckets)
@@ -308,7 +308,7 @@ func (c *StatusCache) GetDeviceHistory(timeRange string, buckets int) *DeviceHis
 
 // GetTimeline returns the cached default timeline response.
 // Returns nil if cache is empty (should not happen after Start() completes).
-func (c *StatusCache) GetTimeline() *TimelineResponse {
+func (c *PageCache) GetTimeline() *TimelineResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.timeline
@@ -316,7 +316,7 @@ func (c *StatusCache) GetTimeline() *TimelineResponse {
 
 // GetIncidents returns the cached default incidents response.
 // Returns nil if cache is empty (should not happen after Start() completes).
-func (c *StatusCache) GetIncidents() *LinkIncidentsResponse {
+func (c *PageCache) GetIncidents() *LinkIncidentsResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.incidents
@@ -324,7 +324,7 @@ func (c *StatusCache) GetIncidents() *LinkIncidentsResponse {
 
 // GetDeviceIncidents returns the cached default device incidents response.
 // Returns nil if cache is empty (should not happen after Start() completes).
-func (c *StatusCache) GetDeviceIncidents() *DeviceIncidentsResponse {
+func (c *PageCache) GetDeviceIncidents() *DeviceIncidentsResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.deviceIncidents
@@ -332,7 +332,7 @@ func (c *StatusCache) GetDeviceIncidents() *DeviceIncidentsResponse {
 
 // GetLatencyComparison returns the cached DZ vs Internet latency comparison.
 // Returns nil if cache is empty (should not happen after Start() completes).
-func (c *StatusCache) GetLatencyComparison() *LatencyComparisonResponse {
+func (c *PageCache) GetLatencyComparison() *LatencyComparisonResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.latencyComparison
@@ -340,14 +340,14 @@ func (c *StatusCache) GetLatencyComparison() *LatencyComparisonResponse {
 
 // GetMetroPathLatency returns the cached metro path latency for the given optimize strategy.
 // Returns nil if the specific strategy is not cached.
-func (c *StatusCache) GetMetroPathLatency(optimize string) *MetroPathLatencyResponse {
+func (c *PageCache) GetMetroPathLatency(optimize string) *MetroPathLatencyResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.metroPathLatency[optimize]
 }
 
 // refreshStatus fetches fresh status data and updates the cache.
-func (c *StatusCache) refreshStatus() (bool, string) {
+func (c *PageCache) refreshStatus() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
@@ -368,7 +368,7 @@ func (c *StatusCache) refreshStatus() (bool, string) {
 }
 
 // refreshLinkHistory fetches fresh link history data for all configured ranges.
-func (c *StatusCache) refreshLinkHistory() (bool, string) {
+func (c *PageCache) refreshLinkHistory() (bool, string) {
 	start := time.Now()
 	var lastErr string
 
@@ -400,7 +400,7 @@ func (c *StatusCache) refreshLinkHistory() (bool, string) {
 }
 
 // refreshDeviceHistory fetches fresh device history data for all configured ranges.
-func (c *StatusCache) refreshDeviceHistory() (bool, string) {
+func (c *PageCache) refreshDeviceHistory() (bool, string) {
 	start := time.Now()
 	var lastErr string
 
@@ -432,7 +432,7 @@ func (c *StatusCache) refreshDeviceHistory() (bool, string) {
 }
 
 // refreshTimeline fetches fresh timeline data for the default 24h view.
-func (c *StatusCache) refreshTimeline() (bool, string) {
+func (c *PageCache) refreshTimeline() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -453,7 +453,7 @@ func (c *StatusCache) refreshTimeline() (bool, string) {
 }
 
 // refreshIncidents fetches fresh incidents data for the default 24h view.
-func (c *StatusCache) refreshIncidents() (bool, string) {
+func (c *PageCache) refreshIncidents() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -478,7 +478,7 @@ func (c *StatusCache) refreshIncidents() (bool, string) {
 }
 
 // refreshDeviceIncidents fetches fresh device incidents data for the default 24h view.
-func (c *StatusCache) refreshDeviceIncidents() (bool, string) {
+func (c *PageCache) refreshDeviceIncidents() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -503,7 +503,7 @@ func (c *StatusCache) refreshDeviceIncidents() (bool, string) {
 }
 
 // refreshLatencyComparison fetches fresh DZ vs Internet latency comparison data.
-func (c *StatusCache) refreshLatencyComparison() (bool, string) {
+func (c *PageCache) refreshLatencyComparison() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -523,7 +523,7 @@ func (c *StatusCache) refreshLatencyComparison() (bool, string) {
 }
 
 // refreshMetroPathLatency fetches fresh metro path latency data for all optimization strategies.
-func (c *StatusCache) refreshMetroPathLatency() (bool, string) {
+func (c *PageCache) refreshMetroPathLatency() (bool, string) {
 	start := time.Now()
 	var lastErr string
 
@@ -556,34 +556,34 @@ func (c *StatusCache) refreshMetroPathLatency() (bool, string) {
 }
 
 // GetDZLedger returns the cached DZ ledger response.
-func (c *StatusCache) GetDZLedger() *LedgerResponse {
+func (c *PageCache) GetDZLedger() *LedgerResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.dzLedger
 }
 
 // GetSolanaLedger returns the cached Solana ledger response.
-func (c *StatusCache) GetSolanaLedger() *LedgerResponse {
+func (c *PageCache) GetSolanaLedger() *LedgerResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.solanaLedger
 }
 
 // GetValidatorPerf returns the cached validator performance response.
-func (c *StatusCache) GetValidatorPerf() *ValidatorPerfResponse {
+func (c *PageCache) GetValidatorPerf() *ValidatorPerfResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.validatorPerf
 }
 
 // GetStakeOverview returns the cached stake overview response.
-func (c *StatusCache) GetStakeOverview() *StakeOverview {
+func (c *PageCache) GetStakeOverview() *StakeOverview {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.stakeOverview
 }
 
-func (c *StatusCache) refreshDZLedger() (bool, string) {
+func (c *PageCache) refreshDZLedger() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
@@ -602,7 +602,7 @@ func (c *StatusCache) refreshDZLedger() (bool, string) {
 	return true, ""
 }
 
-func (c *StatusCache) refreshSolanaLedger() (bool, string) {
+func (c *PageCache) refreshSolanaLedger() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
@@ -620,7 +620,7 @@ func (c *StatusCache) refreshSolanaLedger() (bool, string) {
 	return true, ""
 }
 
-func (c *StatusCache) refreshValidatorPerf() (bool, string) {
+func (c *PageCache) refreshValidatorPerf() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
@@ -638,7 +638,7 @@ func (c *StatusCache) refreshValidatorPerf() (bool, string) {
 	return true, ""
 }
 
-func (c *StatusCache) refreshStakeOverview() (bool, string) {
+func (c *PageCache) refreshStakeOverview() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
@@ -657,13 +657,13 @@ func (c *StatusCache) refreshStakeOverview() (bool, string) {
 }
 
 // GetPublisherCheck returns the cached default publisher check response.
-func (c *StatusCache) GetPublisherCheck() *PublisherCheckResponse {
+func (c *PageCache) GetPublisherCheck() *PublisherCheckResponse {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.publisherCheck
 }
 
-func (c *StatusCache) refreshPublisherCheck() (bool, string) {
+func (c *PageCache) refreshPublisherCheck() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
 	defer cancel()
@@ -691,12 +691,12 @@ func deviceHistoryCacheKey(timeRange string, buckets int) string {
 }
 
 // Global cache instance
-var statusCache *StatusCache
+var pageCache *PageCache
 
-// InitStatusCache initializes the global status cache.
+// InitPageCache initializes the global page cache.
 // Should be called once during server startup.
-func InitStatusCache() {
-	statusCache = NewStatusCache(
+func InitPageCache() {
+	pageCache = NewPageCache(
 		30*time.Second,  // Status refresh every 30s
 		60*time.Second,  // Link history refresh every 60s
 		30*time.Second,  // Timeline refresh every 30s
@@ -705,18 +705,18 @@ func InitStatusCache() {
 		60*time.Second,  // Ledger (DZ/Solana ledger, validator perf, stake overview) refresh every 60s
 		30*time.Second,  // Publisher check refresh every 30s
 	)
-	statusCache.Start()
+	pageCache.Start()
 }
 
-// StopStatusCache stops the global status cache.
+// StopPageCache stops the global page cache.
 // Should be called during server shutdown.
-func StopStatusCache() {
-	if statusCache != nil {
-		statusCache.Stop()
+func StopPageCache() {
+	if pageCache != nil {
+		pageCache.Stop()
 	}
 }
 
-// IsStatusCacheReady returns true if the status cache is initialized and populated.
-func IsStatusCacheReady() bool {
-	return statusCache != nil && statusCache.IsReady()
+// IsPageCacheReady returns true if the page cache is initialized and populated.
+func IsPageCacheReady() bool {
+	return pageCache != nil && pageCache.IsReady()
 }

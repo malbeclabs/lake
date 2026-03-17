@@ -28,8 +28,8 @@ type StatsResponse struct {
 
 func GetStats(w http.ResponseWriter, r *http.Request) {
 	// Try to derive stats from the status cache (cache only holds mainnet data)
-	if isMainnet(r.Context()) && statusCache != nil {
-		if cached := statusCache.GetStatus(); cached != nil {
+	if isMainnet(r.Context()) && pageCache != nil {
+		if cached := pageCache.GetStatus(); cached != nil {
 			stats := StatsResponse{
 				ValidatorsOnDZ: cached.Network.ValidatorsOnDZ,
 				TotalStakeSol:  cached.Network.TotalStakeSol,

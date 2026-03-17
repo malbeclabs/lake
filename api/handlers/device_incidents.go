@@ -1009,8 +1009,8 @@ func isDefaultDeviceIncidentsRequest(r *http.Request) bool {
 
 // GetDeviceIncidents returns incidents for devices with active and drained views
 func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
-	if isMainnet(r.Context()) && isDefaultDeviceIncidentsRequest(r) && statusCache != nil {
-		if cached := statusCache.GetDeviceIncidents(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultDeviceIncidentsRequest(r) && pageCache != nil {
+		if cached := pageCache.GetDeviceIncidents(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {

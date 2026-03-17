@@ -1103,8 +1103,8 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 // GetLinkIncidents returns incidents for links with active and drained views
 func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
-	if isMainnet(r.Context()) && isDefaultIncidentsRequest(r) && statusCache != nil {
-		if cached := statusCache.GetIncidents(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultIncidentsRequest(r) && pageCache != nil {
+		if cached := pageCache.GetIncidents(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {

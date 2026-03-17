@@ -37,10 +37,10 @@ func (errorRow) Err() error           { return errFake }
 func (errorRow) Scan(...any) error    { return errFake }
 func (errorRow) ScanStruct(any) error { return errFake }
 
-// newCancelledCache returns a StatusCache whose parent context is already
+// newCancelledCache returns a PageCache whose parent context is already
 // cancelled, so any refresh that derives a child context will fail immediately.
 // It also installs an errorConn as config.DB to prevent nil-pointer panics.
-func newCancelledCache(t *testing.T) *StatusCache {
+func newCancelledCache(t *testing.T) *PageCache {
 	t.Helper()
 	orig := config.DB
 	t.Cleanup(func() { config.DB = orig })
@@ -48,7 +48,7 @@ func newCancelledCache(t *testing.T) *StatusCache {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
-	return &StatusCache{
+	return &PageCache{
 		linkHistory:      make(map[string]*LinkHistoryResponse),
 		deviceHistory:    make(map[string]*DeviceHistoryResponse),
 		metroPathLatency: make(map[string]*MetroPathLatencyResponse),
@@ -57,7 +57,7 @@ func newCancelledCache(t *testing.T) *StatusCache {
 	}
 }
 
-func TestStatusCache_RefreshStatusKeepsStaleData(t *testing.T) {
+func TestPageCache_RefreshStatusKeepsStaleData(t *testing.T) {
 	c := newCancelledCache(t)
 
 	original := &StatusResponse{
@@ -76,7 +76,7 @@ func TestStatusCache_RefreshStatusKeepsStaleData(t *testing.T) {
 	}
 }
 
-func TestStatusCache_RefreshTimelineKeepsStaleData(t *testing.T) {
+func TestPageCache_RefreshTimelineKeepsStaleData(t *testing.T) {
 	c := newCancelledCache(t)
 
 	original := &TimelineResponse{
@@ -95,7 +95,7 @@ func TestStatusCache_RefreshTimelineKeepsStaleData(t *testing.T) {
 	}
 }
 
-func TestStatusCache_RefreshIncidentsKeepsStaleData(t *testing.T) {
+func TestPageCache_RefreshIncidentsKeepsStaleData(t *testing.T) {
 	c := newCancelledCache(t)
 
 	original := &LinkIncidentsResponse{

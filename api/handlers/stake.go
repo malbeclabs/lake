@@ -230,8 +230,8 @@ func fetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 }
 
 func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
-	if statusCache != nil {
-		if resp := statusCache.GetStakeOverview(); resp != nil {
+	if pageCache != nil {
+		if resp := pageCache.GetStakeOverview(); resp != nil {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 			return

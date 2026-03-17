@@ -1910,8 +1910,8 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && statusCache != nil {
-		if cached := statusCache.GetMetroPathLatency(optimize); cached != nil {
+	if isMainnet(r.Context()) && pageCache != nil {
+		if cached := pageCache.GetMetroPathLatency(optimize); cached != nil {
 			w.Header().Set("X-Cache", "HIT")
 			writeJSON(w, cached)
 			return

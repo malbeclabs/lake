@@ -962,8 +962,8 @@ type LatencyComparisonResponse struct {
 
 func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	// Try cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && statusCache != nil {
-		if cached := statusCache.GetLatencyComparison(); cached != nil {
+	if isMainnet(r.Context()) && pageCache != nil {
+		if cached := pageCache.GetLatencyComparison(); cached != nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cached)

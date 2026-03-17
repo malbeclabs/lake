@@ -191,8 +191,8 @@ func fetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error
 
 // GetDZLedger returns ledger telemetry for the DZ chain.
 func GetDZLedger(w http.ResponseWriter, r *http.Request) {
-	if statusCache != nil {
-		if resp := statusCache.GetDZLedger(); resp != nil {
+	if pageCache != nil {
+		if resp := pageCache.GetDZLedger(); resp != nil {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 			return
@@ -217,8 +217,8 @@ func GetDZLedger(w http.ResponseWriter, r *http.Request) {
 
 // GetSolanaLedger returns ledger telemetry for Solana.
 func GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
-	if statusCache != nil {
-		if resp := statusCache.GetSolanaLedger(); resp != nil {
+	if pageCache != nil {
+		if resp := pageCache.GetSolanaLedger(); resp != nil {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 			return
@@ -311,8 +311,8 @@ func fetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error)
 
 // GetValidatorPerformance returns aggregated validator performance comparing DZ vs non-DZ.
 func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
-	if statusCache != nil {
-		if resp := statusCache.GetValidatorPerf(); resp != nil {
+	if pageCache != nil {
+		if resp := pageCache.GetValidatorPerf(); resp != nil {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(resp)
 			return

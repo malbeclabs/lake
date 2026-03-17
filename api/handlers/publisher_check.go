@@ -93,8 +93,8 @@ func isDefaultPublisherCheckRequest(r *http.Request) bool {
 
 func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default requests
-	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) && statusCache != nil {
-		if cached := statusCache.GetPublisherCheck(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) && pageCache != nil {
+		if cached := pageCache.GetPublisherCheck(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {

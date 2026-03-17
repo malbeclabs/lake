@@ -205,8 +205,8 @@ const (
 
 func GetStatus(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && statusCache != nil {
-		if cached := statusCache.GetStatus(); cached != nil {
+	if isMainnet(r.Context()) && pageCache != nil {
+		if cached := pageCache.GetStatus(); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
@@ -1159,8 +1159,8 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try to serve from cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && statusCache != nil {
-		if cached := statusCache.GetLinkHistory(timeRange, requestedBuckets); cached != nil {
+	if isMainnet(r.Context()) && pageCache != nil {
+		if cached := pageCache.GetLinkHistory(timeRange, requestedBuckets); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
@@ -2107,8 +2107,8 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try to serve from cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && statusCache != nil {
-		if cached := statusCache.GetDeviceHistory(timeRange, requestedBuckets); cached != nil {
+	if isMainnet(r.Context()) && pageCache != nil {
+		if cached := pageCache.GetDeviceHistory(timeRange, requestedBuckets); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			if err := json.NewEncoder(w).Encode(cached); err != nil {
