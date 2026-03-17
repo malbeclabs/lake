@@ -535,7 +535,7 @@ export function EdgeScoreboardPage() {
     let totalSlots = 0
 
     // Per-competitor weighted lead times
-    const competitors = ['jito', 'turbine', 'pipe'] as const
+    const competitors = ['jito', 'turbine'] as const
     const weightedP50: Record<string, number> = {}
     const weightedP95: Record<string, number> = {}
     const competitorSlots: Record<string, number> = {}
@@ -695,7 +695,6 @@ export function EdgeScoreboardPage() {
                   <th className="px-4 py-3 font-medium text-right">Edge Win %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
-                  <th className="px-4 py-3 font-medium text-right">vs Pipe<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
                   <th className="px-4 py-3 font-medium text-right">Slots</th>
                   <th className="px-4 py-3 font-medium text-right">Last Updated</th>
@@ -704,7 +703,7 @@ export function EdgeScoreboardPage() {
               <tbody>
                 {sortedNodes.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
                       No data available for the selected time window.
                     </td>
                   </tr>
@@ -792,7 +791,7 @@ function NodeRow({ node }: { node: EdgeScoreboardNode }) {
       <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
         {dz ? formatPct(dz.win_rate_pct) : '—'}
       </td>
-      {['jito', 'turbine', 'pipe'].map(f => {
+      {['jito', 'turbine'].map(f => {
         const lt = dzLeadByFeed[f]
         return (
           <td key={f} className="px-4 py-3 text-right tabular-nums text-sm">
