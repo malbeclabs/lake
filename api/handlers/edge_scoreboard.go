@@ -22,10 +22,10 @@ type EdgeScoreboardLeadTime struct {
 
 // EdgeScoreboardFeedStats holds per-feed win rate and pairwise lead time stats for an edge node.
 type EdgeScoreboardFeedStats struct {
-	ShredsWon   uint64                    `json:"shreds_won"`
-	TotalShreds uint64                    `json:"total_shreds"`
-	WinRatePct  float64                   `json:"win_rate_pct"`
-	LeadTimes   []EdgeScoreboardLeadTime  `json:"lead_times"`
+	ShredsWon   uint64                   `json:"shreds_won"`
+	TotalShreds uint64                   `json:"total_shreds"`
+	WinRatePct  float64                  `json:"win_rate_pct"`
+	LeadTimes   []EdgeScoreboardLeadTime `json:"lead_times"`
 }
 
 // EdgeScoreboardNode holds aggregated stats for a single edge node.
@@ -51,11 +51,11 @@ type EdgeScoreboardNode struct {
 
 // edgeNodeIPs maps edge node IDs to their known IP addresses.
 var edgeNodeIPs = map[string]string{
-	"slc-qa-bm1":  "64.130.33.90",
-	"ams-mn-bm1":  "23.109.62.84",
-	"fra-mn-bm1":  "198.13.138.107",
-	"tyo-mn-bm1":  "208.91.107.71",
-	"sin-mn-bm1":  "177.54.154.15",
+	"slc-qa-bm1": "64.130.33.90",
+	"ams-mn-bm1": "23.109.62.84",
+	"fra-mn-bm1": "198.13.138.107",
+	"tyo-mn-bm1": "208.91.107.71",
+	"sin-mn-bm1": "177.54.154.15",
 }
 
 // EdgeScoreboardSlotRace holds per-slot per-feed win data for recent slots.
