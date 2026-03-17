@@ -77,7 +77,25 @@ else
     echo ""
 fi
 
-# Step 5: Check dependencies
+# Step 5: Seed local data (optional, requires credentials)
+if [[ -n "${CLICKHOUSE_SHREDDER_PASSWORD:-}" ]]; then
+    echo "=== Seeding shredder race data ==="
+    "$SCRIPT_DIR/seed-shredder-local.sh" 10000
+    echo ""
+else
+    echo "=== Skipping shredder seed (CLICKHOUSE_SHREDDER_PASSWORD not set) ==="
+fi
+
+if [[ -n "${VALIDATORSAPP_API_KEY:-}" ]]; then
+    echo "=== Seeding validators.app data ==="
+    "$SCRIPT_DIR/seed-validatorsapp-local.sh"
+    echo ""
+else
+    echo "=== Skipping validators.app seed (VALIDATORSAPP_API_KEY not set) ==="
+fi
+echo ""
+
+# Step 6: Check dependencies
 echo "=== Checking dependencies ==="
 if ! command -v bun &> /dev/null; then
     echo "bun is not installed. Install it with:"
@@ -95,7 +113,7 @@ else
 fi
 echo ""
 
-# Step 6: Print next steps
+# Step 7: Print next steps
 echo "=== Setup complete! ==="
 echo ""
 echo "Next steps:"
