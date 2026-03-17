@@ -1416,7 +1416,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 
 	deviceMeta, err := fetchDeviceMetadata(ctx, envDB(ctx), filters)
 	if err != nil {
-		slog.Error("cache: failed to fetch device metadata for incidents", "error", err)
+		slog.Info("cache: device incidents metadata fetch unsuccessful", "detail", err)
 		return nil
 	}
 
@@ -1475,7 +1475,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	})
 
 	if err := g.Wait(); err != nil {
-		slog.Error("cache: failed to fetch device incidents", "error", err)
+		slog.Info("cache: device incidents fetch unsuccessful", "detail", err)
 		return nil
 	}
 

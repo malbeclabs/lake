@@ -1684,7 +1684,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 
 	linkMeta, err := fetchLinkMetadataWithStatus(ctx, envDB(ctx), filters)
 	if err != nil {
-		slog.Error("cache: failed to fetch link metadata for incidents", "error", err)
+		slog.Info("cache: incidents link metadata fetch unsuccessful", "detail", err)
 		return nil
 	}
 
@@ -1764,7 +1764,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	})
 
 	if err := g.Wait(); err != nil {
-		slog.Error("cache: failed to fetch incidents", "error", err)
+		slog.Info("cache: incidents fetch unsuccessful", "detail", err)
 		return nil
 	}
 

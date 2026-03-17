@@ -3680,7 +3680,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryDeviceChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying device changes", "error", err)
+			slog.Info("cache: device changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3693,7 +3693,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryLinkChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying link changes", "error", err)
+			slog.Info("cache: link changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3706,7 +3706,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryMetroChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying metro changes", "error", err)
+			slog.Info("cache: metro changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3719,7 +3719,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryContributorChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying contributor changes", "error", err)
+			slog.Info("cache: contributor changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3732,7 +3732,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryUserChanges(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Error("cache: error querying user changes", "error", err)
+			slog.Info("cache: user changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3745,7 +3745,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryPacketLossEvents(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying packet loss events", "error", err)
+			slog.Info("cache: packet loss events query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3758,7 +3758,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryInterfaceEvents(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying interface events", "error", err)
+			slog.Info("cache: interface events query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3771,7 +3771,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryValidatorEvents(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Error("cache: error querying validator events", "error", err)
+			slog.Info("cache: validator events query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3784,7 +3784,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryGossipNetworkChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying gossip network changes", "error", err)
+			slog.Info("cache: gossip network changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3797,7 +3797,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryVoteAccountChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying vote account changes", "error", err)
+			slog.Info("cache: vote account changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3810,7 +3810,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryStakeChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: error querying stake changes", "error", err)
+			slog.Info("cache: stake changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
@@ -3820,7 +3820,7 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	})
 
 	if err := g.Wait(); err != nil {
-		slog.Error("cache: error in timeline queries", "error", err)
+		slog.Info("cache: timeline queries unsuccessful", "detail", err)
 	}
 
 	// Merge all events
