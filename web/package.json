@@ -58,7 +58,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/three": "^0.183.1",
     "@vitejs/plugin-basic-ssl": "^2.1.4",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^10.0.2",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
@@ -66,7 +66,7 @@
     "jsdom": "^28.0.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.0",
-    "vite": "^7.2.4",
+    "vite": "^8.0.0",
     "vitest": "^4.0.18"
   }
 }
