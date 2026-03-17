@@ -68,6 +68,26 @@ func RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// internalDomains are the email domains allowed to access internal-only features.
+var internalDomains = map[string]bool{
+	"malbeclabs.com": true,
+	"doublezero.xyz": true,
+	"doublezero.us":  true,
+}
+
+// RequireInternalDomain middleware returns 403 unless the user is authenticated
+// with an email from an internal domain.
+func RequireInternalDomain(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		account := GetAccountFromContext(r.Context())
+		if account == nil || account.EmailDomain == nil || !internalDomains[strings.ToLower(*account.EmailDomain)] {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // GetAccountFromContext returns the account from context, or nil if not authenticated
 func GetAccountFromContext(ctx context.Context) *Account {
 	account, ok := ctx.Value(accountContextKey).(*Account)

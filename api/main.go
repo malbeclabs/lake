@@ -485,7 +485,7 @@ func main() {
 		r.Get("/api/dz/multicast-groups/{pk}/traffic", handlers.GetMulticastGroupTraffic)
 		r.Get("/api/dz/multicast-groups/{pk}/member-counts", handlers.GetMulticastGroupMemberCounts)
 		r.Get("/api/dz/publisher-check", handlers.GetPublisherCheck)
-		r.Get("/api/dz/edge/scoreboard", handlers.GetEdgeScoreboard)
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", handlers.GetEdgeScoreboard)
 		r.Get("/api/dz/tenants", handlers.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", handlers.GetTenant)
 		r.Get("/api/dz/field-values", handlers.GetFieldValues)

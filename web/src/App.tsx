@@ -91,6 +91,15 @@ const queryClient = new QueryClient({
 })
 
 // Redirect to latest or new query session
+const INTERNAL_DOMAINS = new Set(['malbeclabs.com', 'doublezero.xyz', 'doublezero.us'])
+
+function InternalOnly({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  const isInternal = !!user?.email_domain && INTERNAL_DOMAINS.has(user.email_domain.toLowerCase())
+  if (!isInternal) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 function QueryRedirect() {
   const navigate = useNavigate()
   const { data: sessions, isLoading, isError } = useQuerySessions()
@@ -694,7 +703,7 @@ function AppContent() {
             <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />
             <Route path="/dz/multicast-groups/:pk" element={<MulticastGroupDetailPage />} />
             <Route path="/dz/publisher-check" element={<PublisherCheckPage />} />
-            <Route path="/dz/edge/scoreboard" element={<EdgeScoreboardPage />} />
+            <Route path="/dz/edge/scoreboard" element={<InternalOnly><EdgeScoreboardPage /></InternalOnly>} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />
