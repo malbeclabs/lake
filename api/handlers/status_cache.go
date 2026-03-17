@@ -89,7 +89,7 @@ var deviceHistoryConfigs = []struct {
 type refreshEntry struct {
 	name     string
 	interval time.Duration
-	fn       func() bool // returns true on success, false on failure
+	fn       func() (bool, string) // returns (success, errorDetail)
 }
 
 // NewStatusCache creates a new cache with the specified refresh intervals.
@@ -122,7 +122,7 @@ func (c *StatusCache) Start() {
 	// for the connection pool yet. Keep it moderate to avoid saturating
 	// ClickHouse CPU/IO which causes query timeouts.
 	g.SetLimit(4)
-	for _, fn := range []func() bool{
+	for _, fn := range []func() (bool, string){
 		c.refreshStatus,
 		c.refreshLinkHistory,
 		c.refreshDeviceHistory,
@@ -217,12 +217,21 @@ func (c *StatusCache) refreshLoop() {
 					if c.ctx.Err() != nil {
 						return nil
 					}
-					if entry.fn() {
+					ok, errDetail := entry.fn()
+					if ok {
+						if consecutiveFailures[i] > 1 {
+							slog.Info("cache recovered", "cache", entry.name, "after_failures", consecutiveFailures[i])
+						}
 						consecutiveFailures[i] = 0
 					} else {
 						consecutiveFailures[i]++
-						if consecutiveFailures[i] == 3 {
-							slog.Warn("cache backing off after consecutive failures", "cache", entry.name, "failures", 3)
+						switch consecutiveFailures[i] {
+						case 1:
+							slog.Info("cache refresh unsuccessful, will retry next cycle", "cache", entry.name, "detail", errDetail)
+						case 3:
+							slog.Warn("cache refresh failing persistently, backing off", "cache", entry.name, "failures", 3, "detail", errDetail)
+						default:
+							slog.Info("cache refresh unsuccessful", "cache", entry.name, "failures", consecutiveFailures[i], "detail", errDetail)
 						}
 					}
 					lastRefresh[i] = time.Now()
@@ -332,7 +341,7 @@ func (c *StatusCache) GetMetroPathLatency(optimize string) *MetroPathLatencyResp
 }
 
 // refreshStatus fetches fresh status data and updates the cache.
-func (c *StatusCache) refreshStatus() bool {
+func (c *StatusCache) refreshStatus() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
@@ -340,8 +349,7 @@ func (c *StatusCache) refreshStatus() bool {
 	resp := fetchStatusData(ctx)
 
 	if resp.Error != "" {
-		slog.Warn("status cache refresh failed, keeping stale data", "error", resp.Error)
-		return false
+		return false, resp.Error
 	}
 
 	c.mu.Lock()
@@ -350,13 +358,13 @@ func (c *StatusCache) refreshStatus() bool {
 	c.mu.Unlock()
 
 	slog.Debug("status cache refreshed", "duration", time.Since(start))
-	return true
+	return true, ""
 }
 
 // refreshLinkHistory fetches fresh link history data for all configured ranges.
-func (c *StatusCache) refreshLinkHistory() bool {
+func (c *StatusCache) refreshLinkHistory() (bool, string) {
 	start := time.Now()
-	success := true
+	var lastErr string
 
 	// Refresh all common configurations
 	for _, cfg := range linkHistoryConfigs {
@@ -365,8 +373,7 @@ func (c *StatusCache) refreshLinkHistory() bool {
 		cancel()
 
 		if err != nil {
-			slog.Warn("link history cache refresh failed", "range", cfg.timeRange, "buckets", cfg.buckets, "error", err)
-			success = false
+			lastErr = err.Error()
 			continue
 		}
 		key := linkHistoryCacheKey(cfg.timeRange, cfg.buckets)
@@ -379,14 +386,17 @@ func (c *StatusCache) refreshLinkHistory() bool {
 	c.linkHistoryLastRefresh = time.Now()
 	c.mu.Unlock()
 
+	if lastErr != "" {
+		return false, lastErr
+	}
 	slog.Debug("link history cache refreshed", "duration", time.Since(start), "configs", len(linkHistoryConfigs))
-	return success
+	return true, ""
 }
 
 // refreshDeviceHistory fetches fresh device history data for all configured ranges.
-func (c *StatusCache) refreshDeviceHistory() bool {
+func (c *StatusCache) refreshDeviceHistory() (bool, string) {
 	start := time.Now()
-	success := true
+	var lastErr string
 
 	// Refresh all common configurations
 	for _, cfg := range deviceHistoryConfigs {
@@ -395,8 +405,7 @@ func (c *StatusCache) refreshDeviceHistory() bool {
 		cancel()
 
 		if err != nil {
-			slog.Warn("device history cache refresh failed", "range", cfg.timeRange, "buckets", cfg.buckets, "error", err)
-			success = false
+			lastErr = err.Error()
 			continue
 		}
 		key := deviceHistoryCacheKey(cfg.timeRange, cfg.buckets)
@@ -409,12 +418,15 @@ func (c *StatusCache) refreshDeviceHistory() bool {
 	c.deviceHistoryLastRefresh = time.Now()
 	c.mu.Unlock()
 
+	if lastErr != "" {
+		return false, lastErr
+	}
 	slog.Debug("device history cache refreshed", "duration", time.Since(start), "configs", len(deviceHistoryConfigs))
-	return success
+	return true, ""
 }
 
 // refreshTimeline fetches fresh timeline data for the default 24h view.
-func (c *StatusCache) refreshTimeline() bool {
+func (c *StatusCache) refreshTimeline() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -422,8 +434,7 @@ func (c *StatusCache) refreshTimeline() bool {
 	resp := fetchDefaultTimelineData(ctx)
 
 	if ctx.Err() != nil {
-		slog.Warn("timeline cache refresh failed, keeping stale data", "error", ctx.Err())
-		return false
+		return false, ctx.Err().Error()
 	}
 
 	c.mu.Lock()
@@ -432,11 +443,11 @@ func (c *StatusCache) refreshTimeline() bool {
 	c.mu.Unlock()
 
 	slog.Debug("timeline cache refreshed", "duration", time.Since(start), "events", len(resp.Events))
-	return true
+	return true, ""
 }
 
 // refreshIncidents fetches fresh incidents data for the default 24h view.
-func (c *StatusCache) refreshIncidents() bool {
+func (c *StatusCache) refreshIncidents() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -444,13 +455,11 @@ func (c *StatusCache) refreshIncidents() bool {
 	resp := fetchDefaultIncidentsData(ctx)
 
 	if ctx.Err() != nil {
-		slog.Warn("incidents cache refresh failed, keeping stale data", "error", ctx.Err())
-		return false
+		return false, ctx.Err().Error()
 	}
 
 	if resp == nil {
-		slog.Warn("incidents cache refresh returned nil, keeping stale data")
-		return false
+		return false, "nil response"
 	}
 
 	c.mu.Lock()
@@ -459,11 +468,11 @@ func (c *StatusCache) refreshIncidents() bool {
 	c.mu.Unlock()
 
 	slog.Debug("incidents cache refreshed", "duration", time.Since(start), "active", len(resp.Active), "drained", len(resp.Drained))
-	return true
+	return true, ""
 }
 
 // refreshDeviceIncidents fetches fresh device incidents data for the default 24h view.
-func (c *StatusCache) refreshDeviceIncidents() bool {
+func (c *StatusCache) refreshDeviceIncidents() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
@@ -471,13 +480,11 @@ func (c *StatusCache) refreshDeviceIncidents() bool {
 	resp := fetchDefaultDeviceIncidentsData(ctx)
 
 	if ctx.Err() != nil {
-		slog.Warn("device incidents cache refresh failed, keeping stale data", "error", ctx.Err())
-		return false
+		return false, ctx.Err().Error()
 	}
 
 	if resp == nil {
-		slog.Warn("device incidents cache refresh returned nil, keeping stale data")
-		return false
+		return false, "nil response"
 	}
 
 	c.mu.Lock()
@@ -486,19 +493,18 @@ func (c *StatusCache) refreshDeviceIncidents() bool {
 	c.mu.Unlock()
 
 	slog.Debug("device incidents cache refreshed", "duration", time.Since(start), "active", len(resp.Active), "drained", len(resp.Drained))
-	return true
+	return true, ""
 }
 
 // refreshLatencyComparison fetches fresh DZ vs Internet latency comparison data.
-func (c *StatusCache) refreshLatencyComparison() bool {
+func (c *StatusCache) refreshLatencyComparison() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
 
 	resp, err := fetchLatencyComparisonData(ctx)
 	if err != nil {
-		slog.Warn("latency comparison cache refresh failed", "error", err)
-		return false
+		return false, err.Error()
 	}
 
 	c.mu.Lock()
@@ -507,13 +513,13 @@ func (c *StatusCache) refreshLatencyComparison() bool {
 	c.mu.Unlock()
 
 	slog.Debug("latency comparison cache refreshed", "duration", time.Since(start), "comparisons", len(resp.Comparisons))
-	return true
+	return true, ""
 }
 
 // refreshMetroPathLatency fetches fresh metro path latency data for all optimization strategies.
-func (c *StatusCache) refreshMetroPathLatency() bool {
+func (c *StatusCache) refreshMetroPathLatency() (bool, string) {
 	start := time.Now()
-	success := true
+	var lastErr string
 
 	// Cache all three optimization strategies
 	strategies := []string{"latency", "hops", "bandwidth"}
@@ -523,8 +529,7 @@ func (c *StatusCache) refreshMetroPathLatency() bool {
 		cancel()
 
 		if err != nil {
-			slog.Warn("metro path latency cache refresh failed", "optimize", strategy, "error", err)
-			success = false
+			lastErr = err.Error()
 			continue
 		}
 
@@ -537,8 +542,11 @@ func (c *StatusCache) refreshMetroPathLatency() bool {
 	c.metroPathLatencyLastRefresh = time.Now()
 	c.mu.Unlock()
 
+	if lastErr != "" {
+		return false, lastErr
+	}
 	slog.Debug("metro path latency cache refreshed", "duration", time.Since(start), "strategies", len(strategies))
-	return success
+	return true, ""
 }
 
 // GetDZLedger returns the cached DZ ledger response.
@@ -569,15 +577,14 @@ func (c *StatusCache) GetStakeOverview() *StakeOverview {
 	return c.stakeOverview
 }
 
-func (c *StatusCache) refreshDZLedger() bool {
+func (c *StatusCache) refreshDZLedger() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
 
 	resp, err := fetchLedgerData(ctx, getDZLedgerRPCURL())
 	if err != nil {
-		slog.Warn("dz ledger cache refresh failed, keeping stale data", "error", err)
-		return false
+		return false, err.Error()
 	}
 
 	c.mu.Lock()
@@ -586,18 +593,17 @@ func (c *StatusCache) refreshDZLedger() bool {
 	c.mu.Unlock()
 
 	slog.Debug("dz ledger cache refreshed", "duration", time.Since(start))
-	return true
+	return true, ""
 }
 
-func (c *StatusCache) refreshSolanaLedger() bool {
+func (c *StatusCache) refreshSolanaLedger() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
 
 	resp, err := fetchLedgerData(ctx, getSolanaRPCURL())
 	if err != nil {
-		slog.Warn("solana ledger cache refresh failed, keeping stale data", "error", err)
-		return false
+		return false, err.Error()
 	}
 
 	c.mu.Lock()
@@ -605,18 +611,17 @@ func (c *StatusCache) refreshSolanaLedger() bool {
 	c.mu.Unlock()
 
 	slog.Debug("solana ledger cache refreshed", "duration", time.Since(start))
-	return true
+	return true, ""
 }
 
-func (c *StatusCache) refreshValidatorPerf() bool {
+func (c *StatusCache) refreshValidatorPerf() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
 
 	resp, err := fetchValidatorPerfData(ctx)
 	if err != nil {
-		slog.Warn("validator perf cache refresh failed, keeping stale data", "error", err)
-		return false
+		return false, err.Error()
 	}
 
 	c.mu.Lock()
@@ -624,18 +629,17 @@ func (c *StatusCache) refreshValidatorPerf() bool {
 	c.mu.Unlock()
 
 	slog.Debug("validator perf cache refreshed", "duration", time.Since(start))
-	return true
+	return true, ""
 }
 
-func (c *StatusCache) refreshStakeOverview() bool {
+func (c *StatusCache) refreshStakeOverview() (bool, string) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(c.ctx, 15*time.Second)
 	defer cancel()
 
 	resp, err := fetchStakeOverviewData(ctx)
 	if err != nil {
-		slog.Warn("stake overview cache refresh failed, keeping stale data", "error", err)
-		return false
+		return false, err.Error()
 	}
 
 	c.mu.Lock()
@@ -643,7 +647,7 @@ func (c *StatusCache) refreshStakeOverview() bool {
 	c.mu.Unlock()
 
 	slog.Debug("stake overview cache refreshed", "duration", time.Since(start))
-	return true
+	return true, ""
 }
 
 func linkHistoryCacheKey(timeRange string, buckets int) string {

@@ -1256,6 +1256,26 @@ func insertDZUserCurrent(t *testing.T, pk, dzIP, status, ownerPubkey, devicePK s
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
+// insertDZContributorCurrent inserts a contributor into the history table with a
+// far-future timestamp so it appears as the "current" row via the view.
+func insertDZContributorCurrent(t *testing.T, pk, code string) {
+	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	entityID := fmt.Sprintf("entity-%s", pk)
+	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+		`INSERT INTO dim_dz_contributors_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s')`,
+		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, code, code)))
+}
+
+// insertDZDeviceCurrent inserts a device into the history table with a
+// far-future timestamp so it appears as the "current" row via the view.
+func insertDZDeviceCurrent(t *testing.T, pk, code, contributorPK, metroPK string) {
+	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	entityID := fmt.Sprintf("entity-%s", pk)
+	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 'active', '', '%s', '', '%s', '%s', 0)`,
+		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, code, contributorPK, metroPK)))
+}
+
 func findEventsByType(events []handlers.TimelineEvent, eventType string) []handlers.TimelineEvent {
 	var result []handlers.TimelineEvent
 	for _, e := range events {
@@ -1656,6 +1676,43 @@ func TestStakeChanges_OnDZ(t *testing.T) {
 	increased := findEventsByType(resp.Events, "validator_stake_increased")
 	require.Len(t, increased, 1, "expected 1 stake_increased")
 	assert.Contains(t, increased[0].Title, "DZ ", "title should start with DZ prefix for on-DZ validator")
+}
+
+func TestStakeChanges_OnDZ_ContributorEnrichment(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
+	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
+
+	// Set up the full enrichment chain: contributor → device → user → gossip node
+	insertDZContributorCurrent(t, "contrib-1", "CONTRIB-A")
+	insertDZDeviceCurrent(t, "device-1", "DEV-A", "contrib-1", "metro-1")
+	insertDZUserCurrent(t, "user-1", "1.2.3.4", "activated", "ownerAAA", "device-1")
+
+	// Validator with stake increase, gossip IP matches DZ user
+	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, "vote-A", "node-A", 115_000_000_000_000, t2)
+	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, "vote-A", "node-A", 115_000_000_000_000)
+	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
+		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
+	rr := httptest.NewRecorder()
+	handlers.GetTimeline(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.TimelineResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+	increased := findEventsByType(resp.Events, "validator_stake_increased")
+	require.Len(t, increased, 1, "expected 1 stake_increased")
+
+	details := getDetails(t, increased[0])
+	assert.Equal(t, "CONTRIB-A", details["contributor_code"], "contributor code should be enriched via device → contributor join")
+	assert.Equal(t, "DEV-A", details["device_code"], "device code should be enriched")
+	assert.Equal(t, "device-1", details["device_pk"], "device pk should be enriched")
 }
 
 // --- queryValidatorEvents tests ---

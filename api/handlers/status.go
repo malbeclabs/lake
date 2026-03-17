@@ -1073,7 +1073,6 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("status query error", "error", err)
 		resp.Error = err.Error()
 	}
 

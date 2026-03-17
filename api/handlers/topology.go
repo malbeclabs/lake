@@ -107,6 +107,38 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	response, err := fetchTopologyData(ctx)
+	if err != nil && dberror.IsTransient(err) {
+		response, err = fetchTopologyData(ctx)
+	}
+
+	if err != nil {
+		slog.Error("topology query failed", "error", err)
+		response.Error = dberror.UserMessage(err)
+	}
+
+	// Ensure non-nil slices for JSON serialization
+	if response.Metros == nil {
+		response.Metros = []Metro{}
+	}
+	if response.Devices == nil {
+		response.Devices = []Device{}
+	}
+	if response.Links == nil {
+		response.Links = []Link{}
+	}
+	if response.Validators == nil {
+		response.Validators = []Validator{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
+}
+
+// fetchTopologyData performs the actual topology data fetch from the database.
+func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 	start := time.Now()
 
 	var metros []Metro
@@ -367,36 +399,12 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
-	response := TopologyResponse{
+	return TopologyResponse{
 		Metros:     metros,
 		Devices:    devices,
 		Links:      links,
 		Validators: validators,
-	}
-
-	if err != nil {
-		slog.Error("topology query error", "error", err)
-		response.Error = dberror.UserMessage(err)
-	}
-
-	// Ensure non-nil slices for JSON serialization
-	if response.Metros == nil {
-		response.Metros = []Metro{}
-	}
-	if response.Devices == nil {
-		response.Devices = []Device{}
-	}
-	if response.Links == nil {
-		response.Links = []Link{}
-	}
-	if response.Validators == nil {
-		response.Validators = []Validator{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
-	}
+	}, err
 }
 
 // Traffic data point for charts

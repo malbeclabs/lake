@@ -13,6 +13,7 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -101,26 +102,37 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	resp, err := fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
+	if err != nil && dberror.IsTransient(err) {
+		resp, err = fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
+	}
+
+	if err != nil {
+		slog.Error("publisher check failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		slog.Error("failed to encode response", "error", err)
+	}
+}
+
+// fetchPublisherCheckData performs the actual publisher check query.
+func fetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
 	start := time.Now()
 
 	// Look up the bebop multicast group PK.
-	// The group PK is needed to filter dz_users_current.publishers JSON array.
 	var bebopPK string
 	err := envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE code = 'bebop' LIMIT 1`).Scan(&bebopPK)
 	if err != nil {
-		slog.Error("publisher check: bebop group not found", "error", err)
-		writeJSON(w, PublisherCheckResponse{Publishers: []PublisherCheckItem{}})
-		return
+		return &PublisherCheckResponse{Publishers: []PublisherCheckItem{}}, fmt.Errorf("bebop group lookup: %w", err)
 	}
 
-	// Build query: start from all bebop publishers (dz_users_current),
-	// LEFT JOIN shred stats and validator info.
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", config.ShredderDB)
 
-	// Build per_slot WHERE clause: slot-based or epoch-based filtering.
-	// When slotsParam > 0, filter by recent slot count (scoped to last 2 epochs for performance).
-	// Otherwise, filter by epoch count.
 	var perSlotWhere string
 	var args []any
 	if slotsParam > 0 {
@@ -207,9 +219,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("publisher check query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -244,9 +254,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 			&p.ValidatorVersion,
 			&p.ValidatorName,
 		); err != nil {
-			slog.Error("publisher check scan failed", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 
 		if rowEpoch > epoch {
@@ -270,9 +278,7 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("publisher check rows iteration failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("rows: %w", err)
 	}
 
 	if publishers == nil {
@@ -285,18 +291,13 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		 FROM solana_vote_accounts_current
 		 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake)
 	if err != nil {
-		slog.Error("publisher check: total network stake query failed", "error", err)
+		slog.Warn("publisher check: total network stake query failed", "error", err)
 	}
 
-	resp := PublisherCheckResponse{
+	return &PublisherCheckResponse{
 		Epoch:             epoch,
 		MaxSlot:           maxSlot,
 		TotalNetworkStake: totalNetworkStake,
 		Publishers:        publishers,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
-	}
+	}, nil
 }
