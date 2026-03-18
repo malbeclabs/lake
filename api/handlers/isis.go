@@ -904,7 +904,7 @@ type MultiPathResponse struct {
 	Error string       `json:"error,omitempty"`
 }
 
-// GetISISPaths finds K-shortest paths between two devices using Yen's algorithm.
+// GetISISPaths finds K-shortest paths between two devices using APOC allSimplePaths.
 // Paths are ranked by lowest total ISIS metric (latency proxy), then enriched with measured latency.
 func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -933,30 +933,81 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	session := config.Neo4jSession(ctx)
+	defer session.Close(ctx)
+
 	response := MultiPathResponse{
 		From:  fromPK,
 		To:    toPK,
 		Paths: []SinglePath{},
 	}
 
-	// Find K-shortest paths using Yen's algorithm (true lowest-latency paths)
-	paths, err := findKShortestPaths(ctx, fromPK, toPK, k)
+	// Use APOC allSimplePaths to find all loopless paths, sorted by total ISIS metric.
+	// maxNodes limits search depth to keep queries fast.
+	cypher := `
+		MATCH (a:Device {pk: $from_pk}), (b:Device {pk: $to_pk})
+		CALL apoc.algo.allSimplePaths(a, b, 'ISIS_ADJACENT>', $max_depth) YIELD path
+		WITH path,
+		     reduce(cost = 0, r IN relationships(path) | cost + coalesce(r.metric, 1)) AS totalMetric
+		ORDER BY totalMetric
+		LIMIT $k
+		WITH path, totalMetric,
+		     [n IN nodes(path) |
+		       CASE
+		         WHEN EXISTS { (n)-[:LOCATED_IN]->(:Metro) }
+		         THEN head([(n)-[:LOCATED_IN]->(m:Metro) | {pk: n.pk, code: n.code, status: n.status, device_type: n.device_type, metro_pk: m.pk, metro_code: m.code}])
+		         ELSE {pk: n.pk, code: n.code, status: n.status, device_type: n.device_type, metro_pk: null, metro_code: null}
+		       END
+		     ] AS nodeList,
+		     [r IN relationships(path) | r.metric] AS edgeMetrics
+		RETURN nodeList, edgeMetrics, totalMetric
+	`
+
+	result, err := session.Run(ctx, cypher, map[string]any{
+		"from_pk":   fromPK,
+		"to_pk":     toPK,
+		"k":         int64(k),
+		"max_depth": int64(10),
+	})
 	if err != nil {
-		slog.Error("Yen's KSP error", "error", err)
+		slog.Error("ISIS multi-path query error", "error", err)
 		response.Error = "Failed to find paths: " + err.Error()
 		writeJSON(w, response)
 		return
 	}
 
-	if len(paths) == 0 {
+	records, err := result.Collect(ctx)
+	if err != nil {
+		slog.Error("ISIS multi-path collect error", "error", err)
+		response.Error = "Failed to collect paths: " + err.Error()
+		writeJSON(w, response)
+		return
+	}
+
+	if len(records) == 0 {
 		response.Error = "No paths found between devices"
 		writeJSON(w, response)
 		return
 	}
 
-	response.Paths = paths
+	for _, record := range records {
+		nodeListVal, _ := record.Get("nodeList")
+		edgeMetricsVal, _ := record.Get("edgeMetrics")
+		totalMetric, _ := record.Get("totalMetric")
 
-	// Enrich paths with measured latency from ClickHouse
+		hops := parseNodeListWithMetrics(nodeListVal, edgeMetricsVal)
+		if len(hops) == 0 {
+			continue
+		}
+
+		response.Paths = append(response.Paths, SinglePath{
+			Path:        hops,
+			TotalMetric: uint32(asInt64(totalMetric)),
+			HopCount:    len(hops) - 1,
+		})
+	}
+
+	// Enrich with metro info from Neo4j and measured latency from ClickHouse
 	if err := enrichPathsWithMeasuredLatency(ctx, &response); err != nil {
 		slog.Error("enrichPathsWithMeasuredLatency error", "error", err)
 		response.Error = fmt.Sprintf("failed to enrich paths with measured latency: %v", err)
@@ -986,6 +1037,51 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	slog.Info("ISIS KSP completed", "paths", len(response.Paths), "duration", duration)
 
 	writeJSON(w, response)
+}
+
+func parseNodeListWithMetrics(nodeListVal, edgeMetricsVal any) []MultiPathHop {
+	if nodeListVal == nil {
+		return []MultiPathHop{}
+	}
+	nodeArr, ok := nodeListVal.([]any)
+	if !ok {
+		return []MultiPathHop{}
+	}
+
+	// Parse edge metrics
+	var edgeMetrics []int64
+	if edgeMetricsVal != nil {
+		if metricsArr, ok := edgeMetricsVal.([]any); ok {
+			for _, m := range metricsArr {
+				edgeMetrics = append(edgeMetrics, asInt64(m))
+			}
+		}
+	}
+
+	hops := make([]MultiPathHop, 0, len(nodeArr))
+	for i, item := range nodeArr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		hop := MultiPathHop{
+			DevicePK:   asString(m["pk"]),
+			DeviceCode: asString(m["code"]),
+			Status:     asString(m["status"]),
+			DeviceType: asString(m["device_type"]),
+			MetroPK:    asString(m["metro_pk"]),
+			MetroCode:  asString(m["metro_code"]),
+		}
+
+		// Edge metric is the metric to reach this hop from the previous one
+		if i > 0 && i-1 < len(edgeMetrics) {
+			hop.EdgeMetric = uint32(edgeMetrics[i-1])
+		}
+
+		hops = append(hops, hop)
+	}
+	return hops
 }
 
 // linkLatencyData holds measured latency data for a link
@@ -3453,31 +3549,80 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 		err       error
 	}
 
-	// Load graph once, find shortest path for each pair using Yen's (k=1)
-	g, err := loadISISGraph(ctx)
-	if err != nil {
-		slog.Error("metro device paths graph load error", "error", err)
-		response.Error = "Failed to load graph: " + err.Error()
-		writeJSON(w, response)
-		return
-	}
+	// Find lowest-latency path for each device pair using APOC Dijkstra
+	resultChan := make(chan pathResult, len(sourceDevices)*len(targetDevices))
+	sem := make(chan struct{}, 10) // limit concurrent queries
 
-	results := make([]pathResult, 0, len(sourceDevices)*len(targetDevices))
 	for i, source := range sourceDevices {
 		for j, target := range targetDevices {
-			kspPaths := yenKSP(g, source.PK, target.PK, 1)
-			if len(kspPaths) == 0 {
-				results = append(results, pathResult{sourceIdx: i, targetIdx: j, err: fmt.Errorf("no path")})
-				continue
-			}
-			singlePaths := kspToSinglePaths(g, kspPaths[:1])
-			results = append(results, pathResult{
-				sourceIdx: i,
-				targetIdx: j,
-				path:      singlePaths[0],
-			})
+			i, j := i, j
+			source, target := source, target
+
+			go func() {
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
+				defer queryCancel()
+
+				querySession := config.Neo4jSession(queryCtx)
+				defer querySession.Close(queryCtx)
+
+				cypher := `
+					MATCH (a:Device {pk: $from_pk}), (b:Device {pk: $to_pk})
+					CALL apoc.algo.dijkstra(a, b, 'ISIS_ADJACENT>', 'metric') YIELD path, weight
+					WITH path, toInteger(weight) AS totalMetric
+					RETURN [n IN nodes(path) | {
+						pk: n.pk,
+						code: n.code,
+						status: n.status,
+						device_type: n.device_type
+					}] AS devices,
+					[r IN relationships(path) | r.metric] AS edgeMetrics,
+					totalMetric
+				`
+
+				pathRes, err := querySession.Run(queryCtx, cypher, map[string]any{
+					"from_pk": source.PK,
+					"to_pk":   target.PK,
+				})
+				if err != nil {
+					resultChan <- pathResult{sourceIdx: i, targetIdx: j, err: err}
+					return
+				}
+
+				pathRecord, err := pathRes.Single(queryCtx)
+				if err != nil {
+					resultChan <- pathResult{sourceIdx: i, targetIdx: j, err: err}
+					return
+				}
+
+				devicesVal, _ := pathRecord.Get("devices")
+				edgeMetricsVal, _ := pathRecord.Get("edgeMetrics")
+				totalMetric, _ := pathRecord.Get("totalMetric")
+
+				hops := parseNodeListWithMetrics(devicesVal, edgeMetricsVal)
+
+				resultChan <- pathResult{
+					sourceIdx: i,
+					targetIdx: j,
+					path: SinglePath{
+						Path:        hops,
+						TotalMetric: uint32(asInt64(totalMetric)),
+						HopCount:    len(hops) - 1,
+					},
+				}
+			}()
 		}
 	}
+
+	// Collect all results
+	expectedResults := len(sourceDevices) * len(targetDevices)
+	results := make([]pathResult, 0, expectedResults)
+	for range expectedResults {
+		results = append(results, <-resultChan)
+	}
+	close(resultChan)
 
 	// Build device pair paths from results
 	var totalLatencyMs float64
