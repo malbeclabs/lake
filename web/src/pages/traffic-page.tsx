@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, Loader2, Network } from 'lucide-react'
-import { fetchTrafficData, fetchTopology, fetchDiscardsData } from '@/lib/api'
+import { fetchTrafficData, fetchTopology } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DiscardsChart } from '@/components/discards-chart'
 import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
@@ -207,33 +207,47 @@ function TrafficPageContent() {
     return dashboardFilterParams(dashboardState)
   }, [dashboardState])
 
-  // Fetch tunnel data (only when tunnel charts are visible)
+  // Single query: when intfType is 'all', fetch everything and split client-side.
+  // When intfType is specific, filterParams already has intf_type so the server filters.
   const {
-    data: tunnelData,
-    isLoading: tunnelLoading,
-    isFetching: tunnelFetching,
-    error: tunnelError,
+    data: allTrafficData,
+    isLoading: trafficLoading,
+    isFetching: trafficFetching,
+    error: trafficError,
   } = useQuery({
-    queryKey: ['traffic-intf', timeRange, true, actualBucketSize, aggMethod, filterParams, metric],
-    queryFn: () => fetchTrafficData(timeRange, true, actualBucketSize, aggMethod, filterParams, metric),
+    queryKey: ['traffic-intf', timeRange, actualBucketSize, aggMethod, filterParams, metric],
+    queryFn: () => fetchTrafficData(timeRange, null, actualBucketSize, aggMethod, filterParams, metric),
     staleTime: 30000,
     refetchInterval: dashboardState.refetchInterval,
-    enabled: showTunnelCharts,
   })
 
-  // Fetch non-tunnel data (only when non-tunnel charts are visible)
-  const {
-    data: nonTunnelData,
-    isLoading: nonTunnelLoading,
-    isFetching: nonTunnelFetching,
-    error: nonTunnelError,
-  } = useQuery({
-    queryKey: ['traffic-intf', timeRange, false, actualBucketSize, aggMethod, filterParams, metric],
-    queryFn: () => fetchTrafficData(timeRange, false, actualBucketSize, aggMethod, filterParams, metric),
-    staleTime: 30000,
-    refetchInterval: dashboardState.refetchInterval,
-    enabled: showNonTunnelCharts,
-  })
+  // Split by tunnel vs non-tunnel client-side when fetching all interfaces
+  const tunnelData = useMemo(() => {
+    if (!allTrafficData || intfType !== 'all') return allTrafficData
+    return {
+      ...allTrafficData,
+      points: allTrafficData.points.filter(p => p.intf.startsWith('Tunnel')),
+      series: allTrafficData.series.filter(s => s.intf.startsWith('Tunnel')),
+      discards_series: allTrafficData.discards_series.filter(s => s.intf.startsWith('Tunnel')),
+    }
+  }, [allTrafficData, intfType])
+
+  const nonTunnelData = useMemo(() => {
+    if (!allTrafficData || intfType !== 'all') return allTrafficData
+    return {
+      ...allTrafficData,
+      points: allTrafficData.points.filter(p => !p.intf.startsWith('Tunnel')),
+      series: allTrafficData.series.filter(s => !s.intf.startsWith('Tunnel')),
+      discards_series: allTrafficData.discards_series.filter(s => !s.intf.startsWith('Tunnel')),
+    }
+  }, [allTrafficData, intfType])
+
+  const tunnelLoading = trafficLoading
+  const tunnelFetching = trafficFetching
+  const tunnelError = trafficError
+  const nonTunnelLoading = trafficLoading
+  const nonTunnelFetching = trafficFetching
+  const nonTunnelError = trafficError
 
   // Fetch topology data for link metadata
   const {
@@ -245,18 +259,18 @@ function TrafficPageContent() {
     refetchInterval: dashboardState.refetchInterval,
   })
 
-  // Fetch discards data (only when non-tunnel charts are visible)
-  const {
-    data: discardsData,
-    isLoading: discardsLoading,
-    isFetching: discardsFetching,
-  } = useQuery({
-    queryKey: ['discards-intf', timeRange, actualBucketSize, filterParams],
-    queryFn: () => fetchDiscardsData(timeRange, actualBucketSize, filterParams),
-    staleTime: 30000,
-    refetchInterval: dashboardState.refetchInterval,
-    enabled: showNonTunnelCharts,
-  })
+  // Derive discards data from the combined traffic response
+  const discardsData = useMemo(() => {
+    if (!nonTunnelData) return { points: [], series: [] }
+    return {
+      points: nonTunnelData.points
+        .filter(p => p.in_discards > 0 || p.out_discards > 0)
+        .map(p => ({ time: p.time, device_pk: p.device_pk, device: p.device, intf: p.intf, in_discards: p.in_discards, out_discards: p.out_discards })),
+      series: nonTunnelData.discards_series,
+    }
+  }, [nonTunnelData])
+  const discardsLoading = trafficLoading
+  const discardsFetching = trafficFetching
 
   // Build link lookup: device_pk + interface -> link info
   const linkLookup = useMemo(() => {
@@ -442,7 +456,7 @@ function TrafficPageContent() {
 
 export function TrafficPage() {
   return (
-    <DashboardProvider>
+    <DashboardProvider defaultTimeRange="3h">
       <TrafficPageContent />
     </DashboardProvider>
   )

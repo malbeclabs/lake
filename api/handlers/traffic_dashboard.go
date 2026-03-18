@@ -37,7 +37,7 @@ func dashboardTimeRange(tr string) string {
 	case "30d":
 		return "30 DAY"
 	default:
-		return "12 HOUR"
+		return "6 HOUR"
 	}
 }
 

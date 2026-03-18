@@ -14,12 +14,14 @@ import (
 )
 
 type TrafficPoint struct {
-	Time     string  `json:"time"`
-	DevicePk string  `json:"device_pk"`
-	Device   string  `json:"device"`
-	Intf     string  `json:"intf"`
-	InBps    float64 `json:"in_bps"`
-	OutBps   float64 `json:"out_bps"`
+	Time        string  `json:"time"`
+	DevicePk    string  `json:"device_pk"`
+	Device      string  `json:"device"`
+	Intf        string  `json:"intf"`
+	InBps       float64 `json:"in_bps"`
+	OutBps      float64 `json:"out_bps"`
+	InDiscards  int64   `json:"in_discards"`
+	OutDiscards int64   `json:"out_discards"`
 }
 
 type SeriesInfo struct {
@@ -74,7 +76,7 @@ func trafficIntfTypeFilter(r *http.Request, intfTypeSQL string) string {
 }
 
 func GetTrafficData(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
 	// Parse query parameters
@@ -94,7 +96,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	var inExpr, outExpr, fInExpr, fOutExpr, srcColumns, srcFilters string
 	switch metric {
 	case "packets":
-		srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration"
+		srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta"
 		inExpr = "in_pkts_delta / delta_duration"
 		outExpr = "out_pkts_delta / delta_duration"
 		fInExpr = "f.in_pkts_delta / f.delta_duration"
@@ -103,7 +105,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				AND f.in_pkts_delta >= 0
 				AND f.out_pkts_delta >= 0`
 	default: // throughput
-		srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration"
+		srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta"
 		inExpr = "in_octets_delta * 8 / delta_duration"
 		outExpr = "out_octets_delta * 8 / delta_duration"
 		fInExpr = "f.in_octets_delta * 8 / f.delta_duration"
@@ -153,7 +155,9 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				intf,
 				toStartOfInterval(event_ts, INTERVAL %s) AS time_bucket,
 				%s(%s) AS in_bps,
-				%s(%s) AS out_bps
+				%s(%s) AS out_bps,
+				SUM(COALESCE(in_discards_delta, 0)) AS in_discards,
+				SUM(COALESCE(out_discards_delta, 0)) AS out_discards
 			FROM src
 			GROUP BY device_pk, intf, time_bucket
 		)
@@ -163,7 +167,9 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			d.code AS device,
 			r.intf,
 			r.in_bps,
-			r.out_bps
+			r.out_bps,
+			r.in_discards,
+			r.out_discards
 		FROM rates r
 		INNER JOIN devices d ON d.pk = r.device_pk
 		WHERE r.time_bucket IS NOT NULL
@@ -196,7 +202,9 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			d.code AS device,
 			f.intf,
 			AVG(%s) AS mean_in_bps,
-			AVG(%s) AS mean_out_bps
+			AVG(%s) AS mean_out_bps,
+			SUM(COALESCE(f.in_discards_delta, 0)) AS total_in_discards,
+			SUM(COALESCE(f.out_discards_delta, 0)) AS total_out_discards
 		FROM fact_dz_device_interface_counters f
 		INNER JOIN devices d ON d.pk = f.device_pk%s%s
 		WHERE f.%s
@@ -223,10 +231,12 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	// Build series info from mean query (small result set — one row per device/intf)
 	series := []SeriesInfo{}
+	discardsSeries := []DiscardSeriesInfo{}
 	for meanRows.Next() {
 		var device, intf string
 		var meanIn, meanOut float64
-		if err := meanRows.Scan(&device, &intf, &meanIn, &meanOut); err != nil {
+		var totalInDiscards, totalOutDiscards int64
+		if err := meanRows.Scan(&device, &intf, &meanIn, &meanOut, &totalInDiscards, &totalOutDiscards); err != nil {
 			slog.Error("traffic mean row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -246,6 +256,22 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			Direction: "out",
 			Mean:      meanOut,
 		})
+		if totalInDiscards > 0 {
+			discardsSeries = append(discardsSeries, DiscardSeriesInfo{
+				Key:    fmt.Sprintf("%s (In)", key),
+				Device: device,
+				Intf:   intf,
+				Total:  totalInDiscards,
+			})
+		}
+		if totalOutDiscards > 0 {
+			discardsSeries = append(discardsSeries, DiscardSeriesInfo{
+				Key:    fmt.Sprintf("%s (Out)", key),
+				Device: device,
+				Intf:   intf,
+				Total:  totalOutDiscards,
+			})
+		}
 	}
 
 	// Stream JSON response directly from ClickHouse rows to avoid holding
@@ -260,7 +286,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	var scanErr error
 	for rows.Next() {
 		var point TrafficPoint
-		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps); err != nil {
+		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps, &point.InDiscards, &point.OutDiscards); err != nil {
 			slog.Error("traffic row scan error", "error", err)
 			// Already started writing — can't send HTTP error. Log and break.
 			scanErr = err
@@ -285,10 +311,13 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Write series, metadata, and close
+	// Write series, discards_series, metadata, and close
 	_, _ = bw.WriteString(`],"series":`)
 	seriesJSON, _ := json.Marshal(series)
 	_, _ = bw.Write(seriesJSON)
+	_, _ = bw.WriteString(`,"discards_series":`)
+	discardsSeriesJSON, _ := json.Marshal(discardsSeries)
+	_, _ = bw.Write(discardsSeriesJSON)
 	_, _ = fmt.Fprintf(bw, `,"effective_bucket":%q,"truncated":%t}`, bucketInterval, pointCount >= maxTrafficRows)
 	_, _ = bw.WriteString("\n")
 	_ = bw.Flush()
@@ -320,7 +349,7 @@ type DiscardSeriesInfo struct {
 
 // GetDiscardsData returns discard data for all device-interfaces
 func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
 	// Use shared time filter (supports both preset time_range and custom start_time/end_time)

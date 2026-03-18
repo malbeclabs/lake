@@ -3745,6 +3745,8 @@ export interface TrafficPoint {
   intf: string
   in_bps: number
   out_bps: number
+  in_discards: number
+  out_discards: number
 }
 
 export interface SeriesInfo {
@@ -3758,24 +3760,24 @@ export interface SeriesInfo {
 export interface TrafficDataResponse {
   points: TrafficPoint[]
   series: SeriesInfo[]
+  discards_series: DiscardSeriesInfo[]
   effective_bucket: string
   truncated: boolean
 }
 
 export async function fetchTrafficData(
-  timeRange: string = '12h',
-  tunnelOnly: boolean = true,
+  timeRange: string = '6h',
+  tunnelOnly: boolean | null = null,
   bucket: string = 'auto',
   agg: string = 'max',
   filters?: Record<string, string>,
   metric?: string
 ): Promise<TrafficDataResponse> {
   const hasCustomRange = filters?.start_time && filters?.end_time
-  const params = new URLSearchParams({
-    tunnel_only: String(tunnelOnly),
-    bucket: bucket,
-    agg: agg
-  })
+  const params = new URLSearchParams({ bucket, agg })
+  if (tunnelOnly !== null) {
+    params.set('tunnel_only', String(tunnelOnly))
+  }
   if (metric && metric !== 'throughput') {
     params.set('metric', metric)
   }
