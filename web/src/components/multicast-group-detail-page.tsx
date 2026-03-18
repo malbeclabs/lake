@@ -3,6 +3,10 @@ import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info, Search } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
+import uPlot from 'uplot'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
+import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
+import { formatChartAxisRate, formatChartAxisPps } from '@/components/topology/utils'
 import { fetchMulticastGroup, fetchMulticastGroupMembers, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useChartLegend } from '@/hooks/use-chart-legend'
@@ -18,14 +22,6 @@ function formatBps(bps: number): string {
   return `${bps.toFixed(0)} bps`
 }
 
-function formatAxisBps(bps: number): string {
-  if (bps >= 1e12) return `${(bps / 1e12).toFixed(1)}T`
-  if (bps >= 1e9) return `${(bps / 1e9).toFixed(1)}G`
-  if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)}M`
-  if (bps >= 1e3) return `${(bps / 1e3).toFixed(1)}K`
-  return `${bps.toFixed(0)}`
-}
-
 function formatPps(pps: number): string {
   if (pps === 0) return '—'
   if (pps >= 1e9) return `${(pps / 1e9).toFixed(1)} Gpps`
@@ -36,16 +32,16 @@ function formatPps(pps: number): string {
 
 type TrafficMetric = 'throughput' | 'packets'
 
+function formatTime(timeStr: string): string {
+  const d = new Date(timeStr)
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+}
+
 function formatStake(sol: number): string {
   if (sol === 0) return '—'
   if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M SOL`
   if (sol >= 1e3) return `${(sol / 1e3).toFixed(1)}K SOL`
   return `${sol.toFixed(0)} SOL`
-}
-
-function formatTime(timeStr: string): string {
-  const d = new Date(timeStr)
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
 function formatSlotDelta(slotDelta: number): string {
@@ -75,11 +71,12 @@ const TRAFFIC_COLORS = [
 const TIME_RANGES = ['1h', '6h', '12h', '24h'] as const
 const BUCKET_OPTIONS = ['auto', '2s', '10s', '30s', '1m', '2m', '5m', '10m'] as const
 
-function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }: {
+function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, onSelectMember }: {
   groupCode: string
   members: MulticastMember[]
   activeTab: 'publishers' | 'subscribers'
   onHoverMember?: (seriesKey: string | null) => void
+  onSelectMember?: (keys: Set<string>) => void
 }) {
   const [timeRange, setTimeRange] = useState<string>('1h')
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
@@ -118,56 +115,51 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
     return map
   }, [members])
 
-  const { chartData, seriesKeys } = useMemo(() => {
-    if (!trafficData || trafficData.length === 0) return { chartData: [], seriesKeys: [] as string[] }
+  const { uplotData, seriesKeys } = useMemo(() => {
+    if (!trafficData || trafficData.length === 0)
+      return { uplotData: [new Float64Array(0)] as uPlot.AlignedData, seriesKeys: [] as string[] }
 
     const showPubs = activeTab === 'publishers'
-    const keys = new Set<string>()
-    const timeMap = new Map<string, Record<string, string | number>>()
+    const keySet = new Set<string>()
+    const timeMap = new Map<string, Map<string, number>>()
 
     for (const p of trafficData) {
       const isPub = p.mode === 'P'
       if (isPub !== showPubs) continue
 
       const seriesKey = `${p.device_pk}_${p.tunnel_id}`
-      keys.add(seriesKey)
+      keySet.add(seriesKey)
 
-      let row = timeMap.get(p.time)
-      if (!row) {
-        row = { time: p.time } as Record<string, string | number>
-        timeMap.set(p.time, row)
+      let byKey = timeMap.get(p.time)
+      if (!byKey) {
+        byKey = new Map()
+        timeMap.set(p.time, byKey)
       }
-      // Device counters: in = arriving at device (publisher sends), out = leaving device (to subscriber)
-      if (metric === 'throughput') {
-        row[seriesKey] = showPubs ? p.in_bps : p.out_bps
-      } else {
-        row[seriesKey] = showPubs ? p.in_pps : p.out_pps
-      }
+      const value = metric === 'throughput'
+        ? (showPubs ? p.in_bps : p.out_bps)
+        : (showPubs ? p.in_pps : p.out_pps)
+      byKey.set(seriesKey, value)
     }
 
-    for (const row of timeMap.values()) {
-      for (const k of keys) {
-        if (!(k in row)) row[k] = 0
-      }
-    }
-
-    // Only include series that have a matching member
-    const memberKeys = new Set(members.filter(m => m.tunnel_id > 0).map(m => `${m.device_pk}_${m.tunnel_id}`))
-    const filteredKeys = [...keys].filter(k => memberKeys.has(k)).sort()
-
-    const data = [...timeMap.values()].sort((a, b) =>
-      String(a.time).localeCompare(String(b.time))
+    const memberKeys = new Set(
+      members.filter(m => m.tunnel_id > 0).map(m => `${m.device_pk}_${m.tunnel_id}`)
     )
-    return { chartData: data, seriesKeys: filteredKeys }
+    const keys = [...keySet].filter(k => memberKeys.has(k)).sort()
+    const sortedTimes = [...timeMap.keys()].sort()
+    const timestamps = new Float64Array(sortedTimes.map(t => new Date(t).getTime() / 1000))
+    const columns = keys.map(key =>
+      new Float64Array(sortedTimes.map(t => timeMap.get(t)?.get(key) ?? 0))
+    )
+
+    return {
+      uplotData: [timestamps, ...columns] as uPlot.AlignedData,
+      seriesKeys: keys,
+    }
   }, [trafficData, activeTab, metric, members])
 
-  const getSeriesColor = (key: string) => {
-    const idx = seriesKeys.indexOf(key)
-    return TRAFFIC_COLORS[idx % TRAFFIC_COLORS.length]
-  }
-
-  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const legend = useChartLegend()
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const focusedKeyRef = useRef<string | null>(null)
 
   // Legend: resizable, searchable, sortable
   const LEGEND_HEADER_HEIGHT = 60 // header + column headers + padding
@@ -220,82 +212,90 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
     }
   }
 
-  // Snap-to-peak: find the index with the highest value in a window around the hovered point.
-  // Window scales with data density — 5% of total points in each direction, clamped to [5, 150].
-  const effectiveIdx = useMemo(() => {
-    if (hoveredIdx === null) return null
-    if (chartData.length === 0) return hoveredIdx
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
 
-    const peakWindow = Math.min(150, Math.max(5, Math.round(chartData.length * 0.05)))
-    const lo = Math.max(0, hoveredIdx - peakWindow)
-    const hi = Math.min(chartData.length - 1, hoveredIdx + peakWindow)
-    let bestIdx = hoveredIdx
-    let bestVal = -Infinity
-
-    for (let i = lo; i <= hi; i++) {
-      const row = chartData[i]
-      let rowMax = 0
-      for (const key of seriesKeys) {
-        const val = (row[key] as number) ?? 0
-        rowMax = Math.max(rowMax, val)
-      }
-      if (rowMax > bestVal) {
-        bestVal = rowMax
-        bestIdx = i
-      }
-    }
-    return bestIdx
-  }, [hoveredIdx, chartData, seriesKeys])
-
-  // Latest values (last data point) — used for stable sort order
-  const latestValues = useMemo(() => {
-    if (chartData.length === 0) return new Map<string, number>()
-    const row = chartData[chartData.length - 1]
-    const map = new Map<string, number>()
-    for (const key of seriesKeys) {
-      map.set(key, (row[key] as number) ?? 0)
-    }
-    return map
-  }, [chartData, seriesKeys])
-
-  // Display values (hovered or latest) — shown in legend Rate column
   const displayValues = useMemo(() => {
-    if (effectiveIdx === null || chartData.length === 0) return latestValues
-    const row = chartData[effectiveIdx]
     const map = new Map<string, number>()
-    for (const key of seriesKeys) {
-      map.set(key, (row[key] as number) ?? 0)
+    if (!uplotData[0] || uplotData[0].length === 0) return map
+    const idx = hoveredIdx != null && hoveredIdx < uplotData[0].length
+      ? hoveredIdx
+      : uplotData[0].length - 1
+    for (let i = 0; i < seriesKeys.length; i++) {
+      map.set(seriesKeys[i], (uplotData[i + 1] as number[])?.[idx] ?? 0)
     }
     return map
-  }, [chartData, seriesKeys, effectiveIdx, latestValues])
-
-  const hoveredTime = useMemo(() => {
-    if (hoveredIdx === null || hoveredIdx >= chartData.length) return null
-    const t = chartData[hoveredIdx].time as string
-    if (!t) return null
-    const d = new Date(t)
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  }, [hoveredIdx, chartData])
-
-  // Compute Y-axis domain based on visible series only
-  const yDomain = useMemo((): [number, number] => {
-    if (chartData.length === 0) return [0, 0]
-    const visibleKeys = legend.selectedSeries.size === 0
-      ? seriesKeys
-      : seriesKeys.filter(k => legend.selectedSeries.has(k))
-    if (visibleKeys.length === 0) return [0, 0]
-    let max = 0
-    for (const row of chartData) {
-      for (const k of visibleKeys) {
-        const v = (row[k] as number) ?? 0
-        if (v > max) max = v
-      }
-    }
-    return [0, max || 1]
-  }, [chartData, seriesKeys, legend.selectedSeries])
+  }, [uplotData, seriesKeys, hoveredIdx])
 
   const fmtValue = metric === 'throughput' ? formatBps : formatPps
-  const fmtAxis = (v: number) => formatAxisBps(v)
+
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIdx(idx)
+  }, [])
+
+  const handleFocusSeries = useCallback((seriesIdx: number | null) => {
+    if (seriesIdx != null && seriesIdx > 0 && seriesIdx <= seriesKeys.length) {
+      const key = seriesKeys[seriesIdx - 1]
+      focusedKeyRef.current = key
+      legend.handleMouseEnter(key)
+    } else {
+      focusedKeyRef.current = null
+      legend.handleMouseLeave()
+    }
+  }, [seriesKeys, legend])
+
+  const uplotSeries = useMemo((): uPlot.Series[] => {
+    const s: uPlot.Series[] = [{}]
+    for (let i = 0; i < seriesKeys.length; i++) {
+      s.push({
+        label: seriesKeys[i],
+        stroke: TRAFFIC_COLORS[i % TRAFFIC_COLORS.length],
+        width: 1.5,
+        points: { show: false },
+      })
+    }
+    return s
+  }, [seriesKeys])
+
+  const uplotAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    {
+      values: (_u: uPlot, vals: number[]) =>
+        vals.map(v => metric === 'throughput' ? formatChartAxisRate(v) : formatChartAxisPps(v)),
+    },
+  ], [metric])
+
+  const { plotRef } = useUPlotChart({
+    containerRef: chartContainerRef,
+    data: uplotData,
+    series: uplotSeries,
+    height: 224,
+    axes: uplotAxes,
+    onCursorIdx: handleCursorIdx,
+    onFocusSeries: handleFocusSeries,
+  })
+
+  useUPlotLegendSync(plotRef, legend, seriesKeys)
+
+  // Click on chart: select focused series, or clear selection
+  const legendRef = useRef(legend)
+  legendRef.current = legend
+  const handleChartClick = useCallback((e: React.MouseEvent) => {
+    const leg = legendRef.current
+    if (focusedKeyRef.current) {
+      leg.handleClick(focusedKeyRef.current, e)
+    } else if (leg.selectedSeries.size > 0) {
+      leg.setSelectedSeries(new Set())
+    }
+  }, [])
+
+  // Propagate selection to parent
+  const prevSelectedRef = useRef<Set<string>>(legend.selectedSeries)
+  useEffect(() => {
+    if (prevSelectedRef.current !== legend.selectedSeries) {
+      prevSelectedRef.current = legend.selectedSeries
+      onSelectMember?.(legend.selectedSeries)
+    }
+  }, [legend.selectedSeries, onSelectMember])
 
   // Legend: filter by search text, then sort
   const legendFilteredKeys = useMemo(() => {
@@ -315,8 +315,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
     }
     const sorted = [...keys].sort((a, b) => {
       if (legendSortBy === 'value') {
-        const va = latestValues.get(a) ?? 0
-        const vb = latestValues.get(b) ?? 0
+        const va = displayValues.get(a) ?? 0
+        const vb = displayValues.get(b) ?? 0
         return legendSortDir === 'desc' ? vb - va : va - vb
       }
       const infoA = seriesInfo.get(a)
@@ -326,7 +326,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
       return legendSortDir === 'asc' ? labelA.localeCompare(labelB) : labelB.localeCompare(labelA)
     })
     return sorted
-  }, [seriesKeys, legendSearchText, legendSortBy, legendSortDir, seriesInfo, latestValues])
+  }, [seriesKeys, legendSearchText, legendSortBy, legendSortDir, seriesInfo, displayValues])
 
   const legendHeight = useMemo(() => {
     const contentHeight = LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
@@ -338,7 +338,6 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-muted-foreground">
           Traffic ({activeTab})
-          {hoveredTime && <span className="ml-2 text-foreground tabular-nums">{hoveredTime}</span>}
         </h3>
         <div className="flex items-center gap-2">
           <select
@@ -377,59 +376,19 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
         </div>
       )}
 
-      {!isLoading && chartData.length === 0 && (
+      {!isLoading && uplotData[0].length === 0 && (
         <div className="flex items-center justify-center h-56 text-sm text-muted-foreground">
           No traffic data available
         </div>
       )}
 
-      {!isLoading && chartData.length > 0 && (
+      {!isLoading && uplotData[0].length > 0 && (
         <div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={chartData}
-                onMouseMove={(state) => {
-                  if (state?.activeTooltipIndex != null) setHoveredIdx(Number(state.activeTooltipIndex))
-                }}
-                onMouseLeave={() => setHoveredIdx(null)}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={formatTime}
-                />
-                <YAxis
-                  tick={{ fontSize: 9 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={fmtAxis}
-                  width={45}
-                  domain={yDomain}
-                  allowDataOverflow={true}
-                />
-                <RechartsTooltip
-                  content={() => null}
-                  cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 2' }}
-                />
-                {seriesKeys.map(key => (
-                  <Line
-                    key={key}
-                    type="monotone"
-                    dataKey={key}
-                    stroke={getSeriesColor(key)}
-                    strokeWidth={1.5}
-                    strokeOpacity={legend.getOpacity(key)}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <div
+            ref={chartContainerRef}
+            className="h-56"
+            onClick={handleChartClick}
+          />
           {seriesKeys.length > 0 && (
             <div ref={legendContainerRef} className="relative mt-2" style={{ height: `${legendHeight}px` }}>
               <div className="flex flex-col h-full text-xs">
@@ -501,7 +460,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
                       Owner
                       {legendSortBy === 'name' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
                     </button>
-                    <div className="w-20 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">Node</div>
+                    <div className="w-48 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">DZ ID</div>
                     <button
                       onClick={() => { setLegendSortBy('value'); setLegendSortDir(legendSortBy === 'value' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
                       className="w-20 flex items-center justify-end gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
@@ -523,9 +482,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
                       const ownerLabel = info?.ownerPubkey
                         ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
                         : key.split('_')[0].slice(0, 8)
-                      const nodeLabel = info?.nodePubkey
-                        ? `${info.nodePubkey.slice(0, 4)}..${info.nodePubkey.slice(-4)}`
-                        : '—'
+                      const dzIdLabel = info?.ownerPubkey || '—'
                       return (
                         <div
                           key={key}
@@ -543,7 +500,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember }:
                             {ownerLabel}
                             <span className="text-muted-foreground ml-2">{info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}</span>
                           </div>
-                          <div className="w-20 text-right tabular-nums font-mono text-muted-foreground">{nodeLabel}</div>
+                          <div className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text" title={dzIdLabel}>{dzIdLabel}</div>
                           <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
                         </div>
                       )
@@ -817,6 +774,7 @@ export function MulticastGroupDetailPage() {
   const offset = (page - 1) * pageSize
   const [liveFilter, setLiveFilter] = useState('')
   const [hoveredSeriesKey, setHoveredSeriesKey] = useState<string | null>(null)
+  const [selectedSeriesKeys, setSelectedSeriesKeys] = useState<Set<string>>(new Set())
 
   const setActiveTab = useCallback((tab: 'publishers' | 'subscribers') => {
     setSearchParams(prev => {
@@ -1003,6 +961,42 @@ export function MulticastGroupDetailPage() {
     )
   }, [membersResponse, clientFilters])
 
+  // Selected members not on current page — surfaced at top of table
+  const surfacedMembers = useMemo(() => {
+    if (selectedSeriesKeys.size === 0 || !group) return []
+    const activeKeys = new Set(activeMembers.map(m => `${m.device_pk}_${m.tunnel_id}`))
+    const modeFilter = activeTab === 'publishers' ? 'P' : 'S'
+    return group.members.filter(m => {
+      const key = `${m.device_pk}_${m.tunnel_id}`
+      if (!selectedSeriesKeys.has(key)) return false
+      if (activeKeys.has(key)) return false
+      // Only surface members matching the active tab
+      return m.mode === modeFilter || m.mode === 'P+S'
+    })
+  }, [selectedSeriesKeys, group, activeMembers, activeTab])
+
+  // Scroll to first selected row when selection changes
+  const selectedRowRef = useRef<HTMLTableRowElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (selectedSeriesKeys.size > 0) {
+      // Defer to next frame so surfaced rows are rendered before scrolling
+      requestAnimationFrame(() => {
+        const row = selectedRowRef.current
+        const container = scrollContainerRef.current
+        if (!row || !container) return
+        // Manually scroll just the overflow-auto container (scrollIntoView
+        // also scrolls overflow:hidden ancestors, breaking the app layout)
+        const rowTop = row.offsetTop
+        const containerScroll = container.scrollTop
+        const containerHeight = container.clientHeight
+        if (rowTop < containerScroll || rowTop > containerScroll + containerHeight - row.offsetHeight) {
+          container.scrollTo({ top: Math.max(0, rowTop - 80), behavior: 'smooth' })
+        }
+      })
+    }
+  }, [selectedSeriesKeys])
+
   if (groupLoading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -1028,8 +1022,66 @@ export function MulticastGroupDetailPage() {
     )
   }
 
+  const renderMemberCells = (member: MulticastMember, _seriesKey: string) => (
+    <>
+      <td className="px-4 py-3 text-sm font-mono">
+        {member.owner_pubkey ? (
+          <Link to={`/dz/users/${member.user_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+            {member.owner_pubkey.slice(0, 4)}..{member.owner_pubkey.slice(-4)}
+          </Link>
+        ) : '—'}
+      </td>
+      <td className="px-4 py-3 text-sm font-mono">
+        {member.node_pubkey ? (
+          <Link to={`/solana/gossip-nodes/${member.node_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+            {member.node_pubkey.slice(0, 4)}..{member.node_pubkey.slice(-4)}
+          </Link>
+        ) : '—'}
+      </td>
+      <td className="px-4 py-3 text-sm">
+        {member.device_pk ? (
+          <Link to={`/dz/devices/${member.device_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+            {member.device_code || member.device_pk.slice(0, 8)}
+          </Link>
+        ) : '—'}
+      </td>
+      <td className="px-4 py-3 text-sm">
+        {member.metro_pk ? (
+          <Link to={`/dz/metros/${member.metro_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+            {member.metro_name || member.metro_code}
+          </Link>
+        ) : '—'}
+      </td>
+      <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
+        {member.dz_ip || '—'}
+      </td>
+      <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground font-mono">
+        {member.tunnel_id > 0 ? member.tunnel_id : '—'}
+      </td>
+      <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
+        {member.stake_sol > 0 ? formatStake(member.stake_sol) : '—'}
+      </td>
+      <td className="px-4 py-3 text-sm">
+        {member.is_leader ? (
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 font-medium text-xs">
+            Leading now
+          </span>
+        ) : (
+          (() => {
+            const timing = leaderTimingText(member)
+            return timing ? (
+              <span className="text-muted-foreground">{timing}</span>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )
+          })()
+        )}
+      </td>
+    </>
+  )
+
   return (
-    <div className="flex-1 overflow-auto">
+    <div ref={scrollContainerRef} className="flex-1 overflow-auto">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
         {/* Back button */}
         <button
@@ -1170,79 +1222,33 @@ export function MulticastGroupDetailPage() {
                     </td>
                   </tr>
                 )}
-                {activeMembers.map((member) => (
+                {surfacedMembers.map((member, i) => {
+                  const memberSeriesKey = `${member.device_pk}_${member.tunnel_id}`
+                  return (
+                  <tr
+                    key={`surfaced-${member.user_pk}`}
+                    ref={i === 0 ? selectedRowRef : undefined}
+                    className="border-b border-border bg-muted border-l-2 border-l-purple-500"
+                  >
+                    {renderMemberCells(member, memberSeriesKey)}
+                  </tr>
+                  )
+                })}
+                {activeMembers.map((member) => {
+                  const memberSeriesKey = `${member.device_pk}_${member.tunnel_id}`
+                  const isHovered = hoveredSeriesKey === memberSeriesKey
+                  const isSelected = selectedSeriesKeys.size > 0 && selectedSeriesKeys.has(memberSeriesKey)
+                  return (
                   <tr
                     key={member.user_pk}
-                    className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${hoveredSeriesKey === `${member.device_pk}_${member.tunnel_id}` ? 'bg-muted' : ''}`}
+                    ref={isSelected && surfacedMembers.length === 0 ? selectedRowRef : undefined}
+                    className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${isSelected ? 'bg-muted border-l-2 border-l-purple-500' : isHovered ? 'bg-muted' : ''}`}
                   >
-                    <td className="px-4 py-3 text-sm font-mono">
-                      {member.owner_pubkey ? (
-                        <Link
-                          to={`/dz/users/${member.user_pk}`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          {member.owner_pubkey.slice(0, 4)}..{member.owner_pubkey.slice(-4)}
-                        </Link>
-                      ) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-mono">
-                      {member.node_pubkey ? (
-                        <Link
-                          to={`/solana/gossip-nodes/${member.node_pubkey}`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          {member.node_pubkey.slice(0, 4)}..{member.node_pubkey.slice(-4)}
-                        </Link>
-                      ) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {member.device_pk ? (
-                        <Link
-                          to={`/dz/devices/${member.device_pk}`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
-                        >
-                          {member.device_code || member.device_pk.slice(0, 8)}
-                        </Link>
-                      ) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {member.metro_pk ? (
-                        <Link
-                          to={`/dz/metros/${member.metro_pk}`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline"
-                        >
-                          {member.metro_name || member.metro_code}
-                        </Link>
-                      ) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-                      {member.dz_ip || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground font-mono">
-                      {member.tunnel_id > 0 ? member.tunnel_id : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
-                      {member.stake_sol > 0 ? formatStake(member.stake_sol) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {member.is_leader ? (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-500 font-medium text-xs">
-                          Leading now
-                        </span>
-                      ) : (
-                        (() => {
-                          const timing = leaderTimingText(member)
-                          return timing ? (
-                            <span className="text-muted-foreground">{timing}</span>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )
-                        })()
-                      )}
-                    </td>
+                    {renderMemberCells(member, memberSeriesKey)}
                   </tr>
-                ))}
-                {!membersLoading && activeMembers.length === 0 && (
+                  )
+                })}
+                {!membersLoading && activeMembers.length === 0 && surfacedMembers.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                       No {activeTab} found
@@ -1271,6 +1277,7 @@ export function MulticastGroupDetailPage() {
             members={group.members}
             activeTab={activeTab}
             onHoverMember={setHoveredSeriesKey}
+            onSelectMember={setSelectedSeriesKeys}
           />
         )}
 

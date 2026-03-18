@@ -61,12 +61,12 @@ export function useChartLegend(): UseChartLegendReturn {
     if (hoveredSeries) {
       if (key === hoveredSeries) return 1
       if (selectedSeries.size > 0 && selectedSeries.has(key)) return 1
-      return selectedSeries.size > 0 ? 0 : 0.2
+      return selectedSeries.size > 0 ? 0.15 : 0.2
     }
 
-    // If selected but not hovering, show selected, hide others
+    // If selected but not hovering, show selected, dim others
     if (selectedSeries.size > 0) {
-      return selectedSeries.has(key) ? 1 : 0
+      return selectedSeries.has(key) ? 1 : 0.15
     }
 
     return 1
