@@ -129,7 +129,7 @@ func Load() error {
 		},
 		DialTimeout:     5 * time.Second,
 		MaxOpenConns:    50,
-		MaxIdleConns:    10,
+		MaxIdleConns:    50,
 		ConnMaxLifetime: 10 * time.Minute,
 	}
 
