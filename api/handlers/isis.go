@@ -988,50 +988,6 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, response)
 }
 
-func parseNodeListWithMetrics(nodeListVal, edgeMetricsVal any) []MultiPathHop {
-	if nodeListVal == nil {
-		return []MultiPathHop{}
-	}
-	nodeArr, ok := nodeListVal.([]any)
-	if !ok {
-		return []MultiPathHop{}
-	}
-
-	// Parse edge metrics
-	var edgeMetrics []int64
-	if edgeMetricsVal != nil {
-		if metricsArr, ok := edgeMetricsVal.([]any); ok {
-			for _, m := range metricsArr {
-				edgeMetrics = append(edgeMetrics, asInt64(m))
-			}
-		}
-	}
-
-	hops := make([]MultiPathHop, 0, len(nodeArr))
-	for i, item := range nodeArr {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		hop := MultiPathHop{
-			DevicePK:   asString(m["pk"]),
-			DeviceCode: asString(m["code"]),
-			Status:     asString(m["status"]),
-			DeviceType: asString(m["device_type"]),
-		}
-
-		// Edge metric is the metric to reach this hop from the previous one
-		// So hop[i] uses edgeMetrics[i-1]
-		if i > 0 && i-1 < len(edgeMetrics) {
-			hop.EdgeMetric = uint32(edgeMetrics[i-1])
-		}
-
-		hops = append(hops, hop)
-	}
-	return hops
-}
-
 // linkLatencyData holds measured latency data for a link
 type linkLatencyData struct {
 	SideAPK     string

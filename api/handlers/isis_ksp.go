@@ -19,8 +19,8 @@ type kspEdge struct {
 }
 
 type kspGraph struct {
-	Adj   map[string][]kspEdge          // adjacency list
-	Nodes map[string]kspNodeInfo         // node metadata
+	Adj   map[string][]kspEdge   // adjacency list
+	Nodes map[string]kspNodeInfo // node metadata
 }
 
 type kspNodeInfo struct {
@@ -120,11 +120,6 @@ func dijkstra(g *kspGraph, source, target string, excludeNodes map[string]bool, 
 		return nil
 	}
 
-	type state struct {
-		node string
-		cost uint32
-	}
-
 	dist := make(map[string]uint32)
 	prev := make(map[string]string)
 	dist[source] = 0
@@ -195,10 +190,10 @@ func yenKSP(g *kspGraph, source, target string, k int) []kspPath {
 		return nil
 	}
 
-	A := []kspPath{*first}                                // k-shortest paths found so far
-	B := &candidateHeap{}                                 // candidate paths
+	A := []kspPath{*first} // k-shortest paths found so far
+	B := &candidateHeap{}  // candidate paths
 	heap.Init(B)
-	seen := make(map[string]bool)                         // dedup candidates by node sequence
+	seen := make(map[string]bool) // dedup candidates by node sequence
 
 	for i := 1; i < k; i++ {
 		prevPath := A[i-1]
@@ -344,10 +339,10 @@ type dijkItem struct {
 
 type dijkHeap []dijkItem
 
-func (h dijkHeap) Len() int            { return len(h) }
-func (h dijkHeap) Less(i, j int) bool  { return h[i].cost < h[j].cost }
-func (h dijkHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *dijkHeap) Push(x any)         { *h = append(*h, x.(dijkItem)) }
+func (h dijkHeap) Len() int           { return len(h) }
+func (h dijkHeap) Less(i, j int) bool { return h[i].cost < h[j].cost }
+func (h dijkHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *dijkHeap) Push(x any)        { *h = append(*h, x.(dijkItem)) }
 func (h *dijkHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -358,10 +353,10 @@ func (h *dijkHeap) Pop() any {
 
 type candidateHeap []kspPath
 
-func (h candidateHeap) Len() int            { return len(h) }
-func (h candidateHeap) Less(i, j int) bool  { return h[i].TotalMetric < h[j].TotalMetric }
-func (h candidateHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *candidateHeap) Push(x any)         { *h = append(*h, x.(kspPath)) }
+func (h candidateHeap) Len() int           { return len(h) }
+func (h candidateHeap) Less(i, j int) bool { return h[i].TotalMetric < h[j].TotalMetric }
+func (h candidateHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *candidateHeap) Push(x any)        { *h = append(*h, x.(kspPath)) }
 func (h *candidateHeap) Pop() any {
 	old := *h
 	n := len(old)
