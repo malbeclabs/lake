@@ -13,6 +13,7 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
+import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from './page-header'
 
 const VALID_WINDOWS = ['1h', '24h', '7d', '30d', 'all'] as const
@@ -592,7 +593,10 @@ export function EdgeScoreboardPage() {
     return [...data.nodes].sort((a, b) => (b.stake_sol ?? 0) - (a.stake_sol ?? 0))
   }, [data?.nodes])
 
-  if (isLoading) return <ScoreboardSkeleton />
+  const showSkeleton = useDelayedLoading(isLoading)
+
+  if (isLoading && showSkeleton) return <ScoreboardSkeleton />
+  if (isLoading) return null
 
   if (error) {
     return (
