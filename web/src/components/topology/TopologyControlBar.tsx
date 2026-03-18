@@ -29,7 +29,7 @@ import {
   Play,
   Pause,
 } from 'lucide-react'
-import { useTopology, type TopologyMode, type PathMode } from './TopologyContext'
+import { useTopology, type TopologyMode } from './TopologyContext'
 import { useEnv } from '@/contexts/EnvContext'
 
 interface TopologyControlBarProps {
@@ -125,7 +125,7 @@ export function TopologyControlBar({
   linkAnimating,
   onToggleLinkAnimation,
 }: TopologyControlBarProps) {
-  const { mode, setMode, pathMode, setPathMode, overlays, toggleOverlay, view, panel, openPanel, closePanel } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, view, panel, openPanel, closePanel } = useTopology()
   const { features } = useEnv()
   const hasNeo4j = features.neo4j
   const navigate = useNavigate()
@@ -183,16 +183,14 @@ export function TopologyControlBar({
     }
   }
 
-  // Toggle path mode with specific path type
-  const togglePathMode = (pathType: PathMode) => {
-    // If already in this exact path mode, toggle off
-    if (mode === 'path' && pathMode === pathType) {
+  // Toggle path mode on/off
+  const togglePathMode = () => {
+    if (mode === 'path') {
       setMode('explore')
       if (panel.content === 'mode') {
         closePanel()
       }
     } else {
-      setPathMode(pathType)
       setMode('path')
       openPanel('mode')
     }
@@ -354,20 +352,10 @@ export function TopologyControlBar({
 
               <NavItem
                 icon={<Route className="h-3.5 w-3.5" />}
-                label="Fewest hops"
+                label="Device paths"
                 shortcut="p"
-                onClick={() => togglePathMode('hops')}
-                active={mode === 'path' && pathMode === 'hops'}
-                activeColor="amber"
-                collapsed={collapsed}
-              />
-
-              <NavItem
-                icon={<Route className="h-3.5 w-3.5" />}
-                label="Lowest latency"
-                shortcut="l"
-                onClick={() => togglePathMode('latency')}
-                active={mode === 'path' && pathMode === 'latency'}
+                onClick={() => togglePathMode()}
+                active={mode === 'path'}
                 activeColor="amber"
                 collapsed={collapsed}
               />

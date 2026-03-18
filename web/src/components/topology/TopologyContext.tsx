@@ -11,9 +11,6 @@ export type TopologyMode =
   | 'whatif-addition'  // Simulate link addition
   | 'impact'       // Device failure impact analysis
 
-// Path finding optimization mode
-export type PathMode = 'hops' | 'latency'
-
 // Selection types that can be displayed in the panel
 export type SelectionType = 'device' | 'link' | 'metro' | 'validator'
 
@@ -55,10 +52,6 @@ export interface TopologyContextValue {
   // Current mode
   mode: TopologyMode
   setMode: (mode: TopologyMode) => void
-
-  // Path finding mode (hops vs latency)
-  pathMode: PathMode
-  setPathMode: (mode: PathMode) => void
 
   // Selection state (synced with URL)
   selection: Selection | null
@@ -156,9 +149,6 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
 
   // Mode state
   const [mode, setModeInternal] = useState<TopologyMode>('explore')
-
-  // Path finding mode (hops vs latency)
-  const [pathMode, setPathMode] = useState<PathMode>('hops')
 
   // Panel state with localStorage persistence for width
   // Default to closed - panel opens when user selects an item or enters a mode
@@ -363,8 +353,6 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   const value: TopologyContextValue = {
     mode,
     setMode,
-    pathMode,
-    setPathMode,
     selection,
     setSelection,
     impactDevices,

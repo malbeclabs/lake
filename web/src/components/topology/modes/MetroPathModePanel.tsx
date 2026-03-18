@@ -1,5 +1,5 @@
 import { Building2, X, ArrowLeft } from 'lucide-react'
-import type { MetroDevicePathsResponse, PathMode } from '@/lib/api'
+import type { MetroDevicePathsResponse } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { MetroSelector, type MetroOption } from '../MetroSelector'
 
@@ -18,12 +18,10 @@ interface MetroPathModePanelProps {
   metros: MetroOption[]
   pathsResult: MetroDevicePathsResponse | null
   loading: boolean
-  pathMode: PathMode
   viewMode: 'aggregate' | 'drilldown'
   selectedPairIndices: number[]
   onSetSourceMetro: (pk: string | null) => void
   onSetTargetMetro: (pk: string | null) => void
-  onPathModeChange: (mode: PathMode) => void
   onViewModeChange: (mode: 'aggregate' | 'drilldown') => void
   onTogglePair: (index: number) => void
   onClearSelection: () => void
@@ -56,12 +54,10 @@ export function MetroPathModePanel({
   metros,
   pathsResult,
   loading,
-  pathMode,
   viewMode,
   selectedPairIndices,
   onSetSourceMetro,
   onSetTargetMetro,
-  onPathModeChange,
   onViewModeChange,
   onTogglePair,
   onClearSelection,
@@ -84,35 +80,13 @@ export function MetroPathModePanel({
       <div className="flex items-center justify-between mb-2">
         <span className="font-medium flex items-center gap-1.5">
           <Building2 className="h-3.5 w-3.5 text-cyan-500" />
-          Metro Path Finding
+          Metro Paths
         </span>
         {(sourceMetro || targetMetro) && (
           <button onClick={onClear} className="p-1 hover:bg-[var(--muted)] rounded" title="Clear">
             <X className="h-3 w-3" />
           </button>
         )}
-      </div>
-
-      {/* Mode toggle */}
-      <div className="flex gap-1 mb-3 p-0.5 bg-[var(--muted)] rounded">
-        <button
-          onClick={() => onPathModeChange('hops')}
-          className={`flex-1 px-2 py-1 rounded text-xs transition-colors ${
-            pathMode === 'hops' ? 'bg-[var(--card)] shadow-sm' : 'hover:bg-[var(--card)]/50'
-          }`}
-          title="Find paths with fewest hops"
-        >
-          Fewest Hops
-        </button>
-        <button
-          onClick={() => onPathModeChange('latency')}
-          className={`flex-1 px-2 py-1 rounded text-xs transition-colors ${
-            pathMode === 'latency' ? 'bg-[var(--card)] shadow-sm' : 'hover:bg-[var(--card)]/50'
-          }`}
-          title="Find paths with lowest latency"
-        >
-          Lowest Latency
-        </button>
       </div>
 
       {/* Metro selectors */}

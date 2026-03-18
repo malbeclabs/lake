@@ -1,5 +1,5 @@
 import { Route, X, ArrowRightLeft } from 'lucide-react'
-import type { MultiPathResponse, PathMode } from '@/lib/api'
+import type { MultiPathResponse } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DeviceSelector, type DeviceOption } from '../DeviceSelector'
 
@@ -17,14 +17,12 @@ interface PathModePanelProps {
   pathTarget: string | null
   pathsResult: MultiPathResponse | null
   pathLoading: boolean
-  pathMode: PathMode
   selectedPathIndex: number
   devices: DeviceOption[]
   showReverse: boolean
   reversePathsResult: MultiPathResponse | null
   reversePathLoading: boolean
   selectedReversePathIndex: number
-  onPathModeChange: (mode: PathMode) => void
   onSelectPath: (index: number) => void
   onSelectReversePath: (index: number) => void
   onClearPath: () => void
@@ -38,14 +36,12 @@ export function PathModePanel({
   pathTarget,
   pathsResult,
   pathLoading,
-  pathMode,
   selectedPathIndex,
   devices,
   showReverse,
   reversePathsResult,
   reversePathLoading,
   selectedReversePathIndex,
-  onPathModeChange,
   onSelectPath,
   onSelectReversePath,
   onClearPath,
@@ -65,35 +61,13 @@ export function PathModePanel({
       <div className="flex items-center justify-between mb-2">
         <span className="font-medium flex items-center gap-1.5">
           <Route className="h-3.5 w-3.5 text-amber-500" />
-          Path Finding
+          Device Paths
         </span>
         {(pathSource || pathTarget) && (
           <button onClick={onClearPath} className="p-1 hover:bg-[var(--muted)] rounded" title="Clear path">
             <X className="h-3 w-3" />
           </button>
         )}
-      </div>
-
-      {/* Mode toggle */}
-      <div className="flex gap-1 mb-3 p-0.5 bg-[var(--muted)] rounded">
-        <button
-          onClick={() => onPathModeChange('hops')}
-          className={`flex-1 px-2 py-1 rounded text-xs transition-colors ${
-            pathMode === 'hops' ? 'bg-[var(--card)] shadow-sm' : 'hover:bg-[var(--card)]/50'
-          }`}
-          title="Find path with fewest hops"
-        >
-          Fewest Hops
-        </button>
-        <button
-          onClick={() => onPathModeChange('latency')}
-          className={`flex-1 px-2 py-1 rounded text-xs transition-colors ${
-            pathMode === 'latency' ? 'bg-[var(--card)] shadow-sm' : 'hover:bg-[var(--card)]/50'
-          }`}
-          title="Find path with lowest latency"
-        >
-          Lowest Latency
-        </button>
       </div>
 
       {/* Device selectors */}

@@ -331,7 +331,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const settingSelectionLocallyRef = useRef(false)
 
   // Get unified topology context
-  const { mode, setMode, pathMode, setPathMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
 
   // Derive mode states from context
   const pathModeEnabled = mode === 'path'
@@ -942,7 +942,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (!pathModeEnabled || !pathSource || !pathTarget) return
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, 5, pathMode)
+    fetchISISPaths(pathSource, pathTarget, 5)
       .then(result => {
         setPathsResult(result)
         if (result.paths?.length > 0) {
@@ -953,7 +953,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .catch(err => setPathsResult({ paths: [], from: pathSource, to: pathTarget, error: err.message }))
       .finally(() => setPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathModeEnabled, pathSource, pathTarget, pathMode])
+  }, [pathModeEnabled, pathSource, pathTarget])
 
   // Fetch reverse paths
   useEffect(() => {
@@ -963,11 +963,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, 5, pathMode)
+    fetchISISPaths(pathTarget, pathSource, 5)
       .then(result => setReversePathsResult(result))
       .catch(err => setReversePathsResult({ paths: [], from: pathTarget, to: pathSource, error: err.message }))
       .finally(() => setReversePathLoading(false))
-  }, [pathModeEnabled, pathSource, pathTarget, pathMode, showReverse])
+  }, [pathModeEnabled, pathSource, pathTarget, showReverse])
 
   // Fetch metro paths
   useEffect(() => {
@@ -975,7 +975,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     setMetroPathLoading(true)
     setMetroPathViewMode('aggregate')
     setMetroPathSelectedPairs([])
-    fetchMetroDevicePaths(metroPathSource, metroPathTarget, pathMode)
+    fetchMetroDevicePaths(metroPathSource, metroPathTarget)
       .then(result => {
         setMetroPathsResult(result)
         if (result.devicePairs?.length > 0) {
@@ -990,7 +990,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       }))
       .finally(() => setMetroPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metroPathModeEnabled, metroPathSource, metroPathTarget, pathMode])
+  }, [metroPathModeEnabled, metroPathSource, metroPathTarget])
 
   // Clear state on mode exit
   useEffect(() => { if (!pathModeEnabled) { setPathSource(null); setPathTarget(null); setPathsResult(null); setSelectedPathIndex(0) } }, [pathModeEnabled])
@@ -2086,15 +2086,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       {panel.isOpen && panel.content === 'mode' && (
         <TopologyPanel
           title={
-            mode === 'path' ? 'Path Finding' :
-            mode === 'metro-path' ? 'Metro Path Finding' :
+            mode === 'path' ? 'Device Paths' :
+            mode === 'metro-path' ? 'Metro Paths' :
             mode === 'whatif-removal' ? 'Simulate Link Removal' :
             mode === 'whatif-addition' ? 'Simulate Link Addition' :
             mode === 'impact' ? 'Device Failure' :
             'Analysis Mode'
           }
           subtitle={
-            mode === 'path' ? 'Find shortest paths between two devices by hop count or latency.' :
+            mode === 'path' ? 'Find shortest paths between two devices.' :
             mode === 'metro-path' ? 'Find all paths between devices in two metros.' :
             mode === 'whatif-removal' ? 'Analyze what happens to network paths if a link is removed.' :
             mode === 'whatif-addition' ? 'See how adding a new link would improve connectivity.' :
@@ -2105,10 +2105,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           {mode === 'path' && (
             <PathModePanel
               pathSource={pathSource} pathTarget={pathTarget} pathsResult={pathsResult}
-              pathLoading={pathLoading} pathMode={pathMode} selectedPathIndex={selectedPathIndex}
+              pathLoading={pathLoading} selectedPathIndex={selectedPathIndex}
               devices={deviceOptions} showReverse={showReverse} reversePathsResult={reversePathsResult}
               reversePathLoading={reversePathLoading} selectedReversePathIndex={selectedReversePathIndex}
-              onPathModeChange={setPathMode} onSelectPath={setSelectedPathIndex}
+              onSelectPath={setSelectedPathIndex}
               onSelectReversePath={setSelectedReversePathIndex} onClearPath={clearPath}
               onSetSource={setPathSource} onSetTarget={setPathTarget}
               onToggleReverse={() => setShowReverse(prev => !prev)}
@@ -2117,10 +2117,10 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
           {mode === 'metro-path' && (
             <MetroPathModePanel
               sourceMetro={metroPathSource} targetMetro={metroPathTarget} metros={metroOptions}
-              pathsResult={metroPathsResult} loading={metroPathLoading} pathMode={pathMode}
+              pathsResult={metroPathsResult} loading={metroPathLoading}
               viewMode={metroPathViewMode} selectedPairIndices={metroPathSelectedPairs}
               onSetSourceMetro={setMetroPathSource} onSetTargetMetro={setMetroPathTarget}
-              onPathModeChange={setPathMode} onViewModeChange={setMetroPathViewMode}
+              onViewModeChange={setMetroPathViewMode}
               onTogglePair={handleToggleMetroPathPair}
               onClearSelection={() => setMetroPathSelectedPairs([])}
               onClear={() => { setMetroPathSource(null); setMetroPathTarget(null); setMetroPathsResult(null); setMetroPathSelectedPairs([]); setMetroPathViewMode('aggregate') }}
