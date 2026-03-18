@@ -2111,7 +2111,16 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               onSelectPath={setSelectedPathIndex}
               onSelectReversePath={setSelectedReversePathIndex} onClearPath={clearPath}
               onSetSource={setPathSource} onSetTarget={setPathTarget}
-              onToggleReverse={() => setShowReverse(prev => !prev)}
+              onToggleReverse={() => {
+                setShowReverse(prev => {
+                  if (!prev) {
+                    setSelectedReversePathIndex(selectedPathIndex)
+                  } else {
+                    setSelectedPathIndex(selectedReversePathIndex)
+                  }
+                  return !prev
+                })
+              }}
             />
           )}
           {mode === 'metro-path' && (

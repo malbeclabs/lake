@@ -3442,7 +3442,17 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               onClearPath={clearPath}
               onSetSource={setPathSource}
               onSetTarget={setPathTarget}
-              onToggleReverse={() => setShowReverse(prev => !prev)}
+              onToggleReverse={() => {
+                setShowReverse(prev => {
+                  // Sync indices so the selected tab persists across toggle
+                  if (!prev) {
+                    setSelectedReversePathIndex(selectedPathIndex)
+                  } else {
+                    setSelectedPathIndex(selectedReversePathIndex)
+                  }
+                  return !prev
+                })
+              }}
             />
           )}
           {mode === 'metro-path' && (
