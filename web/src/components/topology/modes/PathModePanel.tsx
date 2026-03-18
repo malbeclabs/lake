@@ -139,7 +139,7 @@ export function PathModePanel({
           {activeResult.paths.length > 1 && (
             <div className="mb-3">
               <div className="text-muted-foreground mb-1">
-                {activeResult.paths.length} paths found
+                Showing {activeResult.paths.length} paths
               </div>
               <div className="flex flex-wrap gap-1">
                 {activeResult.paths.map((_, i) => (
