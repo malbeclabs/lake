@@ -128,8 +128,8 @@ func Load() error {
 			Password: cfg.Password,
 		},
 		DialTimeout:     5 * time.Second,
-		MaxOpenConns:    50,
-		MaxIdleConns:    50,
+		MaxOpenConns:    100,
+		MaxIdleConns:    100,
 		ConnMaxLifetime: 10 * time.Minute,
 	}
 
