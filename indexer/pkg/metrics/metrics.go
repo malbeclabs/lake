@@ -1,6 +1,10 @@
 package metrics
 
 import (
+	"context"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -29,6 +33,28 @@ var (
 			Buckets: prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s to ~410s (~6.8 minutes)
 		},
 		[]string{"view_type"},
+	)
+
+	// ClickHouse connection pool metrics
+	ClickHousePoolOpenConns = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_data_indexer_clickhouse_pool_open_connections",
+			Help: "Number of open ClickHouse connections",
+		},
+	)
+
+	ClickHousePoolIdleConns = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_data_indexer_clickhouse_pool_idle_connections",
+			Help: "Number of idle ClickHouse connections",
+		},
+	)
+
+	ClickHousePoolMaxOpenConns = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "doublezero_data_indexer_clickhouse_pool_max_open_connections",
+			Help: "Maximum number of open ClickHouse connections",
+		},
 	)
 
 	DatabaseQueriesTotal = promauto.NewCounterVec(
@@ -72,3 +98,54 @@ var (
 		[]string{"operation_type", "status"},
 	)
 )
+
+// RecordDatabaseQuery records metrics for a ClickHouse query.
+func RecordDatabaseQuery(duration time.Duration, err error) {
+	status := "success"
+	if err != nil {
+		switch {
+		case context.DeadlineExceeded == err || isDeadlineExceeded(err):
+			status = "timeout"
+		case context.Canceled == err || isCanceled(err):
+			status = "cancelled"
+		default:
+			status = "error"
+		}
+	}
+	DatabaseQueriesTotal.WithLabelValues(status).Inc()
+	DatabaseQueryDuration.Observe(duration.Seconds())
+}
+
+func isDeadlineExceeded(err error) bool {
+	for e := err; e != nil; e = unwrapErr(e) {
+		if e == context.DeadlineExceeded {
+			return true
+		}
+	}
+	return false
+}
+
+func isCanceled(err error) bool {
+	for e := err; e != nil; e = unwrapErr(e) {
+		if e == context.Canceled {
+			return true
+		}
+	}
+	return false
+}
+
+func unwrapErr(err error) error {
+	u, ok := err.(interface{ Unwrap() error })
+	if !ok {
+		return nil
+	}
+	return u.Unwrap()
+}
+
+// CollectClickHousePoolStats updates connection pool gauges.
+// Call this periodically from a background goroutine.
+func CollectClickHousePoolStats(stats driver.Stats) {
+	ClickHousePoolOpenConns.Set(float64(stats.Open))
+	ClickHousePoolIdleConns.Set(float64(stats.Idle))
+	ClickHousePoolMaxOpenConns.Set(float64(stats.MaxOpenConns))
+}

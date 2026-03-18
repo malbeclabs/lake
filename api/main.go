@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
@@ -297,6 +298,31 @@ func main() {
 					dbHealthErr.Store("")
 				}
 				pingCancel()
+			}
+		}
+	}()
+
+	// Start background ClickHouse connection pool stats collector.
+	go func() {
+		pools := map[string]driver.Conn{
+			"main":   config.DB,
+			"health": config.HealthDB,
+		}
+		for env, conn := range config.EnvDBs {
+			if env == "mainnet-beta" {
+				continue // same as "main"
+			}
+			pools[env] = conn
+		}
+
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-dbHealthCtx.Done():
+				return
+			case <-ticker.C:
+				metrics.CollectClickHousePoolStats(pools)
 			}
 		}
 	}()

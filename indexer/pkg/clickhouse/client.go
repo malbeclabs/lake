@@ -28,6 +28,7 @@ func ContextWithSyncInsert(ctx context.Context) context.Context {
 // Client represents a ClickHouse database connection
 type Client interface {
 	Conn(ctx context.Context) (Connection, error)
+	Stats() driver.Stats
 	Close() error
 }
 
@@ -89,6 +90,10 @@ func NewClient(ctx context.Context, log *slog.Logger, addr string, database stri
 
 func (c *client) Conn(ctx context.Context) (Connection, error) {
 	return &connection{conn: c.conn}, nil
+}
+
+func (c *client) Stats() driver.Stats {
+	return c.conn.Stats()
 }
 
 func (c *client) Close() error {

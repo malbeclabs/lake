@@ -1,10 +1,12 @@
 package metrics
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
@@ -44,13 +46,38 @@ var (
 		},
 	)
 
-	// ClickHouse metrics
+	// ClickHouse connection pool metrics
+	ClickHousePoolOpenConns = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_api_clickhouse_pool_open_connections",
+			Help: "Number of open ClickHouse connections",
+		},
+		[]string{"pool"},
+	)
+
+	ClickHousePoolIdleConns = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_api_clickhouse_pool_idle_connections",
+			Help: "Number of idle ClickHouse connections",
+		},
+		[]string{"pool"},
+	)
+
+	ClickHousePoolMaxOpenConns = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "doublezero_lake_api_clickhouse_pool_max_open_connections",
+			Help: "Maximum number of open ClickHouse connections",
+		},
+		[]string{"pool"},
+	)
+
+	// ClickHouse query metrics
 	ClickHouseQueriesTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "doublezero_lake_api_clickhouse_queries_total",
 			Help: "Total number of ClickHouse queries",
 		},
-		[]string{"status"},
+		[]string{"status"}, // "success", "error", "timeout", "cancelled"
 	)
 
 	ClickHouseQueryDuration = promauto.NewHistogram(
@@ -194,10 +221,54 @@ func Middleware(next http.Handler) http.Handler {
 func RecordClickHouseQuery(duration time.Duration, err error) {
 	status := "success"
 	if err != nil {
-		status = "error"
+		switch {
+		case context.DeadlineExceeded == err || isDeadlineExceeded(err):
+			status = "timeout"
+		case context.Canceled == err || isCanceled(err):
+			status = "cancelled"
+		default:
+			status = "error"
+		}
 	}
 	ClickHouseQueriesTotal.WithLabelValues(status).Inc()
 	ClickHouseQueryDuration.Observe(duration.Seconds())
+}
+
+func isDeadlineExceeded(err error) bool {
+	for e := err; e != nil; e = unwrapErr(e) {
+		if e == context.DeadlineExceeded {
+			return true
+		}
+	}
+	return false
+}
+
+func isCanceled(err error) bool {
+	for e := err; e != nil; e = unwrapErr(e) {
+		if e == context.Canceled {
+			return true
+		}
+	}
+	return false
+}
+
+func unwrapErr(err error) error {
+	u, ok := err.(interface{ Unwrap() error })
+	if !ok {
+		return nil
+	}
+	return u.Unwrap()
+}
+
+// CollectClickHousePoolStats updates connection pool gauges for the given pools.
+// Call this periodically (e.g. every 5s) from a background goroutine.
+func CollectClickHousePoolStats(pools map[string]driver.Conn) {
+	for name, conn := range pools {
+		stats := conn.Stats()
+		ClickHousePoolOpenConns.WithLabelValues(name).Set(float64(stats.Open))
+		ClickHousePoolIdleConns.WithLabelValues(name).Set(float64(stats.Idle))
+		ClickHousePoolMaxOpenConns.WithLabelValues(name).Set(float64(stats.MaxOpenConns))
+	}
 }
 
 // RecordAnthropicRequest records metrics for an Anthropic API request.

@@ -311,6 +311,20 @@ func run() error {
 	}()
 	log.Info("clickhouse client initialized", "addr", *clickhouseAddrFlag, "database", *clickhouseDatabaseFlag)
 
+	// Start background ClickHouse connection pool stats collector.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				metrics.CollectClickHousePoolStats(clickhouseDB.Stats())
+			}
+		}
+	}()
+
 	// Determine GeoIP database paths: flag takes precedence, then env var, then default
 	geoipCityDBPath := *geoipCityDBPathFlag
 	if geoipCityDBPath == defaultGeoipCityDBPath {
