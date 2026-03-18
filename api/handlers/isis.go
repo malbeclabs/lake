@@ -878,6 +878,8 @@ type MultiPathHop struct {
 	DeviceCode      string  `json:"deviceCode"`
 	Status          string  `json:"status"`
 	DeviceType      string  `json:"deviceType"`
+	MetroPK         string  `json:"metroPK,omitempty"`
+	MetroCode       string  `json:"metroCode,omitempty"`
 	EdgeMetric      uint32  `json:"edgeMetric,omitempty"`      // ISIS metric to reach this hop from previous
 	EdgeMeasuredMs  float64 `json:"edgeMeasuredMs,omitempty"`  // measured RTT in ms to reach this hop
 	EdgeJitterMs    float64 `json:"edgeJitterMs,omitempty"`    // measured jitter in ms

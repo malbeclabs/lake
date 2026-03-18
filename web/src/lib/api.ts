@@ -1712,6 +1712,8 @@ export interface MultiPathHop {
   deviceCode: string
   status: string
   deviceType: string
+  metroPK?: string
+  metroCode?: string
   edgeMetric?: number
   edgeMeasuredMs?: number   // measured RTT in ms to reach this hop
   edgeJitterMs?: number     // measured jitter in ms

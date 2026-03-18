@@ -411,7 +411,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
 
   // Reverse path state
-  const [showReverse, setShowReverse] = useState(true)
+  const [showReverse, setShowReverse] = useState(false)
   const [reversePathsResult, setReversePathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedReversePathIndex, setSelectedReversePathIndex] = useState<number>(0)
   const [reversePathLoading, setReversePathLoading] = useState(false)
@@ -967,9 +967,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays/toggleOverlay are intentionally excluded to avoid re-fetching when overlays change
   }, [pathModeEnabled, pathSource, pathTarget])
 
-  // Fetch reverse paths when showReverse is enabled
+  // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
-    if (!pathModeEnabled || !pathSource || !pathTarget || !showReverse) {
+    if (!pathModeEnabled || !pathSource || !pathTarget) {
       setReversePathsResult(null)
       return
     }
@@ -986,7 +986,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       .finally(() => {
         setReversePathLoading(false)
       })
-  }, [pathModeEnabled, pathSource, pathTarget, showReverse])
+  }, [pathModeEnabled, pathSource, pathTarget])
 
   // Fetch metro paths when source and target metros are set
   const metroPathModeEnabled = mode === 'metro-path'

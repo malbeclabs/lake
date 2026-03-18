@@ -28,6 +28,8 @@ type kspNodeInfo struct {
 	Code       string
 	Status     string
 	DeviceType string
+	MetroPK    string
+	MetroCode  string
 }
 
 type kspPath struct {
@@ -45,12 +47,16 @@ func loadISISGraph(ctx context.Context) (*kspGraph, error) {
 		Nodes: make(map[string]kspNodeInfo),
 	}
 
-	// Load all edges with metrics
+	// Load all edges with metrics and metro info
 	edgeCypher := `
 		MATCH (from:Device)-[r:ISIS_ADJACENT]->(to:Device)
+		OPTIONAL MATCH (from)-[:LOCATED_IN]->(mFrom:Metro)
+		OPTIONAL MATCH (to)-[:LOCATED_IN]->(mTo:Metro)
 		RETURN from.pk AS from_pk, to.pk AS to_pk, r.metric AS metric,
 		       from.code AS from_code, from.status AS from_status, from.device_type AS from_type,
-		       to.code AS to_code, to.status AS to_status, to.device_type AS to_type
+		       mFrom.pk AS from_metro_pk, mFrom.code AS from_metro_code,
+		       to.code AS to_code, to.status AS to_status, to.device_type AS to_type,
+		       mTo.pk AS to_metro_pk, mTo.code AS to_metro_code
 	`
 
 	result, err := session.Run(ctx, edgeCypher, nil)
@@ -79,6 +85,8 @@ func loadISISGraph(ctx context.Context) (*kspGraph, error) {
 				Code:       asString(recGet(rec, "from_code")),
 				Status:     asString(recGet(rec, "from_status")),
 				DeviceType: asString(recGet(rec, "from_type")),
+				MetroPK:    asString(recGet(rec, "from_metro_pk")),
+				MetroCode:  asString(recGet(rec, "from_metro_code")),
 			}
 		}
 		if _, ok := g.Nodes[toPK]; !ok {
@@ -87,6 +95,8 @@ func loadISISGraph(ctx context.Context) (*kspGraph, error) {
 				Code:       asString(recGet(rec, "to_code")),
 				Status:     asString(recGet(rec, "to_status")),
 				DeviceType: asString(recGet(rec, "to_type")),
+				MetroPK:    asString(recGet(rec, "to_metro_pk")),
+				MetroCode:  asString(recGet(rec, "to_metro_code")),
 			}
 		}
 	}
@@ -284,6 +294,8 @@ func kspToSinglePaths(g *kspGraph, paths []kspPath) []SinglePath {
 				DeviceCode: info.Code,
 				Status:     info.Status,
 				DeviceType: info.DeviceType,
+				MetroPK:    info.MetroPK,
+				MetroCode:  info.MetroCode,
 			}
 			// Set edge metric on each hop (metric of the edge arriving at this node)
 			if i > 0 {

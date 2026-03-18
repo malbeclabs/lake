@@ -142,7 +142,7 @@ export function TopologyGraph({
   const [pathLoading, setPathLoading] = useState(false)
 
   // Reverse path state
-  const [showReverse, setShowReverse] = useState(true)
+  const [showReverse, setShowReverse] = useState(false)
   const [reversePathsResult, setReversePathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedReversePathIndex, setSelectedReversePathIndex] = useState<number>(0)
   const [reversePathLoading, setReversePathLoading] = useState(false)
@@ -709,9 +709,9 @@ export function TopologyGraph({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, pathSource, pathTarget])
 
-  // Fetch reverse paths when showReverse is enabled
+  // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
-    if (mode !== 'path' || !pathSource || !pathTarget || !showReverse) {
+    if (mode !== 'path' || !pathSource || !pathTarget) {
       setReversePathsResult(null)
       return
     }
@@ -728,7 +728,7 @@ export function TopologyGraph({
       .finally(() => {
         setReversePathLoading(false)
       })
-  }, [mode, pathSource, pathTarget, showReverse])
+  }, [mode, pathSource, pathTarget])
 
   // Fetch metro paths when source and target metros are set
   useEffect(() => {

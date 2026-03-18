@@ -1,7 +1,8 @@
 import { Route, X, ArrowRightLeft } from 'lucide-react'
-import type { MultiPathResponse } from '@/lib/api'
+import type { MultiPathResponse, SinglePath } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DeviceSelector, type DeviceOption } from '../DeviceSelector'
+import { cn } from '@/lib/utils'
 
 // Path colors for K-shortest paths visualization
 const PATH_COLORS = [
@@ -56,6 +57,16 @@ export function PathModePanel({
   const sourceDevice = devices.find(d => d.pk === pathSource)
   const targetDevice = devices.find(d => d.pk === pathTarget)
 
+  // Pick which result set to show based on reverse toggle
+  const activeResult = showReverse ? reversePathsResult : pathsResult
+  const activeLoading = showReverse ? reversePathLoading : pathLoading
+  const activeSelectedIndex = showReverse ? selectedReversePathIndex : selectedPathIndex
+  const activeOnSelect = showReverse ? onSelectReversePath : onSelectPath
+
+  const dirLabel = showReverse
+    ? `${targetDevice?.code || 'Target'} → ${sourceDevice?.code || 'Source'}`
+    : `${sourceDevice?.code || 'Source'} → ${targetDevice?.code || 'Target'}`
+
   return (
     <div className="p-3 text-xs">
       <div className="flex items-center justify-between mb-2">
@@ -91,165 +102,143 @@ export function PathModePanel({
         />
       </div>
 
-      {/* Show reverse toggle */}
-      {pathSource && pathTarget && (
-        <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showReverse}
-            onChange={onToggleReverse}
-            className="rounded border-[var(--border)]"
-          />
-          <span className="text-muted-foreground flex items-center gap-1">
-            <ArrowRightLeft className="h-3 w-3" />
-            Show reverse path
-          </span>
-        </label>
-      )}
-
       {!pathSource && (
         <div className="text-muted-foreground text-[10px]">Or click a device on the map</div>
       )}
-      {pathLoading && (
+
+      {/* Direction toggle + loading */}
+      {pathSource && pathTarget && (
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
+            {dirLabel}
+          </div>
+          <button
+            onClick={onToggleReverse}
+            className={cn(
+              'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors',
+              showReverse
+                ? 'bg-primary/15 text-primary'
+                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--muted)]'
+            )}
+            title={showReverse ? 'Show forward path' : 'Show reverse path'}
+          >
+            <ArrowRightLeft className="h-3 w-3" />
+            {showReverse ? 'Reverse' : 'Forward'}
+          </button>
+        </div>
+      )}
+
+      {activeLoading && (
         <div className="text-muted-foreground">Finding paths...</div>
       )}
 
-      {/* Path results - side by side when reverse is enabled */}
-      {pathsResult && !pathsResult.error && pathsResult.paths.length > 0 && (
-        <div className={showReverse ? 'grid grid-cols-2 gap-3' : ''}>
-          {/* Forward path: Source → Target */}
-          <div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
-              {sourceDevice?.code || 'Source'} → {targetDevice?.code || 'Target'}
-            </div>
-
-            {/* Path selector - show if multiple paths */}
-            {pathsResult.paths.length > 1 && (
-              <div className="mb-2">
-                <div className="text-muted-foreground mb-1">
-                  {pathsResult.paths.length} paths
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {pathsResult.paths.map((_, i) => (
-                    <button
-                      key={i}
-                      onClick={() => onSelectPath(i)}
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                        selectedPathIndex === i
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted hover:bg-muted/80 text-muted-foreground'
-                      }`}
-                      style={{
-                        borderLeft: `3px solid ${isDark ? PATH_COLORS[i % PATH_COLORS.length].dark : PATH_COLORS[i % PATH_COLORS.length].light}`,
-                      }}
-                    >
-                      {i + 1}
-                    </button>
-                  ))}
-                </div>
+      {/* Path results */}
+      {activeResult && !activeResult.error && activeResult.paths.length > 0 && (
+        <div>
+          {/* Path selector - show if multiple paths */}
+          {activeResult.paths.length > 1 && (
+            <div className="mb-3">
+              <div className="text-muted-foreground mb-1">
+                {activeResult.paths.length} paths found
               </div>
-            )}
-
-            {/* Selected path details */}
-            {pathsResult.paths[selectedPathIndex] && (
-              <>
-                <div className="space-y-0.5 text-muted-foreground text-[11px]">
-                  <div>Hops: <span className="text-foreground font-medium">{pathsResult.paths[selectedPathIndex].hopCount}</span></div>
-                  <div>Latency: <span className="text-foreground font-medium">{(pathsResult.paths[selectedPathIndex].totalMetric / 1000).toFixed(2)}ms</span></div>
-                </div>
-                <div className="mt-2 pt-2 border-t border-[var(--border)] space-y-0.5">
-                  {pathsResult.paths[selectedPathIndex].path.map((hop, i) => (
-                    <div key={hop.devicePK} className="flex items-center gap-1">
-                      <span className="text-muted-foreground w-4">{i + 1}.</span>
-                      <span className={i === 0 ? 'text-green-500' : i === pathsResult.paths[selectedPathIndex].path.length - 1 ? 'text-red-500' : 'text-foreground'}>
-                        {hop.deviceCode}
-                      </span>
-                      {hop.edgeMetric !== undefined && hop.edgeMetric > 0 && (
-                        <span className="text-muted-foreground text-[10px]">({(hop.edgeMetric / 1000).toFixed(1)}ms)</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Reverse path: Target → Source */}
-          {showReverse && (
-            <div className="border-l border-[var(--border)] pl-3">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
-                {targetDevice?.code || 'Target'} → {sourceDevice?.code || 'Source'}
+              <div className="flex flex-wrap gap-1">
+                {activeResult.paths.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => activeOnSelect(i)}
+                    className={cn(
+                      'px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors',
+                      activeSelectedIndex === i
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                    )}
+                    style={{
+                      borderLeft: `3px solid ${isDark ? PATH_COLORS[i % PATH_COLORS.length].dark : PATH_COLORS[i % PATH_COLORS.length].light}`,
+                    }}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
               </div>
-
-              {reversePathLoading && (
-                <div className="text-muted-foreground text-[11px]">Finding...</div>
-              )}
-
-              {reversePathsResult && !reversePathsResult.error && reversePathsResult.paths.length > 0 && (
-                <>
-                  {/* Reverse path selector - show if multiple paths */}
-                  {reversePathsResult.paths.length > 1 && (
-                    <div className="mb-2">
-                      <div className="text-muted-foreground mb-1">
-                        {reversePathsResult.paths.length} paths
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {reversePathsResult.paths.map((_, i) => (
-                          <button
-                            key={i}
-                            onClick={() => onSelectReversePath(i)}
-                            className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                              selectedReversePathIndex === i
-                                ? 'bg-primary text-primary-foreground'
-                                : 'bg-muted hover:bg-muted/80 text-muted-foreground'
-                            }`}
-                            style={{
-                              borderLeft: `3px solid ${isDark ? PATH_COLORS[i % PATH_COLORS.length].dark : PATH_COLORS[i % PATH_COLORS.length].light}`,
-                            }}
-                          >
-                            {i + 1}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Selected reverse path details */}
-                  {reversePathsResult.paths[selectedReversePathIndex] && (
-                    <>
-                      <div className="space-y-0.5 text-muted-foreground text-[11px]">
-                        <div>Hops: <span className="text-foreground font-medium">{reversePathsResult.paths[selectedReversePathIndex].hopCount}</span></div>
-                        <div>Latency: <span className="text-foreground font-medium">{(reversePathsResult.paths[selectedReversePathIndex].totalMetric / 1000).toFixed(2)}ms</span></div>
-                      </div>
-                      <div className="mt-2 pt-2 border-t border-[var(--border)] space-y-0.5">
-                        {reversePathsResult.paths[selectedReversePathIndex].path.map((hop, i) => (
-                          <div key={hop.devicePK} className="flex items-center gap-1">
-                            <span className="text-muted-foreground w-4">{i + 1}.</span>
-                            <span className={i === 0 ? 'text-red-500' : i === reversePathsResult.paths[selectedReversePathIndex].path.length - 1 ? 'text-green-500' : 'text-foreground'}>
-                              {hop.deviceCode}
-                            </span>
-                            {hop.edgeMetric !== undefined && hop.edgeMetric > 0 && (
-                              <span className="text-muted-foreground text-[10px]">({(hop.edgeMetric / 1000).toFixed(1)}ms)</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </>
-              )}
-
-              {reversePathsResult?.error && (
-                <div className="text-destructive text-[11px]">{reversePathsResult.error}</div>
-              )}
             </div>
+          )}
+
+          {/* Selected path stepper */}
+          {activeResult.paths[activeSelectedIndex] && (
+            <PathStepper
+              path={activeResult.paths[activeSelectedIndex]}
+              isReverse={showReverse}
+            />
           )}
         </div>
       )}
 
-      {pathsResult?.error && (
-        <div className="text-destructive">{pathsResult.error}</div>
+      {activeResult?.error && (
+        <div className="text-destructive">{activeResult.error}</div>
       )}
+    </div>
+  )
+}
+
+// Visual stepper for path hops — matches the path latency page design
+function PathStepper({ path, isReverse }: { path: SinglePath; isReverse: boolean }) {
+  const latencyMs = path.measuredLatencyMs || path.totalMetric / 1000
+
+  return (
+    <div>
+      {/* Summary stats */}
+      <div className="flex items-center gap-3 mb-3 text-[11px] text-muted-foreground">
+        <span>{path.hopCount} hops</span>
+        <span className="text-foreground font-medium">{latencyMs.toFixed(2)}ms</span>
+      </div>
+
+      {/* Stepper */}
+      <div className="space-y-0">
+        {path.path.map((hop, idx) => {
+          const isFirst = idx === 0
+          const isLast = idx === path.path.length - 1
+          const nextHop = !isLast ? path.path[idx + 1] : null
+          const hopLatencyMs = nextHop?.edgeMeasuredMs ?? (nextHop?.edgeMetric ? nextHop.edgeMetric / 1000 : null)
+
+          // Color endpoints: source green, target red (swap for reverse)
+          const isSource = isReverse ? isLast : isFirst
+          const isTarget = isReverse ? isFirst : isLast
+
+          return (
+            <div key={hop.devicePK} className="flex items-stretch gap-3">
+              {/* Timeline rail */}
+              <div className="flex flex-col items-center w-5 flex-shrink-0">
+                <div className={cn(
+                  'w-2.5 h-2.5 rounded-full flex-shrink-0 ring-2 ring-background mt-1',
+                  isSource ? 'bg-green-500' : isTarget ? 'bg-red-500' : 'bg-muted-foreground/60'
+                )} />
+                {!isLast && (
+                  <div className="w-px flex-1 bg-border min-h-[28px]" />
+                )}
+              </div>
+
+              {/* Content */}
+              <div className={cn('flex-1 flex items-start justify-between', !isLast && 'pb-2')}>
+                <div className="flex items-center gap-2 pt-0.5">
+                  <span className="font-mono text-[11px] font-medium leading-none">{hop.deviceCode}</span>
+                  {hop.metroCode && (
+                    <span className="text-[9px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      {hop.metroCode}
+                    </span>
+                  )}
+                </div>
+                {!isLast && hopLatencyMs !== null && hopLatencyMs > 0 && (
+                  <div className="text-right pt-0.5">
+                    <span className="text-[10px] font-medium text-primary tabular-nums">
+                      {hopLatencyMs.toFixed(1)}ms
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -389,7 +389,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [pathsResult, setPathsResult] = useState<MultiPathResponse | null>(null)
   const [pathLoading, setPathLoading] = useState(false)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
-  const [showReverse, setShowReverse] = useState(true)
+  const [showReverse, setShowReverse] = useState(false)
   const [reversePathsResult, setReversePathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedReversePathIndex, setSelectedReversePathIndex] = useState<number>(0)
   const [reversePathLoading, setReversePathLoading] = useState(false)
@@ -955,9 +955,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathModeEnabled, pathSource, pathTarget])
 
-  // Fetch reverse paths
+  // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
-    if (!pathModeEnabled || !pathSource || !pathTarget || !showReverse) {
+    if (!pathModeEnabled || !pathSource || !pathTarget) {
       setReversePathsResult(null)
       return
     }
@@ -967,7 +967,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .then(result => setReversePathsResult(result))
       .catch(err => setReversePathsResult({ paths: [], from: pathTarget, to: pathSource, error: err.message }))
       .finally(() => setReversePathLoading(false))
-  }, [pathModeEnabled, pathSource, pathTarget, showReverse])
+  }, [pathModeEnabled, pathSource, pathTarget])
 
   // Fetch metro paths
   useEffect(() => {
