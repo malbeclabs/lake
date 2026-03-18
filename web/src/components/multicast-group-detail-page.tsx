@@ -1022,7 +1022,7 @@ export function MulticastGroupDetailPage() {
     )
   }
 
-  const renderMemberCells = (member: MulticastMember, _seriesKey: string) => (
+  const renderMemberCells = (member: MulticastMember) => (
     <>
       <td className="px-4 py-3 text-sm font-mono">
         {member.owner_pubkey ? (
@@ -1222,18 +1222,15 @@ export function MulticastGroupDetailPage() {
                     </td>
                   </tr>
                 )}
-                {surfacedMembers.map((member, i) => {
-                  const memberSeriesKey = `${member.device_pk}_${member.tunnel_id}`
-                  return (
+                {surfacedMembers.map((member, i) => (
                   <tr
                     key={`surfaced-${member.user_pk}`}
                     ref={i === 0 ? selectedRowRef : undefined}
                     className="border-b border-border bg-muted border-l-2 border-l-purple-500"
                   >
-                    {renderMemberCells(member, memberSeriesKey)}
+                    {renderMemberCells(member)}
                   </tr>
-                  )
-                })}
+                ))}
                 {activeMembers.map((member) => {
                   const memberSeriesKey = `${member.device_pk}_${member.tunnel_id}`
                   const isHovered = hoveredSeriesKey === memberSeriesKey
@@ -1244,7 +1241,7 @@ export function MulticastGroupDetailPage() {
                     ref={isSelected && surfacedMembers.length === 0 ? selectedRowRef : undefined}
                     className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${isSelected ? 'bg-muted border-l-2 border-l-purple-500' : isHovered ? 'bg-muted' : ''}`}
                   >
-                    {renderMemberCells(member, memberSeriesKey)}
+                    {renderMemberCells(member)}
                   </tr>
                   )
                 })}
