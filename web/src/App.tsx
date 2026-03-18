@@ -92,7 +92,8 @@ const queryClient = new QueryClient({
 
 // Redirect to latest or new query session
 function InternalOnly({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
+  const { user, isLoading } = useAuth()
+  if (isLoading) return null
   if (!user?.is_internal_user) return <Navigate to="/" replace />
   return <>{children}</>
 }
