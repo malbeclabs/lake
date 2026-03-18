@@ -1166,6 +1166,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	var mu = &sync.Mutex{}
 
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	if incidentType == "all" || incidentType == "packet_loss" {
 		g.Go(func() error {
@@ -1392,6 +1393,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	var allIncidents []LinkIncident
 	var mu = &sync.Mutex{}
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	if incidentType == "all" || incidentType == "packet_loss" {
 		g.Go(func() error {
@@ -1692,6 +1694,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	var mu sync.Mutex
 
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	g.Go(func() error {
 		incidents, err := fetchPacketLossIncidents(gCtx, envDB(gCtx), duration, threshold, linkMeta, detectParams)

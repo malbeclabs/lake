@@ -1071,6 +1071,7 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	if incidentType == "all" || incidentType == "errors" {
 		g.Go(func() error {
@@ -1278,6 +1279,7 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	var allIncidents []DeviceIncident
 	var mu sync.Mutex
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	if incidentType == "all" || incidentType == "errors" {
 		g.Go(func() error {
@@ -1424,6 +1426,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	var mu sync.Mutex
 
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	defaultLinkFilter := "AND ic.link_pk = ''"
 

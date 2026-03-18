@@ -57,6 +57,7 @@ func fetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	// Current DZ stake and validator count
 	g.Go(func() error {
@@ -429,6 +430,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	var joinedChanges []StakeChange
 	var leftChanges []StakeChange

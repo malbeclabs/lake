@@ -151,6 +151,7 @@ func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 	var validators []Validator
 
 	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 
 	// Fetch metros with coordinates
 	g.Go(func() error {

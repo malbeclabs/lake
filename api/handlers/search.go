@@ -591,6 +591,7 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 	resultsChan := make(chan searchResult, len(types))
 
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 	for _, et := range types {
 		et := et
 		g.Go(func() error {
@@ -703,6 +704,7 @@ func Search(w http.ResponseWriter, r *http.Request) {
 	resultsChan := make(chan searchResult, len(types))
 
 	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
 	for _, et := range types {
 		et := et
 		g.Go(func() error {
