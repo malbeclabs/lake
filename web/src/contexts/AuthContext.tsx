@@ -26,6 +26,9 @@ interface GooglePromptNotification {
 }
 
 declare global {
+  interface Navigator {
+    brave?: { isBrave?: () => Promise<boolean> }
+  }
   interface Window {
     google?: {
       accounts: {
@@ -58,6 +61,9 @@ interface AuthContextType {
   // Connection state
   connectionError: boolean
   retryConnection: () => void
+  // Brave uses renderButton instead of One Tap prompt
+  isBrave: boolean
+  googleButtonRef: (el: HTMLDivElement | null) => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -192,6 +198,9 @@ export function AuthProvider({ children, googleClientId, onLoginSuccess, onLogou
     }
   }, [user])
 
+  const [isBrave, setIsBrave] = useState(false)
+  const googleButtonContainerRef = useRef<HTMLDivElement | null>(null)
+
   // Initialize Google Sign-In
   useEffect(() => {
     if (!googleClientId) return
@@ -202,13 +211,25 @@ export function AuthProvider({ children, googleClientId, onLoginSuccess, onLogou
     script.defer = true
     document.body.appendChild(script)
 
-    script.onload = () => {
+    script.onload = async () => {
       if (window.google) {
+        const brave = await navigator.brave?.isBrave?.().catch(() => false) ?? false
+        setIsBrave(brave)
         window.google.accounts.id.initialize({
           client_id: googleClientId,
           callback: handleGoogleCallback,
           use_fedcm_for_prompt: false,
         })
+        // For Brave, render a real Google button (opens popup, bypasses Shields)
+        if (brave && googleButtonContainerRef.current) {
+          window.google.accounts.id.renderButton(googleButtonContainerRef.current, {
+            type: 'standard',
+            theme: 'filled_black',
+            size: 'large',
+            width: googleButtonContainerRef.current.offsetWidth,
+            text: 'signin_with',
+          })
+        }
       }
     }
 
@@ -327,6 +348,20 @@ export function AuthProvider({ children, googleClientId, onLoginSuccess, onLogou
     }
   }, [refreshAuth, onLogoutSuccess])
 
+  // Ref callback for the Google button container (Brave only)
+  const googleButtonRef = useCallback((el: HTMLDivElement | null) => {
+    googleButtonContainerRef.current = el
+    if (el && isBrave && window.google?.accounts?.id) {
+      window.google.accounts.id.renderButton(el, {
+        type: 'standard',
+        theme: 'filled_black',
+        size: 'large',
+        width: el.offsetWidth,
+        text: 'signin_with',
+      })
+    }
+  }, [isBrave])
+
   const value: AuthContextType = {
     user,
     isLoading,
@@ -339,6 +374,8 @@ export function AuthProvider({ children, googleClientId, onLoginSuccess, onLogou
     error,
     connectionError,
     retryConnection,
+    isBrave,
+    googleButtonRef,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
