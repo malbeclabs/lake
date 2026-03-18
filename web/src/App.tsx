@@ -86,6 +86,8 @@ const queryClient = new QueryClient({
       staleTime: 30 * 1000,
       // Refetch on window focus after being away
       refetchOnWindowFocus: true,
+      // Don't poll when the tab is hidden
+      refetchIntervalInBackground: false,
     },
   },
 })
