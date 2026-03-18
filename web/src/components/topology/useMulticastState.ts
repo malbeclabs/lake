@@ -8,10 +8,38 @@ export interface UseMulticastStateOptions {
   isDark: boolean
 }
 
+// Selection param for one role: either the enabled PKs ("on") or disabled PKs ("off"),
+// whichever list is shorter. Null means all are in the default state (all enabled).
+export interface SelectionParam {
+  mode: 'on' | 'off'
+  pks: string[]
+}
+
 export interface MulticastParamState {
   groupCode: string | null
-  disabledPubs: Set<string> | null
-  disabledSubs: Set<string> | null
+  pubs: SelectionParam | null
+  subs: SelectionParam | null
+}
+
+// Apply a SelectionParam to a member list to produce an enabled set.
+// "on" means only these PKs are enabled; "off" means all except these are enabled.
+// Null means enable all members of the given role.
+function applySelectionParam(
+  param: SelectionParam | null,
+  members: MulticastGroupDetail['members'],
+  role: 'pub' | 'sub',
+): Set<string> {
+  const rolePKs = members
+    .filter(m => role === 'pub' ? (m.mode === 'P' || m.mode === 'P+S') : (m.mode === 'S' || m.mode === 'P+S'))
+    .map(m => m.user_pk)
+  if (!param) return new Set(rolePKs)
+  if (param.mode === 'on') {
+    const onSet = new Set(param.pks)
+    return new Set(rolePKs.filter(pk => onSet.has(pk)))
+  }
+  // mode === 'off'
+  const offSet = new Set(param.pks)
+  return new Set(rolePKs.filter(pk => !offSet.has(pk)))
 }
 
 // Cache key: sorted publisher device PKs joined by comma
@@ -29,9 +57,9 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
   const [combineSegments, setCombineSegments] = useState(true)
   const [hoveredMemberDevicePK, setHoveredMemberDevicePK] = useState<string | null>(null)
 
-  // PKs to skip during auto-enable (restored from URL on initial load)
-  const initialDisabledPubsRef = useRef<Set<string> | null>(null)
-  const initialDisabledSubsRef = useRef<Set<string> | null>(null)
+  // Selection state restored from URL on initial load
+  const initialPubsRef = useRef<SelectionParam | null>(null)
+  const initialSubsRef = useRef<SelectionParam | null>(null)
   // Track which group we've already initialized publishers/subscribers for
   const initializedGroupRef = useRef<string | null>(null)
   // Track in-flight fetch to avoid duplicates
@@ -161,24 +189,15 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
 
     initializedGroupRef.current = selectedMulticastGroup
 
-    // On first load, skip PKs that were disabled in the URL
-    const skipPubs = initialDisabledPubsRef.current
-    const skipSubs = initialDisabledSubsRef.current
-    initialDisabledPubsRef.current = null
-    initialDisabledSubsRef.current = null
+    // On first load, restore selection from URL params
+    const initPubs = initialPubsRef.current
+    const initSubs = initialSubsRef.current
+    initialPubsRef.current = null
+    initialSubsRef.current = null
 
-    // If restoring from URL, use the URL state (enable all except disabled)
-    if (skipPubs || skipSubs) {
-      const pubs = new Set<string>()
-      const subs = new Set<string>()
-      detail.members.forEach(m => {
-        if ((m.mode === 'P' || m.mode === 'P+S') && !skipPubs?.has(m.user_pk)) {
-          pubs.add(m.user_pk)
-        }
-        if ((m.mode === 'S' || m.mode === 'P+S') && !skipSubs?.has(m.user_pk)) {
-          subs.add(m.user_pk)
-        }
-      })
+    if (initPubs || initSubs) {
+      const pubs = applySelectionParam(initPubs, detail.members, 'pub')
+      const subs = applySelectionParam(initSubs, detail.members, 'sub')
       setEnabledPublishers(pubs)
       setEnabledSubscribers(subs)
       return
@@ -348,28 +367,32 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
       setSelectedMulticastGroup(params.groupCode)
       initializedGroupRef.current = null
     }
-    if (params.disabledPubs) {
-      initialDisabledPubsRef.current = params.disabledPubs
-    }
-    if (params.disabledSubs) {
-      initialDisabledSubsRef.current = params.disabledSubs
-    }
+    if (params.pubs) initialPubsRef.current = params.pubs
+    if (params.subs) initialSubsRef.current = params.subs
   }, [])
 
-  // Get disabled params for URL persistence
-  const getDisabledParams = useCallback(() => {
-    if (!selectedMulticastGroup) return { disabledPubs: null as string[] | null, disabledSubs: null as string[] | null }
+  // Get selection params for URL persistence.
+  // Uses whichever representation (on/off) produces fewer PKs in the URL.
+  const getSelectionParams = useCallback((): { pubs: SelectionParam | null, subs: SelectionParam | null } => {
+    if (!selectedMulticastGroup) return { pubs: null, subs: null }
     const detail = multicastGroupDetails.get(selectedMulticastGroup)
-    if (!detail?.members) return { disabledPubs: null as string[] | null, disabledSubs: null as string[] | null }
-    const disabledPubs = detail.members
-      .filter(m => (m.mode === 'P' || m.mode === 'P+S') && !enabledPublishers.has(m.user_pk))
-      .map(m => m.user_pk)
-    const disabledSubs = detail.members
-      .filter(m => (m.mode === 'S' || m.mode === 'P+S') && !enabledSubscribers.has(m.user_pk))
-      .map(m => m.user_pk)
+    if (!detail?.members) return { pubs: null, subs: null }
+
+    function buildParam(allPKs: string[], enabledSet: Set<string>): SelectionParam | null {
+      const onPKs = allPKs.filter(pk => enabledSet.has(pk))
+      const offPKs = allPKs.filter(pk => !enabledSet.has(pk))
+      if (offPKs.length === 0) return null // all enabled = default
+      if (onPKs.length === 0) return { mode: 'on', pks: [] } // none enabled
+      return onPKs.length <= offPKs.length
+        ? { mode: 'on', pks: onPKs }
+        : { mode: 'off', pks: offPKs }
+    }
+
+    const pubPKs = detail.members.filter(m => m.mode === 'P' || m.mode === 'P+S').map(m => m.user_pk)
+    const subPKs = detail.members.filter(m => m.mode === 'S' || m.mode === 'P+S').map(m => m.user_pk)
     return {
-      disabledPubs: disabledPubs.length > 0 ? disabledPubs : null,
-      disabledSubs: disabledSubs.length > 0 ? disabledSubs : null,
+      pubs: buildParam(pubPKs, enabledPublishers),
+      subs: buildParam(subPKs, enabledSubscribers),
     }
   }, [selectedMulticastGroup, multicastGroupDetails, enabledPublishers, enabledSubscribers])
 
@@ -408,6 +431,6 @@ export function useMulticastState({ enabled, isDark }: UseMulticastStateOptions)
 
     // URL param helpers
     restoreFromParams,
-    getDisabledParams,
+    getSelectionParams,
   }
 }

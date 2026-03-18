@@ -381,7 +381,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     multicastAggregatedSegments, multicastPublisherPaths, multicastSegmentPublishers,
     multicastTreeDevicePKs,
     handleSelectMulticastGroup, handleSetEnabledPublishers, handleSetEnabledSubscribers,
-    restoreFromParams: restoreMulticastParams, getDisabledParams: getMulticastDisabledParams,
+    restoreFromParams: restoreMulticastParams, getSelectionParams: getMulticastSelectionParams,
   } = mc
   const [linkAnimating, setLinkAnimating] = useState(true)
 
@@ -1122,21 +1122,25 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     // Impact mode params (comma-separated list of device PKs)
     setParam('impact_devices', impactMode && impactDevices.length > 0 ? impactDevices.join(',') : null)
 
-    // Multicast group selection and disabled publishers/subscribers
+    // Multicast group selection and member selection (stores whichever of on/off is shorter)
     setParam('multicast', multicastTreesMode && !!selectedMulticastGroup ? selectedMulticastGroup : null)
-    const mcParams = getMulticastDisabledParams()
+    const mcParams = getMulticastSelectionParams()
     if (multicastTreesMode && selectedMulticastGroup) {
-      setParam('mc_pub_off', mcParams.disabledPubs ? mcParams.disabledPubs.join(',') : null)
-      setParam('mc_sub_off', mcParams.disabledSubs ? mcParams.disabledSubs.join(',') : null)
+      setParam('mc_pub_on', mcParams.pubs?.mode === 'on' ? mcParams.pubs.pks.join(',') : null)
+      setParam('mc_pub_off', mcParams.pubs?.mode === 'off' ? mcParams.pubs.pks.join(',') : null)
+      setParam('mc_sub_on', mcParams.subs?.mode === 'on' ? mcParams.subs.pks.join(',') : null)
+      setParam('mc_sub_off', mcParams.subs?.mode === 'off' ? mcParams.subs.pks.join(',') : null)
     } else {
+      setParam('mc_pub_on', null)
       setParam('mc_pub_off', null)
+      setParam('mc_sub_on', null)
       setParam('mc_sub_off', null)
     }
 
     if (changed) {
       setSearchParams(params, { replace: true })
     }
-  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, getMulticastDisabledParams])
+  }, [modeParamsRestored, searchParams, setSearchParams, pathModeEnabled, pathSource, pathTarget, whatifRemovalMode, removalLink, whatifAdditionMode, additionSource, additionTarget, impactMode, impactDevices, multicastTreesMode, selectedMulticastGroup, getMulticastSelectionParams])
 
   // When entering analysis modes with a device already selected, use it as source
   const prevMapModeRef = useRef<string>(mode)
@@ -2386,14 +2390,22 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       return
     }
 
-    // Restore multicast group selection and disabled publishers/subscribers
+    // Restore multicast group selection and member selection
     if (multicastParam) {
       const codes = multicastParam.split(',').filter(Boolean)
       if (codes.length > 0) {
+        const pubOn = searchParams.get('mc_pub_on')
+        const pubOff = searchParams.get('mc_pub_off')
+        const subOn = searchParams.get('mc_sub_on')
+        const subOff = searchParams.get('mc_sub_off')
         restoreMulticastParams({
           groupCode: codes[0] ?? null,
-          disabledPubs: searchParams.get('mc_pub_off') ? new Set(searchParams.get('mc_pub_off')!.split(',').filter(Boolean)) : null,
-          disabledSubs: searchParams.get('mc_sub_off') ? new Set(searchParams.get('mc_sub_off')!.split(',').filter(Boolean)) : null,
+          pubs: pubOn != null ? { mode: 'on', pks: pubOn.split(',').filter(Boolean) }
+              : pubOff != null ? { mode: 'off', pks: pubOff.split(',').filter(Boolean) }
+              : null,
+          subs: subOn != null ? { mode: 'on', pks: subOn.split(',').filter(Boolean) }
+              : subOff != null ? { mode: 'off', pks: subOff.split(',').filter(Boolean) }
+              : null,
         })
         if (!overlays.multicastTrees) toggleOverlay('multicastTrees')
         openPanel('overlay')
