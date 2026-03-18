@@ -14,11 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createSlotFeedRacesTable creates the slot_feed_races table in the shredder DB.
-func createSlotFeedRacesTable(t *testing.T) {
+// createShredderTables creates the slot_feed_races and publisher_shred_stats tables in the shredder DB.
+func createShredderTables(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.ShredderDB))
+	db := "`" + config.ShredderDB + "`"
+	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
 	require.NoError(t, err)
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.slot_feed_races (
@@ -37,7 +38,36 @@ func createSlotFeedRacesTable(t *testing.T) {
 		) ENGINE = ReplacingMergeTree(ingested_at)
 		PARTITION BY toYYYYMM(event_ts)
 		ORDER BY (node_id, slot, feed, loser_feed)
-	`, "`"+config.ShredderDB+"`"))
+	`, db))
+	require.NoError(t, err)
+	err = config.DB.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
+			event_ts DateTime64(3),
+			ingested_at DateTime64(3) DEFAULT now(),
+			host String,
+			publisher_ip String,
+			client_ip String,
+			node_pubkey String,
+			vote_pubkey String,
+			activated_stake UInt64,
+			dz_user_pubkey String,
+			dz_device_code String,
+			dz_metro_code String,
+			epoch UInt64,
+			slot UInt64,
+			total_packets UInt64,
+			unique_shreds UInt64,
+			data_shreds UInt64,
+			coding_shreds UInt64,
+			max_data_index Int64,
+			needs_repair Bool,
+			first_seen_ns Int64,
+			last_seen_ns Int64,
+			is_scheduled_leader Bool
+		) ENGINE = MergeTree
+		PARTITION BY toYYYYMM(event_ts)
+		ORDER BY (slot, node_pubkey)
+	`, db))
 	require.NoError(t, err)
 }
 
@@ -45,7 +75,11 @@ func createSlotFeedRacesTable(t *testing.T) {
 func insertEdgeScoreboardTestData(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	createSlotFeedRacesTable(t)
+	createShredderTables(t)
+
+	const epoch = 800
+	const slot1 = 100 // DZ-leader slot
+	const slot2 = 200 // non-DZ slot
 
 	// Create metros: SLC and FRA
 	err := config.DB.Exec(ctx, `
@@ -60,43 +94,58 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
+	// Mark slot1 as a DZ-leader slot via publisher_shred_stats
+	err = config.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats
+			(event_ts, host, publisher_ip, client_ip, node_pubkey, vote_pubkey,
+			 activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
+			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
+			 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+		VALUES
+			(now(), 'host-1', '1.2.3.4', '1.2.3.4', 'test-pubkey', 'test-vote',
+			 1000000000, 'dz-user-1', 'slc-qa-bm1', 'slc',
+			 %d, %d, 100, 80, 60, 20,
+			 79, false, 0, 1000000, true)
+	`, "`"+config.ShredderDB+"`", epoch, slot1))
+	require.NoError(t, err)
+
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
-	// Slot 100: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds
-	// Slot 200: only turbine + jito (no DZ) — tests completeness calculation
+	// slot1: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds (DZ-leader slot)
+	// slot2: only turbine + jito (no DZ) — tests completeness calculation
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
 			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
 		VALUES
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz',      '', 100, 80),
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'turbine',  '', 100, 15),
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'jito',     '', 100,  5),
-			(now(), 'slc-qa-bm1', 'shred', 800, 200, 'turbine',  '', 100, 60),
-			(now(), 'slc-qa-bm1', 'shred', 800, 200, 'jito',     '', 100, 40),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz',       '', 100, 70),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'turbine',  '', 100, 20),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'jito',     '', 100, 10),
-			(now(), 'fra-qa-bm1', 'shred', 800, 200, 'turbine',  '', 100, 55),
-			(now(), 'fra-qa-bm1', 'shred', 800, 200, 'jito',     '', 100, 45)
-	`, "`"+config.ShredderDB+"`"))
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',      '', 100, 80),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'turbine',  '', 100, 15),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',     '', 100,  5),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',  '', 100, 60),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',     '', 100, 40),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',       '', 100, 70),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'turbine',  '', 100, 20),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',     '', 100, 10),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',  '', 100, 55),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',     '', 100, 45)
+	`, "`"+config.ShredderDB+"`", epoch, slot1, slot2))
 	require.NoError(t, err)
 
 	// Insert lead-time rows (loser_feed != '') — pairwise: winner vs specific loser
-	// For slot 100 on slc-qa-bm1: dz beat turbine and jito
+	// For slot1 on slc-qa-bm1: dz beat turbine and jito
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
 			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, lead_time_p50_ms, lead_time_p95_ms)
 		VALUES
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz', 'turbine', 1.5, 3.0),
-			(now(), 'slc-qa-bm1', 'shred', 800, 100, 'dz', 'jito',    2.0, 4.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz', 'turbine', 2.5, 5.0),
-			(now(), 'fra-qa-bm1', 'shred', 800, 100, 'dz', 'jito',    3.0, 6.0)
-	`, "`"+config.ShredderDB+"`"))
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'turbine', 1.5, 3.0),
+			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'jito',    2.0, 4.0),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'turbine', 2.5, 5.0),
+			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'jito',    3.0, 6.0)
+	`, "`"+config.ShredderDB+"`", epoch, slot1))
 	require.NoError(t, err)
 }
 
 func TestGetEdgeScoreboard_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	createSlotFeedRacesTable(t)
+	createShredderTables(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard", nil)
 	rr := httptest.NewRecorder()
@@ -212,7 +261,7 @@ func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
 
 func TestGetEdgeScoreboard_InvalidWindow(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	createSlotFeedRacesTable(t)
+	createShredderTables(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard?window=bogus", nil)
 	rr := httptest.NewRecorder()

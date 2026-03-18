@@ -147,10 +147,11 @@ func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 	excludedNodes := []string{"fra-mn-bm2", "tyo-mn-bm1"}
 
 	interval := validWindows[window]
-	var timeFilter string
+	var timeOnlyFilter string
 	if interval != "" {
-		timeFilter = fmt.Sprintf("AND event_ts >= now() - INTERVAL %s", interval)
+		timeOnlyFilter = fmt.Sprintf("AND event_ts >= now() - INTERVAL %s", interval)
 	}
+	timeFilter := timeOnlyFilter
 	for _, n := range excludedNodes {
 		timeFilter += fmt.Sprintf(" AND node_id != '%s'", n)
 	}
@@ -225,11 +226,60 @@ func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		}, nil
 	}
 
+	// DZ-leader slot filter: use publisher_shred_stats.is_scheduled_leader to identify
+	// slots where the leader was publishing shreds via DZ. This is the authoritative
+	// source — it comes from the shredder's own observation of DZ multicast traffic.
+	dzLeaderCTE := fmt.Sprintf(`dz_leader_slots AS (
+		SELECT DISTINCT slot
+		FROM %s.publisher_shred_stats
+		WHERE is_scheduled_leader = true %s
+	)`, shredderDB, timeOnlyFilter)
+
+	// Query 1b: DZ-leader slot counts per node (overrides dz_slots from query 1)
+	query1b := fmt.Sprintf(`
+		WITH %s
+		SELECT node_id, uniqExact(slot) AS dz_leader_slots
+		FROM %s.slot_feed_races FINAL
+		WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+			AND slot IN (SELECT slot FROM dz_leader_slots)
+			%s
+		GROUP BY node_id
+	`, dzLeaderCTE, shredderDB, timeFilter)
+
+	start = time.Now()
+	rows1b, err := envDB(ctx).Query(ctx, query1b)
+	duration = time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+	if err != nil {
+		return nil, fmt.Errorf("query1b: %w", err)
+	}
+	defer rows1b.Close()
+
+	// Reset dz_slots and update with DZ-leader counts
+	for _, info := range nodeSlots {
+		info.dzSlots = 0
+	}
+	for rows1b.Next() {
+		var nodeID string
+		var dzLeaderSlots uint64
+		if err := rows1b.Scan(&nodeID, &dzLeaderSlots); err != nil {
+			return nil, fmt.Errorf("query1b scan: %w", err)
+		}
+		if info, ok := nodeSlots[nodeID]; ok {
+			info.dzSlots = dzLeaderSlots
+		}
+	}
+	if err := rows1b.Err(); err != nil {
+		return nil, fmt.Errorf("query1b rows: %w", err)
+	}
+
 	// Query 2: Per-node per-feed win counts from summary rows (loser_feed = '')
-	// Only DZ-participating slots. Uses FINAL for dedup safety.
+	// Scoped to DZ-leader slots (where the leader published shreds via DZ).
+	// Uses FINAL for dedup safety.
 	// Win rate uses MAX(SUM(total_shreds)) OVER (PARTITION BY node_id) as the
 	// denominator so all feeds share the same base per node.
 	query2 := fmt.Sprintf(`
+		WITH %s
 		SELECT
 			node_id,
 			feed,
@@ -247,12 +297,14 @@ func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 			INNER JOIN (
 				SELECT DISTINCT node_id, slot
 				FROM %s.slot_feed_races FINAL
-				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = '' %s
+				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+					AND slot IN (SELECT slot FROM dz_leader_slots)
+					%s
 			) dz ON r.node_id = dz.node_id AND r.slot = dz.slot
 			WHERE r.feed_type = 'shred' AND r.loser_feed = '' %s
 			GROUP BY r.node_id, r.feed
 		)
-	`, shredderDB, shredderDB, timeFilter, timeFilter)
+	`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
 
 	start = time.Now()
 	rows2, err := envDB(ctx).Query(ctx, query2)
@@ -288,23 +340,30 @@ func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 
 	// Query 2b: Pairwise lead times from lead-time rows (loser_feed != '')
 	// Uses quantile() to aggregate per-slot percentiles across slots — never AVG.
-	// No DZ-slot join needed: lead time rows only exist when both feeds delivered
-	// the same shred, so sample counts naturally reflect coverage overlap.
+	// Scoped to DZ-leader slots via INNER JOIN for consistency with query 2.
 	// Uses FINAL for dedup safety.
 	query2b := fmt.Sprintf(`
+		WITH %s
 		SELECT
-			node_id,
-			feed,
-			loser_feed,
+			r.node_id,
+			r.feed,
+			r.loser_feed,
 			count() AS slot_count,
-			quantile(0.5)(lead_time_p50_ms) AS p50_ms,
-			quantile(0.5)(lead_time_p95_ms) AS p95_ms
-		FROM %s.slot_feed_races FINAL
-		WHERE feed_type = 'shred' AND loser_feed != ''
-			AND lead_time_p50_ms <= 500
+			quantile(0.5)(r.lead_time_p50_ms) AS p50_ms,
+			quantile(0.5)(r.lead_time_p95_ms) AS p95_ms
+		FROM %s.slot_feed_races AS r FINAL
+		INNER JOIN (
+			SELECT DISTINCT node_id, slot
+			FROM %s.slot_feed_races FINAL
+			WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+				AND slot IN (SELECT slot FROM dz_leader_slots)
+				%s
+		) dz ON r.node_id = dz.node_id AND r.slot = dz.slot
+		WHERE r.feed_type = 'shred' AND r.loser_feed != ''
+			AND r.lead_time_p50_ms <= 500
 			%s
-		GROUP BY node_id, feed, loser_feed
-	`, shredderDB, timeFilter)
+		GROUP BY r.node_id, r.feed, r.loser_feed
+	`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
 
 	start = time.Now()
 	rows2b, err := envDB(ctx).Query(ctx, query2b)
@@ -517,10 +576,12 @@ func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 	nodeList := strings.Join(validNodeIDs, ",")
 	nodeCount := len(nodeSlots)
 	query5 := fmt.Sprintf(`
-		WITH dz_slots AS (
+		WITH %s,
+		dz_slots AS (
 			SELECT DISTINCT slot
 			FROM %s.slot_feed_races FINAL
 			WHERE feed_type = 'shred' AND loser_feed = '' AND feed = 'dz'
+				AND slot IN (SELECT slot FROM dz_leader_slots)
 				AND node_id IN (%s)
 				AND slot >= (SELECT max(slot) - 10000 FROM %s.slot_feed_races FINAL WHERE feed_type = 'shred' AND loser_feed = '')
 		),
@@ -545,7 +606,7 @@ func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		WHERE r.feed_type = 'shred' AND r.loser_feed = ''
 			AND r.node_id IN (%s)
 		ORDER BY r.node_id, r.slot, r.feed
-	`, shredderDB, nodeList, shredderDB, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
+	`, dzLeaderCTE, shredderDB, nodeList, shredderDB, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
 	start = time.Now()
 	rows5, err := envDB(ctx).Query(ctx, query5)
 	duration = time.Since(start)
