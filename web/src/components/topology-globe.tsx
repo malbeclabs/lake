@@ -942,7 +942,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (!pathModeEnabled || !pathSource || !pathTarget) return
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, 5)
+    fetchISISPaths(pathSource, pathTarget, 10)
       .then(result => {
         setPathsResult(result)
         if (result.paths?.length > 0) {
@@ -963,7 +963,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, 5)
+    fetchISISPaths(pathTarget, pathSource, 10)
       .then(result => setReversePathsResult(result))
       .catch(err => setReversePathsResult({ paths: [], from: pathTarget, to: pathSource, error: err.message }))
       .finally(() => setReversePathLoading(false))

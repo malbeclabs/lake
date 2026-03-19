@@ -691,7 +691,7 @@ export function TopologyGraph({
 
     setPathLoading(true)
     setSelectedPathIndex(0) // Reset to first path
-    fetchISISPaths(pathSource, pathTarget, 5)
+    fetchISISPaths(pathSource, pathTarget, 10)
       .then(result => {
         setPathsResult(result)
         // Turn off device/link type overlays when path is found to make path visualization clearer
@@ -718,7 +718,7 @@ export function TopologyGraph({
 
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, 5)
+    fetchISISPaths(pathTarget, pathSource, 10)
       .then(result => {
         setReversePathsResult(result)
       })

@@ -6,11 +6,16 @@ import { cn } from '@/lib/utils'
 
 // Path colors for K-shortest paths visualization
 const PATH_COLORS = [
-  { light: '#16a34a', dark: '#22c55e' },  // green - primary/shortest
-  { light: '#2563eb', dark: '#3b82f6' },  // blue - alternate 1
-  { light: '#9333ea', dark: '#a855f7' },  // purple - alternate 2
-  { light: '#ea580c', dark: '#f97316' },  // orange - alternate 3
-  { light: '#0891b2', dark: '#06b6d4' },  // cyan - alternate 4
+  { light: '#16a34a', dark: '#22c55e' },  // green
+  { light: '#2563eb', dark: '#3b82f6' },  // blue
+  { light: '#9333ea', dark: '#a855f7' },  // purple
+  { light: '#ea580c', dark: '#f97316' },  // orange
+  { light: '#0891b2', dark: '#06b6d4' },  // cyan
+  { light: '#dc2626', dark: '#ef4444' },  // red
+  { light: '#ca8a04', dark: '#eab308' },  // yellow
+  { light: '#db2777', dark: '#ec4899' },  // pink
+  { light: '#059669', dark: '#10b981' },  // emerald
+  { light: '#7c3aed', dark: '#8b5cf6' },  // violet
 ]
 
 interface PathModePanelProps {
