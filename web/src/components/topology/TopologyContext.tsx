@@ -78,6 +78,10 @@ export interface TopologyContextValue {
   // Hover state (for cursor-following popover)
   hoveredEntity: { type: SelectionType; id: string; x: number; y: number } | null
   setHoveredEntity: (entity: { type: SelectionType; id: string; x: number; y: number } | null) => void
+
+  // Hovered discrepancy key (deviceAPK|deviceBPK) for highlight-on-hover in ISIS overlay
+  hoveredDiscrepancyKey: string | null
+  setHoveredDiscrepancyKey: (key: string | null) => void
 }
 
 const TopologyContext = createContext<TopologyContextValue | null>(null)
@@ -183,6 +187,9 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
 
   // Hover state
   const [hoveredEntity, setHoveredEntity] = useState<{ type: SelectionType; id: string; x: number; y: number } | null>(null)
+
+  // Hovered discrepancy key for ISIS overlay highlight
+  const [hoveredDiscrepancyKey, setHoveredDiscrepancyKey] = useState<string | null>(null)
 
   // Impact mode multi-select state
   const [impactDevices, setImpactDevices] = useState<string[]>([])
@@ -372,6 +379,8 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
     view,
     hoveredEntity,
     setHoveredEntity,
+    hoveredDiscrepancyKey,
+    setHoveredDiscrepancyKey,
   }
 
   return (

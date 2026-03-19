@@ -341,7 +341,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   const markerClickedRef = useRef(false)
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
 
   // Derive mode states from context
   const pathModeEnabled = mode === 'path'
@@ -1609,21 +1609,33 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           displayWeight = 2
         }
 
+        // When hovering a discrepancy item, highlight that link and dim others
+        const isHoveredDiscrepancy = hoveredDiscrepancyKey && (
+          healthKey === hoveredDiscrepancyKey ||
+          healthKey === hoveredDiscrepancyKey.split('|').reverse().join('|')
+        )
+        const isDimmedByHover = hoveredDiscrepancyKey && !isHoveredDiscrepancy
+
         // Color by health status
         if (healthStatus === 'partial') {
           displayColor = '#ef4444' // red — asymmetric adjacency, likely a real problem
-          displayOpacity = 1
+          displayOpacity = isDimmedByHover ? 0.1 : 1
         } else if (healthStatus === 'missing') {
           displayColor = '#f59e0b' // amber — no adjacency at all
           useDash = true
-          displayOpacity = 1
+          displayOpacity = isDimmedByHover ? 0.1 : 1
         } else if (healthStatus === 'extra') {
           displayColor = '#8b5cf6' // purple — ISIS adjacency with no configured link
-          displayOpacity = 1
+          displayOpacity = isDimmedByHover ? 0.1 : 1
         } else {
           // Default to matched (green)
           displayColor = '#22c55e'
-          displayOpacity = 0.8
+          displayOpacity = isDimmedByHover ? 0.1 : 0.4
+        }
+
+        // Boost hovered link
+        if (isHoveredDiscrepancy) {
+          displayWeight = Math.max(displayWeight, 4)
         }
       } else if (isInSelectedPath && linkPathIndices) {
         // Use the selected path's color
@@ -1726,7 +1738,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       features,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks])
+  }, [links, devicePositions, isDark, hoveredLink, selectedItem, hoverHighlight, linkPathMap, selectedPathIndex, criticalityOverlayEnabled, linkCriticalityMap, whatifRemovalMode, removalLink, linkHealthMode, linkSlaStatus, trafficFlowMode, getTrafficColor, metroClusteringMode, collapsedMetros, deviceMap, metroMap, contributorLinksMode, contributorIndexMap, bandwidthMode, isisHealthMode, edgeHealthStatus, linkTypeMode, metroPathModeEnabled, metroLinkPathMap, metroPathSelectedPairs, multicastTreesMode, dimOtherLinks, hoveredDiscrepancyKey])
 
   // GeoJSON for validator links (connecting lines)
   const validatorLinksGeoJson = useMemo(() => {

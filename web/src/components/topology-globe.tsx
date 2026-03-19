@@ -331,7 +331,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const settingSelectionLocallyRef = useRef(false)
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, selection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
 
   // Derive mode states from context
   const pathModeEnabled = mode === 'path'
@@ -1739,10 +1739,15 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (isisHealthMode) {
       const healthKey = `${l.deviceAPk}|${l.deviceZPk}`
       const healthStatus = edgeHealthStatus.get(healthKey)
-      if (healthStatus === 'partial') return '#ef4444'
-      if (healthStatus === 'missing') return '#f59e0b'
-      if (healthStatus === 'extra') return '#8b5cf6'
-      return '#22c55e'
+      const isHoveredDiscrepancy = hoveredDiscrepancyKey && (
+        healthKey === hoveredDiscrepancyKey ||
+        healthKey === hoveredDiscrepancyKey.split('|').reverse().join('|')
+      )
+      const isDimmedByHover = hoveredDiscrepancyKey && !isHoveredDiscrepancy
+      if (healthStatus === 'partial') return isDimmedByHover ? 'rgba(239,68,68,0.1)' : '#ef4444'
+      if (healthStatus === 'missing') return isDimmedByHover ? 'rgba(245,158,11,0.1)' : '#f59e0b'
+      if (healthStatus === 'extra') return isDimmedByHover ? 'rgba(139,92,246,0.1)' : '#8b5cf6'
+      return isDimmedByHover ? 'rgba(34,197,94,0.1)' : 'rgba(34,197,94,0.4)'
     }
     if (isInSelectedPath && linkPathIndices) return PATH_COLORS[selectedPathIndex % PATH_COLORS.length]
     if (isInAnyPath && linkPathIndices) return PATH_COLORS[linkPathIndices[0] % PATH_COLORS.length] + '80'
@@ -1756,7 +1761,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
     // Vibrant default gradient for the "living demo" aesthetic
     return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
-  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap, hoveredHighlightPublisherPKs])
+  }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap, hoveredHighlightPublisherPKs, hoveredDiscrepancyKey])
 
   const getArcStroke = useCallback((arc: object) => {
     const a = arc as GlobeArcEntity

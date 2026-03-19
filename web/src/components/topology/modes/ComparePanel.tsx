@@ -39,10 +39,11 @@ function sortDiscrepancies(discrepancies: TopologyDiscrepancy[]): TopologyDiscre
 }
 
 function DiscrepancyItem({ d }: { d: TopologyDiscrepancy }) {
-  const { setSelection } = useTopology()
+  const { setSelection, setHoveredDiscrepancyKey } = useTopology()
   const status = d.linkStatus
   const statusLabel = status && status !== 'activated' ? STATUS_LABELS[status] : null
   const statusColor = status ? STATUS_COLORS[status] : ''
+  const hoverKey = `${d.deviceAPK}|${d.deviceBPK}`
 
   return (
     <button
@@ -56,6 +57,8 @@ function DiscrepancyItem({ d }: { d: TopologyDiscrepancy }) {
           setSelection({ type: 'device', id: d.deviceAPK })
         }
       }}
+      onMouseEnter={() => setHoveredDiscrepancyKey(hoverKey)}
+      onMouseLeave={() => setHoveredDiscrepancyKey(null)}
     >
       <span className="truncate flex-1">{d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}</span>
       {statusLabel && <span className={`shrink-0 ${statusColor}`}>{statusLabel.toLowerCase()}</span>}

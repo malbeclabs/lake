@@ -98,7 +98,7 @@ export function TopologyGraph({
   const setSelectedLinkRef = useRef<(link: LinkInfo | null) => void>(() => {})
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, setSelection, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, setSelection, impactDevices, toggleImpactDevice, clearImpactDevices, hoveredDiscrepancyKey } = useTopology()
 
   // Get URL params for link selection (device selection comes via props, but links need direct access)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -1698,27 +1698,34 @@ export function TopologyGraph({
         const metric = edge.data('metric') ?? 0
         const width = getMetricWidth(metric)
 
+        // When hovering a discrepancy item, highlight that edge and dim others
+        const isHoveredDiscrepancy = hoveredDiscrepancyKey && (
+          edgeId === hoveredDiscrepancyKey ||
+          edgeId === hoveredDiscrepancyKey.split('|').reverse().join('|')
+        )
+        const isDimmedByHover = hoveredDiscrepancyKey && !isHoveredDiscrepancy
+
         if (status === 'partial') {
           edge.style({
             'line-color': '#ef4444',
             'target-arrow-color': '#ef4444',
-            'width': width,
-            'opacity': 1,
+            'width': isHoveredDiscrepancy ? Math.max(width, 4) : width,
+            'opacity': isDimmedByHover ? 0.1 : 1,
           })
         } else if (status === 'missing') {
           edge.style({
             'line-color': '#f59e0b',
             'target-arrow-color': '#f59e0b',
             'line-style': 'dashed',
-            'width': width,
-            'opacity': 1,
+            'width': isHoveredDiscrepancy ? Math.max(width, 4) : width,
+            'opacity': isDimmedByHover ? 0.1 : 1,
           })
         } else if (status === 'extra') {
           edge.style({
             'line-color': '#8b5cf6',
             'target-arrow-color': '#8b5cf6',
-            'width': width,
-            'opacity': 1,
+            'width': isHoveredDiscrepancy ? Math.max(width, 4) : width,
+            'opacity': isDimmedByHover ? 0.1 : 1,
           })
         } else {
           // Default to matched if no discrepancy found
@@ -1726,12 +1733,12 @@ export function TopologyGraph({
             'line-color': '#22c55e',
             'target-arrow-color': '#22c55e',
             'width': width,
-            'opacity': 0.8,
+            'opacity': isDimmedByHover ? 0.1 : 0.4,
           })
         }
       })
     })
-  }, [isisHealthEnabled, compareData, edgeHealthStatus, cyGeneration])
+  }, [isisHealthEnabled, compareData, edgeHealthStatus, cyGeneration, hoveredDiscrepancyKey])
 
   // Apply criticality styles when criticality overlay is enabled
   useEffect(() => {
@@ -2469,7 +2476,7 @@ export function TopologyGraph({
           style: {
             'line-color': '#22c55e',
             'target-arrow-color': '#22c55e',
-            'opacity': 0.8,
+            'opacity': 0.4,
           },
         },
         {
