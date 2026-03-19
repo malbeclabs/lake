@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,6 +100,25 @@ func loadISISGraph(ctx context.Context) (*kspGraph, error) {
 				MetroCode:  asString(recGet(rec, "to_metro_code")),
 			}
 		}
+	}
+
+	// Sort adjacency lists for deterministic traversal order
+	for _, edges := range g.Adj {
+		slices.SortFunc(edges, func(a, b kspEdge) int {
+			if a.Metric != b.Metric {
+				if a.Metric < b.Metric {
+					return -1
+				}
+				return 1
+			}
+			if a.To < b.To {
+				return -1
+			}
+			if a.To > b.To {
+				return 1
+			}
+			return 0
+		})
 	}
 
 	slog.Info("loaded ISIS graph", "nodes", len(g.Nodes), "edges", len(records))
@@ -339,10 +359,15 @@ type dijkItem struct {
 
 type dijkHeap []dijkItem
 
-func (h dijkHeap) Len() int           { return len(h) }
-func (h dijkHeap) Less(i, j int) bool { return h[i].cost < h[j].cost }
-func (h dijkHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *dijkHeap) Push(x any)        { *h = append(*h, x.(dijkItem)) }
+func (h dijkHeap) Len() int { return len(h) }
+func (h dijkHeap) Less(i, j int) bool {
+	if h[i].cost != h[j].cost {
+		return h[i].cost < h[j].cost
+	}
+	return h[i].node < h[j].node // stable tie-break by node PK
+}
+func (h dijkHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *dijkHeap) Push(x any)   { *h = append(*h, x.(dijkItem)) }
 func (h *dijkHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -353,10 +378,24 @@ func (h *dijkHeap) Pop() any {
 
 type candidateHeap []kspPath
 
-func (h candidateHeap) Len() int           { return len(h) }
-func (h candidateHeap) Less(i, j int) bool { return h[i].TotalMetric < h[j].TotalMetric }
-func (h candidateHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *candidateHeap) Push(x any)        { *h = append(*h, x.(kspPath)) }
+func (h candidateHeap) Len() int { return len(h) }
+func (h candidateHeap) Less(i, j int) bool {
+	if h[i].TotalMetric != h[j].TotalMetric {
+		return h[i].TotalMetric < h[j].TotalMetric
+	}
+	// Stable tie-break: fewer hops first, then lexicographic node order
+	if len(h[i].Nodes) != len(h[j].Nodes) {
+		return len(h[i].Nodes) < len(h[j].Nodes)
+	}
+	for k := range h[i].Nodes {
+		if h[i].Nodes[k] != h[j].Nodes[k] {
+			return h[i].Nodes[k] < h[j].Nodes[k]
+		}
+	}
+	return false
+}
+func (h candidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *candidateHeap) Push(x any)   { *h = append(*h, x.(kspPath)) }
 func (h *candidateHeap) Pop() any {
 	old := *h
 	n := len(old)
