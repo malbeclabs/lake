@@ -83,7 +83,7 @@ function StatusRow({ count, label, color, discrepancies }: {
       <div
         role={hasItems ? 'button' : undefined}
         onClick={hasItems ? () => setExpanded(!expanded) : undefined}
-        className={`flex items-center gap-2 py-1 ${hasItems ? 'cursor-pointer hover:bg-[var(--accent)] -mx-1.5 px-1.5 rounded' : ''}`}
+        className={`flex items-center gap-2 py-1 ${hasItems ? 'cursor-pointer hover:bg-muted -mx-1.5 px-1.5 rounded' : ''}`}
       >
         <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
         <span className="flex-1">{label}</span>
