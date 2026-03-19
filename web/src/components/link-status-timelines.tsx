@@ -228,6 +228,8 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
   const isDarkMode = resolvedTheme === 'dark'
   const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [enabledSides, setEnabledSides] = useState<Set<'A' | 'Z'>>(new Set(['A', 'Z']))
+  const [hoveredMetric, setHoveredMetric] = useState<MetricType | null>(null)
+  const [hoveredSide, setHoveredSide] = useState<'A' | 'Z' | null>(null)
 
   // Determine which metrics have data
   const availableMetrics = useMemo(() => {
@@ -372,24 +374,32 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
   const gridColor = isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
   const textColor = isDarkMode ? '#a1a1aa' : '#71717a'
 
+  // Compute line opacity based on hover state
+  const getLineOpacity = (metric: MetricType, side: 'A' | 'Z'): number => {
+    if (!hoveredMetric && !hoveredSide) return 1
+    const metricMatch = !hoveredMetric || hoveredMetric === metric
+    const sideMatch = !hoveredSide || hoveredSide === side
+    return (metricMatch && sideMatch) ? 1 : 0.15
+  }
+
   // Generate lines for each enabled side + metric
-  const lines: { dataKey: string; color: string; strokeDasharray?: string }[] = []
+  const lines: { dataKey: string; color: string; strokeDasharray?: string; metric: MetricType; side: 'A' | 'Z' }[] = []
   for (const side of ['A', 'Z'] as const) {
     if (!enabledSides.has(side)) continue
     const color = SIDE_COLORS[side]
     if (enabledMetrics.has('errors') && availableMetrics.has('errors')) {
-      lines.push({ dataKey: `${side}_errors_in`, color })
-      lines.push({ dataKey: `${side}_errors_out`, color })
+      lines.push({ dataKey: `${side}_errors_in`, color, metric: 'errors', side })
+      lines.push({ dataKey: `${side}_errors_out`, color, metric: 'errors', side })
     }
     if (enabledMetrics.has('fcs_errors') && availableMetrics.has('fcs_errors')) {
-      lines.push({ dataKey: `${side}_fcs_errors`, color, strokeDasharray: '8 3' })
+      lines.push({ dataKey: `${side}_fcs_errors`, color, strokeDasharray: '8 3', metric: 'fcs_errors', side })
     }
     if (enabledMetrics.has('discards') && availableMetrics.has('discards')) {
-      lines.push({ dataKey: `${side}_discards_in`, color, strokeDasharray: '5 5' })
-      lines.push({ dataKey: `${side}_discards_out`, color, strokeDasharray: '5 5' })
+      lines.push({ dataKey: `${side}_discards_in`, color, strokeDasharray: '5 5', metric: 'discards', side })
+      lines.push({ dataKey: `${side}_discards_out`, color, strokeDasharray: '5 5', metric: 'discards', side })
     }
     if (enabledMetrics.has('carrier') && availableMetrics.has('carrier')) {
-      lines.push({ dataKey: `${side}_carrier`, color, strokeDasharray: '2 2' })
+      lines.push({ dataKey: `${side}_carrier`, color, strokeDasharray: '2 2', metric: 'carrier', side })
     }
   }
 
@@ -408,6 +418,8 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
                 <button
                   key={metric}
                   onClick={() => toggleMetric(metric)}
+                  onMouseEnter={() => setHoveredMetric(metric)}
+                  onMouseLeave={() => setHoveredMetric(null)}
                   className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
                     isEnabled
                       ? 'bg-background border-foreground/20 text-foreground shadow-sm'
@@ -433,6 +445,8 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
                 <button
                   key={side}
                   onClick={() => toggleSide(side)}
+                  onMouseEnter={() => setHoveredSide(side)}
+                  onMouseLeave={() => setHoveredSide(null)}
                   className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
                     isEnabled
                       ? 'bg-background border-current shadow-sm'
@@ -459,7 +473,7 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
             <ReferenceLine y={0} stroke={isDarkMode ? '#666' : '#999'} strokeWidth={1.5} label={{ value: 'in ↑ / out ↓', position: 'right', fontSize: 9, fill: textColor }} />
             <RechartsTooltip content={<CustomTooltip />} />
             {lines.map(line => (
-              <Line key={line.dataKey} type="monotone" dataKey={line.dataKey} stroke={line.color} strokeWidth={1.5} strokeDasharray={line.strokeDasharray} dot={false} connectNulls />
+              <Line key={line.dataKey} type="monotone" dataKey={line.dataKey} stroke={line.color} strokeWidth={1.5} strokeDasharray={line.strokeDasharray} strokeOpacity={getLineOpacity(line.metric, line.side)} dot={false} connectNulls />
             ))}
           </LineChart>
         </ResponsiveContainer>
@@ -478,6 +492,7 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
   const { resolvedTheme } = useTheme()
   const isDarkMode = resolvedTheme === 'dark'
   const [enabledSeries, setEnabledSeries] = useState<Set<'total' | 'A' | 'Z'>>(new Set(['total', 'A', 'Z']))
+  const [hoveredSeries, setHoveredSeries] = useState<'total' | 'A' | 'Z' | null>(null)
 
   // Check which series have data
   const availableSeries = useMemo(() => {
@@ -554,6 +569,8 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
               <button
                 key={series}
                 onClick={() => toggleSeries(series)}
+                onMouseEnter={() => setHoveredSeries(series)}
+                onMouseLeave={() => setHoveredSeries(null)}
                 className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
                   isEnabled
                     ? 'bg-background border-current shadow-sm'
@@ -577,9 +594,9 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
             <XAxis dataKey="time" tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={{ stroke: gridColor }} interval="preserveStartEnd" minTickGap={50} />
             <YAxis tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={false} width={40} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
             <RechartsTooltip content={<CustomTooltip />} />
-            {enabledSeries.has('total') && <Line type="monotone" dataKey="total" stroke={SERIES_CONFIG.total.color} strokeWidth={2} dot={false} />}
-            {enabledSeries.has('A') && availableSeries.has('A') && <Line type="monotone" dataKey="A" stroke={SERIES_CONFIG.A.color} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />}
-            {enabledSeries.has('Z') && availableSeries.has('Z') && <Line type="monotone" dataKey="Z" stroke={SERIES_CONFIG.Z.color} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />}
+            {enabledSeries.has('total') && <Line type="monotone" dataKey="total" stroke={SERIES_CONFIG.total.color} strokeWidth={2} strokeOpacity={!hoveredSeries || hoveredSeries === 'total' ? 1 : 0.15} dot={false} />}
+            {enabledSeries.has('A') && availableSeries.has('A') && <Line type="monotone" dataKey="A" stroke={SERIES_CONFIG.A.color} strokeWidth={1.5} strokeDasharray="5 5" strokeOpacity={!hoveredSeries || hoveredSeries === 'A' ? 1 : 0.15} dot={false} />}
+            {enabledSeries.has('Z') && availableSeries.has('Z') && <Line type="monotone" dataKey="Z" stroke={SERIES_CONFIG.Z.color} strokeWidth={1.5} strokeDasharray="5 5" strokeOpacity={!hoveredSeries || hoveredSeries === 'Z' ? 1 : 0.15} dot={false} />}
           </LineChart>
         </ResponsiveContainer>
       </div>

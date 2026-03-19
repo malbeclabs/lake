@@ -334,9 +334,10 @@ interface InterfaceToggleButtonProps {
   isEnabled: boolean
   color: string
   onToggle: () => void
+  onHoverChange?: (hovered: boolean) => void
 }
 
-function InterfaceToggleButton({ intf, isEnabled, color, onToggle }: InterfaceToggleButtonProps) {
+function InterfaceToggleButton({ intf, isEnabled, color, onToggle, onHoverChange }: InterfaceToggleButtonProps) {
   const [showPopover, setShowPopover] = useState(false)
   const hasLinkInfo = intf.link_code || intf.link_type
 
@@ -344,8 +345,8 @@ function InterfaceToggleButton({ intf, isEnabled, color, onToggle }: InterfaceTo
     <div className="relative">
       <button
         onClick={onToggle}
-        onMouseEnter={() => hasLinkInfo && setShowPopover(true)}
-        onMouseLeave={() => setShowPopover(false)}
+        onMouseEnter={() => { hasLinkInfo && setShowPopover(true); onHoverChange?.(true) }}
+        onMouseLeave={() => { setShowPopover(false); onHoverChange?.(false) }}
         className={`w-full px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 text-left ${
           isEnabled
             ? 'bg-background border-current shadow-sm'
@@ -404,6 +405,8 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
   const [enabledInterfaces, setEnabledInterfaces] = useState<Set<string>>(new Set())
   const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [initialized, setInitialized] = useState(false)
+  const [hoveredMetric, setHoveredMetric] = useState<MetricType | null>(null)
+  const [hoveredInterface, setHoveredInterface] = useState<string | null>(null)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['device-interface-history', devicePk, timeRange, buckets],
@@ -619,26 +622,34 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
   const gridColor = isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
   const textColor = isDarkMode ? '#a1a1aa' : '#71717a'
 
+  // Compute line opacity based on hover state
+  const getLineOpacity = (metric: MetricType, intfName: string): number => {
+    if (!hoveredMetric && !hoveredInterface) return 1
+    const metricMatch = !hoveredMetric || hoveredMetric === metric
+    const intfMatch = !hoveredInterface || hoveredInterface === intfName
+    return (metricMatch && intfMatch) ? 1 : 0.15
+  }
+
   // Generate lines for each enabled interface + metric combination
   // In values are positive (above axis), out values are negative (below axis)
-  const lines: { dataKey: string; color: string; strokeDasharray?: string }[] = []
+  const lines: { dataKey: string; color: string; strokeDasharray?: string; metric: MetricType; intfName: string }[] = []
   for (const intf of interfacesWithIssues) {
     if (!enabledInterfaces.has(intf.interface_name)) continue
     const color = interfaceColorMap[intf.interface_name]
 
     if (enabledMetrics.has('errors') && availableMetrics.has('errors')) {
-      lines.push({ dataKey: `${intf.interface_name}_errors_in`, color, strokeDasharray: undefined })
-      lines.push({ dataKey: `${intf.interface_name}_errors_out`, color, strokeDasharray: undefined })
+      lines.push({ dataKey: `${intf.interface_name}_errors_in`, color, strokeDasharray: undefined, metric: 'errors', intfName: intf.interface_name })
+      lines.push({ dataKey: `${intf.interface_name}_errors_out`, color, strokeDasharray: undefined, metric: 'errors', intfName: intf.interface_name })
     }
     if (enabledMetrics.has('fcs_errors') && availableMetrics.has('fcs_errors')) {
-      lines.push({ dataKey: `${intf.interface_name}_fcs_errors`, color, strokeDasharray: '8 3' })
+      lines.push({ dataKey: `${intf.interface_name}_fcs_errors`, color, strokeDasharray: '8 3', metric: 'fcs_errors', intfName: intf.interface_name })
     }
     if (enabledMetrics.has('discards') && availableMetrics.has('discards')) {
-      lines.push({ dataKey: `${intf.interface_name}_discards_in`, color, strokeDasharray: '5 5' })
-      lines.push({ dataKey: `${intf.interface_name}_discards_out`, color, strokeDasharray: '5 5' })
+      lines.push({ dataKey: `${intf.interface_name}_discards_in`, color, strokeDasharray: '5 5', metric: 'discards', intfName: intf.interface_name })
+      lines.push({ dataKey: `${intf.interface_name}_discards_out`, color, strokeDasharray: '5 5', metric: 'discards', intfName: intf.interface_name })
     }
     if (enabledMetrics.has('carrier') && availableMetrics.has('carrier')) {
-      lines.push({ dataKey: `${intf.interface_name}_carrier`, color, strokeDasharray: '2 2' })
+      lines.push({ dataKey: `${intf.interface_name}_carrier`, color, strokeDasharray: '2 2', metric: 'carrier', intfName: intf.interface_name })
     }
   }
 
@@ -659,6 +670,8 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
                 <button
                   key={metric}
                   onClick={() => toggleMetric(metric)}
+                  onMouseEnter={() => setHoveredMetric(metric)}
+                  onMouseLeave={() => setHoveredMetric(null)}
                   className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
                     isEnabled
                       ? 'bg-background border-foreground/20 text-foreground shadow-sm'
@@ -697,6 +710,7 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
                   isEnabled={isEnabled}
                   color={color}
                   onToggle={() => toggleInterface(intf.interface_name)}
+                  onHoverChange={(hovered) => setHoveredInterface(hovered ? intf.interface_name : null)}
                 />
               )
             })}
@@ -740,6 +754,7 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
                   stroke={line.color}
                   strokeWidth={1.5}
                   strokeDasharray={line.strokeDasharray}
+                  strokeOpacity={getLineOpacity(line.metric, line.intfName)}
                   dot={false}
                   connectNulls
                 />
