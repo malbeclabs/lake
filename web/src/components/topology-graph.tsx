@@ -640,24 +640,8 @@ export function TopologyGraph({
       edge => nodeIds.has(edge.data.source) && nodeIds.has(edge.data.target)
     )
 
-    // Add ghost edges for missing/partial ISIS discrepancies
-    if (isisHealthEnabled && compareData?.discrepancies) {
-      const existingEdgeIds = new Set(filteredEdges.map(e => e.data.id))
-      for (const d of compareData.discrepancies) {
-        if (d.type !== 'missing_isis' && d.type !== 'partial_isis') continue
-        const edgeId = `${d.deviceAPK}->${d.deviceBPK}`
-        const reverseId = `${d.deviceBPK}->${d.deviceAPK}`
-        if (existingEdgeIds.has(edgeId) || existingEdgeIds.has(reverseId)) continue
-        if (!nodeIds.has(d.deviceAPK) || !nodeIds.has(d.deviceBPK)) continue
-        filteredEdges.push({
-          data: { id: edgeId, source: d.deviceAPK, target: d.deviceBPK, metric: 0 },
-        })
-        existingEdgeIds.add(edgeId)
-      }
-    }
-
     return { nodes: filteredNodes, edges: filteredEdges }
-  }, [data, statusFilter, deviceTypeFilter, isisHealthEnabled, compareData])
+  }, [data, statusFilter, deviceTypeFilter])
 
   // Get device type color
   const getDeviceTypeColor = useCallback((deviceType: string) => {
@@ -1708,18 +1692,43 @@ export function TopologyGraph({
       return 2
     }
 
+    // Hover highlight key conversion (ComparePanel uses '|', graph uses '->')
+    const hoverEdgeKey = hoveredDiscrepancyKey?.replace('|', '->')
+    const hoverEdgeKeyReverse = hoveredDiscrepancyKey?.split('|').reverse().join('->')
+
     cy.batch(() => {
-      // Skip path edges - they have their own styling
+      // Add ghost edges for missing/partial ISIS discrepancies that have no ISIS adjacency edge
+      // ISIS graph is directional — add both A→B and B→A if missing
+      const existingEdgeIds = new Set(cy.edges().map(e => e.id()))
+      for (const d of compareData.discrepancies) {
+        if (d.type !== 'missing_isis' && d.type !== 'partial_isis') continue
+        // Only add if both nodes exist in the graph
+        if (!cy.getElementById(d.deviceAPK).length || !cy.getElementById(d.deviceBPK).length) continue
+        const edgeId = `${d.deviceAPK}->${d.deviceBPK}`
+        const reverseId = `${d.deviceBPK}->${d.deviceAPK}`
+        if (!existingEdgeIds.has(edgeId)) {
+          cy.add({
+            group: 'edges',
+            data: { id: edgeId, source: d.deviceAPK, target: d.deviceBPK, metric: 0, isGhostEdge: true },
+          })
+          existingEdgeIds.add(edgeId)
+        }
+        if (!existingEdgeIds.has(reverseId)) {
+          cy.add({
+            group: 'edges',
+            data: { id: reverseId, source: d.deviceBPK, target: d.deviceAPK, metric: 0, isGhostEdge: true },
+          })
+          existingEdgeIds.add(reverseId)
+        }
+      }
+
+      // Style all edges by health status
       cy.edges().not('.path-edge').forEach(edge => {
         const edgeId = edge.data('id') // format: source->target
         const status = edgeHealthStatus.get(edgeId)
         const metric = edge.data('metric') ?? 0
         const width = getMetricWidth(metric)
 
-        // When hovering a discrepancy item, highlight that edge and dim others
-        // hoveredDiscrepancyKey uses '|' separator, edgeId uses '->'
-        const hoverEdgeKey = hoveredDiscrepancyKey?.replace('|', '->')
-        const hoverEdgeKeyReverse = hoveredDiscrepancyKey?.split('|').reverse().join('->')
         const isHoveredDiscrepancy = hoveredDiscrepancyKey && (
           edgeId === hoverEdgeKey ||
           edgeId === hoverEdgeKeyReverse
@@ -1759,6 +1768,15 @@ export function TopologyGraph({
         }
       })
     })
+
+    // Cleanup: remove ghost edges when overlay is disabled
+    return () => {
+      if (cyRef.current) {
+        cyRef.current.batch(() => {
+          cyRef.current!.edges('[?isGhostEdge]').remove()
+        })
+      }
+    }
   }, [isisHealthEnabled, compareData, edgeHealthStatus, cyGeneration, hoveredDiscrepancyKey])
 
   // Apply criticality styles when criticality overlay is enabled
