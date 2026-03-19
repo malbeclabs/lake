@@ -47,7 +47,7 @@ function DiscrepancyItem({ d }: { d: TopologyDiscrepancy }) {
 
   return (
     <button
-      className="flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-[var(--accent)] transition-colors"
+      className="flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
       title={d.details}
       onClick={() => {
         setHoveredDiscrepancyKey(null)
