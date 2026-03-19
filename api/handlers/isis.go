@@ -967,7 +967,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 		"from_pk":   fromPK,
 		"to_pk":     toPK,
 		"k":         int64(k),
-		"max_depth": int64(10),
+		"max_depth": int64(20),
 	})
 	if err != nil {
 		slog.Error("ISIS multi-path query error", "error", err)
