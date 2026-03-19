@@ -301,12 +301,12 @@ func (i *Indexer) startGraphSync(ctx context.Context) {
 // Otherwise, it syncs just the base graph.
 func (i *Indexer) doGraphSync(ctx context.Context) error {
 	if i.isisSource != nil {
-		// Fetch ISIS data first, then sync everything atomically
+		// Fetch ISIS data first, then sync everything atomically.
+		// If the fetch fails, skip this sync cycle rather than wiping ISIS
+		// adjacencies with a base-only sync (which would cause flapping).
 		lsps, err := i.fetchISISData(ctx)
 		if err != nil {
-			i.log.Warn("graph_sync: failed to fetch ISIS data, syncing without ISIS", "error", err)
-			// Fall back to sync without ISIS data
-			return i.graphStore.Sync(ctx)
+			return fmt.Errorf("failed to fetch ISIS data: %w", err)
 		}
 		return i.graphStore.SyncWithISIS(ctx, lsps)
 	}
