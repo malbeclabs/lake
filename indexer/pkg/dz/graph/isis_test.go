@@ -460,9 +460,9 @@ func TestStore_SyncWithISIS_ReplacesExistingData(t *testing.T) {
 	require.Equal(t, int64(1), count, "expected 1 ISIS_ADJACENT relationship after resync")
 }
 
-// TestStore_SyncISIS_DrainedLinkSkipsAdjacency verifies that drained links
-// do not get ISIS_ADJACENT relationships, even when IS-IS LSPs report them as neighbors.
-func TestStore_SyncISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
+// TestStore_SyncISIS_DrainedLinkIncludesAdjacency verifies that drained links
+// still get ISIS_ADJACENT relationships (ISIS is a control plane fact).
+func TestStore_SyncISIS_DrainedLinkIncludesAdjacency(t *testing.T) {
 	chClient := testClickHouseClient(t)
 	neo4jClient := testNeo4jClient(t)
 	log := laketesting.NewLogger()
@@ -539,18 +539,18 @@ func TestStore_SyncISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
 	metric, _ := record.Get("metric")
 	require.Equal(t, int64(1000), metric, "link ISIS metric should still be updated")
 
-	// But no ISIS_ADJACENT relationship should be created
+	// ISIS_ADJACENT should still be created for drained links (ISIS is a control plane fact)
 	res, err = session.Run(ctx, "MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count", nil)
 	require.NoError(t, err)
 	record, err = res.Single(ctx)
 	require.NoError(t, err)
 	count, _ := record.Get("count")
-	require.Equal(t, int64(0), count, "expected no ISIS_ADJACENT for drained link")
+	require.Equal(t, int64(1), count, "expected ISIS_ADJACENT even for drained link")
 }
 
-// TestStore_SyncWithISIS_DrainedLinkSkipsAdjacency verifies the same behavior
-// in the atomic SyncWithISIS path.
-func TestStore_SyncWithISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
+// TestStore_SyncWithISIS_DrainedLinkIncludesAdjacency verifies that drained links
+// still get ISIS_ADJACENT relationships in the atomic SyncWithISIS path.
+func TestStore_SyncWithISIS_DrainedLinkIncludesAdjacency(t *testing.T) {
 	chClient := testClickHouseClient(t)
 	neo4jClient := testNeo4jClient(t)
 	log := laketesting.NewLogger()
@@ -614,15 +614,15 @@ func TestStore_SyncWithISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
 	require.NoError(t, err)
 	defer session.Close(ctx)
 
-	// No ISIS_ADJACENT for drained link
+	// ISIS_ADJACENT should still be created for drained links (ISIS is a control plane fact)
 	res, err := session.Run(ctx, "MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count", nil)
 	require.NoError(t, err)
 	record, err := res.Single(ctx)
 	require.NoError(t, err)
 	count, _ := record.Get("count")
-	require.Equal(t, int64(0), count, "expected no ISIS_ADJACENT for drained link")
+	require.Equal(t, int64(1), count, "expected ISIS_ADJACENT even for drained link")
 
-	// But device ISIS properties should still be set
+	// Device ISIS properties should still be set
 	res, err = session.Run(ctx, "MATCH (d:Device {pk: 'device1'}) RETURN d.isis_system_id AS system_id", nil)
 	require.NoError(t, err)
 	record, err = res.Single(ctx)
@@ -631,9 +631,9 @@ func TestStore_SyncWithISIS_DrainedLinkSkipsAdjacency(t *testing.T) {
 	require.Equal(t, "ac10.0001.0000.00-00", systemID, "device ISIS properties should still be set")
 }
 
-// TestStore_SyncISIS_HardDrainedLinkSkipsAdjacency verifies that hard-drained links
-// (status = "hard-drained" without isis_delay_override_ns) also skip ISIS adjacency.
-func TestStore_SyncISIS_HardDrainedLinkSkipsAdjacency(t *testing.T) {
+// TestStore_SyncISIS_HardDrainedLinkIncludesAdjacency verifies that hard-drained links
+// still get ISIS_ADJACENT relationships (ISIS is a control plane fact).
+func TestStore_SyncISIS_HardDrainedLinkIncludesAdjacency(t *testing.T) {
 	chClient := testClickHouseClient(t)
 	neo4jClient := testNeo4jClient(t)
 	log := laketesting.NewLogger()
@@ -701,13 +701,13 @@ func TestStore_SyncISIS_HardDrainedLinkSkipsAdjacency(t *testing.T) {
 	require.NoError(t, err)
 	defer session.Close(ctx)
 
-	// No ISIS_ADJACENT for hard-drained link
+	// ISIS_ADJACENT should still be created for hard-drained links (ISIS is a control plane fact)
 	res, err := session.Run(ctx, "MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count", nil)
 	require.NoError(t, err)
 	record, err := res.Single(ctx)
 	require.NoError(t, err)
 	count, _ := record.Get("count")
-	require.Equal(t, int64(0), count, "expected no ISIS_ADJACENT for hard-drained link")
+	require.Equal(t, int64(1), count, "expected ISIS_ADJACENT even for hard-drained link")
 }
 
 func TestParseTunnelNet31(t *testing.T) {

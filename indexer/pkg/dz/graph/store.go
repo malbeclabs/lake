@@ -282,11 +282,6 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 				devicesUpdated++
 			}
 
-			// Skip drained links — the adjacency is considered down
-			if mapping.isDrained {
-				continue
-			}
-
 			// Create ISIS_ADJACENT relationship
 			if err := createISISAdjacentInTx(ctx, tx, mapping.localPK, mapping.neighborPK, neighbor, mapping.bandwidth, now); err != nil {
 				s.log.Warn("graph: failed to create ISIS_ADJACENT",
@@ -790,11 +785,6 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 					"error", err)
 			} else {
 				devicesUpdated++
-			}
-
-			// Skip drained links — the adjacency is considered down
-			if mapping.isDrained {
-				continue
 			}
 
 			// Create ISIS_ADJACENT relationship with bandwidth from the link

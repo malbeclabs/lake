@@ -29,8 +29,9 @@ type Indexer struct {
 	telemUsage    *dztelemusage.View
 	sol           *sol.View
 	geoip         *mcpgeoip.View
-	isisSource    isis.Source
-	validatorsApp *validatorsapp.View
+	isisSource       isis.Source
+	lastISISDumpFile string // tracks S3 filename to skip redundant syncs
+	validatorsApp    *validatorsapp.View
 
 	startedAt time.Time
 }
@@ -376,6 +377,7 @@ func (i *Indexer) startISISSync(ctx context.Context) {
 }
 
 // doISISSync performs a single IS-IS sync operation.
+// It skips the sync if the S3 dump file hasn't changed since the last sync.
 func (i *Indexer) doISISSync(ctx context.Context) error {
 	i.log.Debug("isis_sync: fetching latest dump")
 
@@ -383,6 +385,12 @@ func (i *Indexer) doISISSync(ctx context.Context) error {
 	dump, err := i.isisSource.FetchLatest(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch ISIS dump: %w", err)
+	}
+
+	// Skip if the dump file hasn't changed since last sync
+	if dump.FileName == i.lastISISDumpFile {
+		i.log.Debug("isis_sync: dump unchanged, skipping", "file", dump.FileName)
+		return nil
 	}
 
 	i.log.Debug("isis_sync: parsing dump", "file", dump.FileName, "size", len(dump.RawJSON))
@@ -400,6 +408,7 @@ func (i *Indexer) doISISSync(ctx context.Context) error {
 		return fmt.Errorf("failed to sync ISIS to graph: %w", err)
 	}
 
+	i.lastISISDumpFile = dump.FileName
 	return nil
 }
 
