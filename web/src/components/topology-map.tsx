@@ -509,7 +509,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
   }, [linkHealthData])
 
   // Build edge health status from compare data (keyed by device pair)
-  // Returns: 'matched' | 'missing' | 'extra' | 'mismatch' | undefined
+  // Returns: 'matched' | 'partial' | 'missing' | 'extra' | undefined
   const edgeHealthStatus = useMemo(() => {
     if (!compareData?.discrepancies) return new Map<string, string>()
     const status = new Map<string, string>()
@@ -522,6 +522,9 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       if (d.type === 'missing_isis') {
         status.set(key1, 'missing')
         status.set(key2, 'missing')
+      } else if (d.type === 'partial_isis') {
+        status.set(key1, 'partial')
+        status.set(key2, 'partial')
       } else if (d.type === 'extra_isis') {
         status.set(key1, 'extra')
         status.set(key2, 'extra')
@@ -1607,12 +1610,15 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         }
 
         // Color by health status
-        if (healthStatus === 'missing') {
-          displayColor = '#ef4444' // red
+        if (healthStatus === 'partial') {
+          displayColor = '#ef4444' // red — asymmetric adjacency, likely a real problem
+          displayOpacity = 1
+        } else if (healthStatus === 'missing') {
+          displayColor = '#f59e0b' // amber — no adjacency at all
           useDash = true
           displayOpacity = 1
         } else if (healthStatus === 'extra') {
-          displayColor = '#f59e0b' // amber
+          displayColor = '#8b5cf6' // purple — ISIS adjacency with no configured link
           displayOpacity = 1
         } else {
           // Default to matched (green)

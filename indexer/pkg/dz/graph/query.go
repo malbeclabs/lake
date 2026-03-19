@@ -67,7 +67,7 @@ type ISISAdjacency struct {
 
 // TopologyDiscrepancy represents a difference between configured and ISIS topology.
 type TopologyDiscrepancy struct {
-	Type        string // "missing_isis", "extra_isis"
+	Type        string // "missing_isis", "partial_isis", "extra_isis"
 	LinkPK      string // For configured links
 	LinkCode    string
 	DeviceAPK   string
@@ -942,7 +942,7 @@ func (s *Store) CompareTopology(ctx context.Context) (*TopologyComparison, error
 				direction = "reverse only"
 			}
 			comparison.Discrepancies = append(comparison.Discrepancies, TopologyDiscrepancy{
-				Type:        "missing_isis",
+				Type:        "partial_isis",
 				LinkPK:      link.linkPK,
 				LinkCode:    link.linkCode,
 				DeviceAPK:   link.deviceAPK,

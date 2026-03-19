@@ -622,7 +622,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     for (const d of compareData.discrepancies) {
       const key1 = `${d.deviceAPK}|${d.deviceBPK}`
       const key2 = `${d.deviceBPK}|${d.deviceAPK}`
-      const type = d.type === 'missing_isis' ? 'missing' : 'extra'
+      const type = d.type === 'missing_isis' ? 'missing' : d.type === 'partial_isis' ? 'partial' : 'extra'
       status.set(key1, type)
       status.set(key2, type)
     }
@@ -1739,8 +1739,9 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (isisHealthMode) {
       const healthKey = `${l.deviceAPk}|${l.deviceZPk}`
       const healthStatus = edgeHealthStatus.get(healthKey)
-      if (healthStatus === 'missing') return '#ef4444'
-      if (healthStatus === 'extra') return '#f59e0b'
+      if (healthStatus === 'partial') return '#ef4444'
+      if (healthStatus === 'missing') return '#f59e0b'
+      if (healthStatus === 'extra') return '#8b5cf6'
       return '#22c55e'
     }
     if (isInSelectedPath && linkPathIndices) return PATH_COLORS[selectedPathIndex % PATH_COLORS.length]

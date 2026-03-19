@@ -592,7 +592,7 @@ export function TopologyGraph({
   }, [data])
 
   // Build edge health status from compare data
-  // Returns: 'matched' | 'missing' | 'extra' | undefined
+  // Returns: 'matched' | 'partial' | 'missing' | 'extra' | undefined
   const edgeHealthStatus = useMemo(() => {
     if (!compareData?.discrepancies) return new Map<string, string>()
     const status = new Map<string, string>()
@@ -605,6 +605,9 @@ export function TopologyGraph({
       if (d.type === 'missing_isis') {
         status.set(key1, 'missing')
         status.set(key2, 'missing')
+      } else if (d.type === 'partial_isis') {
+        status.set(key1, 'partial')
+        status.set(key2, 'partial')
       } else if (d.type === 'extra_isis') {
         status.set(key1, 'extra')
         status.set(key2, 'extra')
@@ -1695,18 +1698,25 @@ export function TopologyGraph({
         const metric = edge.data('metric') ?? 0
         const width = getMetricWidth(metric)
 
-        if (status === 'missing') {
+        if (status === 'partial') {
           edge.style({
             'line-color': '#ef4444',
             'target-arrow-color': '#ef4444',
+            'width': width,
+            'opacity': 1,
+          })
+        } else if (status === 'missing') {
+          edge.style({
+            'line-color': '#f59e0b',
+            'target-arrow-color': '#f59e0b',
             'line-style': 'dashed',
             'width': width,
             'opacity': 1,
           })
         } else if (status === 'extra') {
           edge.style({
-            'line-color': '#f59e0b',
-            'target-arrow-color': '#f59e0b',
+            'line-color': '#8b5cf6',
+            'target-arrow-color': '#8b5cf6',
             'width': width,
             'opacity': 1,
           })

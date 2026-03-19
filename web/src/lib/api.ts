@@ -2068,7 +2068,7 @@ export async function fetchRedundancyReport(): Promise<RedundancyReportResponse>
 
 // Topology comparison types
 export interface TopologyDiscrepancy {
-  type: 'missing_isis' | 'extra_isis'
+  type: 'missing_isis' | 'partial_isis' | 'extra_isis'
   linkPK?: string
   linkCode?: string
   linkStatus?: string  // "activated", "soft-drained", "provisioning"

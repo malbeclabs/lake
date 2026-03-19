@@ -131,15 +131,21 @@ export function ComparePanel({ data, isLoading }: ComparePanelProps) {
               color="#22c55e"
             />
             <StatusRow
+              count={data.discrepancies.filter(d => d.type === 'partial_isis').length}
+              label="Partial ISIS"
+              color="#ef4444"
+              discrepancies={data.discrepancies.filter(d => d.type === 'partial_isis')}
+            />
+            <StatusRow
               count={data.discrepancies.filter(d => d.type === 'missing_isis').length}
               label="Missing ISIS"
-              color="#ef4444"
+              color="#f59e0b"
               discrepancies={data.discrepancies.filter(d => d.type === 'missing_isis')}
             />
             <StatusRow
               count={data.discrepancies.filter(d => d.type === 'extra_isis').length}
               label="Extra adjacency"
-              color="#f59e0b"
+              color="#8b5cf6"
               discrepancies={data.discrepancies.filter(d => d.type === 'extra_isis')}
             />
           </div>

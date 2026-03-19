@@ -344,7 +344,7 @@ func parsePathHops(v any) []PathHop {
 
 // TopologyDiscrepancy represents a mismatch between configured and ISIS topology
 type TopologyDiscrepancy struct {
-	Type        string `json:"type"` // "missing_isis", "extra_isis"
+	Type        string `json:"type"` // "missing_isis", "partial_isis", "extra_isis"
 	LinkPK      string `json:"linkPK,omitempty"`
 	LinkCode    string `json:"linkCode,omitempty"`
 	LinkStatus  string `json:"linkStatus,omitempty"` // "activated", "soft-drained", "provisioning"
@@ -460,7 +460,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 					direction = "reverse only"
 				}
 				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-					Type:        "missing_isis",
+					Type:        "partial_isis",
 					LinkPK:      asString(linkPK),
 					LinkCode:    asString(linkCode),
 					LinkStatus:  effectiveStatus,
