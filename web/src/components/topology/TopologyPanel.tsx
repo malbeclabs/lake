@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { X } from 'lucide-react'
+import { X, ArrowLeft } from 'lucide-react'
 import { useTopology } from './TopologyContext'
 
 // Sidebar widths (must match sidebar.tsx)
@@ -10,9 +10,10 @@ interface TopologyPanelProps {
   children: ReactNode
   title?: ReactNode
   subtitle?: ReactNode
+  onBack?: () => void
 }
 
-export function TopologyPanel({ children, title, subtitle }: TopologyPanelProps) {
+export function TopologyPanel({ children, title, subtitle, onBack }: TopologyPanelProps) {
   const { panel, closePanel, setPanelWidth } = useTopology()
   const [isResizing, setIsResizing] = useState(false)
 
@@ -88,17 +89,28 @@ export function TopologyPanel({ children, title, subtitle }: TopologyPanelProps)
 
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] min-w-0">
-        <div className="min-w-0 flex-1 mr-2">
-          {title && (
-            <div className="text-sm font-medium truncate">
-              {title}
-            </div>
+        <div className="flex items-center min-w-0 flex-1 mr-2 gap-2">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="p-1 hover:bg-[var(--muted)] rounded transition-colors shrink-0"
+              title="Back"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </button>
           )}
-          {subtitle && (
-            <div className="text-xs text-muted-foreground mt-0.5">
-              {subtitle}
-            </div>
-          )}
+          <div className="min-w-0">
+            {title && (
+              <div className="text-sm font-medium truncate">
+                {title}
+              </div>
+            )}
+            {subtitle && (
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {subtitle}
+              </div>
+            )}
+          </div>
         </div>
         <button
           onClick={closePanel}

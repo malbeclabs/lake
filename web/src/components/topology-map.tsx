@@ -3382,6 +3382,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
               </span>
             ) : undefined
           }
+          onBack={hasOverlayPanelContent ? () => { setSelectedItem(null); openPanel('overlay') } : undefined}
         >
           {/* eslint-disable @typescript-eslint/no-explicit-any */}
           {selectedItem.type === 'device' && (

@@ -98,7 +98,7 @@ export function TopologyGraph({
   const setSelectedLinkRef = useRef<(link: LinkInfo | null) => void>(() => {})
 
   // Get unified topology context
-  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
+  const { mode, setMode, overlays, toggleOverlay, panel, openPanel, closePanel, setSelection, impactDevices, toggleImpactDevice, clearImpactDevices } = useTopology()
 
   // Get URL params for link selection (device selection comes via props, but links need direct access)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -3578,6 +3578,7 @@ export function TopologyGraph({
             <EntityLink to={`/dz/links/${selectedLink.pk}`}>{selectedLink.code}</EntityLink>
           ) : 'Details'}
           subtitle={selectedDevice ? selectedDevice.deviceType : selectedLink?.linkType}
+          onBack={hasOverlayPanelContent ? () => { setSelection(null); openPanel('overlay') } : undefined}
         >
           {selectedDevice && <DeviceDetails device={selectedDevice} />}
           {selectedLink && <LinkDetails link={selectedLink} />}

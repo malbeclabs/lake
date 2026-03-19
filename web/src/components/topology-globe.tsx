@@ -2072,6 +2072,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
               </span>
             ) : undefined
           }
+          onBack={hasOverlayPanelContent ? () => { setSelectedItem(null); openPanel('overlay') } : undefined}
         >
           {/* eslint-disable @typescript-eslint/no-explicit-any */}
           {selectedItem.type === 'device' && <DeviceDetails device={selectedItem.data as any} />}
