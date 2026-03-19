@@ -345,7 +345,7 @@ function InterfaceToggleButton({ intf, isEnabled, color, onToggle, onHoverChange
     <div className="relative">
       <button
         onClick={onToggle}
-        onMouseEnter={() => { hasLinkInfo && setShowPopover(true); onHoverChange?.(true) }}
+        onMouseEnter={() => { if (hasLinkInfo) setShowPopover(true); onHoverChange?.(true) }}
         onMouseLeave={() => { setShowPopover(false); onHoverChange?.(false) }}
         className={`w-full px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 text-left ${
           isEnabled
