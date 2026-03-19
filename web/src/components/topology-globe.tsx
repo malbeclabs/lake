@@ -389,6 +389,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const [pathsResult, setPathsResult] = useState<MultiPathResponse | null>(null)
   const [pathLoading, setPathLoading] = useState(false)
   const [selectedPathIndex, setSelectedPathIndex] = useState(0)
+  const [pathK, setPathK] = useState(10)
   const [showReverse, setShowReverse] = useState(false)
   const [reversePathsResult, setReversePathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedReversePathIndex, setSelectedReversePathIndex] = useState<number>(0)
@@ -942,7 +943,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (!pathModeEnabled || !pathSource || !pathTarget) return
     setPathLoading(true)
     setSelectedPathIndex(0)
-    fetchISISPaths(pathSource, pathTarget, 10)
+    fetchISISPaths(pathSource, pathTarget, pathK)
       .then(result => {
         setPathsResult(result)
         if (result.paths?.length > 0) {
@@ -953,7 +954,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
       .catch(err => setPathsResult({ paths: [], from: pathSource, to: pathTarget, error: err.message }))
       .finally(() => setPathLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathModeEnabled, pathSource, pathTarget])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -963,11 +964,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     }
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, 10)
+    fetchISISPaths(pathTarget, pathSource, pathK)
       .then(result => setReversePathsResult(result))
       .catch(err => setReversePathsResult({ paths: [], from: pathTarget, to: pathSource, error: err.message }))
       .finally(() => setReversePathLoading(false))
-  }, [pathModeEnabled, pathSource, pathTarget])
+  }, [pathModeEnabled, pathSource, pathTarget, pathK])
 
   // Fetch metro paths
   useEffect(() => {
@@ -2121,6 +2122,8 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
                   return !prev
                 })
               }}
+              pathK={pathK}
+              onPathKChange={setPathK}
             />
           )}
           {mode === 'metro-path' && (

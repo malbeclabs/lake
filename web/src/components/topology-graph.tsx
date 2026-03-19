@@ -140,6 +140,7 @@ export function TopologyGraph({
   const [pathsResult, setPathsResult] = useState<MultiPathResponse | null>(null)
   const [selectedPathIndex, setSelectedPathIndex] = useState<number>(0)
   const [pathLoading, setPathLoading] = useState(false)
+  const [pathK, setPathK] = useState(10)
 
   // Reverse path state
   const [showReverse, setShowReverse] = useState(false)
@@ -691,7 +692,7 @@ export function TopologyGraph({
 
     setPathLoading(true)
     setSelectedPathIndex(0) // Reset to first path
-    fetchISISPaths(pathSource, pathTarget, 10)
+    fetchISISPaths(pathSource, pathTarget, pathK)
       .then(result => {
         setPathsResult(result)
         // Turn off device/link type overlays when path is found to make path visualization clearer
@@ -707,7 +708,7 @@ export function TopologyGraph({
         setPathLoading(false)
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, pathSource, pathTarget])
+  }, [mode, pathSource, pathTarget, pathK])
 
   // Pre-fetch reverse paths so toggling direction is instant
   useEffect(() => {
@@ -718,7 +719,7 @@ export function TopologyGraph({
 
     setReversePathLoading(true)
     setSelectedReversePathIndex(0)
-    fetchISISPaths(pathTarget, pathSource, 10)
+    fetchISISPaths(pathTarget, pathSource, pathK)
       .then(result => {
         setReversePathsResult(result)
       })
@@ -728,7 +729,7 @@ export function TopologyGraph({
       .finally(() => {
         setReversePathLoading(false)
       })
-  }, [mode, pathSource, pathTarget])
+  }, [mode, pathSource, pathTarget, pathK])
 
   // Fetch metro paths when source and target metros are set
   useEffect(() => {
@@ -3496,6 +3497,8 @@ export function TopologyGraph({
                   return !prev
                 })
               }}
+              pathK={pathK}
+              onPathKChange={setPathK}
             />
           )}
           {mode === 'metro-path' && (

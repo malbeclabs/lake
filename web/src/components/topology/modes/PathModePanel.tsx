@@ -35,6 +35,8 @@ interface PathModePanelProps {
   onSetSource: (pk: string | null) => void
   onSetTarget: (pk: string | null) => void
   onToggleReverse: () => void
+  pathK: number
+  onPathKChange: (k: number) => void
 }
 
 export function PathModePanel({
@@ -54,6 +56,8 @@ export function PathModePanel({
   onSetSource,
   onSetTarget,
   onToggleReverse,
+  pathK,
+  onPathKChange,
 }: PathModePanelProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -143,8 +147,17 @@ export function PathModePanel({
           {/* Path selector - show if multiple paths */}
           {activeResult.paths.length > 1 && (
             <div className="mb-3">
-              <div className="text-muted-foreground mb-1">
-                Showing {activeResult.paths.length} paths
+              <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
+                <span>Showing {activeResult.paths.length} of</span>
+                <select
+                  value={pathK}
+                  onChange={e => onPathKChange(Number(e.target.value))}
+                  className="bg-muted text-foreground rounded px-1 py-0.5 text-[10px] border border-[var(--border)]"
+                >
+                  {[3, 5, 10].map(n => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
               </div>
               <div className="flex flex-wrap gap-1">
                 {activeResult.paths.map((_, i) => (
