@@ -56,12 +56,6 @@ export function ComparePanel({ data, isLoading }: ComparePanelProps) {
                     <span className="text-amber-500">{data.discrepancies.filter(d => d.type === 'extra_isis').length} extra adjacencies</span>
                   </div>
                 )}
-                {data.discrepancies.filter(d => d.type === 'metric_mismatch').length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-0.5 bg-yellow-500" />
-                    <span className="text-yellow-500">{data.discrepancies.filter(d => d.type === 'metric_mismatch').length} metric mismatches</span>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -88,10 +82,6 @@ export function ComparePanel({ data, isLoading }: ComparePanelProps) {
               <div className="flex items-center gap-1.5">
                 <div className="w-4 h-0.5 bg-amber-500" />
                 <span>Extra adjacency</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-yellow-500" />
-                <span>Metric mismatch</span>
               </div>
             </div>
           </div>

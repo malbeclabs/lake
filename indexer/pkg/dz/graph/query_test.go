@@ -381,14 +381,8 @@ func TestStore_CompareTopology(t *testing.T) {
 	// Should have 2 matched links (both links have ISIS adjacencies)
 	require.Equal(t, 2, comparison.MatchedLinks, "expected 2 matched links")
 
-	// Test data has metric mismatches:
-	// - link1: configured RTT 1000µs, ISIS metric 100µs (10x difference)
-	// - link2: configured RTT 2000µs, ISIS metric 200µs (10x difference)
-	// Both exceed the 50% threshold, so expect 2 metric_mismatch discrepancies
-	require.Len(t, comparison.Discrepancies, 2, "expected 2 metric mismatch discrepancies")
-	for _, d := range comparison.Discrepancies {
-		require.Equal(t, "metric_mismatch", d.Type)
-	}
+	// Both links have ISIS adjacencies, no discrepancies expected
+	require.Len(t, comparison.Discrepancies, 0, "expected 0 discrepancies")
 }
 
 func TestStore_CompareTopology_MissingISIS(t *testing.T) {

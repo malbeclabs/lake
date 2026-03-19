@@ -344,16 +344,15 @@ func parsePathHops(v any) []PathHop {
 
 // TopologyDiscrepancy represents a mismatch between configured and ISIS topology
 type TopologyDiscrepancy struct {
-	Type            string `json:"type"` // "missing_isis", "extra_isis", "metric_mismatch"
-	LinkPK          string `json:"linkPK,omitempty"`
-	LinkCode        string `json:"linkCode,omitempty"`
-	DeviceAPK       string `json:"deviceAPK"`
-	DeviceACode     string `json:"deviceACode"`
-	DeviceBPK       string `json:"deviceBPK"`
-	DeviceBCode     string `json:"deviceBCode"`
-	ConfiguredRTTUs uint64 `json:"configuredRttUs,omitempty"`
-	ISISMetric      uint32 `json:"isisMetric,omitempty"`
-	Details         string `json:"details"`
+	Type        string `json:"type"` // "missing_isis", "extra_isis"
+	LinkPK      string `json:"linkPK,omitempty"`
+	LinkCode    string `json:"linkCode,omitempty"`
+	DeviceAPK   string `json:"deviceAPK"`
+	DeviceACode string `json:"deviceACode"`
+	DeviceBPK   string `json:"deviceBPK"`
+	DeviceBCode string `json:"deviceBCode"`
+	ISISMetric  uint32 `json:"isisMetric,omitempty"`
+	Details     string `json:"details"`
 }
 
 // TopologyCompareResponse is the response for the topology compare endpoint
@@ -379,179 +378,154 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 		Discrepancies: []TopologyDiscrepancy{},
 	}
 
-	// Query 1: Find configured links and check if they have ISIS adjacencies
-	configuredCypher := `
-		MATCH (l:Link)-[:CONNECTS]->(da:Device)
-		MATCH (l)-[:CONNECTS]->(db:Device)
-		WHERE da.pk < db.pk
-		OPTIONAL MATCH (da)-[isis:ISIS_ADJACENT]->(db)
-		OPTIONAL MATCH (db)-[isis_rev:ISIS_ADJACENT]->(da)
-		RETURN l.pk AS link_pk,
-		       l.code AS link_code,
-		       l.status AS link_status,
-		       l.committed_rtt_ns AS configured_rtt_ns,
-		       da.pk AS device_a_pk,
-		       da.code AS device_a_code,
-		       db.pk AS device_b_pk,
-		       db.code AS device_b_code,
-		       isis.metric AS isis_metric_forward,
-		       isis IS NOT NULL AS has_forward_adj,
-		       isis_rev IS NOT NULL AS has_reverse_adj
-	`
+	// Run all queries in a single read transaction so we see a consistent
+	// snapshot of the graph. Without this, concurrent graph/ISIS syncs can
+	// commit between individual queries, causing the counts and discrepancy
+	// list to flap across refreshes.
+	_, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
+		// Query 1: Find configured links and check if they have ISIS adjacencies
+		configuredCypher := `
+			MATCH (l:Link)-[:CONNECTS]->(da:Device)
+			MATCH (l)-[:CONNECTS]->(db:Device)
+			WHERE da.pk < db.pk
+			OPTIONAL MATCH (da)-[isis:ISIS_ADJACENT]->(db)
+			OPTIONAL MATCH (db)-[isis_rev:ISIS_ADJACENT]->(da)
+			RETURN l.pk AS link_pk,
+			       l.code AS link_code,
+			       l.status AS link_status,
+			       da.pk AS device_a_pk,
+			       da.code AS device_a_code,
+			       db.pk AS device_b_pk,
+			       db.code AS device_b_code,
+			       isis IS NOT NULL AS has_forward_adj,
+			       isis_rev IS NOT NULL AS has_reverse_adj
+		`
 
-	configuredResult, err := session.Run(ctx, configuredCypher, nil)
-	if err != nil {
-		slog.Error("topology compare configured query error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	configuredRecords, err := configuredResult.Collect(ctx)
-	if err != nil {
-		slog.Error("topology compare configured collect error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	response.ConfiguredLinks = len(configuredRecords)
-
-	for _, record := range configuredRecords {
-		linkPK, _ := record.Get("link_pk")
-		linkCode, _ := record.Get("link_code")
-		linkStatus, _ := record.Get("link_status")
-		configuredRTTNs, _ := record.Get("configured_rtt_ns")
-		deviceAPK, _ := record.Get("device_a_pk")
-		deviceACode, _ := record.Get("device_a_code")
-		deviceBPK, _ := record.Get("device_b_pk")
-		deviceBCode, _ := record.Get("device_b_code")
-		hasForwardAdj, _ := record.Get("has_forward_adj")
-		hasReverseAdj, _ := record.Get("has_reverse_adj")
-		isisMetricForward, _ := record.Get("isis_metric_forward")
-
-		hasForward := asBool(hasForwardAdj)
-		hasReverse := asBool(hasReverseAdj)
-		status := asString(linkStatus)
-
-		if hasForward || hasReverse {
-			response.MatchedLinks++
+		configuredResult, err := tx.Run(ctx, configuredCypher, nil)
+		if err != nil {
+			return nil, fmt.Errorf("configured query: %w", err)
 		}
 
-		// Check for missing ISIS adjacencies on active links
-		if status == "active" && !hasForward && !hasReverse {
-			response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-				Type:        "missing_isis",
-				LinkPK:      asString(linkPK),
-				LinkCode:    asString(linkCode),
-				DeviceAPK:   asString(deviceAPK),
-				DeviceACode: asString(deviceACode),
-				DeviceBPK:   asString(deviceBPK),
-				DeviceBCode: asString(deviceBCode),
-				Details:     "Active link has no ISIS adjacency in either direction",
-			})
-		} else if status == "active" && hasForward != hasReverse {
-			direction := "forward only"
-			if hasReverse && !hasForward {
-				direction = "reverse only"
+		configuredRecords, err := configuredResult.Collect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("configured collect: %w", err)
+		}
+
+		response.ConfiguredLinks = len(configuredRecords)
+
+		for _, record := range configuredRecords {
+			linkPK, _ := record.Get("link_pk")
+			linkCode, _ := record.Get("link_code")
+			linkStatus, _ := record.Get("link_status")
+			deviceAPK, _ := record.Get("device_a_pk")
+			deviceACode, _ := record.Get("device_a_code")
+			deviceBPK, _ := record.Get("device_b_pk")
+			deviceBCode, _ := record.Get("device_b_code")
+			hasForwardAdj, _ := record.Get("has_forward_adj")
+			hasReverseAdj, _ := record.Get("has_reverse_adj")
+
+			hasForward := asBool(hasForwardAdj)
+			hasReverse := asBool(hasReverseAdj)
+			status := asString(linkStatus)
+
+			if hasForward || hasReverse {
+				response.MatchedLinks++
 			}
-			response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-				Type:        "missing_isis",
-				LinkPK:      asString(linkPK),
-				LinkCode:    asString(linkCode),
-				DeviceAPK:   asString(deviceAPK),
-				DeviceACode: asString(deviceACode),
-				DeviceBPK:   asString(deviceBPK),
-				DeviceBCode: asString(deviceBCode),
-				Details:     "ISIS adjacency is " + direction + " (should be bidirectional)",
-			})
-		}
 
-		// Check for metric mismatch
-		configRTTNs := asInt64(configuredRTTNs)
-		isisMetric := asInt64(isisMetricForward)
-		if hasForward && configRTTNs > 0 && isisMetric > 0 {
-			configRTTUs := uint64(configRTTNs) / 1000
-			if configRTTUs > 0 {
-				ratio := float64(isisMetric) / float64(configRTTUs)
-				if ratio < 0.5 || ratio > 2.0 {
-					response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-						Type:            "metric_mismatch",
-						LinkPK:          asString(linkPK),
-						LinkCode:        asString(linkCode),
-						DeviceAPK:       asString(deviceAPK),
-						DeviceACode:     asString(deviceACode),
-						DeviceBPK:       asString(deviceBPK),
-						DeviceBCode:     asString(deviceBCode),
-						ConfiguredRTTUs: configRTTUs,
-						ISISMetric:      uint32(isisMetric),
-						Details:         "ISIS metric differs significantly from configured RTT",
-					})
+			// Check for missing ISIS adjacencies on active links
+			if status == "active" && !hasForward && !hasReverse {
+				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
+					Type:        "missing_isis",
+					LinkPK:      asString(linkPK),
+					LinkCode:    asString(linkCode),
+					DeviceAPK:   asString(deviceAPK),
+					DeviceACode: asString(deviceACode),
+					DeviceBPK:   asString(deviceBPK),
+					DeviceBCode: asString(deviceBCode),
+					Details:     "Active link has no ISIS adjacency in either direction",
+				})
+			} else if status == "active" && hasForward != hasReverse {
+				direction := "forward only"
+				if hasReverse && !hasForward {
+					direction = "reverse only"
 				}
+				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
+					Type:        "missing_isis",
+					LinkPK:      asString(linkPK),
+					LinkCode:    asString(linkCode),
+					DeviceAPK:   asString(deviceAPK),
+					DeviceACode: asString(deviceACode),
+					DeviceBPK:   asString(deviceBPK),
+					DeviceBCode: asString(deviceBCode),
+					Details:     "ISIS adjacency is " + direction + " (should be bidirectional)",
+				})
 			}
 		}
-	}
 
-	// Query 2: Find ISIS adjacencies that don't correspond to any configured link
-	extraCypher := `
-		MATCH (da:Device)-[isis:ISIS_ADJACENT]->(db:Device)
-		WHERE NOT EXISTS {
-			MATCH (l:Link)-[:CONNECTS]->(da)
-			MATCH (l)-[:CONNECTS]->(db)
+		// Query 2: Find ISIS adjacencies that don't correspond to any configured link
+		extraCypher := `
+			MATCH (da:Device)-[isis:ISIS_ADJACENT]->(db:Device)
+			WHERE NOT EXISTS {
+				MATCH (l:Link)-[:CONNECTS]->(da)
+				MATCH (l)-[:CONNECTS]->(db)
+			}
+			RETURN da.pk AS device_a_pk,
+			       da.code AS device_a_code,
+			       db.pk AS device_b_pk,
+			       db.code AS device_b_code,
+			       isis.metric AS isis_metric,
+			       isis.neighbor_addr AS neighbor_addr
+		`
+
+		extraResult, err := tx.Run(ctx, extraCypher, nil)
+		if err != nil {
+			return nil, fmt.Errorf("extra query: %w", err)
 		}
-		RETURN da.pk AS device_a_pk,
-		       da.code AS device_a_code,
-		       db.pk AS device_b_pk,
-		       db.code AS device_b_code,
-		       isis.metric AS isis_metric,
-		       isis.neighbor_addr AS neighbor_addr
-	`
 
-	extraResult, err := session.Run(ctx, extraCypher, nil)
-	if err != nil {
-		slog.Error("topology compare extra query error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	extraRecords, err := extraResult.Collect(ctx)
-	if err != nil {
-		slog.Error("topology compare extra collect error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	for _, record := range extraRecords {
-		deviceAPK, _ := record.Get("device_a_pk")
-		deviceACode, _ := record.Get("device_a_code")
-		deviceBPK, _ := record.Get("device_b_pk")
-		deviceBCode, _ := record.Get("device_b_code")
-		isisMetric, _ := record.Get("isis_metric")
-		neighborAddr, _ := record.Get("neighbor_addr")
-
-		response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-			Type:        "extra_isis",
-			DeviceAPK:   asString(deviceAPK),
-			DeviceACode: asString(deviceACode),
-			DeviceBPK:   asString(deviceBPK),
-			DeviceBCode: asString(deviceBCode),
-			ISISMetric:  uint32(asInt64(isisMetric)),
-			Details:     "ISIS adjacency exists (neighbor: " + asString(neighborAddr) + ") but no configured link found",
-		})
-	}
-
-	// Count total ISIS adjacencies
-	countCypher := `MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count`
-	countResult, err := session.Run(ctx, countCypher, nil)
-	if err != nil {
-		slog.Error("topology compare count query error", "error", err)
-	} else {
-		if countRecord, err := countResult.Single(ctx); err == nil {
-			count, _ := countRecord.Get("count")
-			response.ISISAdjacencies = int(asInt64(count))
+		extraRecords, err := extraResult.Collect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("extra collect: %w", err)
 		}
+
+		for _, record := range extraRecords {
+			deviceAPK, _ := record.Get("device_a_pk")
+			deviceACode, _ := record.Get("device_a_code")
+			deviceBPK, _ := record.Get("device_b_pk")
+			deviceBCode, _ := record.Get("device_b_code")
+			isisMetric, _ := record.Get("isis_metric")
+			neighborAddr, _ := record.Get("neighbor_addr")
+
+			response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
+				Type:        "extra_isis",
+				DeviceAPK:   asString(deviceAPK),
+				DeviceACode: asString(deviceACode),
+				DeviceBPK:   asString(deviceBPK),
+				DeviceBCode: asString(deviceBCode),
+				ISISMetric:  uint32(asInt64(isisMetric)),
+				Details:     "ISIS adjacency exists (neighbor: " + asString(neighborAddr) + ") but no configured link found",
+			})
+		}
+
+		// Count total ISIS adjacencies
+		countCypher := `MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count`
+		countResult, err := tx.Run(ctx, countCypher, nil)
+		if err != nil {
+			return nil, fmt.Errorf("count query: %w", err)
+		}
+
+		countRecord, err := countResult.Single(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("count single: %w", err)
+		}
+
+		count, _ := countRecord.Get("count")
+		response.ISISAdjacencies = int(asInt64(count))
+
+		return nil, nil
+	})
+	if err != nil {
+		slog.Error("topology compare query error", "error", err)
+		response.Error = err.Error()
 	}
 
 	duration := time.Since(start)

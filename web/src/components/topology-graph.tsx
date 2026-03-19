@@ -592,7 +592,7 @@ export function TopologyGraph({
   }, [data])
 
   // Build edge health status from compare data
-  // Returns: 'matched' | 'missing' | 'extra' | 'mismatch' | undefined
+  // Returns: 'matched' | 'missing' | 'extra' | undefined
   const edgeHealthStatus = useMemo(() => {
     if (!compareData?.discrepancies) return new Map<string, string>()
     const status = new Map<string, string>()
@@ -608,9 +608,6 @@ export function TopologyGraph({
       } else if (d.type === 'extra_isis') {
         status.set(key1, 'extra')
         status.set(key2, 'extra')
-      } else if (d.type === 'metric_mismatch') {
-        status.set(key1, 'mismatch')
-        status.set(key2, 'mismatch')
       }
     }
     return status
@@ -1267,7 +1264,7 @@ export function TopologyGraph({
 
   // Clear classes when mode changes
   useEffect(() => {
-    const allClasses = 'path-node path-edge path-source path-target path-0 path-1 path-2 path-3 path-4 path-selected health-matched health-extra health-missing health-mismatch criticality-critical criticality-important criticality-redundant whatif-removal-candidate whatif-removed whatif-rerouted whatif-disconnected whatif-added whatif-addition-source whatif-addition-target whatif-improved whatif-redundancy-gained'
+    const allClasses = 'path-node path-edge path-source path-target path-0 path-1 path-2 path-3 path-4 path-selected health-matched health-extra health-missing criticality-critical criticality-important criticality-redundant whatif-removal-candidate whatif-removed whatif-rerouted whatif-disconnected whatif-added whatif-addition-source whatif-addition-target whatif-improved whatif-redundancy-gained'
 
     if (mode === 'explore') {
       setPathSource(null)
@@ -1354,7 +1351,7 @@ export function TopologyGraph({
           }
         })
         previousPathEdgeIdsRef.current.clear()
-        cy.elements().removeClass('path-node path-edge path-source path-target path-0 path-1 path-2 path-3 path-4 path-selected health-matched health-extra health-missing health-mismatch criticality-critical criticality-important criticality-redundant whatif-added whatif-addition-source whatif-addition-target whatif-improved whatif-redundancy-gained')
+        cy.elements().removeClass('path-node path-edge path-source path-target path-0 path-1 path-2 path-3 path-4 path-selected health-matched health-extra health-missing criticality-critical criticality-important criticality-redundant whatif-added whatif-addition-source whatif-addition-target whatif-improved whatif-redundancy-gained')
         // Make edges more prominent for easier clicking
         cy.edges().addClass('whatif-removal-candidate')
       }
@@ -1385,7 +1382,7 @@ export function TopologyGraph({
           }
         })
         previousPathEdgeIdsRef.current.clear()
-        cy.elements().removeClass('path-node path-edge path-source path-target path-0 path-1 path-2 path-3 path-4 path-selected health-matched health-extra health-missing health-mismatch criticality-critical criticality-important criticality-redundant whatif-removal-candidate whatif-removed whatif-rerouted whatif-disconnected')
+        cy.elements().removeClass('path-node path-edge path-source path-target path-0 path-1 path-2 path-3 path-4 path-selected health-matched health-extra health-missing criticality-critical criticality-important criticality-redundant whatif-removal-candidate whatif-removed whatif-rerouted whatif-disconnected')
       }
     }
   }, [mode, isDark])
@@ -1710,13 +1707,6 @@ export function TopologyGraph({
           edge.style({
             'line-color': '#f59e0b',
             'target-arrow-color': '#f59e0b',
-            'width': width,
-            'opacity': 1,
-          })
-        } else if (status === 'mismatch') {
-          edge.style({
-            'line-color': '#eab308',
-            'target-arrow-color': '#eab308',
             'width': width,
             'opacity': 1,
           })
@@ -2487,15 +2477,6 @@ export function TopologyGraph({
             'line-color': '#ef4444',
             'target-arrow-color': '#ef4444',
             'line-style': 'dashed',
-            'width': 3,
-            'opacity': 1,
-          },
-        },
-        {
-          selector: 'edge.health-mismatch',
-          style: {
-            'line-color': '#eab308',
-            'target-arrow-color': '#eab308',
             'width': 3,
             'opacity': 1,
           },

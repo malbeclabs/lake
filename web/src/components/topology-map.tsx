@@ -525,9 +525,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       } else if (d.type === 'extra_isis') {
         status.set(key1, 'extra')
         status.set(key2, 'extra')
-      } else if (d.type === 'metric_mismatch') {
-        status.set(key1, 'mismatch')
-        status.set(key2, 'mismatch')
       }
     }
     return status
@@ -1616,9 +1613,6 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
           displayOpacity = 1
         } else if (healthStatus === 'extra') {
           displayColor = '#f59e0b' // amber
-          displayOpacity = 1
-        } else if (healthStatus === 'mismatch') {
-          displayColor = '#eab308' // yellow
           displayOpacity = 1
         } else {
           // Default to matched (green)
