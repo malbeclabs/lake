@@ -1,9 +1,55 @@
-import { GitCompare, AlertTriangle } from 'lucide-react'
-import type { TopologyCompareResponse } from '@/lib/api'
+import { useState } from 'react'
+import { GitCompare, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
+import type { TopologyCompareResponse, TopologyDiscrepancy } from '@/lib/api'
+import { useTopology } from '../TopologyContext'
 
 interface ComparePanelProps {
   data: TopologyCompareResponse | null
   isLoading: boolean
+}
+
+function DiscrepancyList({ discrepancies, type, label, colorClass }: {
+  discrepancies: TopologyDiscrepancy[]
+  type: 'missing_isis' | 'extra_isis'
+  label: string
+  colorClass: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const { setSelection } = useTopology()
+  const filtered = discrepancies.filter(d => d.type === type)
+  if (filtered.length === 0) return null
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className={`flex items-center gap-1.5 w-full text-left ${colorClass} hover:opacity-80`}
+      >
+        {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+        <span>{filtered.length} {label}</span>
+      </button>
+      {expanded && (
+        <div className="mt-1 ml-4.5 space-y-0.5">
+          {filtered.map((d, i) => (
+            <button
+              key={i}
+              className="block w-full text-left text-muted-foreground hover:text-foreground truncate"
+              title={d.details}
+              onClick={() => {
+                if (d.linkPK) {
+                  setSelection({ type: 'link', id: d.linkPK })
+                } else {
+                  setSelection({ type: 'device', id: d.deviceAPK })
+                }
+              }}
+            >
+              {d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function ComparePanel({ data, isLoading }: ComparePanelProps) {
@@ -36,26 +82,26 @@ export function ComparePanel({ data, isLoading }: ComparePanelProps) {
             </div>
           </div>
 
-          {/* Discrepancy summary */}
+          {/* Discrepancy list */}
           {data.discrepancies.length > 0 && (
             <div className="pt-2 border-t border-[var(--border)]">
               <div className="flex items-center gap-1.5 mb-2">
                 <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                 <span className="font-medium">{data.discrepancies.length} Issues</span>
               </div>
-              <div className="space-y-1">
-                {data.discrepancies.filter(d => d.type === 'missing_isis').length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-0.5 bg-red-500" style={{ borderStyle: 'dashed', borderWidth: '1px', borderColor: '#ef4444' }} />
-                    <span className="text-red-500">{data.discrepancies.filter(d => d.type === 'missing_isis').length} missing ISIS</span>
-                  </div>
-                )}
-                {data.discrepancies.filter(d => d.type === 'extra_isis').length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-0.5 bg-amber-500" />
-                    <span className="text-amber-500">{data.discrepancies.filter(d => d.type === 'extra_isis').length} extra adjacencies</span>
-                  </div>
-                )}
+              <div className="space-y-1.5">
+                <DiscrepancyList
+                  discrepancies={data.discrepancies}
+                  type="missing_isis"
+                  label="missing ISIS"
+                  colorClass="text-red-500"
+                />
+                <DiscrepancyList
+                  discrepancies={data.discrepancies}
+                  type="extra_isis"
+                  label="extra adjacencies"
+                  colorClass="text-amber-500"
+                />
               </div>
             </div>
           )}
