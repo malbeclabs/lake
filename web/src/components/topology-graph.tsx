@@ -618,6 +618,8 @@ export function TopologyGraph({
 
 
   // Filter nodes and edges
+  // When ISIS health overlay is active, inject ghost edges for missing/partial
+  // discrepancies so they're visible in the graph even without ISIS adjacencies
   const filteredData = useMemo(() => {
     if (!data) return null
 
@@ -638,8 +640,24 @@ export function TopologyGraph({
       edge => nodeIds.has(edge.data.source) && nodeIds.has(edge.data.target)
     )
 
+    // Add ghost edges for missing/partial ISIS discrepancies
+    if (isisHealthEnabled && compareData?.discrepancies) {
+      const existingEdgeIds = new Set(filteredEdges.map(e => e.data.id))
+      for (const d of compareData.discrepancies) {
+        if (d.type !== 'missing_isis' && d.type !== 'partial_isis') continue
+        const edgeId = `${d.deviceAPK}->${d.deviceBPK}`
+        const reverseId = `${d.deviceBPK}->${d.deviceAPK}`
+        if (existingEdgeIds.has(edgeId) || existingEdgeIds.has(reverseId)) continue
+        if (!nodeIds.has(d.deviceAPK) || !nodeIds.has(d.deviceBPK)) continue
+        filteredEdges.push({
+          data: { id: edgeId, source: d.deviceAPK, target: d.deviceBPK, metric: 0 },
+        })
+        existingEdgeIds.add(edgeId)
+      }
+    }
+
     return { nodes: filteredNodes, edges: filteredEdges }
-  }, [data, statusFilter, deviceTypeFilter])
+  }, [data, statusFilter, deviceTypeFilter, isisHealthEnabled, compareData])
 
   // Get device type color
   const getDeviceTypeColor = useCallback((deviceType: string) => {
@@ -1699,9 +1717,12 @@ export function TopologyGraph({
         const width = getMetricWidth(metric)
 
         // When hovering a discrepancy item, highlight that edge and dim others
+        // hoveredDiscrepancyKey uses '|' separator, edgeId uses '->'
+        const hoverEdgeKey = hoveredDiscrepancyKey?.replace('|', '->')
+        const hoverEdgeKeyReverse = hoveredDiscrepancyKey?.split('|').reverse().join('->')
         const isHoveredDiscrepancy = hoveredDiscrepancyKey && (
-          edgeId === hoveredDiscrepancyKey ||
-          edgeId === hoveredDiscrepancyKey.split('|').reverse().join('|')
+          edgeId === hoverEdgeKey ||
+          edgeId === hoverEdgeKeyReverse
         )
         const isDimmedByHover = hoveredDiscrepancyKey && !isHoveredDiscrepancy
 
