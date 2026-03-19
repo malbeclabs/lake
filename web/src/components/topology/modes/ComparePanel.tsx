@@ -50,6 +50,7 @@ function DiscrepancyItem({ d }: { d: TopologyDiscrepancy }) {
       className="flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-[var(--accent)] transition-colors"
       title={d.details}
       onClick={() => {
+        setHoveredDiscrepancyKey(null)
         // Drained/provisioning links aren't in the topology data, so select a device instead
         if (d.linkPK && d.linkStatus === 'activated') {
           setSelection({ type: 'link', id: d.linkPK })

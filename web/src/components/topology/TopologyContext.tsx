@@ -267,6 +267,10 @@ export function TopologyProvider({ children, view }: TopologyProviderProps) {
   // Panel controls
   const openPanel = useCallback((content: 'details' | 'mode' | 'overlay') => {
     setPanel(prev => ({ ...prev, isOpen: true, content }))
+    // Clear discrepancy hover when switching away from overlay panel
+    if (content !== 'overlay') {
+      setHoveredDiscrepancyKey(null)
+    }
   }, [])
 
   const closePanel = useCallback(() => {
