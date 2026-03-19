@@ -14,7 +14,7 @@ function StatusRow({ count, label, color, discrepancies }: {
   color: string
   discrepancies?: TopologyDiscrepancy[]
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const { setSelection } = useTopology()
 
   const hasItems = discrepancies && discrepancies.length > 0
