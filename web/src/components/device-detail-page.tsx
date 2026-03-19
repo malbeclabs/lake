@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Server, AlertCircle, ArrowLeft } from 'lucide-react'
+import { CopyableText } from '@/components/copyable-text'
 import { fetchDevice } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -85,9 +86,16 @@ export function DeviceDetailPage() {
         <div className="flex items-center gap-3 mb-8">
           <Server className="h-8 w-8 text-muted-foreground" />
           <div>
-            <h1 className="text-2xl font-medium font-mono">{device.code}</h1>
-            <div className={`text-sm capitalize ${statusColors[device.status] || 'text-muted-foreground'}`}>
-              {device.status}
+            <h1 className="text-2xl font-medium font-mono">
+              <CopyableText text={device.code} />
+            </h1>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground font-mono">
+                <CopyableText text={device.pk} />
+              </span>
+              <span className={`text-sm capitalize ${statusColors[device.status] || 'text-muted-foreground'}`}>
+                {device.status}
+              </span>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Cable, AlertCircle, ArrowLeft } from 'lucide-react'
+import { CopyableText } from '@/components/copyable-text'
 import { fetchLink } from '@/lib/api'
 import { LinkInfoContent } from '@/components/shared/LinkInfoContent'
 import { linkDetailToInfo } from '@/components/shared/link-info-converters'
@@ -88,8 +89,12 @@ export function LinkDetailPage() {
         <div className="flex items-center gap-3 mb-8">
           <Cable className="h-8 w-8 text-muted-foreground" />
           <div>
-            <h1 className="text-2xl font-medium font-mono">{link.code}</h1>
-            <div className="text-sm text-muted-foreground">{link.link_type}</div>
+            <h1 className="text-2xl font-medium font-mono">
+              <CopyableText text={link.code} />
+            </h1>
+            <div className="text-sm text-muted-foreground font-mono">
+              <CopyableText text={link.pk} />
+            </div>
           </div>
         </div>
       </div>
