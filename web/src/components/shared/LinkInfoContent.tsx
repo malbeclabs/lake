@@ -189,7 +189,7 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'ISIS Latency (override)' : 'ISIS Latency'}
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Committed Latency (override)' : 'Committed Latency'}
             </div>
           </div>
         )}
@@ -381,7 +381,7 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'ISIS Latency (override)' : 'ISIS Latency'}
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Committed Latency (override)' : 'Committed Latency'}
             </div>
           </div>
         )}
