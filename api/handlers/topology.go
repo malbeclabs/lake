@@ -1007,6 +1007,8 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 		JOIN dz_metros_current m1 ON c.origin_metro = m1.code
 		JOIN dz_metros_current m2 ON c.target_metro = m2.code
 		WHERE c.dz_sample_count > 0
+		  AND isFinite(c.dz_avg_rtt_ms)
+		  AND isFinite(c.internet_avg_rtt_ms)
 		ORDER BY c.origin_metro, c.target_metro
 	`
 
@@ -1118,6 +1120,8 @@ func fetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse
 		JOIN dz_metros_current m1 ON c.origin_metro = m1.code
 		JOIN dz_metros_current m2 ON c.target_metro = m2.code
 		WHERE c.dz_sample_count > 0
+		  AND isFinite(c.dz_avg_rtt_ms)
+		  AND isFinite(c.internet_avg_rtt_ms)
 		ORDER BY c.origin_metro, c.target_metro
 	`
 
