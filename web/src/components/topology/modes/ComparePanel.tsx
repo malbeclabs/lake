@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { GitCompare, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react'
+import { GitCompare, ChevronDown, ChevronRight } from 'lucide-react'
 import type { TopologyCompareResponse, TopologyDiscrepancy } from '@/lib/api'
 import { useTopology } from '../TopologyContext'
 
@@ -8,33 +8,43 @@ interface ComparePanelProps {
   isLoading: boolean
 }
 
-function DiscrepancySection({ discrepancies, type, label, dotColor }: {
+function StatusSection({ discrepancies, type, label, color, lineStyle }: {
   discrepancies: TopologyDiscrepancy[]
-  type: 'missing_isis' | 'extra_isis'
+  type: 'matched' | 'missing_isis' | 'extra_isis'
   label: string
-  dotColor: string
+  color: string
+  lineStyle?: React.CSSProperties
 }) {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const { setSelection } = useTopology()
-  const filtered = discrepancies.filter(d => d.type === type)
-  if (filtered.length === 0) return null
+  const filtered = type === 'matched' ? [] : discrepancies.filter(d => d.type === type)
+  const count = type === 'matched' ? 0 : filtered.length // matched count handled by parent
+
+  const hasItems = filtered.length > 0
+  const isExpandable = hasItems
 
   return (
     <div>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 w-full text-left text-muted-foreground hover:text-foreground"
+      <div
+        role={isExpandable ? 'button' : undefined}
+        onClick={isExpandable ? () => setExpanded(!expanded) : undefined}
+        className={`flex items-center gap-1.5 py-0.5 ${isExpandable ? 'cursor-pointer hover:text-foreground' : ''}`}
       >
-        {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
-        <span>{filtered.length} {label}</span>
-      </button>
-      {expanded && (
-        <div className="mt-1 space-y-px">
+        {isExpandable ? (
+          expanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <div className="w-3" />
+        )}
+        <div className="w-4 h-0.5 shrink-0" style={{ backgroundColor: color, ...lineStyle }} />
+        <span className="flex-1" style={{ color: count > 0 ? color : undefined }}>{label}</span>
+        <span className="font-medium" style={{ color: count > 0 ? color : undefined }}>{count}</span>
+      </div>
+      {expanded && hasItems && (
+        <div className="mt-0.5 space-y-px">
           {filtered.map((d, i) => (
             <button
               key={i}
-              className="flex items-center gap-1.5 w-full text-left pl-7 py-0.5 rounded hover:bg-[var(--accent)] text-muted-foreground hover:text-foreground transition-colors"
+              className="flex items-center w-full text-left pl-[4.5rem] py-0.5 rounded hover:bg-[var(--accent)] text-muted-foreground hover:text-foreground transition-colors truncate"
               title={d.details}
               onClick={() => {
                 if (d.linkPK) {
@@ -44,9 +54,7 @@ function DiscrepancySection({ discrepancies, type, label, dotColor }: {
                 }
               }}
             >
-              <span className="truncate">
-                {d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}
-              </span>
+              {d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}
             </button>
           ))}
         </div>
@@ -79,60 +87,29 @@ export function ComparePanel({ data, isLoading }: ComparePanelProps) {
               <span className="text-muted-foreground">ISIS Adjacencies</span>
               <span className="font-medium">{data.isisAdjacencies}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Matched</span>
-              <span className="font-medium text-green-500">{data.matchedLinks}</span>
-            </div>
           </div>
 
-          {/* Discrepancy list */}
-          {data.discrepancies.length > 0 && (
-            <div className="pt-2 border-t border-[var(--border)]">
-              <div className="flex items-center gap-1.5 mb-2">
-                <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                <span className="font-medium">{data.discrepancies.length} Issues</span>
-              </div>
-              <div className="space-y-2">
-                <DiscrepancySection
-                  discrepancies={data.discrepancies}
-                  type="missing_isis"
-                  label="missing ISIS"
-                  dotColor="#ef4444"
-                />
-                <DiscrepancySection
-                  discrepancies={data.discrepancies}
-                  type="extra_isis"
-                  label="extra adjacencies"
-                  dotColor="#f59e0b"
-                />
-              </div>
+          {/* Status breakdown with inline legend */}
+          <div className="pt-2 border-t border-[var(--border)] space-y-0.5">
+            <div className="flex items-center gap-1.5 py-0.5">
+              <div className="w-3" />
+              <div className="w-4 h-0.5 shrink-0 bg-green-500" />
+              <span className="flex-1 text-green-500">Matched</span>
+              <span className="font-medium text-green-500">{data.matchedLinks}</span>
             </div>
-          )}
-
-          {data.discrepancies.length === 0 && (
-            <div className="pt-2 border-t border-[var(--border)] text-green-500 flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              All links healthy
-            </div>
-          )}
-
-          {/* Edge legend */}
-          <div className="pt-2 border-t border-[var(--border)]">
-            <div className="text-muted-foreground mb-1.5">Edge Colors</div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-green-500" />
-                <span>Matched</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-red-500" style={{ borderTop: '2px dashed #ef4444' }} />
-                <span>Missing ISIS</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-0.5 bg-amber-500" />
-                <span>Extra adjacency</span>
-              </div>
-            </div>
+            <StatusSection
+              discrepancies={data.discrepancies}
+              type="missing_isis"
+              label="Missing ISIS"
+              color="#ef4444"
+              lineStyle={{ borderTop: '2px dashed #ef4444', backgroundColor: 'transparent' }}
+            />
+            <StatusSection
+              discrepancies={data.discrepancies}
+              type="extra_isis"
+              label="Extra adjacency"
+              color="#f59e0b"
+            />
           </div>
         </div>
       )}
