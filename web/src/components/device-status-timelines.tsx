@@ -974,23 +974,45 @@ export function DeviceStatusTimelines({
       return matchesIssue && matchesHealth
     })
 
-    // Sort by most recent issue
+    // Sort by: 1) most recent issue, 2) severity of that issue, 3) total issue count, 4) alphabetical
+    const statusSeverity = (status: string): number => {
+      switch (status) {
+        case 'unhealthy': return 4
+        case 'degraded': return 3
+        case 'disabled': return 2
+        case 'no_data': return 1
+        default: return 0
+      }
+    }
+
     return filtered.sort((a, b) => {
-      const getLatestIssueIndex = (device: DeviceHistory): number => {
-        if (!device.hours) return -1
+      const getLatestIssue = (device: DeviceHistory): { index: number; severity: number } => {
+        if (!device.hours) return { index: -1, severity: 0 }
         for (let i = device.hours.length - 1; i >= 0; i--) {
-          const status = device.hours[i].status
-          if (status === 'unhealthy' || status === 'degraded' || status === 'disabled' || status === 'no_data') {
-            return i
-          }
+          const sev = statusSeverity(device.hours[i].status)
+          if (sev > 0) return { index: i, severity: sev }
         }
-        return -1
+        return { index: -1, severity: 0 }
       }
 
-      const aIndex = getLatestIssueIndex(a)
-      const bIndex = getLatestIssueIndex(b)
+      const issueCount = (device: DeviceHistory): number => {
+        if (!device.hours) return 0
+        return device.hours.filter(h => statusSeverity(h.status) > 0).length
+      }
 
-      return bIndex - aIndex
+      const aIssue = getLatestIssue(a)
+      const bIssue = getLatestIssue(b)
+
+      // Most recent issue first
+      if (aIssue.index !== bIssue.index) return bIssue.index - aIssue.index
+      // Higher severity first
+      if (aIssue.severity !== bIssue.severity) return bIssue.severity - aIssue.severity
+      // More total issues first
+      const aCount = issueCount(a)
+      const bCount = issueCount(b)
+      if (aCount !== bCount) return bCount - aCount
+      // Alphabetical fallback
+      return a.code.localeCompare(b.code)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.devices, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, devicesWithIssues, devicesWithHealth])

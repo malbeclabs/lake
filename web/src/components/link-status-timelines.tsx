@@ -848,25 +848,44 @@ export function LinkStatusTimelines({
       return matchesIssue && matchesHealth
     })
 
-    // Sort by most recent issue (higher index in hours = more recent)
-    // Issues are: unhealthy, degraded
+    // Sort by: 1) most recent issue, 2) severity of that issue, 3) total issue count, 4) alphabetical
+    const statusSeverity = (status: string): number => {
+      switch (status) {
+        case 'unhealthy': return 3
+        case 'degraded': return 2
+        case 'no_data': return 1
+        default: return 0
+      }
+    }
+
     return filtered.sort((a, b) => {
-      const getLatestIssueIndex = (link: LinkHistory): number => {
-        if (!link.hours) return -1
+      const getLatestIssue = (link: LinkHistory): { index: number; severity: number } => {
+        if (!link.hours) return { index: -1, severity: 0 }
         for (let i = link.hours.length - 1; i >= 0; i--) {
-          const status = link.hours[i].status
-          if (status === 'unhealthy' || status === 'degraded' || status === 'no_data') {
-            return i
-          }
+          const sev = statusSeverity(link.hours[i].status)
+          if (sev > 0) return { index: i, severity: sev }
         }
-        return -1
+        return { index: -1, severity: 0 }
       }
 
-      const aIndex = getLatestIssueIndex(a)
-      const bIndex = getLatestIssueIndex(b)
+      const issueCount = (link: LinkHistory): number => {
+        if (!link.hours) return 0
+        return link.hours.filter(h => statusSeverity(h.status) > 0).length
+      }
 
-      // Higher index = more recent = should come first
-      return bIndex - aIndex
+      const aIssue = getLatestIssue(a)
+      const bIssue = getLatestIssue(b)
+
+      // Most recent issue first
+      if (aIssue.index !== bIssue.index) return bIssue.index - aIssue.index
+      // Higher severity first
+      if (aIssue.severity !== bIssue.severity) return bIssue.severity - aIssue.severity
+      // More total issues first
+      const aCount = issueCount(a)
+      const bCount = issueCount(b)
+      if (aCount !== bCount) return bCount - aCount
+      // Alphabetical fallback
+      return a.code.localeCompare(b.code)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, showProvisioning, linksWithIssues, linksWithHealth])
