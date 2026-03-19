@@ -310,9 +310,10 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		WHERE link.tunnel_net IS NOT NULL AND link.tunnel_net <> ''
 		MATCH (link)-[:CONNECTS {side: 'A'}]->(devA:Device)
 		MATCH (link)-[:CONNECTS {side: 'Z'}]->(devZ:Device)
-		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
+		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, link.code AS code, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
 		       coalesce(link.bandwidth, 0) AS bandwidth,
 		       link.status IN ['soft-drained', 'hard-drained'] AS is_drained
+		ORDER BY link.pk
 	`
 	result, err := tx.Run(ctx, cypher, nil)
 	if err != nil {
@@ -327,6 +328,7 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		sideAPK, _ := record.Get("side_a_pk")
 		sideZPK, _ := record.Get("side_z_pk")
 		linkPK, _ := record.Get("pk")
+		linkCode, _ := record.Get("code")
 		bandwidth, _ := record.Get("bandwidth")
 		isDrained, _ := record.Get("is_drained")
 
@@ -337,6 +339,7 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		sideAPKStr, _ := sideAPK.(string)
 		sideZPKStr, _ := sideZPK.(string)
 		linkPKStr, _ := linkPK.(string)
+		linkCodeStr, _ := linkCode.(string)
 		bandwidthInt, _ := bandwidth.(int64)
 		isDrainedBool, _ := isDrained.(bool)
 
@@ -345,6 +348,16 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 			s.log.Debug("graph: failed to parse tunnel_net",
 				"tunnel_net", tunnelNetStr,
 				"error", err)
+			continue
+		}
+
+		// Skip duplicate tunnel_net IPs — first link (by pk sort) wins
+		if existing, ok := tunnelMap[ip1]; ok {
+			s.log.Warn("graph: duplicate tunnel_net IP, skipping",
+				"ip", ip1,
+				"tunnel_net", tunnelNetStr,
+				"link", linkCodeStr,
+				"existing_link", existing.linkPK)
 			continue
 		}
 
@@ -817,9 +830,10 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		WHERE link.tunnel_net IS NOT NULL AND link.tunnel_net <> ''
 		MATCH (link)-[:CONNECTS {side: 'A'}]->(devA:Device)
 		MATCH (link)-[:CONNECTS {side: 'Z'}]->(devZ:Device)
-		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
+		RETURN link.pk AS pk, link.tunnel_net AS tunnel_net, link.code AS code, devA.pk AS side_a_pk, devZ.pk AS side_z_pk,
 		       coalesce(link.bandwidth, 0) AS bandwidth,
 		       link.status IN ['soft-drained', 'hard-drained'] AS is_drained
+		ORDER BY link.pk
 	`
 	result, err := session.Run(ctx, cypher, nil)
 	if err != nil {
@@ -834,6 +848,7 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		sideAPK, _ := record.Get("side_a_pk")
 		sideZPK, _ := record.Get("side_z_pk")
 		linkPK, _ := record.Get("pk")
+		linkCode, _ := record.Get("code")
 		bandwidth, _ := record.Get("bandwidth")
 		isDrained, _ := record.Get("is_drained")
 
@@ -844,6 +859,7 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		sideAPKStr, _ := sideAPK.(string)
 		sideZPKStr, _ := sideZPK.(string)
 		linkPKStr, _ := linkPK.(string)
+		linkCodeStr, _ := linkCode.(string)
 		bandwidthInt, _ := bandwidth.(int64)
 		isDrainedBool, _ := isDrained.(bool)
 
@@ -856,18 +872,26 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 			continue
 		}
 
-		// Map each IP: if neighbor_addr is ip1, then the device at ip1 is the neighbor
-		// For /31: lower IP typically assigned to side_a, higher to side_z
+		// Skip duplicate tunnel_net IPs — first link (by pk sort) wins
+		if existing, ok := tunnelMap[ip1]; ok {
+			s.log.Warn("graph: duplicate tunnel_net IP, skipping",
+				"ip", ip1,
+				"tunnel_net", tunnelNetStr,
+				"link", linkCodeStr,
+				"existing_link", existing.linkPK)
+			continue
+		}
+
 		tunnelMap[ip1] = tunnelMapping{
 			linkPK:     linkPKStr,
-			neighborPK: sideAPKStr, // Device at ip1 (lower) is side_a
+			neighborPK: sideAPKStr,
 			localPK:    sideZPKStr,
 			bandwidth:  bandwidthInt,
 			isDrained:  isDrainedBool,
 		}
 		tunnelMap[ip2] = tunnelMapping{
 			linkPK:     linkPKStr,
-			neighborPK: sideZPKStr, // Device at ip2 (higher) is side_z
+			neighborPK: sideZPKStr,
 			localPK:    sideAPKStr,
 			bandwidth:  bandwidthInt,
 			isDrained:  isDrainedBool,
