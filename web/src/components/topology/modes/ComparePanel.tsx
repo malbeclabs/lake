@@ -8,6 +8,60 @@ interface ComparePanelProps {
   isLoading: boolean
 }
 
+const STATUS_ORDER: Record<string, number> = {
+  'activated': 0,
+  'provisioning': 1,
+  'soft-drained': 2,
+  'hard-drained': 3,
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  'activated': 'Activated',
+  'provisioning': 'Provisioning',
+  'soft-drained': 'Soft-drained',
+  'hard-drained': 'Hard-drained',
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  'activated': 'text-foreground',
+  'provisioning': 'text-blue-500',
+  'soft-drained': 'text-yellow-500',
+  'hard-drained': 'text-orange-500',
+}
+
+function sortDiscrepancies(discrepancies: TopologyDiscrepancy[]): TopologyDiscrepancy[] {
+  return [...discrepancies].sort((a, b) => {
+    const aOrder = STATUS_ORDER[a.linkStatus ?? 'activated'] ?? 99
+    const bOrder = STATUS_ORDER[b.linkStatus ?? 'activated'] ?? 99
+    if (aOrder !== bOrder) return aOrder - bOrder
+    return (a.linkCode ?? '').localeCompare(b.linkCode ?? '')
+  })
+}
+
+function DiscrepancyItem({ d }: { d: TopologyDiscrepancy }) {
+  const { setSelection } = useTopology()
+  const status = d.linkStatus
+  const statusLabel = status && status !== 'activated' ? STATUS_LABELS[status] : null
+  const statusColor = status ? STATUS_COLORS[status] : ''
+
+  return (
+    <button
+      className="flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-[var(--accent)] transition-colors"
+      title={d.details}
+      onClick={() => {
+        if (d.linkPK) {
+          setSelection({ type: 'link', id: d.linkPK })
+        } else {
+          setSelection({ type: 'device', id: d.deviceAPK })
+        }
+      }}
+    >
+      <span className="truncate flex-1">{d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}</span>
+      {statusLabel && <span className={`shrink-0 ${statusColor}`}>{statusLabel.toLowerCase()}</span>}
+    </button>
+  )
+}
+
 function StatusRow({ count, label, color, discrepancies }: {
   count: number
   label: string
@@ -15,9 +69,9 @@ function StatusRow({ count, label, color, discrepancies }: {
   discrepancies?: TopologyDiscrepancy[]
 }) {
   const [expanded, setExpanded] = useState(true)
-  const { setSelection } = useTopology()
 
   const hasItems = discrepancies && discrepancies.length > 0
+  const sorted = hasItems ? sortDiscrepancies(discrepancies) : []
 
   return (
     <div>
@@ -35,23 +89,7 @@ function StatusRow({ count, label, color, discrepancies }: {
       </div>
       {expanded && hasItems && (
         <div className="ml-4 mt-0.5 mb-1 border-l border-[var(--border)] pl-2 space-y-px">
-          {discrepancies.map((d, i) => (
-            <button
-              key={i}
-              className="block w-full text-left py-0.5 px-1 rounded text-muted-foreground hover:text-foreground hover:bg-[var(--accent)] transition-colors truncate"
-              title={d.details}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (d.linkPK) {
-                  setSelection({ type: 'link', id: d.linkPK })
-                } else {
-                  setSelection({ type: 'device', id: d.deviceAPK })
-                }
-              }}
-            >
-              {d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}
-            </button>
-          ))}
+          {sorted.map((d, i) => <DiscrepancyItem key={i} d={d} />)}
         </div>
       )}
     </div>

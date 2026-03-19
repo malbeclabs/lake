@@ -2071,6 +2071,7 @@ export interface TopologyDiscrepancy {
   type: 'missing_isis' | 'extra_isis'
   linkPK?: string
   linkCode?: string
+  linkStatus?: string  // "activated", "soft-drained", "provisioning"
   deviceAPK: string
   deviceACode: string
   deviceBPK: string

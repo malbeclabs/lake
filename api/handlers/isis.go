@@ -347,6 +347,7 @@ type TopologyDiscrepancy struct {
 	Type        string `json:"type"` // "missing_isis", "extra_isis"
 	LinkPK      string `json:"linkPK,omitempty"`
 	LinkCode    string `json:"linkCode,omitempty"`
+	LinkStatus  string `json:"linkStatus,omitempty"` // "activated", "soft-drained", "provisioning"
 	DeviceAPK   string `json:"deviceAPK"`
 	DeviceACode string `json:"deviceACode"`
 	DeviceBPK   string `json:"deviceBPK"`
@@ -393,6 +394,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 			RETURN l.pk AS link_pk,
 			       l.code AS link_code,
 			       l.status AS link_status,
+			       l.committed_rtt_ns AS committed_rtt_ns,
 			       da.pk AS device_a_pk,
 			       da.code AS device_a_code,
 			       db.pk AS device_b_pk,
@@ -417,6 +419,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 			linkPK, _ := record.Get("link_pk")
 			linkCode, _ := record.Get("link_code")
 			linkStatus, _ := record.Get("link_status")
+			committedRTTNs, _ := record.Get("committed_rtt_ns")
 			deviceAPK, _ := record.Get("device_a_pk")
 			deviceACode, _ := record.Get("device_a_code")
 			deviceBPK, _ := record.Get("device_b_pk")
@@ -428,16 +431,23 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 			hasReverse := asBool(hasReverseAdj)
 			status := asString(linkStatus)
 
+			// Compute effective status: 1000ms committed RTT = provisioning
+			effectiveStatus := status
+			if asInt64(committedRTTNs) == committedRttProvisioningNs {
+				effectiveStatus = "provisioning"
+			}
+
 			if hasForward || hasReverse {
 				response.MatchedLinks++
 			}
 
-			// Check for missing ISIS adjacencies on active links
+			// Check for missing ISIS adjacencies on activated links
 			if status == "activated" && !hasForward && !hasReverse {
 				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
 					Type:        "missing_isis",
 					LinkPK:      asString(linkPK),
 					LinkCode:    asString(linkCode),
+					LinkStatus:  effectiveStatus,
 					DeviceAPK:   asString(deviceAPK),
 					DeviceACode: asString(deviceACode),
 					DeviceBPK:   asString(deviceBPK),
@@ -453,6 +463,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 					Type:        "missing_isis",
 					LinkPK:      asString(linkPK),
 					LinkCode:    asString(linkCode),
+					LinkStatus:  effectiveStatus,
 					DeviceAPK:   asString(deviceAPK),
 					DeviceACode: asString(deviceACode),
 					DeviceBPK:   asString(deviceBPK),
