@@ -155,9 +155,9 @@ func setupISISTestData(t *testing.T, chClient clickhouse.Client, graphStore *Sto
 
 	// Create 3 devices forming a chain: device1 -- device2 -- device3
 	devices := []dzsvc.Device{
-		{PK: "device1", Status: "active", DeviceType: "router", Code: "DZ-NY1-SW01", PublicIP: "1.2.3.4", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
-		{PK: "device2", Status: "active", DeviceType: "router", Code: "DZ-NY2-SW01", PublicIP: "1.2.3.5", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
-		{PK: "device3", Status: "active", DeviceType: "router", Code: "DZ-DC1-SW01", PublicIP: "1.2.3.6", ContributorPK: "contrib1", MetroPK: "metro2", MaxUsers: 100},
+		{PK: "device1", Status: "activated", DeviceType: "router", Code: "DZ-NY1-SW01", PublicIP: "1.2.3.4", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "device2", Status: "activated", DeviceType: "router", Code: "DZ-NY2-SW01", PublicIP: "1.2.3.5", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "device3", Status: "activated", DeviceType: "router", Code: "DZ-DC1-SW01", PublicIP: "1.2.3.6", ContributorPK: "contrib1", MetroPK: "metro2", MaxUsers: 100},
 	}
 	err = store.ReplaceDevices(ctx, devices)
 	require.NoError(t, err)
@@ -166,8 +166,8 @@ func setupISISTestData(t *testing.T, chClient clickhouse.Client, graphStore *Sto
 	// link1: device1 (172.16.0.0) <-> device2 (172.16.0.1)
 	// link2: device2 (172.16.0.2) <-> device3 (172.16.0.3)
 	links := []dzsvc.Link{
-		{PK: "link1", Status: "active", Code: "link1", TunnelNet: "172.16.0.0/31", ContributorPK: "contrib1", SideAPK: "device1", SideZPK: "device2", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 10000000000},
-		{PK: "link2", Status: "active", Code: "link2", TunnelNet: "172.16.0.2/31", ContributorPK: "contrib1", SideAPK: "device2", SideZPK: "device3", SideAIfaceName: "eth1", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 2000000, CommittedJitterNs: 200000, Bandwidth: 10000000000},
+		{PK: "link1", Status: "activated", Code: "link1", TunnelNet: "172.16.0.0/31", ContributorPK: "contrib1", SideAPK: "device1", SideZPK: "device2", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 10000000000},
+		{PK: "link2", Status: "activated", Code: "link2", TunnelNet: "172.16.0.2/31", ContributorPK: "contrib1", SideAPK: "device2", SideZPK: "device3", SideAIfaceName: "eth1", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 2000000, CommittedJitterNs: 200000, Bandwidth: 10000000000},
 	}
 	err = store.ReplaceLinks(ctx, links)
 	require.NoError(t, err)
@@ -410,15 +410,15 @@ func TestStore_CompareTopology_MissingISIS(t *testing.T) {
 	require.NoError(t, err)
 
 	devices := []dzsvc.Device{
-		{PK: "device1", Status: "active", DeviceType: "router", Code: "SW01", PublicIP: "1.2.3.4", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
-		{PK: "device2", Status: "active", DeviceType: "router", Code: "SW02", PublicIP: "1.2.3.5", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "device1", Status: "activated", DeviceType: "router", Code: "SW01", PublicIP: "1.2.3.4", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "device2", Status: "activated", DeviceType: "router", Code: "SW02", PublicIP: "1.2.3.5", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
 	}
 	err = store.ReplaceDevices(ctx, devices)
 	require.NoError(t, err)
 
 	// Create an active link
 	links := []dzsvc.Link{
-		{PK: "link1", Status: "active", Code: "link1", TunnelNet: "172.16.0.0/31", ContributorPK: "contrib1", SideAPK: "device1", SideZPK: "device2", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 10000000000},
+		{PK: "link1", Status: "activated", Code: "link1", TunnelNet: "172.16.0.0/31", ContributorPK: "contrib1", SideAPK: "device1", SideZPK: "device2", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "direct", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 10000000000},
 	}
 	err = store.ReplaceLinks(ctx, links)
 	require.NoError(t, err)

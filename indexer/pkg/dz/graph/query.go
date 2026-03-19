@@ -925,7 +925,7 @@ func (s *Store) CompareTopology(ctx context.Context) (*TopologyComparison, error
 		}
 
 		// Check for missing ISIS adjacencies on active links
-		if link.linkStatus == "active" && !link.hasForwardAdj && !link.hasReverseAdj {
+		if link.linkStatus == "activated" && !link.hasForwardAdj && !link.hasReverseAdj {
 			comparison.Discrepancies = append(comparison.Discrepancies, TopologyDiscrepancy{
 				Type:        "missing_isis",
 				LinkPK:      link.linkPK,
@@ -936,7 +936,7 @@ func (s *Store) CompareTopology(ctx context.Context) (*TopologyComparison, error
 				DeviceBCode: link.deviceBCode,
 				Details:     "Active link has no ISIS adjacency in either direction",
 			})
-		} else if link.linkStatus == "active" && link.hasForwardAdj != link.hasReverseAdj {
+		} else if link.linkStatus == "activated" && link.hasForwardAdj != link.hasReverseAdj {
 			direction := "forward only"
 			if link.hasReverseAdj && !link.hasForwardAdj {
 				direction = "reverse only"

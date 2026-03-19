@@ -433,7 +433,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Check for missing ISIS adjacencies on active links
-			if status == "active" && !hasForward && !hasReverse {
+			if status == "activated" && !hasForward && !hasReverse {
 				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
 					Type:        "missing_isis",
 					LinkPK:      asString(linkPK),
@@ -444,7 +444,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 					DeviceBCode: asString(deviceBCode),
 					Details:     "Active link has no ISIS adjacency in either direction",
 				})
-			} else if status == "active" && hasForward != hasReverse {
+			} else if status == "activated" && hasForward != hasReverse {
 				direction := "forward only"
 				if hasReverse && !hasForward {
 					direction = "reverse only"
