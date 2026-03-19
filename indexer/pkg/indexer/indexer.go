@@ -23,12 +23,12 @@ type Indexer struct {
 	log *slog.Logger
 	cfg Config
 
-	svc           *dzsvc.View
-	graphStore    *dzgraph.Store
-	telemLatency  *dztelemlatency.View
-	telemUsage    *dztelemusage.View
-	sol           *sol.View
-	geoip         *mcpgeoip.View
+	svc              *dzsvc.View
+	graphStore       *dzgraph.Store
+	telemLatency     *dztelemlatency.View
+	telemUsage       *dztelemusage.View
+	sol              *sol.View
+	geoip            *mcpgeoip.View
 	isisSource       isis.Source
 	lastISISDumpFile string // tracks S3 filename to skip redundant syncs
 	validatorsApp    *validatorsapp.View
