@@ -79,6 +79,36 @@ function formatTimeAgo(isoString: string): string {
   return `${Math.floor(diffSecs / 86400)}d ago`
 }
 
+// Filter out devices with only minor/transient interface issues (low error counts).
+// Groups issues by device, sums totals, and keeps only devices exceeding thresholds.
+const DEVICE_ISSUE_MIN_ERRORS = 100
+const DEVICE_ISSUE_MIN_DISCARDS = 100
+const DEVICE_ISSUE_MIN_CARRIER = 5
+
+function filterSignificantDeviceIssues(issues: InterfaceIssue[]): InterfaceIssue[] {
+  // Group by device and compute totals
+  const deviceTotals = new Map<string, { errors: number; discards: number; carrier: number }>()
+  for (const i of issues) {
+    const prev = deviceTotals.get(i.device_pk) ?? { errors: 0, discards: 0, carrier: 0 }
+    prev.errors += i.in_errors + i.out_errors + i.in_fcs_errors
+    prev.discards += i.in_discards + i.out_discards
+    prev.carrier += i.carrier_transitions
+    deviceTotals.set(i.device_pk, prev)
+  }
+
+  // Keep only devices that exceed at least one threshold
+  const significantDevices = new Set<string>()
+  for (const [pk, totals] of deviceTotals) {
+    if (totals.errors >= DEVICE_ISSUE_MIN_ERRORS ||
+        totals.discards >= DEVICE_ISSUE_MIN_DISCARDS ||
+        totals.carrier >= DEVICE_ISSUE_MIN_CARRIER) {
+      significantDevices.add(pk)
+    }
+  }
+
+  return issues.filter(i => significantDevices.has(i.device_pk))
+}
+
 function getStatusReasons(status: StatusResponse): string[] {
   const reasons: string[] = []
 
@@ -98,9 +128,9 @@ function getStatusReasons(status: StatusResponse): string[] {
     reasons.push(`${noDataCount} link${noDataCount > 1 ? 's' : ''} with telemetry stopped`)
   }
 
-  // Count devices with interface issues
-  const deviceIssues = status.interfaces?.issues || []
-  const devicesWithIssues = new Set(deviceIssues.map(i => i.device_pk)).size
+  // Count devices with significant interface issues (exclude minor/transient)
+  const significantDeviceIssues = filterSignificantDeviceIssues(status.interfaces?.issues || [])
+  const devicesWithIssues = new Set(significantDeviceIssues.map(i => i.device_pk)).size
   if (devicesWithIssues > 0) {
     reasons.push(`${devicesWithIssues} device${devicesWithIssues > 1 ? 's' : ''} with interface issues`)
   }
@@ -530,10 +560,10 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
 
   const { icon: Icon, label, className, borderClassName } = config[status]
 
-  // Check if there are issues to show
+  // Check if there are issues to show (filter out minor/transient device interface issues)
   const linkIssues = statusData.links.issues || []
   const nonActivatedLinks = (statusData.alerts?.links || []).filter(l => l.status !== 'provisioning')
-  const deviceIssues = statusData.interfaces?.issues || []
+  const deviceIssues = filterSignificantDeviceIssues(statusData.interfaces?.issues || [])
   const nonActivatedDevices = statusData.alerts?.devices || []
   const hasExpandableContent = linkIssues.length > 0 || nonActivatedLinks.length > 0 || deviceIssues.length > 0 || nonActivatedDevices.length > 0
 
