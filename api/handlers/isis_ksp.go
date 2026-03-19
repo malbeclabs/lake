@@ -38,8 +38,9 @@ type kspPath struct {
 	TotalMetric uint32
 }
 
-// loadISISGraph loads the full ISIS adjacency graph from Neo4j into memory.
-func loadISISGraph(ctx context.Context) (*kspGraph, error) {
+// loadTopologyGraph loads the device/link topology from Neo4j into memory.
+// Edge weights use committed_rtt_ns (converted to microseconds) as the metric.
+func loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 	session := config.Neo4jSession(ctx)
 	defer session.Close(ctx)
 
@@ -48,56 +49,63 @@ func loadISISGraph(ctx context.Context) (*kspGraph, error) {
 		Nodes: make(map[string]kspNodeInfo),
 	}
 
-	// Load all edges with metrics and metro info
+	// Load all links with committed latency and device/metro info.
+	// Links are bidirectional, so we add edges in both directions.
 	edgeCypher := `
-		MATCH (from:Device)-[r:ISIS_ADJACENT]->(to:Device)
-		OPTIONAL MATCH (from)-[:LOCATED_IN]->(mFrom:Metro)
-		OPTIONAL MATCH (to)-[:LOCATED_IN]->(mTo:Metro)
-		RETURN from.pk AS from_pk, to.pk AS to_pk, r.metric AS metric,
-		       from.code AS from_code, from.status AS from_status, from.device_type AS from_type,
-		       mFrom.pk AS from_metro_pk, mFrom.code AS from_metro_code,
-		       to.code AS to_code, to.status AS to_status, to.device_type AS to_type,
-		       mTo.pk AS to_metro_pk, mTo.code AS to_metro_code
+		MATCH (a:Device)-[:CONNECTS]-(l:Link)-[:CONNECTS]-(b:Device)
+		WHERE a.pk < b.pk AND l.status = 'activated'
+		OPTIONAL MATCH (a)-[:LOCATED_IN]->(mA:Metro)
+		OPTIONAL MATCH (b)-[:LOCATED_IN]->(mB:Metro)
+		RETURN a.pk AS a_pk, b.pk AS b_pk,
+		       l.committed_rtt_ns AS committed_rtt_ns,
+		       a.code AS a_code, a.status AS a_status, a.device_type AS a_type,
+		       mA.pk AS a_metro_pk, mA.code AS a_metro_code,
+		       b.code AS b_code, b.status AS b_status, b.device_type AS b_type,
+		       mB.pk AS b_metro_pk, mB.code AS b_metro_code
 	`
 
 	result, err := session.Run(ctx, edgeCypher, nil)
 	if err != nil {
-		return nil, fmt.Errorf("loading ISIS graph edges: %w", err)
+		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}
 
 	records, err := result.Collect(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("collecting ISIS graph edges: %w", err)
+		return nil, fmt.Errorf("collecting topology graph: %w", err)
 	}
 
 	for _, rec := range records {
-		fromPK := asString(recGet(rec, "from_pk"))
-		toPK := asString(recGet(rec, "to_pk"))
-		metric := uint32(asInt64(recGet(rec, "metric")))
+		aPK := asString(recGet(rec, "a_pk"))
+		bPK := asString(recGet(rec, "b_pk"))
+		// Convert committed_rtt_ns to microseconds for uint32 metric
+		committedNs := asInt64(recGet(rec, "committed_rtt_ns"))
+		metric := uint32(committedNs / 1000)
 		if metric == 0 {
 			metric = 1
 		}
 
-		g.Adj[fromPK] = append(g.Adj[fromPK], kspEdge{To: toPK, Metric: metric})
+		// Bidirectional edges
+		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{To: bPK, Metric: metric})
+		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{To: aPK, Metric: metric})
 
-		if _, ok := g.Nodes[fromPK]; !ok {
-			g.Nodes[fromPK] = kspNodeInfo{
-				PK:         fromPK,
-				Code:       asString(recGet(rec, "from_code")),
-				Status:     asString(recGet(rec, "from_status")),
-				DeviceType: asString(recGet(rec, "from_type")),
-				MetroPK:    asString(recGet(rec, "from_metro_pk")),
-				MetroCode:  asString(recGet(rec, "from_metro_code")),
+		if _, ok := g.Nodes[aPK]; !ok {
+			g.Nodes[aPK] = kspNodeInfo{
+				PK:         aPK,
+				Code:       asString(recGet(rec, "a_code")),
+				Status:     asString(recGet(rec, "a_status")),
+				DeviceType: asString(recGet(rec, "a_type")),
+				MetroPK:    asString(recGet(rec, "a_metro_pk")),
+				MetroCode:  asString(recGet(rec, "a_metro_code")),
 			}
 		}
-		if _, ok := g.Nodes[toPK]; !ok {
-			g.Nodes[toPK] = kspNodeInfo{
-				PK:         toPK,
-				Code:       asString(recGet(rec, "to_code")),
-				Status:     asString(recGet(rec, "to_status")),
-				DeviceType: asString(recGet(rec, "to_type")),
-				MetroPK:    asString(recGet(rec, "to_metro_pk")),
-				MetroCode:  asString(recGet(rec, "to_metro_code")),
+		if _, ok := g.Nodes[bPK]; !ok {
+			g.Nodes[bPK] = kspNodeInfo{
+				PK:         bPK,
+				Code:       asString(recGet(rec, "b_code")),
+				Status:     asString(recGet(rec, "b_status")),
+				DeviceType: asString(recGet(rec, "b_type")),
+				MetroPK:    asString(recGet(rec, "b_metro_pk")),
+				MetroCode:  asString(recGet(rec, "b_metro_code")),
 			}
 		}
 	}
@@ -121,7 +129,7 @@ func loadISISGraph(ctx context.Context) (*kspGraph, error) {
 		})
 	}
 
-	slog.Info("loaded ISIS graph", "nodes", len(g.Nodes), "edges", len(records))
+	slog.Info("loaded topology graph", "nodes", len(g.Nodes), "edges", len(records))
 	return g, nil
 }
 
@@ -331,7 +339,7 @@ func kspToSinglePaths(g *kspGraph, paths []kspPath) []SinglePath {
 // findKShortestPaths loads the graph and runs Yen's algorithm.
 func findKShortestPaths(ctx context.Context, fromPK, toPK string, k int) ([]SinglePath, error) {
 	start := time.Now()
-	g, err := loadISISGraph(ctx)
+	g, err := loadTopologyGraph(ctx)
 	if err != nil {
 		return nil, err
 	}

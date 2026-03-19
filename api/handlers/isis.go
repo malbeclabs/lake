@@ -926,7 +926,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	k := 5 // default
 	if kStr != "" {
-		if parsed, err := strconv.Atoi(kStr); err == nil && parsed > 0 && parsed <= 10 {
+		if parsed, err := strconv.Atoi(kStr); err == nil && parsed > 0 && parsed <= 25 {
 			k = parsed
 		}
 	}
@@ -962,25 +962,6 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 		slog.Error("enrichPathsWithMeasuredLatency error", "error", err)
 		response.Error = fmt.Sprintf("failed to enrich paths with measured latency: %v", err)
 	}
-
-	// Re-sort by measured latency when available, fall back to ISIS metric
-	slices.SortFunc(response.Paths, func(a, b SinglePath) int {
-		if a.MeasuredLatencyMs > 0 && b.MeasuredLatencyMs > 0 {
-			if a.MeasuredLatencyMs < b.MeasuredLatencyMs {
-				return -1
-			}
-			if a.MeasuredLatencyMs > b.MeasuredLatencyMs {
-				return 1
-			}
-		}
-		if a.TotalMetric < b.TotalMetric {
-			return -1
-		}
-		if a.TotalMetric > b.TotalMetric {
-			return 1
-		}
-		return 0
-	})
 
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, nil)
@@ -3455,7 +3436,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load graph once, find shortest path for each pair in-memory
-	g, err := loadISISGraph(ctx)
+	g, err := loadTopologyGraph(ctx)
 	if err != nil {
 		slog.Error("metro device paths graph load error", "error", err)
 		response.Error = "Failed to load graph: " + err.Error()

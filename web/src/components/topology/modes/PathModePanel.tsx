@@ -148,13 +148,13 @@ export function PathModePanel({
           {activeResult.paths.length > 1 && (
             <div className="mb-3">
               <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
-                <span>Showing {activeResult.paths.length} of</span>
+                <span>Showing</span>
                 <select
                   value={pathK}
                   onChange={e => onPathKChange(Number(e.target.value))}
                   className="bg-muted text-foreground rounded px-1 py-0.5 text-[10px] border border-[var(--border)]"
                 >
-                  {[3, 5, 10].map(n => (
+                  {[3, 5, 10, 15, 20, 25].map(n => (
                     <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
@@ -200,14 +200,18 @@ export function PathModePanel({
 
 // Visual stepper for path hops — matches the path latency page design
 function PathStepper({ path, isReverse }: { path: SinglePath; isReverse: boolean }) {
-  const latencyMs = path.measuredLatencyMs || path.totalMetric / 1000
+  const isisLatencyMs = path.totalMetric / 1000
+  const measuredLatencyMs = path.measuredLatencyMs
 
   return (
     <div>
       {/* Summary stats */}
       <div className="flex items-center gap-3 mb-3 text-[11px] text-muted-foreground">
         <span>{path.hopCount} hops</span>
-        <span className="text-foreground font-medium">{latencyMs.toFixed(2)}ms</span>
+        <span className="text-foreground font-medium">{isisLatencyMs.toFixed(2)}ms</span>
+        {measuredLatencyMs != null && measuredLatencyMs > 0 && (
+          <span className="text-muted-foreground" title="Measured latency">({measuredLatencyMs.toFixed(2)}ms measured)</span>
+        )}
       </div>
 
       {/* Stepper */}
@@ -216,7 +220,8 @@ function PathStepper({ path, isReverse }: { path: SinglePath; isReverse: boolean
           const isFirst = idx === 0
           const isLast = idx === path.path.length - 1
           const nextHop = !isLast ? path.path[idx + 1] : null
-          const hopLatencyMs = nextHop?.edgeMeasuredMs ?? (nextHop?.edgeMetric ? nextHop.edgeMetric / 1000 : null)
+          const hopIsisMs = nextHop?.edgeMetric ? nextHop.edgeMetric / 1000 : null
+          const hopMeasuredMs = nextHop?.edgeMeasuredMs ?? null
 
           // Color endpoints: source green, target red (swap for reverse)
           const isSource = isReverse ? isLast : isFirst
@@ -245,11 +250,16 @@ function PathStepper({ path, isReverse }: { path: SinglePath; isReverse: boolean
                     </span>
                   )}
                 </div>
-                {!isLast && hopLatencyMs !== null && hopLatencyMs > 0 && (
+                {!isLast && hopIsisMs !== null && hopIsisMs > 0 && (
                   <div className="text-right pt-0.5">
                     <span className="text-[10px] font-medium text-primary tabular-nums">
-                      {hopLatencyMs.toFixed(1)}ms
+                      {hopIsisMs.toFixed(1)}ms
                     </span>
+                    {hopMeasuredMs !== null && hopMeasuredMs > 0 && (
+                      <span className="text-[9px] text-muted-foreground tabular-nums block">
+                        {hopMeasuredMs.toFixed(1)}ms
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
