@@ -8,13 +8,13 @@ interface ComparePanelProps {
   isLoading: boolean
 }
 
-function DiscrepancyList({ discrepancies, type, label, colorClass }: {
+function DiscrepancySection({ discrepancies, type, label, dotColor }: {
   discrepancies: TopologyDiscrepancy[]
   type: 'missing_isis' | 'extra_isis'
   label: string
-  colorClass: string
+  dotColor: string
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
   const { setSelection } = useTopology()
   const filtered = discrepancies.filter(d => d.type === type)
   if (filtered.length === 0) return null
@@ -23,17 +23,18 @@ function DiscrepancyList({ discrepancies, type, label, colorClass }: {
     <div>
       <button
         onClick={() => setExpanded(!expanded)}
-        className={`flex items-center gap-1.5 w-full text-left ${colorClass} hover:opacity-80`}
+        className="flex items-center gap-1.5 w-full text-left text-muted-foreground hover:text-foreground"
       >
         {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+        <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
         <span>{filtered.length} {label}</span>
       </button>
       {expanded && (
-        <div className="mt-1 ml-4.5 space-y-0.5">
+        <div className="mt-1 space-y-px">
           {filtered.map((d, i) => (
             <button
               key={i}
-              className="block w-full text-left text-muted-foreground hover:text-foreground truncate"
+              className="flex items-center gap-1.5 w-full text-left pl-7 py-0.5 rounded hover:bg-[var(--accent)] text-muted-foreground hover:text-foreground transition-colors"
               title={d.details}
               onClick={() => {
                 if (d.linkPK) {
@@ -43,7 +44,9 @@ function DiscrepancyList({ discrepancies, type, label, colorClass }: {
                 }
               }}
             >
-              {d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}
+              <span className="truncate">
+                {d.linkCode || `${d.deviceACode} → ${d.deviceBCode}`}
+              </span>
             </button>
           ))}
         </div>
@@ -89,18 +92,18 @@ export function ComparePanel({ data, isLoading }: ComparePanelProps) {
                 <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                 <span className="font-medium">{data.discrepancies.length} Issues</span>
               </div>
-              <div className="space-y-1.5">
-                <DiscrepancyList
+              <div className="space-y-2">
+                <DiscrepancySection
                   discrepancies={data.discrepancies}
                   type="missing_isis"
                   label="missing ISIS"
-                  colorClass="text-red-500"
+                  dotColor="#ef4444"
                 />
-                <DiscrepancyList
+                <DiscrepancySection
                   discrepancies={data.discrepancies}
                   type="extra_isis"
                   label="extra adjacencies"
-                  colorClass="text-amber-500"
+                  dotColor="#f59e0b"
                 />
               </div>
             </div>
