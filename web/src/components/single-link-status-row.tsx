@@ -65,10 +65,12 @@ export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkSta
   const hasAnyDiscards = data.hours.some(h => (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 || (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0)
   const hasAnyCarrier = data.hours.some(h => (h.side_a_carrier_transitions ?? 0) > 0 || (h.side_z_carrier_transitions ?? 0) > 0)
   const hasAnyNoData = data.hours.some(h => h.status === 'no_data')
+  const hasAnyISISDown = data.hours.some(h => h.isis_down)
 
   if (hasAnyPacketLoss) issueReasons.push('packet_loss')
   if (hasAnyHighLatency) issueReasons.push('high_latency')
   if (hasAnyNoData) issueReasons.push('no_data')
+  if (hasAnyISISDown) issueReasons.push('isis_down')
   if (hasAnyErrors) issueReasons.push('interface_errors')
   if (hasAnyFcsErrors) issueReasons.push('fcs_errors')
   if (hasAnyDiscards) issueReasons.push('discards')
@@ -99,6 +101,9 @@ export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkSta
           )}
           {issueReasons.includes('carrier_transitions') && (
             <span className="text-xs px-2 py-1 rounded font-medium" style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04' }}>Carrier Transitions</span>
+          )}
+          {issueReasons.includes('isis_down') && (
+            <span className="text-xs px-2 py-1 rounded font-medium bg-rose-600/15 text-rose-700 dark:text-rose-400">ISIS Down</span>
           )}
         </div>
       )}

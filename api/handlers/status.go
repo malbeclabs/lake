@@ -3602,6 +3602,106 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 		return ""
 	}
 
+	// Query ISIS adjacency history for this link (SCD2 carry-forward)
+	type isisAdjEntry struct {
+		bucket    string
+		isDeleted bool
+	}
+	var isisAdjEntriesForLink []isisAdjEntry
+	isisAdjHistoryMap := make(map[string]bool) // bucket -> is_deleted
+
+	isisAdjHistQuery := `
+		SELECT
+			` + historyBucketInterval + ` as bucket,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_adjacencies_history
+		WHERE link_pk = ? AND snapshot_ts > now() - INTERVAL ? HOUR
+		GROUP BY bucket
+		ORDER BY bucket
+	`
+	isisAdjHistRows, isisAdjHistErr := envDB(ctx).Query(ctx, isisAdjHistQuery, linkPK, totalHours)
+	if isisAdjHistErr != nil {
+		slog.Warn("single link history: failed to query ISIS adjacency history", "error", isisAdjHistErr)
+	}
+	if isisAdjHistRows != nil {
+		defer isisAdjHistRows.Close()
+		for isisAdjHistRows.Next() {
+			var bucket time.Time
+			var isDeleted uint8
+			if err := isisAdjHistRows.Scan(&bucket, &isDeleted); err != nil {
+				slog.Error("ISIS adjacency history scan error", "error", err)
+				break
+			}
+			key := bucket.UTC().Format(time.RFC3339)
+			deleted := isDeleted == 1
+			isisAdjEntriesForLink = append(isisAdjEntriesForLink, isisAdjEntry{bucket: key, isDeleted: deleted})
+			isisAdjHistoryMap[key] = deleted
+		}
+	}
+
+	// Baseline: ISIS adjacency state before the time range
+	var isisAdjBaselineIsDeleted *bool
+	isisAdjBaselineQuery := `
+		SELECT argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_adjacencies_history
+		WHERE link_pk = ? AND snapshot_ts <= now() - INTERVAL ? HOUR
+	`
+	var baselineIsDeleted uint8
+	if err := envDB(ctx).QueryRow(ctx, isisAdjBaselineQuery, linkPK, totalHours).Scan(&baselineIsDeleted); err == nil {
+		v := baselineIsDeleted == 1
+		isisAdjBaselineIsDeleted = &v
+	}
+
+	hasISISHistory := len(isisAdjEntriesForLink) > 0 || isisAdjBaselineIsDeleted != nil
+
+	// Check if this link is currently missing its ISIS adjacency (with sibling check)
+	isMissingISISAdj := false
+	if !hasISISHistory {
+		missingISISQuery := `
+			SELECT count() > 0
+			FROM dz_links_current l
+			WHERE l.pk = ?
+			  AND l.status = 'activated'
+			  AND l.tunnel_net != ''
+			  AND l.committed_rtt_ns != ?
+			  AND l.pk NOT IN (
+			    SELECT DISTINCT link_pk
+			    FROM isis_adjacencies_current
+			    WHERE link_pk != ''
+			  )
+			  AND l.tunnel_net NOT IN (
+			    SELECT DISTINCT l2.tunnel_net
+			    FROM dz_links_current l2
+			    JOIN isis_adjacencies_current a ON a.link_pk = l2.pk
+			    WHERE l2.tunnel_net != '' AND a.link_pk != ''
+			  )
+		`
+		_ = envDB(ctx).QueryRow(ctx, missingISISQuery, linkPK, committedRttProvisioningNs).Scan(&isMissingISISAdj)
+	}
+
+	resolveISISDown := func(bucketKey string) bool {
+		// Direct hit in history
+		if isDeleted, ok := isisAdjHistoryMap[bucketKey]; ok {
+			return isDeleted
+		}
+		// No direct hit — find the most recent entry before this bucket
+		if len(isisAdjEntriesForLink) > 0 {
+			idx := sort.Search(len(isisAdjEntriesForLink), func(i int) bool { return isisAdjEntriesForLink[i].bucket > bucketKey })
+			if idx > 0 {
+				return isisAdjEntriesForLink[idx-1].isDeleted
+			}
+		}
+		// No in-range entries — fall back to baseline
+		if isisAdjBaselineIsDeleted != nil {
+			return *isisAdjBaselineIsDeleted
+		}
+		// No history at all — use current missing check
+		if !hasISISHistory {
+			return isMissingISISAdj
+		}
+		return false
+	}
+
 	// Build hour statuses including the current collecting bucket.
 	var hourStatuses []LinkHourStatus
 	for i := bucketCount - 1; i >= 0; i-- {
@@ -3704,6 +3804,11 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			}
 		} else if (totalErrors > 0 || totalDiscards > 0 || totalCarrier > 0) && hs.Status == "healthy" {
 			hs.Status = "degraded"
+		}
+
+		// Check ISIS adjacency state for this bucket
+		if resolveISISDown(key) {
+			hs.ISISDown = true
 		}
 
 		hourStatuses = append(hourStatuses, hs)
