@@ -290,49 +290,71 @@ function IssueDetails({
       {sections.map(({ key, label, icon: Icon, iconColor, valueColor }) => {
         const sectionIssues = grouped[key]
         if (sectionIssues.length === 0) return null
+
+        // Group issues by link code so the same link appears once with all its issues
+        const byLink = new Map<string, LinkIssue[]>()
+        for (const issue of sectionIssues) {
+          const existing = byLink.get(issue.code) || []
+          existing.push(issue)
+          byLink.set(issue.code, existing)
+        }
+
         return (
           <div key={key}>
             <div className="text-sm font-medium text-muted-foreground mb-2">{label}</div>
             <div className="space-y-2">
-              {sectionIssues.map((issue, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => onIssueClick(issue.code)}
-                  className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <Icon className={`h-4 w-4 ${iconColor}`} />
-                    <div>
-                      <div className="font-medium text-sm">{issue.code}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {issue.side_a_metro} → {issue.side_z_metro} · {issue.link_type}{issue.contributor && ` · ${issue.contributor}`}
+              {[...byLink.entries()].map(([code, linkIssues]) => {
+                const first = linkIssues[0]
+                // Use the most recent "since" across all issues for this link
+                const mostRecentSince = linkIssues.reduce((latest, i) => {
+                  if (!i.since) return latest
+                  if (!latest) return i.since
+                  return new Date(i.since) > new Date(latest) ? i.since : latest
+                }, '' as string)
+                return (
+                  <button
+                    key={code}
+                    onClick={() => onIssueClick(code)}
+                    className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon className={`h-4 w-4 ${iconColor}`} />
+                      <div>
+                        <div className="font-medium text-sm">{code}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {first.side_a_metro} → {first.side_z_metro} · {first.link_type}{first.contributor && ` · ${first.contributor}`}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    {issue.issue === 'missing_adjacency' && (
-                      <div className={`text-sm font-medium ${valueColor}`}>
-                        ISIS down
-                      </div>
-                    )}
-                    {issue.issue !== 'no_data' && issue.issue !== 'missing_adjacency' && (
-                      <div className={`text-sm font-medium ${valueColor}`}>
-                        {issue.issue === 'packet_loss'
-                          ? `${issue.value.toFixed(1)}% loss`
-                          : `${issue.value.toFixed(0)}% over SLA`}
-                      </div>
-                    )}
-                    {issue.since && (
-                      <div
-                        className="text-xs text-muted-foreground"
-                        title={new Date(issue.since).toLocaleString()}
-                      >
-                        for {formatDuration(issue.since)}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              ))}
+                    <div className="text-right">
+                      {linkIssues.map((issue, idx) => (
+                        <div key={idx}>
+                          {issue.issue === 'missing_adjacency' && (
+                            <div className={`text-sm font-medium ${valueColor}`}>
+                              ISIS down
+                            </div>
+                          )}
+                          {issue.issue !== 'no_data' && issue.issue !== 'missing_adjacency' && (
+                            <div className={`text-sm font-medium ${valueColor}`}>
+                              {issue.issue === 'packet_loss'
+                                ? `${issue.value.toFixed(1)}% loss`
+                                : `${issue.value.toFixed(0)}% over SLA`}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {mostRecentSince && (
+                        <div
+                          className="text-xs text-muted-foreground"
+                          title={new Date(mostRecentSince).toLocaleString()}
+                        >
+                          for {formatDuration(mostRecentSince)}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )

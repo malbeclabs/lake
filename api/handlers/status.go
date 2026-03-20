@@ -767,6 +767,14 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				// An issue is considered resolved if its calculated start time is in the future,
 				// which happens when the current bucket is healthy (last_good_bucket + 5min > now)
 				now := time.Now()
+
+				// Save original issues so we can adjust severity counts for any that get filtered out.
+				// Without this, the banner can show "N links with degraded performance" while the
+				// expanded details list is empty (the issue was resolved between metric snapshot and
+				// bucket-based persistence check).
+				originalIssues := make([]LinkIssue, len(issues))
+				copy(originalIssues, issues)
+
 				filtered := issues[:0]
 				for i := range issues {
 					if since, ok := issueSince[issues[i].Code]; ok {
@@ -779,6 +787,46 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 					filtered = append(filtered, issues[i])
 				}
 				issues = filtered
+
+				// Adjust health counts for links whose issues were filtered out as resolved.
+				// Classify each removed link by its most severe original issue.
+				removedSeverity := make(map[string]int) // code -> 0=degraded, 1=unhealthy, 2=down
+				for _, orig := range originalIssues {
+					sev := 0
+					if orig.IsDown {
+						sev = 2
+					} else if (orig.Issue == "packet_loss" && orig.Value >= LossCriticalPct) ||
+						(orig.Issue == "high_latency" && orig.Value >= LatencyCriticalPct) {
+						sev = 1
+					}
+					if existing, ok := removedSeverity[orig.Code]; !ok || sev > existing {
+						removedSeverity[orig.Code] = sev
+					}
+				}
+				// Remove links that still have at least one issue remaining
+				for _, remaining := range issues {
+					delete(removedSeverity, remaining.Code)
+				}
+				// Decrement the appropriate counter and move to healthy
+				for _, sev := range removedSeverity {
+					switch sev {
+					case 2:
+						if resp.Links.Down > 0 {
+							resp.Links.Down--
+							resp.Links.Healthy++
+						}
+					case 1:
+						if resp.Links.Unhealthy > 0 {
+							resp.Links.Unhealthy--
+							resp.Links.Healthy++
+						}
+					case 0:
+						if resp.Links.Degraded > 0 {
+							resp.Links.Degraded--
+							resp.Links.Healthy++
+						}
+					}
+				}
 			}
 		}
 
@@ -1128,7 +1176,7 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 				COALESCE(c.code, '') as contributor,
 				COALESCE(ma.code, '') as side_a_metro,
 				COALESCE(mz.code, '') as side_z_metro,
-				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since
+				l.pk as link_pk
 			FROM dz_links_current l
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
 			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
@@ -1159,28 +1207,83 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		}
 		defer rows.Close()
 
+		type missingAdj struct {
+			code, linkType, contributor, sideAMetro, sideZMetro, linkPK string
+		}
+		var missing []missingAdj
 		for rows.Next() {
-			var code, linkType, contributor, sideAMetro, sideZMetro, since string
-			if err := rows.Scan(&code, &linkType, &contributor, &sideAMetro, &sideZMetro, &since); err != nil {
+			var m missingAdj
+			if err := rows.Scan(&m.code, &m.linkType, &m.contributor, &m.sideAMetro, &m.sideZMetro, &m.linkPK); err != nil {
 				return err
 			}
+			missing = append(missing, m)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		// Find when each adjacency was last seen to compute accurate "since" time.
+		// The last snapshot where is_deleted=0 is when the adjacency was still up.
+		lastSeen := make(map[string]string) // link_pk -> ISO timestamp
+		if len(missing) > 0 {
+			linkPKs := make([]string, len(missing))
+			for i, m := range missing {
+				linkPKs[i] = m.linkPK
+			}
+			sinceQuery := `
+				SELECT
+					link_pk,
+					formatDateTime(max(snapshot_ts), '%Y-%m-%dT%H:%i:%sZ', 'UTC') as last_seen
+				FROM dim_isis_adjacencies_history
+				WHERE link_pk IN ?
+				  AND is_deleted = 0
+				GROUP BY link_pk
+			`
+			sinceRows, sinceErr := envDB(ctx).Query(ctx, sinceQuery, linkPKs)
+			if sinceErr == nil {
+				defer sinceRows.Close()
+				for sinceRows.Next() {
+					var pk, ts string
+					if err := sinceRows.Scan(&pk, &ts); err == nil {
+						lastSeen[pk] = ts
+					}
+				}
+			}
+		}
+
+		for _, m := range missing {
 			missingAdjIssues = append(missingAdjIssues, LinkIssue{
-				Code:        code,
-				LinkType:    linkType,
-				Contributor: contributor,
+				Code:        m.code,
+				LinkType:    m.linkType,
+				Contributor: m.contributor,
 				Issue:       "missing_adjacency",
-				SideAMetro:  sideAMetro,
-				SideZMetro:  sideZMetro,
-				Since:       since,
+				SideAMetro:  m.sideAMetro,
+				SideZMetro:  m.sideZMetro,
+				Since:       lastSeen[m.linkPK],
 				IsDown:      true,
 			})
 		}
-		return rows.Err()
+		return nil
 	})
 
 	err := g.Wait()
 
 	// Merge missing adjacency issues after all goroutines complete (avoids race on resp.Links.Issues)
+	// Also update the Down count for links that weren't already counted during the latency scan.
+	existingIssueCodes := make(map[string]bool)
+	for _, issue := range resp.Links.Issues {
+		if issue.IsDown {
+			existingIssueCodes[issue.Code] = true
+		}
+	}
+	for _, issue := range missingAdjIssues {
+		if !existingIssueCodes[issue.Code] {
+			resp.Links.Down++
+			if resp.Links.Healthy > 0 {
+				resp.Links.Healthy--
+			}
+		}
+	}
 	resp.Links.Issues = append(resp.Links.Issues, missingAdjIssues...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
