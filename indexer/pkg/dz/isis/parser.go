@@ -47,11 +47,11 @@ type jsonHostname struct {
 
 // jsonNeighbor represents an IS-IS adjacency.
 type jsonNeighbor struct {
-	SystemID              string                    `json:"systemId"`
-	Metric                uint32                    `json:"metric"`
-	NeighborAddr          string                    `json:"neighborAddr"`
-	AdjSIDs               []jsonAdjSID              `json:"adjSids"`
-	AdjInterfaceAddresses []jsonInterfaceAddress     `json:"adjInterfaceAddresses"`
+	SystemID              string                 `json:"systemId"`
+	Metric                uint32                 `json:"metric"`
+	NeighborAddr          string                 `json:"neighborAddr"`
+	AdjSIDs               []jsonAdjSID           `json:"adjSids"`
+	AdjInterfaceAddresses []jsonInterfaceAddress `json:"adjInterfaceAddresses"`
 }
 
 // jsonAdjSID represents an adjacency SID entry.
