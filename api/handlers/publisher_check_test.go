@@ -184,6 +184,43 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// insertBulkShredStats inserts N leader slots and M retransmit slots for a publisher.
+func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string, epoch, startSlot uint64, leaderSlots, retransmitSlots int) {
+	t.Helper()
+	ctx := t.Context()
+	slot := startSlot
+	for range leaderSlots {
+		err := config.DB.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
+				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
+				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
+				 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+			VALUES
+				(now(), now(), 'shredder-1', ?, '', '',
+				 '', 0, ?, '', '',
+				 ?, ?, 100, 64, 32, 32, 31, false, 0, 0, true)
+		`, publisherIP, dzUserPubkey, epoch, slot)
+		require.NoError(t, err)
+		slot++
+	}
+	for range retransmitSlots {
+		err := config.DB.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
+				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
+				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
+				 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+			VALUES
+				(now(), now(), 'shredder-1', ?, '', '',
+				 '', 0, ?, '', '',
+				 ?, ?, 100, 64, 32, 32, 31, false, 0, 0, false)
+		`, publisherIP, dzUserPubkey, epoch, slot)
+		require.NoError(t, err)
+		slot++
+	}
+}
+
 func TestGetPublisherCheck_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	createPublisherShredStatsTable(t)
@@ -491,4 +528,79 @@ func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Publishers, 1)
 	assert.Equal(t, "dzuser1", resp.Publishers[0].DZUserPubkey)
+}
+
+func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	createPublisherShredStatsTable(t)
+
+	ctx := t.Context()
+
+	// Create bebop group
+	err := config.DB.Exec(ctx, `
+		INSERT INTO dim_dz_multicast_groups_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
+		VALUES
+			('bebop-group', now(), now(), generateUUIDv4(), 0, 1,
+			 'bebop-pk', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
+	`)
+	require.NoError(t, err)
+
+	// Create four publishers to test each threshold scenario
+	err = config.DB.Exec(ctx, `
+		INSERT INTO dim_dz_users_history
+			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
+			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
+		VALUES
+			('below-abs', now(), now(), generateUUIDv4(), 0, 1,
+			 'below-abs', '', 'activated', 'multicast', '', '10.0.1.1', '', '', 0, '["bebop-pk"]', '[]'),
+			('above-abs-below-ratio', now(), now(), generateUUIDv4(), 0, 2,
+			 'above-abs-below-ratio', '', 'activated', 'multicast', '', '10.0.1.2', '', '', 0, '["bebop-pk"]', '[]'),
+			('above-both', now(), now(), generateUUIDv4(), 0, 3,
+			 'above-both', '', 'activated', 'multicast', '', '10.0.1.3', '', '', 0, '["bebop-pk"]', '[]'),
+			('boundary', now(), now(), generateUUIDv4(), 0, 4,
+			 'boundary', '', 'activated', 'multicast', '', '10.0.1.4', '', '', 0, '["bebop-pk"]', '[]')
+	`)
+	require.NoError(t, err)
+
+	// Scenario 1: 10 retransmit / 100 total (10% ratio, but only 10 retransmit < 50 min)
+	insertBulkShredStats(t, "below-abs", "10.0.1.1", 800, 2000, 90, 10)
+
+	// Scenario 2: 60 retransmit / 2000 total (3% ratio < 5% min, but 60 > 50 abs min)
+	insertBulkShredStats(t, "above-abs-below-ratio", "10.0.1.2", 800, 5000, 1940, 60)
+
+	// Scenario 3: 200 retransmit / 400 total (50% ratio, 200 > 50) — clearly flagged
+	insertBulkShredStats(t, "above-both", "10.0.1.3", 800, 8000, 200, 200)
+
+	// Scenario 4: exactly 50 retransmit / 1000 total (exactly 5%, exactly 50) — boundary, flagged
+	insertBulkShredStats(t, "boundary", "10.0.1.4", 800, 10000, 950, 50)
+
+	tests := []struct {
+		name     string
+		dzUser   string
+		wantFlag bool
+	}{
+		{"below absolute minimum", "below-abs", false},
+		{"above absolute but below ratio", "above-abs-below-ratio", false},
+		{"above both thresholds", "above-both", true},
+		{"boundary - exactly at both thresholds", "boundary", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q="+tt.dzUser, nil)
+			rr := httptest.NewRecorder()
+			handlers.GetPublisherCheck(rr, req)
+
+			assert.Equal(t, http.StatusOK, rr.Code)
+
+			var resp handlers.PublisherCheckResponse
+			err := json.NewDecoder(rr.Body).Decode(&resp)
+			require.NoError(t, err)
+			require.Len(t, resp.Publishers, 1)
+			assert.Equal(t, tt.wantFlag, resp.Publishers[0].PublishingRetransmitted,
+				"publisher %s: retransmit flag mismatch", tt.dzUser)
+		})
+	}
 }
