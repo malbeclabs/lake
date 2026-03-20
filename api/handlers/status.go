@@ -183,9 +183,18 @@ type NonActivatedLink struct {
 	Since      string `json:"since"` // ISO timestamp when entered this status
 }
 
+type ISISDeviceIssue struct {
+	Code       string `json:"code"`
+	DeviceType string `json:"device_type"`
+	Metro      string `json:"metro"`
+	Issue      string `json:"issue"` // "overload", "unreachable"
+	Since      string `json:"since"` // ISO timestamp
+}
+
 type InfrastructureAlerts struct {
-	Devices []NonActivatedDevice `json:"devices"`
-	Links   []NonActivatedLink   `json:"links"`
+	Devices     []NonActivatedDevice `json:"devices"`
+	Links       []NonActivatedLink   `json:"links"`
+	ISISDevices []ISISDeviceIssue    `json:"isis_devices"`
 }
 
 // Thresholds for health classification (matching methodology)
@@ -248,8 +257,9 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			Issues: []InterfaceIssue{},
 		},
 		Alerts: InfrastructureAlerts{
-			Devices: []NonActivatedDevice{},
-			Links:   []NonActivatedLink{},
+			Devices:     []NonActivatedDevice{},
+			Links:       []NonActivatedLink{},
+			ISISDevices: []ISISDeviceIssue{},
 		},
 	}
 
@@ -1069,7 +1079,103 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 		return rows.Err()
 	})
 
+	// ISIS device issues (overload, unreachable)
+	g.Go(func() error {
+		query := `
+			SELECT
+				id.hostname as code,
+				COALESCE(d.device_type, '') as device_type,
+				COALESCE(m.code, '') as metro,
+				CASE
+					WHEN id.overload = 1 AND id.node_unreachable = 1 THEN 'unreachable'
+					WHEN id.node_unreachable = 1 THEN 'unreachable'
+					ELSE 'overload'
+				END as issue,
+				formatDateTime(id.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since
+			FROM isis_devices_current id
+			LEFT JOIN dz_devices_current d ON id.device_pk = d.pk AND id.device_pk != ''
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			WHERE id.overload = 1 OR id.node_unreachable = 1
+			ORDER BY id.hostname
+			LIMIT 50
+		`
+		rows, err := envDB(ctx).Query(ctx, query)
+		if err != nil {
+			slog.Warn("status: failed to query ISIS device issues", "error", err)
+			return nil
+		}
+		defer rows.Close()
+
+		var issues []ISISDeviceIssue
+		for rows.Next() {
+			var issue ISISDeviceIssue
+			if err := rows.Scan(&issue.Code, &issue.DeviceType, &issue.Metro, &issue.Issue, &issue.Since); err != nil {
+				return err
+			}
+			issues = append(issues, issue)
+		}
+		resp.Alerts.ISISDevices = issues
+		return rows.Err()
+	})
+
+	// Missing ISIS adjacencies (activated links with tunnel_net but no ISIS adjacency)
+	var missingAdjIssues []LinkIssue
+	g.Go(func() error {
+		query := `
+			SELECT
+				l.code,
+				l.link_type,
+				COALESCE(c.code, '') as contributor,
+				COALESCE(ma.code, '') as side_a_metro,
+				COALESCE(mz.code, '') as side_z_metro,
+				formatDateTime(l.snapshot_ts, '%Y-%m-%dT%H:%i:%sZ', 'UTC') as since
+			FROM dz_links_current l
+			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
+			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
+			LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
+			LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+			LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
+			WHERE l.status = 'activated'
+			  AND l.tunnel_net != ''
+			  AND l.committed_rtt_ns != ?
+			  AND l.pk NOT IN (
+			    SELECT DISTINCT link_pk
+			    FROM isis_adjacencies_current
+			    WHERE link_pk != ''
+			  )
+			ORDER BY l.code
+			LIMIT 50
+		`
+		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
+		if err != nil {
+			slog.Warn("status: failed to query missing ISIS adjacencies", "error", err)
+			return nil
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var code, linkType, contributor, sideAMetro, sideZMetro, since string
+			if err := rows.Scan(&code, &linkType, &contributor, &sideAMetro, &sideZMetro, &since); err != nil {
+				return err
+			}
+			missingAdjIssues = append(missingAdjIssues, LinkIssue{
+				Code:        code,
+				LinkType:    linkType,
+				Contributor: contributor,
+				Issue:       "missing_adjacency",
+				SideAMetro:  sideAMetro,
+				SideZMetro:  sideZMetro,
+				Since:       since,
+				IsDown:      true,
+			})
+		}
+		return rows.Err()
+	})
+
 	err := g.Wait()
+
+	// Merge missing adjacency issues after all goroutines complete (avoids race on resp.Links.Issues)
+	resp.Links.Issues = append(resp.Links.Issues, missingAdjIssues...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1115,6 +1221,8 @@ type LinkHourStatus struct {
 	// Utilization (traffic rate / capacity)
 	UtilizationInPct  float64 `json:"utilization_in_pct,omitempty"`
 	UtilizationOutPct float64 `json:"utilization_out_pct,omitempty"`
+	// ISIS state
+	ISISDown bool `json:"isis_down,omitempty"` // true when link has no ISIS adjacency in this bucket
 }
 
 type LinkHistory struct {
@@ -1132,7 +1240,7 @@ type LinkHistory struct {
 	DrainStatus    string           `json:"drain_status,omitempty"`
 	Provisioning   bool             `json:"provisioning,omitempty"`
 	Hours          []LinkHourStatus `json:"hours"`
-	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "interface_errors", "discards", "carrier_transitions", "high_utilization"
+	IssueReasons   []string         `json:"issue_reasons"` // "packet_loss", "high_latency", "no_data", "missing_adjacency", "interface_errors", "discards", "carrier_transitions", "high_utilization"
 }
 
 type LinkHistoryResponse struct {
@@ -1692,6 +1800,108 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
+	// Query link PKs missing ISIS adjacencies (for marking as missing_adjacency issue)
+	missingISISLinkPKs := make(map[string]bool)
+	missingISISQuery := `
+		SELECT l.pk
+		FROM dz_links_current l
+		WHERE l.status = 'activated'
+		  AND l.tunnel_net != ''
+		  AND l.committed_rtt_ns != ?
+		  AND l.pk NOT IN (
+		    SELECT DISTINCT link_pk
+		    FROM isis_adjacencies_current
+		    WHERE link_pk != ''
+		  )
+	`
+	missingRows, missingErr := envDB(ctx).Query(ctx, missingISISQuery, committedRttProvisioningNs)
+	if missingErr != nil {
+		slog.Warn("link history: failed to query missing ISIS adjacencies", "error", missingErr)
+	} else {
+		defer missingRows.Close()
+		for missingRows.Next() {
+			var pk string
+			if err := missingRows.Scan(&pk); err == nil {
+				missingISISLinkPKs[pk] = true
+			}
+		}
+	}
+
+	// Query ISIS adjacency history per link per bucket
+	// For each link_pk, find whether an ISIS adjacency existed at each bucket
+	// by looking at the SCD2 history (is_deleted=0 means adjacency exists, is_deleted=1 means gone)
+	type isisAdjEntry struct {
+		bucket    string
+		isDeleted bool
+	}
+	isisAdjEntries := make(map[string][]isisAdjEntry) // link_pk -> sorted entries
+	isisAdjHistory := make(map[linkBucketKey]bool)     // link_pk+bucket -> is_deleted
+
+	isisAdjHistQuery := `
+		SELECT
+			link_pk,
+			` + historyBucketInterval + ` as bucket,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_adjacencies_history
+		WHERE snapshot_ts > now() - INTERVAL ? HOUR
+		  AND link_pk != ''
+		GROUP BY link_pk, bucket
+		ORDER BY link_pk, bucket
+	`
+	isisAdjHistRows, isisAdjHistErr := safeQueryRows(ctx, isisAdjHistQuery, totalHours)
+	if isisAdjHistErr != nil {
+		slog.Warn("link history: failed to query ISIS adjacency history", "error", isisAdjHistErr)
+	}
+	if isisAdjHistRows != nil {
+		defer isisAdjHistRows.Close()
+		for isisAdjHistRows.Next() {
+			var linkPK string
+			var bucket time.Time
+			var isDeleted uint8
+			if err := isisAdjHistRows.Scan(&linkPK, &bucket, &isDeleted); err != nil {
+				slog.Error("ISIS adjacency history scan error", "error", err)
+				break
+			}
+			key := bucket.UTC().Format(time.RFC3339)
+			deleted := isDeleted == 1
+			isisAdjEntries[linkPK] = append(isisAdjEntries[linkPK], isisAdjEntry{bucket: key, isDeleted: deleted})
+			isisAdjHistory[linkBucketKey{linkPK: linkPK, bucket: key}] = deleted
+		}
+	}
+
+	// Baseline: ISIS adjacency state before the time range for each link
+	isisAdjBaseline := make(map[string]bool) // link_pk -> is_deleted (true = no adjacency)
+	isisAdjBaselineQuery := `
+		SELECT link_pk, argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_adjacencies_history
+		WHERE snapshot_ts <= now() - INTERVAL ? HOUR
+		  AND link_pk != ''
+		GROUP BY link_pk
+	`
+	isisAdjBaselineRows, isisAdjBaselineErr := safeQueryRows(ctx, isisAdjBaselineQuery, totalHours)
+	if isisAdjBaselineErr != nil {
+		slog.Warn("ISIS adjacency baseline query error", "error", isisAdjBaselineErr)
+	}
+	if isisAdjBaselineRows != nil {
+		defer isisAdjBaselineRows.Close()
+		for isisAdjBaselineRows.Next() {
+			var linkPK string
+			var isDeleted uint8
+			if err := isisAdjBaselineRows.Scan(&linkPK, &isDeleted); err == nil {
+				isisAdjBaseline[linkPK] = isDeleted == 1
+			}
+		}
+	}
+
+	// Set of link_pks that have any ISIS adjacency data at all (history or current)
+	isisAdjKnownLinks := make(map[string]bool)
+	for linkPK := range isisAdjEntries {
+		isisAdjKnownLinks[linkPK] = true
+	}
+	for linkPK := range isisAdjBaseline {
+		isisAdjKnownLinks[linkPK] = true
+	}
+
 	// Build response with all buckets for each link
 	now := time.Now().UTC()
 	bucketDuration := time.Duration(bucketMinutes) * time.Minute
@@ -1784,6 +1994,35 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 				return ""
 			}
 			return ""
+		}
+
+		// Resolve whether this link is missing its ISIS adjacency at a given bucket.
+		// Returns true if the link should have an adjacency but doesn't.
+		// Only applies to links we know should have adjacencies (those that appear in
+		// missingISISLinkPKs or have ISIS history data).
+		isisAdjEntriesForLink := isisAdjEntries[pk]
+		resolveISISDown := func(bucketKey string) bool {
+			// Direct hit in history
+			if isDeleted, ok := isisAdjHistory[linkBucketKey{linkPK: pk, bucket: bucketKey}]; ok {
+				return isDeleted
+			}
+			// No direct hit — find the most recent entry before this bucket
+			if len(isisAdjEntriesForLink) > 0 {
+				idx := sort.Search(len(isisAdjEntriesForLink), func(i int) bool { return isisAdjEntriesForLink[i].bucket > bucketKey })
+				if idx > 0 {
+					return isisAdjEntriesForLink[idx-1].isDeleted
+				}
+			}
+			// No in-range entries before this bucket — fall back to baseline
+			if baseline, ok := isisAdjBaseline[pk]; ok {
+				return baseline
+			}
+			// No ISIS history at all for this link — check if it's in the known set
+			// If not known, it never had an adjacency, so it's "down"
+			if !isisAdjKnownLinks[pk] {
+				return missingISISLinkPKs[pk]
+			}
+			return false
 		}
 
 		var hourStatuses []LinkHourStatus
@@ -1927,13 +2166,22 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 					}
 				}
 
+				// Check ISIS adjacency state for this bucket
+				isisDown := resolveISISDown(key)
+				if isisDown {
+					hourStatus.ISISDown = true
+					issueReasons["missing_adjacency"] = true
+				}
+
 				hourStatuses = append(hourStatuses, hourStatus)
 			} else {
+				isisDown := resolveISISDown(key)
 				hourStatuses = append(hourStatuses, LinkHourStatus{
 					Hour:        key,
 					Status:      "no_data",
 					Collecting:  isCollecting,
 					DrainStatus: drainStatus,
+					ISISDown:    isisDown,
 				})
 			}
 		}
@@ -1957,6 +2205,11 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		}
 
 		isDown := downLinkPKs[pk] && currentDrainStatus == ""
+
+		// Mark link as down if currently missing ISIS adjacency
+		if missingISISLinkPKs[pk] && currentDrainStatus == "" && !isProvisioning {
+			isDown = true
+		}
 
 		// Convert issue reasons to slice (after all tracking is complete)
 		var issueReasonsList []string
@@ -2071,6 +2324,9 @@ type DeviceHourStatus struct {
 	CarrierTransitions uint64  `json:"carrier_transitions"`
 	DrainStatus        string  `json:"drain_status,omitempty"` // "", "soft-drained", "hard-drained", "suspended"
 	NoProbes           bool    `json:"no_probes,omitempty"`    // true when device has interface data but no latency probes
+	// ISIS state
+	ISISOverload    bool `json:"isis_overload,omitempty"`    // true when device is in ISIS overload state
+	ISISUnreachable bool `json:"isis_unreachable,omitempty"` // true when device is unreachable in ISIS topology
 }
 
 type DeviceHistory struct {
@@ -2081,7 +2337,7 @@ type DeviceHistory struct {
 	Metro        string             `json:"metro"`
 	MaxUsers     int32              `json:"max_users"`
 	Hours        []DeviceHourStatus `json:"hours"`
-	IssueReasons []string           `json:"issue_reasons"` // "interface_errors", "discards", "carrier_transitions", "drained"
+	IssueReasons []string           `json:"issue_reasons"` // "interface_errors", "discards", "carrier_transitions", "drained", "isis_overload", "isis_unreachable"
 }
 
 type DeviceHistoryResponse struct {
@@ -2356,6 +2612,89 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
+	// Query ISIS device issues per bucket from SCD2 history
+	type isisDevState struct {
+		overload    bool
+		unreachable bool
+	}
+	type isisDevEntry struct {
+		bucket string
+		state  isisDevState
+	}
+	isisDevEntries := make(map[string][]isisDevEntry) // device_pk -> sorted entries
+	isisDevHistory := make(map[deviceBucketKey]isisDevState)
+
+	isisDevHistQuery := `
+		SELECT
+			device_pk,
+			` + historyBucketInterval + ` as bucket,
+			argMax(overload, snapshot_ts) as overload,
+			argMax(node_unreachable, snapshot_ts) as node_unreachable,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_devices_history
+		WHERE snapshot_ts > now() - INTERVAL ? HOUR
+		  AND device_pk != ''
+		GROUP BY device_pk, bucket
+		ORDER BY device_pk, bucket
+	`
+	isisDevHistRows, isisDevHistErr := safeQueryRows(ctx, isisDevHistQuery, totalHours)
+	if isisDevHistErr != nil {
+		slog.Warn("device history: failed to query ISIS device history", "error", isisDevHistErr)
+	}
+	if isisDevHistRows != nil {
+		defer isisDevHistRows.Close()
+		for isisDevHistRows.Next() {
+			var devicePK string
+			var bucket time.Time
+			var overload, unreachable, isDeleted uint8
+			if err := isisDevHistRows.Scan(&devicePK, &bucket, &overload, &unreachable, &isDeleted); err != nil {
+				slog.Error("ISIS device history scan error", "error", err)
+				break
+			}
+			key := bucket.UTC().Format(time.RFC3339)
+			state := isisDevState{}
+			if isDeleted == 0 {
+				state.overload = overload == 1
+				state.unreachable = unreachable == 1
+			}
+			isisDevEntries[devicePK] = append(isisDevEntries[devicePK], isisDevEntry{bucket: key, state: state})
+			isisDevHistory[deviceBucketKey{devicePK: devicePK, bucket: key}] = state
+		}
+	}
+
+	// Baseline: ISIS device state before the time range
+	isisDevBaseline := make(map[string]isisDevState)
+	isisDevBaselineQuery := `
+		SELECT
+			device_pk,
+			argMax(overload, snapshot_ts) as overload,
+			argMax(node_unreachable, snapshot_ts) as node_unreachable,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_devices_history
+		WHERE snapshot_ts <= now() - INTERVAL ? HOUR
+		  AND device_pk != ''
+		GROUP BY device_pk
+	`
+	isisDevBaselineRows, isisDevBaselineErr := safeQueryRows(ctx, isisDevBaselineQuery, totalHours)
+	if isisDevBaselineErr != nil {
+		slog.Warn("ISIS device baseline query error", "error", isisDevBaselineErr)
+	}
+	if isisDevBaselineRows != nil {
+		defer isisDevBaselineRows.Close()
+		for isisDevBaselineRows.Next() {
+			var devicePK string
+			var overload, unreachable, isDeleted uint8
+			if err := isisDevBaselineRows.Scan(&devicePK, &overload, &unreachable, &isDeleted); err == nil {
+				state := isisDevState{}
+				if isDeleted == 0 {
+					state.overload = overload == 1
+					state.unreachable = unreachable == 1
+				}
+				isisDevBaseline[devicePK] = state
+			}
+		}
+	}
+
 	// Build response with all buckets for each device
 	now := time.Now().UTC()
 	bucketDuration := time.Duration(bucketMinutes) * time.Minute
@@ -2370,6 +2709,27 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 
 		if isCurrentlyDrained {
 			issueReasons["drained"] = true
+		}
+
+		// Build ISIS state resolver for this device (SCD2 carry-forward)
+		isisDevEntriesForDevice := isisDevEntries[pk]
+		resolveISISDevState := func(bucketKey string) isisDevState {
+			// Direct hit in history
+			if state, ok := isisDevHistory[deviceBucketKey{devicePK: pk, bucket: bucketKey}]; ok {
+				return state
+			}
+			// No direct hit — find the most recent entry before this bucket
+			if len(isisDevEntriesForDevice) > 0 {
+				idx := sort.Search(len(isisDevEntriesForDevice), func(i int) bool { return isisDevEntriesForDevice[i].bucket > bucketKey })
+				if idx > 0 {
+					return isisDevEntriesForDevice[idx-1].state
+				}
+			}
+			// Fall back to baseline
+			if baseline, ok := isisDevBaseline[pk]; ok {
+				return baseline
+			}
+			return isisDevState{}
 		}
 
 		// Get interface stats for this device
@@ -2429,13 +2789,24 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 			historicalStatus, hasHistory := deviceStatusHistory[histKey]
 			wasDrained := hasHistory && (historicalStatus == "soft-drained" || historicalStatus == "hard-drained" || historicalStatus == "suspended")
 
+			// Resolve ISIS state for this bucket
+			isisState := resolveISISDevState(key)
+			if isisState.overload {
+				issueReasons["isis_overload"] = true
+			}
+			if isisState.unreachable {
+				issueReasons["isis_unreachable"] = true
+			}
+
 			// If device was drained at this time, show as disabled
 			if wasDrained {
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
-					Hour:        key,
-					Status:      "disabled",
-					Collecting:  isCollecting,
-					DrainStatus: historicalStatus,
+					Hour:            key,
+					Status:          "disabled",
+					Collecting:      isCollecting,
+					DrainStatus:     historicalStatus,
+					ISISOverload:    isisState.overload,
+					ISISUnreachable: isisState.unreachable,
 				})
 				continue
 			}
@@ -2467,14 +2838,18 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 					OutDiscards:        stats.outDiscards,
 					CarrierTransitions: stats.carrierTransitions,
 					NoProbes:           noProbes,
+					ISISOverload:       isisState.overload,
+					ISISUnreachable:    isisState.unreachable,
 				})
 			} else {
 				// No interface data for this bucket — show as no_data.
 				hourStatuses = append(hourStatuses, DeviceHourStatus{
-					Hour:       key,
-					Status:     "no_data",
-					Collecting: isCollecting,
-					MaxUsers:   meta.maxUsers,
+					Hour:            key,
+					Status:          "no_data",
+					Collecting:      isCollecting,
+					MaxUsers:        meta.maxUsers,
+					ISISOverload:    isisState.overload,
+					ISISUnreachable: isisState.unreachable,
 				})
 			}
 		}

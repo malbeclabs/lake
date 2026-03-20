@@ -103,7 +103,7 @@ function DeviceInfoPopover({ device }: { device: DeviceHistory }) {
 }
 
 // Status colors and labels for timeline
-const statusColors = {
+const statusColors: Record<string, string> = {
   healthy: 'bg-green-500',
   degraded: 'bg-amber-500',
   unhealthy: 'bg-red-500',
@@ -111,7 +111,7 @@ const statusColors = {
   disabled: 'bg-gray-500 dark:bg-gray-700',
 }
 
-const statusLabels = {
+const statusLabels: Record<string, string> = {
   healthy: 'Healthy',
   degraded: 'Degraded',
   unhealthy: 'Unhealthy',
@@ -141,6 +141,18 @@ interface DeviceStatusTimelineProps {
   timeRange?: string
 }
 
+function getEffectiveDeviceStatus(hour: DeviceHourStatus): string {
+  if (hour.status !== 'healthy' && hour.status !== 'degraded') {
+    // If already unhealthy/disabled/no_data, keep it
+    if (hour.isis_unreachable) return 'unhealthy'
+    return hour.status
+  }
+  // ISIS unreachable → unhealthy, overload → at least degraded
+  if (hour.isis_unreachable) return 'unhealthy'
+  if (hour.isis_overload && hour.status === 'healthy') return 'degraded'
+  return hour.status
+}
+
 function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: DeviceStatusTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
@@ -159,7 +171,8 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
     <div className="relative">
       <div className="flex gap-[2px]">
         {hours.map((hour, index) => {
-          const prevStatus = index > 0 ? hours[index - 1].status : undefined
+          const effectiveStatus = getEffectiveDeviceStatus(hour)
+          const prevStatus = index > 0 ? getEffectiveDeviceStatus(hours[index - 1]) : undefined
           return (
           <div
             key={hour.hour}
@@ -169,11 +182,11 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
           >
             <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
               <div className={`absolute inset-0 ${
-                hour.collecting && hour.status === 'no_data'
+                hour.collecting && effectiveStatus === 'no_data'
                   ? (prevStatus && prevStatus !== 'no_data' ? statusColors[prevStatus] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
-                  : statusColors[hour.status]
+                  : statusColors[effectiveStatus]
               }`} />
-              {hour.collecting && (hour.status !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
+              {hour.collecting && (effectiveStatus !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
               )}
             </div>
@@ -186,12 +199,12 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
                     {formatTimeRange(hour.hour, bucketMinutes)}
                   </div>
                   <div className={`text-xs mb-2 ${
-                    hour.status === 'healthy' ? 'text-green-600 dark:text-green-400' :
-                    hour.status === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
-                    hour.status === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
+                    effectiveStatus === 'healthy' ? 'text-green-600 dark:text-green-400' :
+                    effectiveStatus === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
+                    effectiveStatus === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
                     'text-muted-foreground'
                   }`}>
-                    {statusLabels[hour.status]}
+                    {statusLabels[effectiveStatus]}
                     {hour.collecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
                   </div>
                   {hour.status !== 'no_data' && (
@@ -246,10 +259,21 @@ function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: 
                           <span className="text-red-500">Not sending latency probes</span>
                         </div>
                       )}
+                      {hour.isis_overload && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-red-500">ISIS Overload</span>
+                        </div>
+                      )}
+                      {hour.isis_unreachable && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-red-500">ISIS Unreachable</span>
+                        </div>
+                      )}
                       {hour.in_errors === 0 && hour.out_errors === 0 &&
                        hour.in_fcs_errors === 0 &&
                        hour.in_discards === 0 && hour.out_discards === 0 &&
-                       hour.carrier_transitions === 0 && !hour.no_probes && hour.max_users === 0 && (
+                       hour.carrier_transitions === 0 && !hour.no_probes && hour.max_users === 0 &&
+                       !hour.isis_overload && !hour.isis_unreachable && (
                         <div className="text-xs">No issues detected</div>
                       )}
                     </div>
@@ -860,6 +884,12 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
                 {issueReasons.includes('no_data') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
                 )}
+                {issueReasons.includes('isis_overload') && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-600/15 text-red-700 dark:text-red-400">ISIS Overload</span>
+                )}
+                {issueReasons.includes('isis_unreachable') && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-800/15 text-red-800 dark:text-red-400">ISIS Unreachable</span>
+                )}
               </div>
             )}
           </div>
@@ -898,7 +928,7 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
 export function DeviceStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained'],
+  issueFilters = ['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained', 'isis_overload', 'isis_unreachable'],
   healthFilters = ['healthy', 'degraded', 'unhealthy', 'disabled'],
   devicesWithIssues,
   devicesWithHealth,

@@ -98,6 +98,11 @@ function hasInterfaceIssues(hour: LinkHourStatus): boolean {
 }
 
 function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): string {
+  // ISIS down overrides everything — link has no adjacency
+  if (hour.isis_down) {
+    return 'down'
+  }
+
   // Keep original status if not healthy
   if (hour.status !== 'healthy') {
     return hour.status
@@ -124,6 +129,10 @@ function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): stri
 
 function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string[] {
   const reasons: string[] = []
+
+  if (hour.isis_down) {
+    reasons.push('ISIS down')
+  }
 
   if (hour.status === 'no_data') return reasons
 

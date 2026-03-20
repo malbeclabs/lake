@@ -300,6 +300,11 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 		"devices_updated", devicesUpdated,
 		"unmatched_neighbors", unmatchedNeighbors)
 
+	// Write ISIS data to ClickHouse
+	if err := s.writeISISToClickHouse(ctx, lsps, tunnelMap); err != nil {
+		s.log.Warn("graph: failed to write ISIS data to ClickHouse", "error", err)
+	}
+
 	return nil
 }
 
@@ -819,6 +824,11 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 		"devices_updated", devicesUpdated,
 		"unmatched_neighbors", unmatchedNeighbors)
 
+	// Write ISIS data to ClickHouse
+	if err := s.writeISISToClickHouse(ctx, lsps, tunnelMap); err != nil {
+		s.log.Warn("graph: failed to write ISIS data to ClickHouse", "error", err)
+	}
+
 	return nil
 }
 
@@ -973,6 +983,87 @@ func (s *Store) createISISAdjacent(ctx context.Context, session neo4j.Session, f
 	}
 	_, err = res.Consume(ctx)
 	return err
+}
+
+// writeISISToClickHouse builds ISIS adjacency and device slices from LSPs and writes them to ClickHouse.
+// All adjacencies are included (matched and unmatched). device_pk and link_pk are enrichment columns
+// populated via tunnel net correlation when possible, empty when not.
+func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tunnelMap map[string]tunnelMapping) error {
+	isisStore, err := isis.NewStore(isis.StoreConfig{
+		Logger:     s.log,
+		ClickHouse: s.cfg.ClickHouse,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create ISIS store: %w", err)
+	}
+
+	// Build device lookup: system_id -> device_pk (from tunnel map matches)
+	devicePKBySystemID := make(map[string]string)
+	for _, lsp := range lsps {
+		for _, neighbor := range lsp.Neighbors {
+			if mapping, found := tunnelMap[neighbor.NeighborAddr]; found {
+				devicePKBySystemID[lsp.SystemID] = mapping.localPK
+			}
+		}
+	}
+
+	// Build adjacency and device slices
+	var adjacencies []isis.Adjacency
+	for _, lsp := range lsps {
+		for _, neighbor := range lsp.Neighbors {
+			adj := isis.Adjacency{
+				SystemID:         lsp.SystemID,
+				NeighborSystemID: neighbor.SystemID,
+				NeighborAddr:     neighbor.NeighborAddr,
+				Hostname:         lsp.Hostname,
+				RouterID:         lsp.RouterID,
+				LocalAddr:        neighbor.LocalAddr,
+				Metric:           int64(neighbor.Metric),
+				AdjSIDs:          isis.AdjSIDsToJSON(neighbor.AdjSIDs),
+			}
+			// Enrich with device_pk and link_pk if we have a tunnel match
+			if mapping, found := tunnelMap[neighbor.NeighborAddr]; found {
+				adj.DevicePK = mapping.localPK
+				adj.LinkPK = mapping.linkPK
+			}
+			adjacencies = append(adjacencies, adj)
+		}
+	}
+
+	var devices []isis.Device
+	for _, lsp := range lsps {
+		var overload, nodeUnreachable uint8
+		if lsp.Overload {
+			overload = 1
+		}
+		if lsp.NodeUnreachable {
+			nodeUnreachable = 1
+		}
+		dev := isis.Device{
+			SystemID:        lsp.SystemID,
+			DevicePK:        devicePKBySystemID[lsp.SystemID],
+			Hostname:        lsp.Hostname,
+			RouterID:        lsp.RouterID,
+			Overload:        overload,
+			NodeUnreachable: nodeUnreachable,
+			Sequence:        lsp.Sequence,
+		}
+		devices = append(devices, dev)
+	}
+
+	if err := isisStore.ReplaceAdjacencies(ctx, adjacencies); err != nil {
+		return fmt.Errorf("failed to replace adjacencies: %w", err)
+	}
+
+	if err := isisStore.ReplaceDevices(ctx, devices); err != nil {
+		return fmt.Errorf("failed to replace devices: %w", err)
+	}
+
+	s.log.Info("graph: wrote ISIS data to ClickHouse",
+		"adjacencies", len(adjacencies),
+		"devices", len(devices))
+
+	return nil
 }
 
 // parseTunnelNet31 parses a /31 CIDR and returns both IP addresses.

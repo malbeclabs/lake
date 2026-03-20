@@ -688,6 +688,9 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
                 {issueReasons.includes('carrier_transitions') && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04' }}>Carrier Transitions</span>
                 )}
+                {issueReasons.includes('missing_adjacency') && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-600/15 text-rose-700 dark:text-rose-400">ISIS Down</span>
+                )}
               </div>
             )}
           </div>
@@ -740,7 +743,7 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
 export function LinkStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions'],
+  issueFilters = ['packet_loss', 'high_latency', 'high_utilization', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'missing_adjacency'],
   healthFilters = ['healthy', 'degraded', 'unhealthy'],
   showDrained = false,
   onShowDrainedChange,

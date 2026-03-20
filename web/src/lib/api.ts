@@ -1286,9 +1286,18 @@ export interface NonActivatedLink {
   since: string
 }
 
+export interface ISISDeviceIssue {
+  code: string
+  device_type: string
+  metro: string
+  issue: string // "overload", "unreachable"
+  since: string
+}
+
 export interface InfrastructureAlerts {
   devices: NonActivatedDevice[]
   links: NonActivatedLink[]
+  isis_devices: ISISDeviceIssue[]
 }
 
 export interface DeviceUtilization {
@@ -1357,6 +1366,8 @@ export interface LinkHourStatus {
   utilization_out_pct?: number
   // Device-specific: no latency probes detected
   no_probes?: boolean
+  // ISIS state
+  isis_down?: boolean
 }
 
 export interface LinkHistory {
@@ -1435,6 +1446,9 @@ export interface DeviceHourStatus {
   out_discards: number
   carrier_transitions: number
   no_probes?: boolean
+  // ISIS state
+  isis_overload?: boolean
+  isis_unreachable?: boolean
 }
 
 export interface DeviceHistory {

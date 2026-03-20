@@ -30,6 +30,14 @@ type jsonLSP struct {
 	Hostname           jsonHostname             `json:"hostname"`
 	Neighbors          []jsonNeighbor           `json:"neighbors"`
 	RouterCapabilities []jsonRouterCapabilities `json:"routerCapabilities"`
+	Flags              jsonFlags                `json:"flags"`
+	NodeUnreachable    bool                     `json:"nodeUnreachable"`
+	Sequence           int64                    `json:"sequence"`
+}
+
+// jsonFlags contains LSP flags.
+type jsonFlags struct {
+	DBOverload bool `json:"dbOverload"`
 }
 
 // jsonHostname contains the router hostname.
@@ -39,15 +47,21 @@ type jsonHostname struct {
 
 // jsonNeighbor represents an IS-IS adjacency.
 type jsonNeighbor struct {
-	SystemID     string       `json:"systemId"`
-	Metric       uint32       `json:"metric"`
-	NeighborAddr string       `json:"neighborAddr"`
-	AdjSIDs      []jsonAdjSID `json:"adjSids"`
+	SystemID              string                    `json:"systemId"`
+	Metric                uint32                    `json:"metric"`
+	NeighborAddr          string                    `json:"neighborAddr"`
+	AdjSIDs               []jsonAdjSID              `json:"adjSids"`
+	AdjInterfaceAddresses []jsonInterfaceAddress     `json:"adjInterfaceAddresses"`
 }
 
 // jsonAdjSID represents an adjacency SID entry.
 type jsonAdjSID struct {
 	AdjSID uint32 `json:"adjSid"`
+}
+
+// jsonInterfaceAddress represents an interface address entry.
+type jsonInterfaceAddress struct {
+	Address string `json:"address"`
 }
 
 // jsonRouterCapabilities contains router capability information.
@@ -85,8 +99,11 @@ func Parse(data []byte) ([]LSP, error) {
 	// Process each LSP
 	for systemID, jsonLSP := range level2.LSPs {
 		lsp := LSP{
-			SystemID: systemID,
-			Hostname: jsonLSP.Hostname.Name,
+			SystemID:        systemID,
+			Hostname:        jsonLSP.Hostname.Name,
+			Overload:        jsonLSP.Flags.DBOverload,
+			NodeUnreachable: jsonLSP.NodeUnreachable,
+			Sequence:        jsonLSP.Sequence,
 		}
 		// RouterCapabilities is an array; use the first entry if present
 		if len(jsonLSP.RouterCapabilities) > 0 {
@@ -100,10 +117,15 @@ func Parse(data []byte) ([]LSP, error) {
 			for _, adj := range jn.AdjSIDs {
 				adjSIDs = append(adjSIDs, adj.AdjSID)
 			}
+			var localAddr string
+			if len(jn.AdjInterfaceAddresses) > 0 {
+				localAddr = jn.AdjInterfaceAddresses[0].Address
+			}
 			neighbor := Neighbor{
 				SystemID:     jn.SystemID,
 				Metric:       jn.Metric,
 				NeighborAddr: jn.NeighborAddr,
+				LocalAddr:    localAddr,
 				AdjSIDs:      adjSIDs,
 			}
 			lsp.Neighbors = append(lsp.Neighbors, neighbor)
