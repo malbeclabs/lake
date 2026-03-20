@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { LinkHourStatus } from '@/lib/api'
+import { getEffectiveStatus } from '@/lib/link-status'
 
 interface StatusTimelineProps {
   hours: LinkHourStatus[]
@@ -97,35 +98,7 @@ function hasInterfaceIssues(hour: LinkHourStatus): boolean {
   )
 }
 
-export function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): string {
-  // ISIS down overrides everything — link has no adjacency
-  if (hour.isis_down) {
-    return 'down'
-  }
-
-  // Keep original status if not healthy
-  if (hour.status !== 'healthy') {
-    return hour.status
-  }
-
-  // Check for high latency (>= 50% over SLA = critical/unhealthy, >= 20% = warning/degraded)
-  if (committedRttUs && committedRttUs > 0 && hour.avg_latency_us > 0) {
-    const latencyOveragePct = ((hour.avg_latency_us - committedRttUs) / committedRttUs) * 100
-    if (latencyOveragePct >= LATENCY_CRITICAL_PCT) {
-      return 'unhealthy'
-    }
-    if (latencyOveragePct >= LATENCY_WARNING_PCT) {
-      return 'degraded'
-    }
-  }
-
-  // If marked as healthy but has interface issues, downgrade to degraded
-  if (hasInterfaceIssues(hour)) {
-    return 'degraded'
-  }
-
-  return hour.status
-}
+// getEffectiveStatus is imported from @/lib/link-status
 
 function getStatusReasons(hour: LinkHourStatus, committedRttUs?: number): string[] {
   const reasons: string[] = []
