@@ -28,6 +28,7 @@ func setupIncidentsTables(t *testing.T) {
 			link_type String,
 			bandwidth_bps Nullable(Int64),
 			committed_rtt_ns Int64 DEFAULT 0,
+			tunnel_net String DEFAULT '',
 			side_a_pk Nullable(String),
 			side_z_pk Nullable(String),
 			contributor_pk Nullable(String),
@@ -133,6 +134,62 @@ func setupIncidentsTables(t *testing.T) {
 			has_packet_loss UInt8,
 			is_dark UInt8,
 			is_down UInt8
+		) ENGINE = Memory
+	`)
+	require.NoError(t, err)
+
+	// ISIS adjacencies (current view + history)
+	err = config.DB.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS isis_adjacencies_current (
+			link_pk String,
+			system_id String,
+			neighbor_system_id String,
+			neighbor_addr String,
+			device_pk String,
+			hostname String,
+			router_id String,
+			local_addr String,
+			metric Int64,
+			adj_sids String
+		) ENGINE = Memory
+	`)
+	require.NoError(t, err)
+
+	err = config.DB.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS dim_isis_adjacencies_history (
+			link_pk String,
+			system_id String,
+			neighbor_system_id String,
+			neighbor_addr String,
+			snapshot_ts DateTime,
+			is_deleted UInt8
+		) ENGINE = Memory
+	`)
+	require.NoError(t, err)
+
+	// ISIS devices (current view + history)
+	err = config.DB.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS isis_devices_current (
+			device_pk String,
+			system_id String,
+			hostname String,
+			router_id String,
+			overload UInt8,
+			node_unreachable UInt8,
+			sequence Int64
+		) ENGINE = Memory
+	`)
+	require.NoError(t, err)
+
+	err = config.DB.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS dim_isis_devices_history (
+			device_pk String,
+			system_id String,
+			hostname String,
+			snapshot_ts DateTime,
+			is_deleted UInt8,
+			overload UInt8,
+			node_unreachable UInt8
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
