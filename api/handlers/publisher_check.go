@@ -25,6 +25,11 @@ var minValidatorVersions = map[string]string{
 	"firedancer": "0.1.0",
 }
 
+const (
+	retransmitMinSlots uint64  = 50
+	retransmitMinRatio float64 = 0.05
+)
+
 // isValidatorVersionOk checks if the version meets the minimum for the client type.
 func isValidatorVersionOk(clientName, clientVersion string) bool {
 	if clientVersion == "" {
@@ -303,7 +308,9 @@ func fetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsPa
 		p.LeaderSlots = leaderSlots
 		p.MulticastConnected = true // All rows are bebop group members
 		p.PublishingLeaderShreds = leaderSlots > 0
-		p.PublishingRetransmitted = retransmitSlots > 0
+		p.PublishingRetransmitted = totalSlots > 0 &&
+			retransmitSlots >= retransmitMinSlots &&
+			float64(retransmitSlots)/float64(totalSlots) >= retransmitMinRatio
 		p.ValidatorVersionOk = isValidatorVersionOk(p.ValidatorClient, p.ValidatorVersion)
 		p.IsBackup = p.NodePubkey != "" && p.VotePubkey == ""
 

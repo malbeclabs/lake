@@ -234,7 +234,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	assert.Equal(t, "dzuser1", pub1.DZUserPubkey)
 	assert.True(t, pub1.MulticastConnected)
 	assert.True(t, pub1.PublishingLeaderShreds)
-	assert.True(t, pub1.PublishingRetransmitted)
+	assert.False(t, pub1.PublishingRetransmitted, "1 retransmit slot is below the 50-slot threshold")
 	assert.Equal(t, uint64(1), pub1.LeaderSlots)
 	assert.Equal(t, uint64(2), pub1.TotalSlots)
 	assert.Equal(t, "Validator 1", pub1.ValidatorName)
@@ -248,7 +248,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	assert.Equal(t, "dzuser2", pub2.DZUserPubkey)
 	assert.True(t, pub2.MulticastConnected)
 	assert.False(t, pub2.PublishingLeaderShreds)
-	assert.True(t, pub2.PublishingRetransmitted)
+	assert.False(t, pub2.PublishingRetransmitted, "1 retransmit slot is below the 50-slot threshold")
 	assert.Equal(t, "", pub2.ValidatorName)
 	assert.Equal(t, uint64(1), pub2.TotalSlots)
 
@@ -437,7 +437,7 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 	pub := resp.Publishers[0]
 	assert.Equal(t, uint64(1), pub.TotalSlots)
 	assert.False(t, pub.PublishingLeaderShreds, "old leader slot should be excluded by slot window")
-	assert.True(t, pub.PublishingRetransmitted)
+	assert.False(t, pub.PublishingRetransmitted, "1 retransmit slot is below the 50-slot threshold")
 }
 
 func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
