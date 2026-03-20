@@ -97,7 +97,7 @@ function hasInterfaceIssues(hour: LinkHourStatus): boolean {
   )
 }
 
-function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): string {
+export function getEffectiveStatus(hour: LinkHourStatus, committedRttUs?: number): string {
   // ISIS down overrides everything — link has no adjacency
   if (hour.isis_down) {
     return 'down'

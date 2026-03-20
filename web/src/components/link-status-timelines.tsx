@@ -5,7 +5,7 @@ import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loa
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
 import { fetchLinkHistory } from '@/lib/api'
 import type { LinkHistory, LinkHourStatus } from '@/lib/api'
-import { StatusTimeline } from './status-timeline'
+import { StatusTimeline, getEffectiveStatus } from './status-timeline'
 import { CriticalityBadge } from './criticality-badge'
 import { useTheme } from '@/hooks/use-theme'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
@@ -851,9 +851,13 @@ export function LinkStatusTimelines({
       return matchesIssue && matchesHealth
     })
 
-    // Sort by: 1) most recent issue, 2) severity of that issue, 3) total issue count, 4) alphabetical
+    // Sort by: 1) worst severity across all buckets, 2) most recent issue timestamp,
+    // 3) total issue count, 4) alphabetical.
+    // Uses getEffectiveStatus to account for ISIS down, interface issues, and latency
+    // overages that aren't reflected in the raw status field.
     const statusSeverity = (status: string): number => {
       switch (status) {
+        case 'down':
         case 'unhealthy': return 3
         case 'degraded': return 2
         case 'no_data': return 1
@@ -862,31 +866,31 @@ export function LinkStatusTimelines({
     }
 
     return filtered.sort((a, b) => {
-      const getLatestIssue = (link: LinkHistory): { index: number; severity: number } => {
-        if (!link.hours) return { index: -1, severity: 0 }
-        for (let i = link.hours.length - 1; i >= 0; i--) {
-          const sev = statusSeverity(link.hours[i].status)
-          if (sev > 0) return { index: i, severity: sev }
+      const getWorstAndLatest = (link: LinkHistory): { worst: number; latestTs: string; count: number } => {
+        if (!link.hours) return { worst: 0, latestTs: '', count: 0 }
+        let worst = 0
+        let latestTs = ''
+        let count = 0
+        for (const h of link.hours) {
+          const sev = statusSeverity(getEffectiveStatus(h, link.committed_rtt_us))
+          if (sev > 0) {
+            count++
+            if (sev > worst) worst = sev
+            if (h.hour > latestTs) latestTs = h.hour
+          }
         }
-        return { index: -1, severity: 0 }
+        return { worst, latestTs, count }
       }
 
-      const issueCount = (link: LinkHistory): number => {
-        if (!link.hours) return 0
-        return link.hours.filter(h => statusSeverity(h.status) > 0).length
-      }
+      const aInfo = getWorstAndLatest(a)
+      const bInfo = getWorstAndLatest(b)
 
-      const aIssue = getLatestIssue(a)
-      const bIssue = getLatestIssue(b)
-
-      // Most recent issue first
-      if (aIssue.index !== bIssue.index) return bIssue.index - aIssue.index
-      // Higher severity first
-      if (aIssue.severity !== bIssue.severity) return bIssue.severity - aIssue.severity
+      // Worst severity first
+      if (aInfo.worst !== bInfo.worst) return bInfo.worst - aInfo.worst
+      // Most recent issue first (by timestamp, not index)
+      if (aInfo.latestTs !== bInfo.latestTs) return aInfo.latestTs < bInfo.latestTs ? 1 : -1
       // More total issues first
-      const aCount = issueCount(a)
-      const bCount = issueCount(b)
-      if (aCount !== bCount) return bCount - aCount
+      if (aInfo.count !== bInfo.count) return bInfo.count - aInfo.count
       // Alphabetical fallback
       return a.code.localeCompare(b.code)
     })
