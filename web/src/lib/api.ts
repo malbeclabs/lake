@@ -4149,7 +4149,7 @@ export async function fetchSearch(
 
 // Incidents types and functions
 export type IncidentTimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '30d'
-export type IncidentType = 'packet_loss' | 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data'
+export type IncidentType = 'packet_loss' | 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data' | 'isis_down'
 
 export interface LinkIncident {
   id: string
@@ -4247,7 +4247,7 @@ export async function fetchLinkIncidents(params: FetchLinkIncidentsParams = {}):
 }
 
 // Device incident types
-export type DeviceIncidentType = 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data'
+export type DeviceIncidentType = 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data' | 'isis_overload' | 'isis_unreachable'
 
 export interface DeviceIncident {
   id: string

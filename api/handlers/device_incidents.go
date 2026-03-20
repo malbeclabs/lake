@@ -1142,6 +1142,32 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if incidentType == "all" || incidentType == "isis_overload" {
+		g.Go(func() error {
+			incidents, err := fetchISISDeviceIncidents(gCtx, envDB(gCtx), duration, deviceMeta, "isis_overload", "overload")
+			if err != nil {
+				return fmt.Errorf("isis_overload: %w", err)
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "isis_unreachable" {
+		g.Go(func() error {
+			incidents, err := fetchISISDeviceIncidents(gCtx, envDB(gCtx), duration, deviceMeta, "isis_unreachable", "node_unreachable")
+			if err != nil {
+				return fmt.Errorf("isis_unreachable: %w", err)
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
 	if err := g.Wait(); err != nil {
 		slog.Error("failed to fetch device incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch device incidents: %v", err), http.StatusInternalServerError)
@@ -1186,7 +1212,7 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	activeSummary := DeviceIncidentsSummary{
 		Total:   len(activeIncidents),
 		Ongoing: 0,
-		ByType:  map[string]int{"errors": 0, "discards": 0, "carrier": 0, "no_data": 0},
+		ByType:  map[string]int{"errors": 0, "discards": 0, "carrier": 0, "no_data": 0, "isis_overload": 0, "isis_unreachable": 0},
 	}
 	for _, inc := range activeIncidents {
 		if inc.IsOngoing {
@@ -1340,6 +1366,32 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	if incidentType == "all" || incidentType == "no_data" {
 		g.Go(func() error {
 			incidents, err := fetchDeviceNoDataIncidents(gCtx, envDB(gCtx), duration, deviceMeta)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "isis_overload" {
+		g.Go(func() error {
+			incidents, err := fetchISISDeviceIncidents(gCtx, envDB(gCtx), duration, deviceMeta, "isis_overload", "overload")
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "isis_unreachable" {
+		g.Go(func() error {
+			incidents, err := fetchISISDeviceIncidents(gCtx, envDB(gCtx), duration, deviceMeta, "isis_unreachable", "node_unreachable")
 			if err != nil {
 				return err
 			}
@@ -1517,7 +1569,7 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 	activeSummary := DeviceIncidentsSummary{
 		Total:   len(activeIncidents),
 		Ongoing: 0,
-		ByType:  map[string]int{"errors": 0, "discards": 0, "carrier": 0, "no_data": 0},
+		ByType:  map[string]int{"errors": 0, "discards": 0, "carrier": 0, "no_data": 0, "isis_overload": 0, "isis_unreachable": 0},
 	}
 	for _, inc := range activeIncidents {
 		if inc.IsOngoing {

@@ -1250,6 +1250,19 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if incidentType == "all" || incidentType == "isis_down" {
+		g.Go(func() error {
+			incidents, err := fetchISISDownIncidents(gCtx, envDB(gCtx), duration, linkMeta, detectParams)
+			if err != nil {
+				return fmt.Errorf("isis_down: %w", err)
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
 	if err := g.Wait(); err != nil {
 		slog.Error("failed to fetch incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch incidents: %v", err), http.StatusInternalServerError)
@@ -1302,7 +1315,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	activeSummary := LinkIncidentsSummary{
 		Total:   len(activeIncidents),
 		Ongoing: 0,
-		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "fcs": 0, "discards": 0, "carrier": 0, "no_data": 0},
+		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "fcs": 0, "discards": 0, "carrier": 0, "no_data": 0, "isis_down": 0},
 	}
 	for _, inc := range activeIncidents {
 		if inc.IsOngoing {
@@ -1467,6 +1480,19 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	if incidentType == "all" || incidentType == "no_data" {
 		g.Go(func() error {
 			incidents, err := fetchNoDataIncidents(gCtx, envDB(gCtx), duration, linkMeta)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			allIncidents = append(allIncidents, incidents...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if incidentType == "all" || incidentType == "isis_down" {
+		g.Go(func() error {
+			incidents, err := fetchISISDownIncidents(gCtx, envDB(gCtx), duration, linkMeta, detectParams)
 			if err != nil {
 				return err
 			}
@@ -1809,7 +1835,7 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	activeSummary := LinkIncidentsSummary{
 		Total:   len(activeIncidents),
 		Ongoing: 0,
-		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "fcs": 0, "discards": 0, "carrier": 0, "no_data": 0},
+		ByType:  map[string]int{"packet_loss": 0, "errors": 0, "fcs": 0, "discards": 0, "carrier": 0, "no_data": 0, "isis_down": 0},
 	}
 	for _, inc := range activeIncidents {
 		if inc.IsOngoing {

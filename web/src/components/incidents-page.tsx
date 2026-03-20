@@ -124,6 +124,18 @@ function IncidentTypeBadge({ type }: { type: string }) {
       label: 'no data',
       className: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
     },
+    isis_down: {
+      label: 'ISIS down',
+      className: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    },
+    isis_overload: {
+      label: 'ISIS overload',
+      className: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    },
+    isis_unreachable: {
+      label: 'ISIS unreachable',
+      className: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+    },
   }
   const c = config[type] || { label: type, className: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200' }
   return (
@@ -481,7 +493,7 @@ export function IncidentsPage() {
   const filteredByType = useMemo(() => {
     if (scope === 'links') {
       const all = linkData?.active || []
-      const byType: Record<string, number> = { packet_loss: 0, errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0 }
+      const byType: Record<string, number> = { packet_loss: 0, errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0, isis_down: 0 }
       let ongoing = 0
       for (const i of all) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
@@ -490,7 +502,7 @@ export function IncidentsPage() {
       return { byType, ongoing }
     } else {
       const all = deviceData?.active || []
-      const byType: Record<string, number> = { errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0 }
+      const byType: Record<string, number> = { errors: 0, fcs: 0, discards: 0, carrier: 0, no_data: 0, isis_overload: 0, isis_unreachable: 0 }
       let ongoing = 0
       for (const i of all) {
         byType[i.incident_type] = (byType[i.incident_type] || 0) + 1
@@ -738,15 +750,20 @@ export function IncidentsPage() {
           )}
         </div>
         {/* Type stat cards — clickable multi-select filters */}
-        <div className={`grid gap-3 mb-6 ${scope === 'links' ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-5'}`}>
+        <div className={`grid gap-3 mb-6 ${scope === 'links' ? 'grid-cols-4 sm:grid-cols-7' : 'grid-cols-4 sm:grid-cols-7'}`}>
           {([
             ...(scope === 'links' ? [{ key: 'packet_loss', label: 'Packet Loss' }] : []),
             { key: 'errors', label: 'Errors' },
             { key: 'fcs', label: 'FCS Errors' },
             { key: 'discards', label: 'Discards' },
-            { key: 'carrier', label: 'Carrier Transitions' },
+            { key: 'carrier', label: 'Carrier' },
             { key: 'no_data', label: 'No Data' },
-          ] as const).map(({ key, label }) => {
+            ...(scope === 'links' ? [{ key: 'isis_down', label: 'ISIS Down' }] : []),
+            ...(scope === 'devices' ? [
+              { key: 'isis_overload', label: 'ISIS Overload' },
+              { key: 'isis_unreachable', label: 'ISIS Unreachable' },
+            ] : []),
+          ] as { key: string; label: string }[]).map(({ key, label }) => {
             const count = filteredByType.byType[key] || 0
             const isSelected = selectedTypes.has(key)
             return (
