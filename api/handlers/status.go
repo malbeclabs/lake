@@ -1847,7 +1847,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		isDeleted bool
 	}
 	isisAdjEntries := make(map[string][]isisAdjEntry) // link_pk -> sorted entries
-	isisAdjHistory := make(map[linkBucketKey]bool)     // link_pk+bucket -> is_deleted
+	isisAdjHistory := make(map[linkBucketKey]bool)    // link_pk+bucket -> is_deleted
 
 	isisAdjHistQuery := `
 		SELECT

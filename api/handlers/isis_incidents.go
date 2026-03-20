@@ -249,18 +249,18 @@ func fetchISISDownIncidents(ctx context.Context, conn driver.Conn, duration time
 
 func buildISISLinkIncident(id int, linkPK string, meta linkMetadataWithStatus, start time.Time, end *time.Time, ongoing bool) LinkIncident {
 	inc := LinkIncident{
-		ID:           fmt.Sprintf("isis-down-%d", id),
-		LinkPK:       linkPK,
-		LinkCode:     meta.LinkCode,
-		LinkType:     meta.LinkType,
-		SideAMetro:   meta.SideAMetro,
-		SideZMetro:   meta.SideZMetro,
+		ID:              fmt.Sprintf("isis-down-%d", id),
+		LinkPK:          linkPK,
+		LinkCode:        meta.LinkCode,
+		LinkType:        meta.LinkType,
+		SideAMetro:      meta.SideAMetro,
+		SideZMetro:      meta.SideZMetro,
 		ContributorCode: meta.ContributorCode,
-		IncidentType: "isis_down",
-		StartedAt:    start.Format(time.RFC3339),
-		IsOngoing:    ongoing,
-		IsDrained:    meta.Status == "soft-drained" || meta.Status == "hard-drained",
-		Severity:     "incident",
+		IncidentType:    "isis_down",
+		StartedAt:       start.Format(time.RFC3339),
+		IsOngoing:       ongoing,
+		IsDrained:       meta.Status == "soft-drained" || meta.Status == "hard-drained",
+		Severity:        "incident",
 	}
 	if end != nil {
 		endStr := end.Format(time.RFC3339)

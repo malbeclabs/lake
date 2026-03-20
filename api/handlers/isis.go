@@ -210,21 +210,6 @@ func asFloat64(v any) float64 {
 	}
 }
 
-func asUint32Slice(v any) []uint32 {
-	if v == nil {
-		return nil
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	result := make([]uint32, 0, len(arr))
-	for _, item := range arr {
-		result = append(result, uint32(asInt64(item)))
-	}
-	return result
-}
-
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
