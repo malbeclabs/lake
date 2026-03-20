@@ -1143,6 +1143,12 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			    FROM isis_adjacencies_current
 			    WHERE link_pk != ''
 			  )
+			  AND l.tunnel_net NOT IN (
+			    SELECT DISTINCT l2.tunnel_net
+			    FROM dz_links_current l2
+			    JOIN isis_adjacencies_current a ON a.link_pk = l2.pk
+			    WHERE l2.tunnel_net != '' AND a.link_pk != ''
+			  )
 			ORDER BY l.code
 			LIMIT 50
 		`
@@ -1812,6 +1818,12 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		    SELECT DISTINCT link_pk
 		    FROM isis_adjacencies_current
 		    WHERE link_pk != ''
+		  )
+		  AND l.tunnel_net NOT IN (
+		    SELECT DISTINCT l2.tunnel_net
+		    FROM dz_links_current l2
+		    JOIN isis_adjacencies_current a ON a.link_pk = l2.pk
+		    WHERE l2.tunnel_net != '' AND a.link_pk != ''
 		  )
 	`
 	missingRows, missingErr := envDB(ctx).Query(ctx, missingISISQuery, committedRttProvisioningNs)
