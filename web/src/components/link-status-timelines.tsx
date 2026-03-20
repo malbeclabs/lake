@@ -851,10 +851,12 @@ export function LinkStatusTimelines({
       return matchesIssue && matchesHealth
     })
 
-    // Sort by: 1) worst severity across all buckets, 2) most recent issue timestamp,
-    // 3) total issue count, 4) alphabetical.
+    // Sort by: 1) recent severity (worst in last 6 buckets), 2) overall worst severity,
+    // 3) most recent issue timestamp, 4) total issue count, 5) alphabetical.
     // Uses getEffectiveStatus to account for ISIS down, interface issues, and latency
     // overages that aren't reflected in the raw status field.
+    // "Recent severity" ensures a link that's down right now sorts above one that had
+    // a brief issue 12 hours ago, even if both have the same worst-ever severity.
     const statusSeverity = (status: string): number => {
       switch (status) {
         case 'down':
@@ -865,27 +867,34 @@ export function LinkStatusTimelines({
       }
     }
 
+    const RECENT_BUCKETS = 6
+
     return filtered.sort((a, b) => {
-      const getWorstAndLatest = (link: LinkHistory): { worst: number; latestTs: string; count: number } => {
-        if (!link.hours) return { worst: 0, latestTs: '', count: 0 }
+      const getSortKey = (link: LinkHistory): { recent: number; worst: number; latestTs: string; count: number } => {
+        if (!link.hours) return { recent: 0, worst: 0, latestTs: '', count: 0 }
         let worst = 0
+        let recent = 0
         let latestTs = ''
         let count = 0
-        for (const h of link.hours) {
-          const sev = statusSeverity(getEffectiveStatus(h, link.committed_rtt_us))
+        const recentStart = Math.max(0, link.hours.length - RECENT_BUCKETS)
+        for (let i = 0; i < link.hours.length; i++) {
+          const sev = statusSeverity(getEffectiveStatus(link.hours[i], link.committed_rtt_us))
           if (sev > 0) {
             count++
             if (sev > worst) worst = sev
-            if (h.hour > latestTs) latestTs = h.hour
+            if (i >= recentStart && sev > recent) recent = sev
+            if (link.hours[i].hour > latestTs) latestTs = link.hours[i].hour
           }
         }
-        return { worst, latestTs, count }
+        return { recent, worst, latestTs, count }
       }
 
-      const aInfo = getWorstAndLatest(a)
-      const bInfo = getWorstAndLatest(b)
+      const aInfo = getSortKey(a)
+      const bInfo = getSortKey(b)
 
-      // Worst severity first
+      // Recent severity first (what's happening now)
+      if (aInfo.recent !== bInfo.recent) return bInfo.recent - aInfo.recent
+      // Overall worst severity
       if (aInfo.worst !== bInfo.worst) return bInfo.worst - aInfo.worst
       // Most recent issue first (by timestamp, not index)
       if (aInfo.latestTs !== bInfo.latestTs) return aInfo.latestTs < bInfo.latestTs ? 1 : -1
