@@ -1529,6 +1529,28 @@ func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 		return nil
 	})
 
+	g.Go(func() error {
+		incidents, err := fetchISISDeviceIncidents(gCtx, envDB(gCtx), duration, deviceMeta, "isis_overload", "overload")
+		if err != nil {
+			return fmt.Errorf("isis_overload: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
+	g.Go(func() error {
+		incidents, err := fetchISISDeviceIncidents(gCtx, envDB(gCtx), duration, deviceMeta, "isis_unreachable", "node_unreachable")
+		if err != nil {
+			return fmt.Errorf("isis_unreachable: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
 	if err := g.Wait(); err != nil {
 		slog.Info("cache: device incidents fetch unsuccessful", "detail", err)
 		return nil

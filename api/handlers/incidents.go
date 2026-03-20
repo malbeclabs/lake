@@ -1792,6 +1792,17 @@ func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 		return nil
 	})
 
+	g.Go(func() error {
+		incidents, err := fetchISISDownIncidents(gCtx, envDB(gCtx), duration, linkMeta, detectParams)
+		if err != nil {
+			return fmt.Errorf("isis_down: %w", err)
+		}
+		mu.Lock()
+		allIncidents = append(allIncidents, incidents...)
+		mu.Unlock()
+		return nil
+	})
+
 	if err := g.Wait(); err != nil {
 		slog.Info("cache: incidents fetch unsuccessful", "detail", err)
 		return nil
