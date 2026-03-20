@@ -3642,12 +3642,13 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	// Baseline: ISIS adjacency state before the time range
 	var isisAdjBaselineIsDeleted *bool
 	isisAdjBaselineQuery := `
-		SELECT argMax(is_deleted, snapshot_ts) as is_deleted
+		SELECT argMax(is_deleted, snapshot_ts) as is_deleted, count() as cnt
 		FROM dim_isis_adjacencies_history
 		WHERE link_pk = ? AND snapshot_ts <= now() - INTERVAL ? HOUR
 	`
 	var baselineIsDeleted uint8
-	if err := envDB(ctx).QueryRow(ctx, isisAdjBaselineQuery, linkPK, totalHours).Scan(&baselineIsDeleted); err == nil {
+	var baselineCnt uint64
+	if err := envDB(ctx).QueryRow(ctx, isisAdjBaselineQuery, linkPK, totalHours).Scan(&baselineIsDeleted, &baselineCnt); err == nil && baselineCnt > 0 {
 		v := baselineIsDeleted == 1
 		isisAdjBaselineIsDeleted = &v
 	}
@@ -3676,7 +3677,10 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			    WHERE l2.tunnel_net != '' AND a.link_pk != ''
 			  )
 		`
-		_ = envDB(ctx).QueryRow(ctx, missingISISQuery, linkPK, committedRttProvisioningNs).Scan(&isMissingISISAdj)
+		var missing uint8
+		if err := envDB(ctx).QueryRow(ctx, missingISISQuery, linkPK, committedRttProvisioningNs).Scan(&missing); err == nil {
+			isMissingISISAdj = missing == 1
+		}
 	}
 
 	resolveISISDown := func(bucketKey string) bool {
