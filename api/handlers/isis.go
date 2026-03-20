@@ -53,7 +53,7 @@ type ISISTopologyResponse struct {
 	Error string     `json:"error,omitempty"`
 }
 
-// GetISISTopology returns the full ISIS topology graph
+// GetISISTopology returns the full ISIS topology graph from ClickHouse
 func GetISISTopology(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -65,104 +65,103 @@ func GetISISTopology(w http.ResponseWriter, r *http.Request) {
 		Edges: []ISISEdge{},
 	}
 
-	// Helper to run Neo4j query with retry
-	runNeo4jQuery := func(cypher string) ([]*neo4jdriver.Record, error) {
-		cfg := dberror.DefaultRetryConfig()
-		return dberror.Retry(ctx, cfg, func() ([]*neo4jdriver.Record, error) {
-			session := config.Neo4jSession(ctx)
-			defer session.Close(ctx)
-
-			result, err := session.Run(ctx, cypher, nil)
-			if err != nil {
-				return nil, err
-			}
-			return result.Collect(ctx)
-		})
-	}
-
-	// Get devices with ISIS data
-	deviceCypher := `
-		MATCH (d:Device)
-		WHERE d.isis_system_id IS NOT NULL
-		OPTIONAL MATCH (d)-[:LOCATED_IN]->(m:Metro)
-		RETURN d.pk AS pk,
-		       d.code AS code,
-		       d.status AS status,
-		       d.device_type AS device_type,
-		       d.isis_system_id AS system_id,
-		       d.isis_router_id AS router_id,
-		       m.pk AS metro_pk
+	// Get ISIS devices joined with device metadata
+	deviceQuery := `
+		SELECT
+			id.device_pk AS pk,
+			COALESCE(d.code, id.hostname) AS code,
+			COALESCE(d.status, '') AS status,
+			COALESCE(d.device_type, '') AS device_type,
+			id.system_id AS system_id,
+			id.router_id AS router_id,
+			COALESCE(d.metro_pk, '') AS metro_pk
+		FROM isis_devices_current id
+		LEFT JOIN dz_devices_current d ON id.device_pk = d.pk
+		WHERE id.device_pk != ''
 	`
-
-	deviceRecords, err := runNeo4jQuery(deviceCypher)
+	deviceRows, err := envDB(ctx).Query(ctx, deviceQuery)
 	if err != nil {
 		slog.Error("ISIS topology device query error", "error", err)
-		response.Error = dberror.UserMessage(err)
+		response.Error = "Failed to query ISIS devices"
 		writeJSON(w, response)
 		return
 	}
+	defer deviceRows.Close()
 
-	for _, record := range deviceRecords {
-		pk, _ := record.Get("pk")
-		code, _ := record.Get("code")
-		status, _ := record.Get("status")
-		deviceType, _ := record.Get("device_type")
-		systemID, _ := record.Get("system_id")
-		routerID, _ := record.Get("router_id")
-		metroPK, _ := record.Get("metro_pk")
-
+	for deviceRows.Next() {
+		var pk, code, status, deviceType, systemID, routerID, metroPK string
+		if err := deviceRows.Scan(&pk, &code, &status, &deviceType, &systemID, &routerID, &metroPK); err != nil {
+			slog.Error("ISIS topology device scan error", "error", err)
+			continue
+		}
 		response.Nodes = append(response.Nodes, ISISNode{
 			Data: ISISNodeData{
-				ID:         asString(pk),
-				Label:      asString(code),
-				Status:     asString(status),
-				DeviceType: asString(deviceType),
-				SystemID:   asString(systemID),
-				RouterID:   asString(routerID),
-				MetroPK:    asString(metroPK),
+				ID:         pk,
+				Label:      code,
+				Status:     status,
+				DeviceType: deviceType,
+				SystemID:   systemID,
+				RouterID:   routerID,
+				MetroPK:    metroPK,
 			},
 		})
 	}
 
-	// Get all ISIS adjacencies
-	adjCypher := `
-		MATCH (from:Device)-[r:ISIS_ADJACENT]->(to:Device)
-		RETURN from.pk AS from_pk,
-		       to.pk AS to_pk,
-		       r.metric AS metric,
-		       r.neighbor_addr AS neighbor_addr,
-		       r.adj_sids AS adj_sids
+	// Get ISIS adjacencies with neighbor device_pk resolved via hostname
+	adjQuery := `
+		SELECT
+			a.device_pk AS from_pk,
+			nd.device_pk AS to_pk,
+			a.metric AS metric,
+			a.neighbor_addr AS neighbor_addr,
+			a.adj_sids AS adj_sids
+		FROM isis_adjacencies_current a
+		JOIN isis_devices_current nd ON a.neighbor_system_id = concat(nd.hostname, '.00')
+		WHERE a.device_pk != '' AND nd.device_pk != ''
 	`
-
-	adjRecords, err := runNeo4jQuery(adjCypher)
+	adjRows, err := envDB(ctx).Query(ctx, adjQuery)
 	if err != nil {
 		slog.Error("ISIS topology adjacency query error", "error", err)
-		response.Error = dberror.UserMessage(err)
+		response.Error = "Failed to query ISIS adjacencies"
 		writeJSON(w, response)
 		return
 	}
+	defer adjRows.Close()
 
-	for _, record := range adjRecords {
-		fromPK, _ := record.Get("from_pk")
-		toPK, _ := record.Get("to_pk")
-		metric, _ := record.Get("metric")
-		neighborAddr, _ := record.Get("neighbor_addr")
-		adjSids, _ := record.Get("adj_sids")
+	for adjRows.Next() {
+		var fromPK, toPK, neighborAddr, adjSidsJSON string
+		var metric int64
+		if err := adjRows.Scan(&fromPK, &toPK, &metric, &neighborAddr, &adjSidsJSON); err != nil {
+			slog.Error("ISIS topology adjacency scan error", "error", err)
+			continue
+		}
+
+		var adjSIDs []uint32
+		if adjSidsJSON != "" && adjSidsJSON != "[]" {
+			var sids []json.Number
+			if json.Unmarshal([]byte(adjSidsJSON), &sids) == nil {
+				for _, s := range sids {
+					if v, err := s.Int64(); err == nil {
+						adjSIDs = append(adjSIDs, uint32(v))
+					}
+				}
+			}
+		}
 
 		response.Edges = append(response.Edges, ISISEdge{
 			Data: ISISEdgeData{
-				ID:           asString(fromPK) + "->" + asString(toPK),
-				Source:       asString(fromPK),
-				Target:       asString(toPK),
-				Metric:       uint32(asInt64(metric)),
-				NeighborAddr: asString(neighborAddr),
-				AdjSIDs:      asUint32Slice(adjSids),
+				ID:           fromPK + "->" + toPK,
+				Source:       fromPK,
+				Target:       toPK,
+				Metric:       uint32(metric),
+				NeighborAddr: neighborAddr,
+				AdjSIDs:      adjSIDs,
 			},
 		})
 	}
 
 	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil) // Reuse existing metric for now
+	metrics.RecordClickHouseQuery(duration, nil)
 
 	writeJSON(w, response)
 }
@@ -365,178 +364,212 @@ type TopologyCompareResponse struct {
 	Error           string                `json:"error,omitempty"`
 }
 
-// GetTopologyCompare compares configured links vs ISIS adjacencies
+// GetTopologyCompare compares configured links vs ISIS adjacencies using ClickHouse
 func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
-	defer session.Close(ctx)
-
 	response := TopologyCompareResponse{
 		Discrepancies: []TopologyDiscrepancy{},
 	}
 
-	// Run all queries in a single read transaction so we see a consistent
-	// snapshot of the graph. Without this, concurrent graph/ISIS syncs can
-	// commit between individual queries, causing the counts and discrepancy
-	// list to flap across refreshes.
-	_, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
-		// Query 1: Find configured links and check if they have ISIS adjacencies
-		configuredCypher := `
-			MATCH (l:Link)-[:CONNECTS]->(da:Device)
-			MATCH (l)-[:CONNECTS]->(db:Device)
-			WHERE da.pk < db.pk
-			OPTIONAL MATCH (da)-[isis:ISIS_ADJACENT]->(db)
-			OPTIONAL MATCH (db)-[isis_rev:ISIS_ADJACENT]->(da)
-			RETURN l.pk AS link_pk,
-			       l.code AS link_code,
-			       l.status AS link_status,
-			       l.committed_rtt_ns AS committed_rtt_ns,
-			       da.pk AS device_a_pk,
-			       da.code AS device_a_code,
-			       db.pk AS device_b_pk,
-			       db.code AS device_b_code,
-			       isis IS NOT NULL AS has_forward_adj,
-			       isis_rev IS NOT NULL AS has_reverse_adj
-		`
+	db := envDB(ctx)
 
-		configuredResult, err := tx.Run(ctx, configuredCypher, nil)
-		if err != nil {
-			return nil, fmt.Errorf("configured query: %w", err)
-		}
+	// Build ISIS adjacency data keyed by link_pk.
+	// Each adjacency is directional (device_pk -> neighbor), so a fully matched
+	// link should have two adjacencies with its link_pk (one per direction).
+	type adjDirection struct {
+		fromPK       string
+		toPK         string
+		metric       int64
+		neighborAddr string
+	}
+	// link_pk -> list of directional adjacencies
+	linkAdjMap := make(map[string][]adjDirection)
+	// Adjacencies with no link_pk (extra — not matched to any configured link)
+	var unmatchedAdjs []adjDirection
 
-		configuredRecords, err := configuredResult.Collect(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("configured collect: %w", err)
-		}
-
-		response.ConfiguredLinks = len(configuredRecords)
-
-		for _, record := range configuredRecords {
-			linkPK, _ := record.Get("link_pk")
-			linkCode, _ := record.Get("link_code")
-			linkStatus, _ := record.Get("link_status")
-			committedRTTNs, _ := record.Get("committed_rtt_ns")
-			deviceAPK, _ := record.Get("device_a_pk")
-			deviceACode, _ := record.Get("device_a_code")
-			deviceBPK, _ := record.Get("device_b_pk")
-			deviceBCode, _ := record.Get("device_b_code")
-			hasForwardAdj, _ := record.Get("has_forward_adj")
-			hasReverseAdj, _ := record.Get("has_reverse_adj")
-
-			hasForward := asBool(hasForwardAdj)
-			hasReverse := asBool(hasReverseAdj)
-			status := asString(linkStatus)
-
-			// Compute effective status: 1000ms committed RTT = provisioning
-			effectiveStatus := status
-			if asInt64(committedRTTNs) == committedRttProvisioningNs {
-				effectiveStatus = "provisioning"
-			}
-
-			if hasForward || hasReverse {
-				response.MatchedLinks++
-			}
-
-			// Check for missing ISIS adjacencies
-			if !hasForward && !hasReverse {
-				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-					Type:        "missing_isis",
-					LinkPK:      asString(linkPK),
-					LinkCode:    asString(linkCode),
-					LinkStatus:  effectiveStatus,
-					DeviceAPK:   asString(deviceAPK),
-					DeviceACode: asString(deviceACode),
-					DeviceBPK:   asString(deviceBPK),
-					DeviceBCode: asString(deviceBCode),
-					Details:     "Link has no ISIS adjacency in either direction",
-				})
-			} else if hasForward != hasReverse {
-				direction := "forward only"
-				if hasReverse && !hasForward {
-					direction = "reverse only"
-				}
-				response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-					Type:        "partial_isis",
-					LinkPK:      asString(linkPK),
-					LinkCode:    asString(linkCode),
-					LinkStatus:  effectiveStatus,
-					DeviceAPK:   asString(deviceAPK),
-					DeviceACode: asString(deviceACode),
-					DeviceBPK:   asString(deviceBPK),
-					DeviceBCode: asString(deviceBCode),
-					Details:     "ISIS adjacency is " + direction + " (should be bidirectional)",
-				})
-			}
-		}
-
-		// Query 2: Find ISIS adjacencies that don't correspond to any configured link
-		extraCypher := `
-			MATCH (da:Device)-[isis:ISIS_ADJACENT]->(db:Device)
-			WHERE NOT EXISTS {
-				MATCH (l:Link)-[:CONNECTS]->(da)
-				MATCH (l)-[:CONNECTS]->(db)
-			}
-			RETURN da.pk AS device_a_pk,
-			       da.code AS device_a_code,
-			       db.pk AS device_b_pk,
-			       db.code AS device_b_code,
-			       isis.metric AS isis_metric,
-			       isis.neighbor_addr AS neighbor_addr
-		`
-
-		extraResult, err := tx.Run(ctx, extraCypher, nil)
-		if err != nil {
-			return nil, fmt.Errorf("extra query: %w", err)
-		}
-
-		extraRecords, err := extraResult.Collect(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("extra collect: %w", err)
-		}
-
-		for _, record := range extraRecords {
-			deviceAPK, _ := record.Get("device_a_pk")
-			deviceACode, _ := record.Get("device_a_code")
-			deviceBPK, _ := record.Get("device_b_pk")
-			deviceBCode, _ := record.Get("device_b_code")
-			isisMetric, _ := record.Get("isis_metric")
-			neighborAddr, _ := record.Get("neighbor_addr")
-
-			response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
-				Type:        "extra_isis",
-				DeviceAPK:   asString(deviceAPK),
-				DeviceACode: asString(deviceACode),
-				DeviceBPK:   asString(deviceBPK),
-				DeviceBCode: asString(deviceBCode),
-				ISISMetric:  uint32(asInt64(isisMetric)),
-				Details:     "ISIS adjacency exists (neighbor: " + asString(neighborAddr) + ") but no configured link found",
-			})
-		}
-
-		// Count total ISIS adjacencies
-		countCypher := `MATCH ()-[r:ISIS_ADJACENT]->() RETURN count(r) AS count`
-		countResult, err := tx.Run(ctx, countCypher, nil)
-		if err != nil {
-			return nil, fmt.Errorf("count query: %w", err)
-		}
-
-		countRecord, err := countResult.Single(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("count single: %w", err)
-		}
-
-		count, _ := countRecord.Get("count")
-		response.ISISAdjacencies = int(asInt64(count))
-
-		return nil, nil
-	})
+	adjQuery := `
+		SELECT
+			a.device_pk AS from_pk,
+			nd.device_pk AS to_pk,
+			a.link_pk,
+			a.metric,
+			a.neighbor_addr
+		FROM isis_adjacencies_current a
+		JOIN isis_devices_current nd ON a.neighbor_system_id = concat(nd.hostname, '.00')
+		WHERE a.device_pk != '' AND nd.device_pk != ''
+	`
+	adjRows, err := db.Query(ctx, adjQuery)
 	if err != nil {
-		slog.Error("topology compare query error", "error", err)
-		response.Error = err.Error()
+		slog.Error("topology compare adjacency query error", "error", err)
+		response.Error = "Failed to query ISIS adjacencies"
+		writeJSON(w, response)
+		return
+	}
+	defer adjRows.Close()
+
+	totalAdjs := 0
+	for adjRows.Next() {
+		var fromPK, toPK, linkPK, neighborAddr string
+		var metric int64
+		if err := adjRows.Scan(&fromPK, &toPK, &linkPK, &metric, &neighborAddr); err != nil {
+			slog.Error("topology compare adjacency scan error", "error", err)
+			continue
+		}
+		totalAdjs++
+		dir := adjDirection{fromPK: fromPK, toPK: toPK, metric: metric, neighborAddr: neighborAddr}
+		if linkPK == "" {
+			unmatchedAdjs = append(unmatchedAdjs, dir)
+		} else {
+			linkAdjMap[linkPK] = append(linkAdjMap[linkPK], dir)
+		}
+	}
+
+	response.ISISAdjacencies = totalAdjs
+
+	// Get configured links
+	type linkInfo struct {
+		pk, code, status string
+		committedRttNs   int64
+		tunnelNet        string
+		deviceAPK        string
+		deviceACode      string
+		deviceBPK        string
+		deviceBCode      string
+	}
+
+	linkQuery := `
+		SELECT
+			l.pk, l.code, l.status, l.committed_rtt_ns, l.tunnel_net,
+			l.side_a_pk, COALESCE(da.code, '') AS side_a_code,
+			l.side_z_pk, COALESCE(dz.code, '') AS side_z_code
+		FROM dz_links_current l
+		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
+		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+	`
+	linkRows, err := db.Query(ctx, linkQuery)
+	if err != nil {
+		slog.Error("topology compare link query error", "error", err)
+		response.Error = "Failed to query configured links"
+		writeJSON(w, response)
+		return
+	}
+	defer linkRows.Close()
+
+	var links []linkInfo
+	for linkRows.Next() {
+		var li linkInfo
+		if err := linkRows.Scan(&li.pk, &li.code, &li.status, &li.committedRttNs, &li.tunnelNet, &li.deviceAPK, &li.deviceACode, &li.deviceBPK, &li.deviceBCode); err != nil {
+			slog.Error("topology compare link scan error", "error", err)
+			continue
+		}
+		links = append(links, li)
+	}
+
+	response.ConfiguredLinks = len(links)
+
+	// Build sibling tunnel_net set: tunnel_nets that have at least one link with an adjacency.
+	// If a link is missing its adjacency but a sibling on the same /31 has one,
+	// it's a data quality issue (duplicate tunnel_net), not a real missing adjacency.
+	siblingTunnelNets := make(map[string]bool)
+	for _, li := range links {
+		if li.tunnelNet != "" && len(linkAdjMap[li.pk]) > 0 {
+			siblingTunnelNets[li.tunnelNet] = true
+		}
+	}
+
+	// Compare each configured link against its ISIS adjacencies
+	for _, li := range links {
+		adjs := linkAdjMap[li.pk]
+		hasForward := false
+		hasReverse := false
+
+		for _, a := range adjs {
+			if a.fromPK == li.deviceAPK && a.toPK == li.deviceBPK {
+				hasForward = true
+			} else if a.fromPK == li.deviceBPK && a.toPK == li.deviceAPK {
+				hasReverse = true
+			} else {
+				// Adjacency matched by link_pk — count as matched regardless of direction
+				hasForward = true
+				hasReverse = true
+			}
+		}
+
+		effectiveStatus := li.status
+		if li.committedRttNs == committedRttProvisioningNs {
+			effectiveStatus = "provisioning"
+		}
+
+		// Normalize device order for consistent display
+		devAPK, devACode := li.deviceAPK, li.deviceACode
+		devBPK, devBCode := li.deviceBPK, li.deviceBCode
+		if devAPK > devBPK {
+			devAPK, devACode, devBPK, devBCode = devBPK, devBCode, devAPK, devACode
+		}
+
+		if hasForward || hasReverse {
+			response.MatchedLinks++
+			continue
+		}
+
+		// No adjacency — check if this is a sibling tunnel_net false positive
+		if li.tunnelNet != "" && siblingTunnelNets[li.tunnelNet] {
+			// Another link on the same /31 has the adjacency — data quality issue, not missing
+			response.MatchedLinks++
+			continue
+		}
+
+		response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
+			Type:        "missing_isis",
+			LinkPK:      li.pk,
+			LinkCode:    li.code,
+			LinkStatus:  effectiveStatus,
+			DeviceAPK:   devAPK,
+			DeviceACode: devACode,
+			DeviceBPK:   devBPK,
+			DeviceBCode: devBCode,
+			Details:     "Link has no ISIS adjacency in either direction",
+		})
+	}
+
+	// Extra ISIS adjacencies: those with no link_pk
+	isisDeviceCodes := make(map[string]string)
+	codeRows, err := db.Query(ctx, `SELECT id.device_pk, COALESCE(d.code, id.hostname) FROM isis_devices_current id LEFT JOIN dz_devices_current d ON id.device_pk = d.pk WHERE id.device_pk != ''`)
+	if err == nil {
+		defer codeRows.Close()
+		for codeRows.Next() {
+			var pk, code string
+			if codeRows.Scan(&pk, &code) == nil {
+				isisDeviceCodes[pk] = code
+			}
+		}
+	}
+
+	// Dedupe extra adjacencies by sorted device pair
+	seenExtraPairs := make(map[[2]string]bool)
+	for _, adj := range unmatchedAdjs {
+		a, b := adj.fromPK, adj.toPK
+		if a > b {
+			a, b = b, a
+		}
+		if seenExtraPairs[[2]string{a, b}] {
+			continue
+		}
+		seenExtraPairs[[2]string{a, b}] = true
+
+		response.Discrepancies = append(response.Discrepancies, TopologyDiscrepancy{
+			Type:        "extra_isis",
+			DeviceAPK:   adj.fromPK,
+			DeviceACode: isisDeviceCodes[adj.fromPK],
+			DeviceBPK:   adj.toPK,
+			DeviceBCode: isisDeviceCodes[adj.toPK],
+			ISISMetric:  uint32(adj.metric),
+			Details:     "ISIS adjacency exists (neighbor: " + adj.neighborAddr + ") but no configured link found",
+		})
 	}
 
 	duration := time.Since(start)
