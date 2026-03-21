@@ -98,12 +98,31 @@ func setupIncidentsTables(t *testing.T) {
 	err = config.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS fact_dz_device_link_latency (
 			event_ts DateTime,
+			ingested_at DateTime DEFAULT now(),
 			link_pk String,
 			origin_device_pk String DEFAULT '',
+			target_device_pk String DEFAULT '',
+			epoch Int64 DEFAULT 0,
+			sample_index Int32 DEFAULT 0,
 			rtt_us Float64,
 			ipdv_us Float64,
 			loss UInt8,
 			direction Nullable(String)
+		) ENGINE = Memory
+	`)
+	require.NoError(t, err)
+
+	// Latency sample headers (for display timestamp correction)
+	err = config.DB.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS fact_dz_device_link_latency_sample_header (
+			written_at DateTime64(3, 'UTC'),
+			origin_device_pk String,
+			target_device_pk String,
+			link_pk String,
+			epoch Int64,
+			start_timestamp_us Int64,
+			sampling_interval_us UInt64,
+			latest_sample_index Int32
 		) ENGINE = Memory
 	`)
 	require.NoError(t, err)
