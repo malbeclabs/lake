@@ -697,6 +697,16 @@ func TestGetLinkIncidents_NoDataDetection(t *testing.T) {
 	`, staleTime)
 	require.NoError(t, err)
 
+	// Insert stale header so the freshness check detects this link as no_data
+	err = config.DB.Exec(ctx, `
+		INSERT INTO fact_dz_device_link_latency_sample_header
+			(written_at, origin_device_pk, target_device_pk, link_pk, epoch, start_timestamp_us, sampling_interval_us, latest_sample_index)
+		VALUES
+			($1, 'dev-nyc-1', 'dev-lax-1', 'link-1', 0, 0, 0, 0),
+			($1, 'dev-lax-1', 'dev-nyc-1', 'link-1', 0, 0, 0, 0)
+	`, staleTime)
+	require.NoError(t, err)
+
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=no_data&min_duration=5", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetLinkIncidents(rr, req)
