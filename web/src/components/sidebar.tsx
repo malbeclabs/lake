@@ -93,6 +93,7 @@ export function Sidebar() {
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isScoreboardRoute = location.pathname === '/dz/edge/scoreboard'
+  const isMulticastRoute = isMulticastGroupsRoute || isPublisherCheckRoute
   const isValidatorsRoute = location.pathname === '/solana/validators'
   const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -529,14 +530,22 @@ export function Sidebar() {
               <Users className="h-4 w-4" />
               Users
             </Link>
-            <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
+            <Link to="/dz/multicast-groups" className={isMulticastRoute ? navItemExpandedClass : navItemClass(false)}>
               <Radio className="h-4 w-4" />
               Multicast Groups
             </Link>
-            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
-              <ShieldCheck className="h-4 w-4" />
-              Publisher Check
-            </Link>
+            {isMulticastRoute && (
+              <>
+                <Link to="/dz/multicast-groups" className={subNavItemClass(isMulticastGroupsRoute)}>
+                  <Radio className="h-4 w-4" />
+                  Groups
+                </Link>
+                <Link to="/dz/publisher-check" className={subNavItemClass(isPublisherCheckRoute)}>
+                  <ShieldCheck className="h-4 w-4" />
+                  Publisher Check
+                </Link>
+              </>
+            )}
             {isInternalUser && (
               <Link to="/dz/edge/scoreboard" className={navItemClass(isScoreboardRoute)}>
                 <Trophy className="h-4 w-4" />
