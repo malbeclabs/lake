@@ -241,15 +241,24 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		return convertEventsToIncidents(currentEvents, linkMeta), nil
 	}
 
+	displayTs := "if(h.sampling_interval_us > 0 AND lat.sample_index >= h.latest_sample_index - 1000, lat.ingested_at, lat.event_ts)"
 	query := fmt.Sprintf(`
 		WITH buckets AS (
 			SELECT
 				lat.link_pk,
-				toStartOfInterval(lat.event_ts, INTERVAL %s) as bucket,
+				toStartOfInterval(%s, INTERVAL %s) as bucket,
 				countIf(lat.loss = true OR lat.rtt_us = 0) * 100.0 / count(*) as loss_pct,
 				count(*) as sample_count
 			FROM fact_dz_device_link_latency lat
-			WHERE lat.event_ts >= now() - INTERVAL $1 SECOND
+			LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON lat.origin_device_pk = h.origin_device_pk
+				AND lat.target_device_pk = h.target_device_pk
+				AND lat.link_pk = h._hdr_link_pk
+				AND lat.epoch = h.epoch
+			WHERE lat.ingested_at >= now() - INTERVAL $1 SECOND
 			  AND lat.link_pk IN ($2)
 			GROUP BY lat.link_pk, bucket
 			HAVING count(*) >= 3
@@ -257,7 +266,7 @@ func fetchPacketLossIncidents(ctx context.Context, conn driver.Conn, duration ti
 		SELECT b.link_pk, b.bucket, b.loss_pct, b.sample_count
 		FROM buckets b
 		ORDER BY b.link_pk, b.bucket
-	`, sqlBucketInterval(dp.bucketSize()))
+	`, displayTs, sqlBucketInterval(dp.bucketSize()))
 
 	// Add 1 day of lookback padding so incidents starting before the time range boundary get their true start time
 	lookbackSecs := int64((duration + 24*time.Hour).Seconds())
@@ -369,10 +378,9 @@ func fetchCurrentNoDataLinksIncidents(ctx context.Context, conn driver.Conn, lin
 		WITH link_last_seen AS (
 			SELECT
 				link_pk,
-				max(event_ts) as last_seen
-			FROM fact_dz_device_link_latency
-			WHERE event_ts >= now() - INTERVAL 30 DAY
-			  AND link_pk IN ($1)
+				max(written_at) as last_seen
+			FROM fact_dz_device_link_latency_sample_header
+			WHERE link_pk IN ($1)
 			GROUP BY link_pk
 		)
 		SELECT lls.link_pk, lls.last_seen
@@ -446,10 +454,9 @@ func fetchPartialDataLinksIncidents(ctx context.Context, conn driver.Conn, linkM
 		SELECT
 			link_pk,
 			origin_device_pk,
-			max(event_ts) as last_seen
-		FROM fact_dz_device_link_latency
-		WHERE event_ts >= now() - INTERVAL 30 DAY
-		  AND link_pk IN ($1)
+			max(written_at) as last_seen
+		FROM fact_dz_device_link_latency_sample_header
+		WHERE link_pk IN ($1)
 		GROUP BY link_pk, origin_device_pk
 	`
 

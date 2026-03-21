@@ -45,6 +45,7 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 	}
 
 	var allSamples []InternetMetroLatencySample
+	var allHeaders []InternetMetroLatencySampleHeader
 	var samplesMu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, v.cfg.MaxConcurrency)
@@ -128,6 +129,7 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 
 					metroHasSamples := false
 					var metroSamples []InternetMetroLatencySample
+					var metroHeaders []InternetMetroLatencySampleHeader
 
 					for _, epoch := range epochsToFetch {
 						// Check for context cancellation before each RPC call
@@ -149,6 +151,21 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 						}
 
 						metroHasSamples = true
+
+						// Record the on-chain header for this circuit/epoch
+						latestIdx := len(samples.Samples) - 1
+						if latestIdx < 0 {
+							latestIdx = 0
+						}
+						metroHeaders = append(metroHeaders, InternetMetroLatencySampleHeader{
+							OriginMetroPK:      originMetroPK,
+							TargetMetroPK:      targetMetroPK,
+							DataProvider:       dataProvider,
+							Epoch:              epoch,
+							StartTimestampUs:   samples.StartTimestampMicroseconds,
+							SamplingIntervalUs: samples.SamplingIntervalMicroseconds,
+							LatestSampleIndex:  latestIdx,
+						})
 
 						// Check what's already in the database for this origin_metro_pk+target_metro_pk+data_provider+epoch
 						key := fmt.Sprintf("%s:%s:%s:%d", originMetroPK, targetMetroPK, dataProvider, epoch)
@@ -172,12 +189,15 @@ func (v *View) refreshInternetMetroLatencySamples(ctx context.Context, metros []
 						metrosWithSamplesMu.Unlock()
 					}
 
-					// Append samples to shared slice
+					// Append samples and headers to shared slices
+					samplesMu.Lock()
 					if len(metroSamples) > 0 {
-						samplesMu.Lock()
 						allSamples = append(allSamples, metroSamples...)
-						samplesMu.Unlock()
 					}
+					if len(metroHeaders) > 0 {
+						allHeaders = append(allHeaders, metroHeaders...)
+					}
+					samplesMu.Unlock()
 				}(pair.origin.PK, pair.target.PK, originPK, targetPK, dataProvider)
 			}
 		}
@@ -191,7 +211,14 @@ done:
 		if err := v.store.AppendInternetMetroLatencySamples(ctx, allSamples); err != nil {
 			return fmt.Errorf("failed to append internet-metro latency samples: %w", err)
 		}
-		v.log.Debug("telemetry/internet-metro: sample refresh completed", "metros", metrosProcessed, "samples", len(allSamples))
+	}
+	if len(allHeaders) > 0 {
+		if err := v.store.AppendInternetMetroLatencySampleHeaders(ctx, allHeaders); err != nil {
+			return fmt.Errorf("failed to append internet-metro latency sample headers: %w", err)
+		}
+	}
+	if len(allSamples) > 0 || len(allHeaders) > 0 {
+		v.log.Debug("telemetry/internet-metro: sample refresh completed", "metros", metrosProcessed, "samples", len(allSamples), "headers", len(allHeaders))
 	}
 	return nil
 }

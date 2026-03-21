@@ -189,15 +189,25 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 	}
 
 	// Get the most recent 5-min buckets to check for above-threshold loss
-	query := `
+	// Use ingested_at for recent epochs (handles on-chain writer gaps), fall back to event_ts for backfills.
+	displayTs := "if(h.sampling_interval_us > 0 AND lat.sample_index >= h.latest_sample_index - 1000, lat.ingested_at, lat.event_ts)"
+	query := fmt.Sprintf(`
 		WITH recent_buckets AS (
 			SELECT
 				lat.link_pk,
-				toStartOfInterval(lat.event_ts, INTERVAL 5 MINUTE) as bucket,
+				toStartOfInterval(%s, INTERVAL 5 MINUTE) as bucket,
 				countIf(lat.loss = true OR lat.rtt_us = 0) * 100.0 / count(*) as loss_pct,
 				count(*) as sample_count
 			FROM fact_dz_device_link_latency lat
-			WHERE lat.event_ts >= now() - INTERVAL 15 MINUTE
+			LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON lat.origin_device_pk = h.origin_device_pk
+				AND lat.target_device_pk = h.target_device_pk
+				AND lat.link_pk = h._hdr_link_pk
+				AND lat.epoch = h.epoch
+			WHERE lat.ingested_at >= now() - INTERVAL 15 MINUTE
 			  AND lat.link_pk IN ($2)
 			GROUP BY lat.link_pk, bucket
 			HAVING count(*) >= 3
@@ -214,7 +224,7 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 		FROM ranked
 		WHERE rn <= 3
 		ORDER BY link_pk, rn
-	`
+	`, displayTs)
 
 	rows, err := conn.Query(ctx, query, threshold, linkPKs)
 	if err != nil {
@@ -294,14 +304,24 @@ func fetchCurrentHighLossLinks(ctx context.Context, conn driver.Conn, threshold 
 
 // findPacketLossEventStart looks back in history to find when the current event started
 func findPacketLossEventStart(ctx context.Context, conn driver.Conn, linkPK string, threshold float64) (time.Time, float64, error) {
-	query := `
+	eventDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	eventHeaderJoin := `LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON f.origin_device_pk = h.origin_device_pk
+				AND f.target_device_pk = h.target_device_pk
+				AND f.link_pk = h._hdr_link_pk
+				AND f.epoch = h.epoch`
+	query := fmt.Sprintf(`
 		WITH buckets AS (
 			SELECT
-				toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket,
-				countIf(loss = true OR rtt_us = 0) * 100.0 / count(*) as loss_pct
-			FROM fact_dz_device_link_latency
-			WHERE link_pk = $1
-			  AND event_ts >= now() - INTERVAL 365 DAY
+				toStartOfInterval(%s, INTERVAL 5 MINUTE) as bucket,
+				countIf(f.loss = true OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
+			FROM fact_dz_device_link_latency f
+			%s
+			WHERE f.link_pk = $1
+			  AND f.ingested_at >= now() - INTERVAL 365 DAY
 			GROUP BY bucket
 			HAVING count(*) >= 3
 			ORDER BY bucket DESC
@@ -319,7 +339,7 @@ func findPacketLossEventStart(ctx context.Context, conn driver.Conn, linkPK stri
 		WHERE prev_bucket IS NULL OR dateDiff('minute', prev_bucket, bucket) > 15
 		ORDER BY bucket DESC
 		LIMIT 1
-	`
+	`, eventDisplayTs, eventHeaderJoin)
 
 	var startBucket time.Time
 	var peakLoss float64
@@ -330,16 +350,17 @@ func findPacketLossEventStart(ctx context.Context, conn driver.Conn, linkPK stri
 	}
 
 	// Now find the peak loss during this event
-	peakQuery := `
+	peakQuery := fmt.Sprintf(`
 		SELECT max(loss_pct) as peak_loss FROM (
-			SELECT countIf(loss = true OR rtt_us = 0) * 100.0 / count(*) as loss_pct
-			FROM fact_dz_device_link_latency
-			WHERE link_pk = $1
-			  AND event_ts >= $2
-			GROUP BY toStartOfInterval(event_ts, INTERVAL 5 MINUTE)
+			SELECT countIf(f.loss = true OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
+			FROM fact_dz_device_link_latency f
+			%s
+			WHERE f.link_pk = $1
+			  AND f.ingested_at >= $2
+			GROUP BY toStartOfInterval(%s, INTERVAL 5 MINUTE)
 			HAVING count(*) >= 3
 		)
-	`
+	`, eventHeaderJoin, eventDisplayTs)
 
 	var peak float64
 	err = conn.QueryRow(ctx, peakQuery, linkPK, startBucket).Scan(&peak)
@@ -613,16 +634,25 @@ func findCompletedNoDataEvents(ctx context.Context, conn driver.Conn, duration t
 		return nil, nil
 	}
 
-	query := `
+	noDataDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	query := fmt.Sprintf(`
 		SELECT
-			link_pk,
-			toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket
-		FROM fact_dz_device_link_latency
-		WHERE event_ts >= now() - INTERVAL $1 SECOND
-		  AND link_pk IN ($2)
-		GROUP BY link_pk, bucket
-		ORDER BY link_pk, bucket
-	`
+			f.link_pk,
+			toStartOfInterval(%s, INTERVAL 5 MINUTE) as bucket
+		FROM fact_dz_device_link_latency f
+		LEFT JOIN (
+			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+				   latest_sample_index, sampling_interval_us
+			FROM fact_dz_device_link_latency_sample_header
+		) h ON f.origin_device_pk = h.origin_device_pk
+			AND f.target_device_pk = h.target_device_pk
+			AND f.link_pk = h._hdr_link_pk
+			AND f.epoch = h.epoch
+		WHERE f.ingested_at >= now() - INTERVAL $1 SECOND
+		  AND f.link_pk IN ($2)
+		GROUP BY f.link_pk, bucket
+		ORDER BY f.link_pk, bucket
+	`, noDataDisplayTs)
 
 	rows, err := conn.Query(ctx, query, int64(duration.Seconds()), linkPKs)
 	if err != nil {

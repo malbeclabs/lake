@@ -817,7 +817,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		bucketSeconds = calculateBucketSize(time.Duration(intervalMinutes) * time.Minute)
 		timeFormat = timeFormatForBucket(bucketSeconds)
 		// Exclude the current incomplete bucket so the chart line doesn't drop to zero.
-		timeFilter = fmt.Sprintf("f.event_ts > now() - INTERVAL %d MINUTE AND f.event_ts < toStartOfInterval(now(), INTERVAL %d SECOND)", intervalMinutes, bucketSeconds)
+		timeFilter = fmt.Sprintf("f.ingested_at > now() - INTERVAL %d MINUTE", intervalMinutes)
 	}
 
 	start := time.Now()
@@ -825,8 +825,17 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	// Get latency stats for a link with per-direction breakdown.
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
-	displayBucketExpr := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d SECOND)", bucketSeconds)
-	lossBucketExpr := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d SECOND)", min(bucketSeconds, 300))
+	topoDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	topoHeaderJoin := `LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON f.origin_device_pk = h.origin_device_pk
+				AND f.target_device_pk = h.target_device_pk
+				AND f.link_pk = h._hdr_link_pk
+				AND f.epoch = h.epoch`
+	displayBucketExpr := fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d SECOND)", topoDisplayTs, bucketSeconds)
+	lossBucketExpr := fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d SECOND)", topoDisplayTs, min(bucketSeconds, 300))
 	query := `
 		WITH loss_sub AS (
 			SELECT
@@ -834,6 +843,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 				countIf(f.loss) * 100.0 / count(*) as loss_pct
 			FROM fact_dz_device_link_latency f
 			JOIN dz_links_current l ON f.link_pk = l.pk
+			` + topoHeaderJoin + `
 			WHERE ` + timeFilter + `
 				AND f.link_pk = $1
 			GROUP BY display_bucket, ` + lossBucketExpr + `
@@ -857,6 +867,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			avgIf(abs(f.ipdv_us), f.origin_device_pk = l.side_z_pk) / 1000.0 as jitter_z_to_a_ms
 		FROM fact_dz_device_link_latency f
 		JOIN dz_links_current l ON f.link_pk = l.pk
+		` + topoHeaderJoin + `
 		LEFT JOIN loss_max lm ON lm.display_bucket = ` + displayBucketExpr + `
 		WHERE ` + timeFilter + `
 			AND f.link_pk = $2
@@ -1284,7 +1295,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		),
 		dz_data AS (
 			SELECT
-				toStartOfInterval(f.event_ts, INTERVAL %d MINUTE) AS bucket,
+				toStartOfInterval(if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts), INTERVAL %d MINUTE) AS bucket,
 				round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
 				round(avg(f.ipdv_us) / 1000.0, 2) AS avg_jitter_ms,
 				count() AS sample_count
@@ -1295,7 +1306,15 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-			WHERE f.event_ts >= lookback.min_ts
+			LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON f.origin_device_pk = h.origin_device_pk
+				AND f.target_device_pk = h.target_device_pk
+				AND f.link_pk = h._hdr_link_pk
+				AND f.epoch = h.epoch
+			WHERE f.ingested_at >= lookback.min_ts
 				AND f.link_pk != ''
 				AND f.loss = false
 				AND least(ma.code, mz.code) = $1
@@ -1304,15 +1323,23 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		),
 		inet_data AS (
 			SELECT
-				toStartOfInterval(f.event_ts, INTERVAL %d MINUTE) AS bucket,
+				toStartOfInterval(if(ih.sampling_interval_us > 0 AND f.sample_index >= ih.latest_sample_index - 1000, f.ingested_at, f.event_ts), INTERVAL %d MINUTE) AS bucket,
 				round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
 				round(avg(f.ipdv_us) / 1000.0, 2) AS avg_jitter_ms,
 				count() AS sample_count
 			FROM fact_dz_internet_metro_latency f
 			CROSS JOIN lookback
+			LEFT JOIN (
+				SELECT origin_metro_pk, target_metro_pk, data_provider AS _hdr_data_provider, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_internet_metro_latency_sample_header
+			) ih ON f.origin_metro_pk = ih.origin_metro_pk
+				AND f.target_metro_pk = ih.target_metro_pk
+				AND f.data_provider = ih._hdr_data_provider
+				AND f.epoch = ih.epoch
 			JOIN dz_metros_current ma ON f.origin_metro_pk = ma.pk
 			JOIN dz_metros_current mz ON f.target_metro_pk = mz.pk
-			WHERE f.event_ts >= lookback.min_ts
+			WHERE f.ingested_at >= lookback.min_ts
 				AND least(ma.code, mz.code) = $1
 				AND greatest(ma.code, mz.code) = $2
 			GROUP BY bucket

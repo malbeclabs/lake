@@ -50,6 +50,7 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 	}
 
 	var allSamples []DeviceLinkLatencySample
+	var allHeaders []DeviceLinkLatencySampleHeader
 	var samplesMu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, v.cfg.MaxConcurrency)
@@ -102,6 +103,7 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 					defer func() { <-sem }() // Release semaphore
 
 					linkSamples := make([]DeviceLinkLatencySample, 0, 128)
+					var linkHeaders []DeviceLinkLatencySampleHeader
 
 					for _, epoch := range epochsToFetch {
 						// Check for context cancellation before each RPC call
@@ -132,6 +134,21 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 							continue
 						}
 
+						// Record the on-chain header for this circuit/epoch
+						latestIdx := startIdx + len(tail) - 1
+						if latestIdx < 0 {
+							latestIdx = 0
+						}
+						linkHeaders = append(linkHeaders, DeviceLinkLatencySampleHeader{
+							OriginDevicePK:     originDevicePK,
+							TargetDevicePK:     targetDevicePK,
+							LinkPK:             linkPKStr,
+							Epoch:              epoch,
+							StartTimestampUs:   hdr.StartTimestampMicroseconds,
+							SamplingIntervalUs: hdr.SamplingIntervalMicroseconds,
+							LatestSampleIndex:  latestIdx,
+						})
+
 						if len(tail) > 0 {
 							step := hdr.SamplingIntervalMicroseconds
 							baseTs := hdr.StartTimestampMicroseconds + uint64(startIdx)*step
@@ -153,12 +170,15 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 						}
 					}
 
-					// Append samples to shared slice
+					// Append samples and headers to shared slices
+					samplesMu.Lock()
 					if len(linkSamples) > 0 {
-						samplesMu.Lock()
 						allSamples = append(allSamples, linkSamples...)
-						samplesMu.Unlock()
 					}
+					if len(linkHeaders) > 0 {
+						allHeaders = append(allHeaders, linkHeaders...)
+					}
+					samplesMu.Unlock()
 				}(direction.originPK, direction.targetPK, link.PK, originPK, targetPK, linkPK)
 			}
 		}
@@ -172,7 +192,14 @@ done:
 		if err := v.store.AppendDeviceLinkLatencySamples(ctx, allSamples); err != nil {
 			return fmt.Errorf("failed to append latency samples: %w", err)
 		}
-		v.log.Debug("telemetry/device-link: sample refresh completed", "links", linksProcessed, "samples", len(allSamples))
+	}
+	if len(allHeaders) > 0 {
+		if err := v.store.AppendDeviceLinkLatencySampleHeaders(ctx, allHeaders); err != nil {
+			return fmt.Errorf("failed to append latency sample headers: %w", err)
+		}
+	}
+	if len(allSamples) > 0 || len(allHeaders) > 0 {
+		v.log.Debug("telemetry/device-link: sample refresh completed", "links", linksProcessed, "samples", len(allSamples), "headers", len(allHeaders))
 	}
 	return nil
 }

@@ -1466,7 +1466,7 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	bucketCount := totalMinutes / bucketMinutes
 	totalHours := totalMinutes / 60
 
-	// Build the bucket interval expression
+	// Build the bucket interval expression (event_ts for interface counters)
 	var bucketInterval string
 	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
 		bucketInterval = fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d HOUR, 'UTC')", bucketMinutes/60)
@@ -1537,18 +1537,39 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 	// Get stats for the configured time range, grouped by direction (A→Z vs Z→A).
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
-	lossBucketInterval := fmt.Sprintf("toStartOfInterval(f.event_ts, INTERVAL %d MINUTE, 'UTC')", min(bucketMinutes, 5))
+	//
+	// Display timestamps use ingested_at (wall-clock time) for recent epochs where the
+	// indexer is keeping up, falling back to event_ts (interpolated) for old epochs
+	// (backfills). This fixes gaps where the on-chain writer stopped mid-epoch —
+	// interpolated event_ts would be in the past, but ingested_at reflects real time.
+	displayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	lossBucketInterval := fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", displayTs, min(bucketMinutes, 5))
 	// Include the current (possibly incomplete) bucket — the frontend marks it as "collecting".
-	timeFilterExpr := fmt.Sprintf("f.event_ts > now() - INTERVAL %d HOUR", totalHours)
+	// Use ingested_at for time filtering to capture samples with stale interpolated event_ts.
+	timeFilterExpr := fmt.Sprintf("f.ingested_at > now() - INTERVAL %d HOUR", totalHours)
+	var displayBucketInterval string
+	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
+		displayBucketInterval = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d HOUR, 'UTC')", displayTs, bucketMinutes/60)
+	} else {
+		displayBucketInterval = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", displayTs, bucketMinutes)
+	}
 	historyQuery := `
 		WITH loss_sub AS (
 			SELECT
 				f.link_pk,
-				` + bucketInterval + ` as display_bucket,
+				` + displayBucketInterval + ` as display_bucket,
 				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
 			FROM fact_dz_device_link_latency f
 			JOIN dz_links_current l ON f.link_pk = l.pk
+			LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON f.origin_device_pk = h.origin_device_pk
+				AND f.target_device_pk = h.target_device_pk
+				AND f.link_pk = h._hdr_link_pk
+				AND f.epoch = h.epoch
 			WHERE ` + timeFilterExpr + `
 			GROUP BY f.link_pk, display_bucket, direction, ` + lossBucketInterval + `
 		),
@@ -1559,15 +1580,23 @@ func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBucket
 		)
 		SELECT
 			f.link_pk,
-			` + bucketInterval + ` as bucket,
+			` + displayBucketInterval + ` as bucket,
 			if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 			avg(f.rtt_us) as avg_latency,
 			max(lm.loss_pct) as loss_pct,
 			count(*) as samples
 		FROM fact_dz_device_link_latency f
 		JOIN dz_links_current l ON f.link_pk = l.pk
+		LEFT JOIN (
+			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+				   latest_sample_index, sampling_interval_us
+			FROM fact_dz_device_link_latency_sample_header
+		) h ON f.origin_device_pk = h.origin_device_pk
+			AND f.target_device_pk = h.target_device_pk
+			AND f.link_pk = h._hdr_link_pk
+			AND f.epoch = h.epoch
 		LEFT JOIN loss_max lm ON f.link_pk = lm.link_pk
-			AND ` + bucketInterval + ` = lm.display_bucket
+			AND ` + displayBucketInterval + ` = lm.display_bucket
 			AND if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') = lm.direction
 		WHERE ` + timeFilterExpr + `
 		GROUP BY f.link_pk, bucket, direction
@@ -2639,15 +2668,30 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 
 	// Get latency probe presence per device per bucket.
 	// Used to detect devices that have interface data but aren't sending probes.
+	probeDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	var probeBucketInterval string
+	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
+		probeBucketInterval = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d HOUR, 'UTC')", probeDisplayTs, bucketMinutes/60)
+	} else {
+		probeBucketInterval = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", probeDisplayTs, bucketMinutes)
+	}
 	probeQuery := `
 		SELECT
-			origin_device_pk,
-			` + bucketInterval + ` as bucket,
+			f.origin_device_pk,
+			` + probeBucketInterval + ` as bucket,
 			count(*) as samples
-		FROM fact_dz_device_link_latency
-		WHERE event_ts > now() - INTERVAL ? HOUR
-		GROUP BY origin_device_pk, bucket
-		ORDER BY origin_device_pk, bucket
+		FROM fact_dz_device_link_latency f
+		LEFT JOIN (
+			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+				   latest_sample_index, sampling_interval_us
+			FROM fact_dz_device_link_latency_sample_header
+		) h ON f.origin_device_pk = h.origin_device_pk
+			AND f.target_device_pk = h.target_device_pk
+			AND f.link_pk = h._hdr_link_pk
+			AND f.epoch = h.epoch
+		WHERE f.ingested_at > now() - INTERVAL ? HOUR
+		GROUP BY f.origin_device_pk, bucket
+		ORDER BY f.origin_device_pk, bucket
 	`
 	probeRows, err := envDB(ctx).Query(ctx, probeQuery, totalHours)
 	if err != nil {
@@ -3503,17 +3547,33 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 	// Get latency/loss stats per direction.
 	// Loss is computed as the max of 5-minute sub-bucket loss percentages within each
 	// display bucket, matching Grafana's [5m] window for sharper spike visibility.
-	singleLossBucket := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d MINUTE, 'UTC')", min(bucketMinutes, 5))
+	singleDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	var singleDisplayBucket string
+	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
+		singleDisplayBucket = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d HOUR, 'UTC')", singleDisplayTs, bucketMinutes/60)
+	} else {
+		singleDisplayBucket = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", singleDisplayTs, bucketMinutes)
+	}
+	singleLossBucket := fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", singleDisplayTs, min(bucketMinutes, 5))
 	// Include the current (possibly incomplete) bucket — the frontend marks it as "collecting".
-	singleTimeFilter := fmt.Sprintf("event_ts > now() - INTERVAL %d HOUR", totalHours)
+	singleTimeFilter := fmt.Sprintf("f.ingested_at > now() - INTERVAL %d HOUR", totalHours)
+	singleHeaderJoin := `LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   latest_sample_index, sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+			) h ON f.origin_device_pk = h.origin_device_pk
+				AND f.target_device_pk = h.target_device_pk
+				AND f.link_pk = h._hdr_link_pk
+				AND f.epoch = h.epoch`
 	latencyQuery := `
 		WITH loss_sub AS (
 			SELECT
-				` + bucketInterval + ` as display_bucket,
-				if(origin_device_pk = ?, 'A', 'Z') as direction,
-				countIf(loss OR rtt_us = 0) * 100.0 / count(*) as loss_pct
-			FROM fact_dz_device_link_latency
-			WHERE link_pk = ? AND ` + singleTimeFilter + `
+				` + singleDisplayBucket + ` as display_bucket,
+				if(f.origin_device_pk = ?, 'A', 'Z') as direction,
+				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
+			FROM fact_dz_device_link_latency f
+			` + singleHeaderJoin + `
+			WHERE f.link_pk = ? AND ` + singleTimeFilter + `
 			GROUP BY display_bucket, direction, ` + singleLossBucket + `
 		),
 		loss_max AS (
@@ -3522,15 +3582,16 @@ func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange st
 			GROUP BY display_bucket, direction
 		)
 		SELECT
-			` + bucketInterval + ` as bucket,
-			if(origin_device_pk = ?, 'A', 'Z') as direction,
-			avg(rtt_us) as avg_latency,
+			` + singleDisplayBucket + ` as bucket,
+			if(f.origin_device_pk = ?, 'A', 'Z') as direction,
+			avg(f.rtt_us) as avg_latency,
 			max(lm.loss_pct) as loss_pct,
 			count(*) as samples
 		FROM fact_dz_device_link_latency f
-		LEFT JOIN loss_max lm ON ` + bucketInterval + ` = lm.display_bucket
-			AND if(origin_device_pk = ?, 'A', 'Z') = lm.direction
-		WHERE link_pk = ? AND ` + singleTimeFilter + `
+		` + singleHeaderJoin + `
+		LEFT JOIN loss_max lm ON ` + singleDisplayBucket + ` = lm.display_bucket
+			AND if(f.origin_device_pk = ?, 'A', 'Z') = lm.direction
+		WHERE f.link_pk = ? AND ` + singleTimeFilter + `
 		GROUP BY bucket, direction
 		ORDER BY bucket, direction
 	`
@@ -4107,12 +4168,27 @@ func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRang
 	}
 
 	// Get latency probe presence per bucket for this device
+	deviceProbeDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	var deviceProbeBucket string
+	if bucketMinutes >= 60 && bucketMinutes%60 == 0 {
+		deviceProbeBucket = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d HOUR, 'UTC')", deviceProbeDisplayTs, bucketMinutes/60)
+	} else {
+		deviceProbeBucket = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", deviceProbeDisplayTs, bucketMinutes)
+	}
 	probeQuery := `
 		SELECT
-			` + bucketInterval + ` as bucket,
+			` + deviceProbeBucket + ` as bucket,
 			count(*) as samples
-		FROM fact_dz_device_link_latency
-		WHERE origin_device_pk = ? AND event_ts > now() - INTERVAL ? HOUR
+		FROM fact_dz_device_link_latency f
+		LEFT JOIN (
+			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+				   latest_sample_index, sampling_interval_us
+			FROM fact_dz_device_link_latency_sample_header
+		) h ON f.origin_device_pk = h.origin_device_pk
+			AND f.target_device_pk = h.target_device_pk
+			AND f.link_pk = h._hdr_link_pk
+			AND f.epoch = h.epoch
+		WHERE f.origin_device_pk = ? AND f.ingested_at > now() - INTERVAL ? HOUR
 		GROUP BY bucket
 		ORDER BY bucket
 	`

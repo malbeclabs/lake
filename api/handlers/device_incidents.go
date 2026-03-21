@@ -598,10 +598,9 @@ func fetchCurrentNoDataDevices(ctx context.Context, conn driver.Conn, deviceMeta
 	query := `
 		SELECT
 			origin_device_pk as device_pk,
-			max(event_ts) as last_seen
-		FROM fact_dz_device_link_latency
-		WHERE event_ts >= now() - INTERVAL 30 DAY
-		  AND origin_device_pk IN ($1)
+			max(written_at) as last_seen
+		FROM fact_dz_device_link_latency_sample_header
+		WHERE origin_device_pk IN ($1)
 		GROUP BY origin_device_pk
 		HAVING last_seen < now() - INTERVAL 15 MINUTE
 	`
@@ -666,14 +665,23 @@ func findCompletedDeviceNoDataEvents(ctx context.Context, conn driver.Conn, dura
 
 	// Only check origin — if the device stopped sending probes, that's a gap,
 	// even if other devices can still reach it as a target.
-	query := `
-		SELECT origin_device_pk as device_pk, toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket
-		FROM fact_dz_device_link_latency
-		WHERE event_ts >= now() - INTERVAL $1 SECOND
-		  AND origin_device_pk IN ($2)
+	deviceDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+	query := fmt.Sprintf(`
+		SELECT f.origin_device_pk as device_pk, toStartOfInterval(%s, INTERVAL 5 MINUTE) as bucket
+		FROM fact_dz_device_link_latency f
+		LEFT JOIN (
+			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+				   latest_sample_index, sampling_interval_us
+			FROM fact_dz_device_link_latency_sample_header
+		) h ON f.origin_device_pk = h.origin_device_pk
+			AND f.target_device_pk = h.target_device_pk
+			AND f.link_pk = h._hdr_link_pk
+			AND f.epoch = h.epoch
+		WHERE f.ingested_at >= now() - INTERVAL $1 SECOND
+		  AND f.origin_device_pk IN ($2)
 		GROUP BY device_pk, bucket
 		ORDER BY device_pk, bucket
-	`
+	`, deviceDisplayTs)
 
 	rows, err := conn.Query(ctx, query, int64(duration.Seconds()), devicePKs)
 	if err != nil {
