@@ -53,7 +53,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	//   timestamp equals event_ts anyway, so filtering and bucketing align.
 	const displayTs = "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
 
-	isLiveWindow := input.WindowEnd.Sub(input.WindowStart) <= 15*time.Minute
+	isLiveWindow := input.WindowEnd.Sub(input.WindowStart) <= 10*time.Minute
 	filterCol := "f.event_ts"
 	if isLiveWindow {
 		filterCol = "f.ingested_at"
@@ -176,10 +176,26 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 		return nil, fmt.Errorf("resolve ISIS adjacency: %w", err)
 	}
 
+	// For live windows (ingested_at filtering), only emit the bucket that
+	// contains WindowEnd — the in-progress bucket that hasn't been backfilled
+	// yet. Older buckets get partial data because the ingested_at filter
+	// doesn't see probes ingested before the window, producing incomplete rows
+	// that would overwrite correct backfill results via ReplacingMergeTree.
+	// The workflow's WindowEnd is truncated to 5 minutes, so the target bucket
+	// is the one starting at WindowEnd - 5min.
+	liveBucket := time.Time{}
+	if isLiveWindow {
+		liveBucket = input.WindowEnd.Truncate(5 * time.Minute).Add(-5 * time.Minute)
+	}
+
 	now := time.Now()
 	var buckets []LinkBucket
 
 	for bk, bd := range bucketMap {
+		if isLiveWindow && !bk.bucket.Equal(liveBucket) {
+			continue
+		}
+
 		b := LinkBucket{
 			BucketTS:   bk.bucket,
 			LinkPK:     bk.linkPK,
