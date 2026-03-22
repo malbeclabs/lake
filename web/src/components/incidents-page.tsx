@@ -406,22 +406,14 @@ export function IncidentsPage() {
   // Client-side type filtering
   const hasTypeFilter = selectedTypes.size > 0
   const activeIncidents = useMemo(() => {
-    if (scope === 'links') {
-      const all = linkData?.active || []
-      if (!hasTypeFilter) return all
-      return all.filter(i => selectedTypes.has(i.incident_type))
-    }
+    if (scope === 'links') return linkData?.active || []
     return [] as LinkIncident[]
-  }, [scope, linkData?.active, hasTypeFilter, selectedTypes])
+  }, [scope, linkData?.active])
 
   const activeDeviceIncidents = useMemo(() => {
-    if (scope === 'devices') {
-      const all = deviceData?.active || []
-      if (!hasTypeFilter) return all
-      return all.filter(i => selectedTypes.has(i.incident_type))
-    }
+    if (scope === 'devices') return deviceData?.active || []
     return [] as DeviceIncident[]
-  }, [scope, deviceData?.active, hasTypeFilter, selectedTypes])
+  }, [scope, deviceData?.active])
 
   const drainedLinks = useMemo(() => {
     const all = linkData?.drained || []
@@ -912,6 +904,7 @@ export function IncidentsPage() {
                             sortDir={sortDir}
                             toggleSort={toggleSort}
                             coalesceGapMinutes={coalesceGap}
+                            typeFilter={selectedTypes}
                           />
                         ) : (
                           <ActiveDeviceIncidentsTable
@@ -919,6 +912,7 @@ export function IncidentsPage() {
                             sortField={sortField}
                             sortDir={sortDir}
                             toggleSort={toggleSort}
+                            typeFilter={selectedTypes}
                           />
                         )}
                       </IncidentSection>
@@ -1090,19 +1084,25 @@ function ActiveIncidentsTable({
   sortDir,
   toggleSort,
   coalesceGapMinutes = 180,
+  typeFilter,
 }: {
   incidents: LinkIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'ended_at' | 'duration') => void
   coalesceGapMinutes?: number
+  typeFilter?: Set<string>
 }) {
   // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
 
   const grouped = useMemo(() => {
-    const groups = groupIncidentsByLink(incidents, coalesceGapMinutes)
+    let groups = groupIncidentsByLink(incidents, coalesceGapMinutes)
+    // Filter rows to those containing at least one incident of a selected type
+    if (typeFilter && typeFilter.size > 0) {
+      groups = groups.filter(g => g.incidents.some(i => typeFilter.has(i.incident_type)))
+    }
     return groups.sort((a, b) => {
       if (sortField === 'started_at') {
         const aTime = new Date(a.started_at).getTime()
@@ -1118,7 +1118,8 @@ function ActiveIncidentsTable({
         return sortDir === 'asc' ? aDur - bDur : bDur - aDur
       }
     })
-  }, [incidents, coalesceGapMinutes, sortField, sortDir])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidents, coalesceGapMinutes, sortField, sortDir, typeFilter])
 
   const sortIcon = (field: string) => sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
 
@@ -1339,17 +1340,22 @@ function ActiveDeviceIncidentsTable({
   sortField,
   sortDir,
   toggleSort,
+  typeFilter,
 }: {
   incidents: DeviceIncident[]
   sortField: string
   sortDir: string
   toggleSort: (field: 'started_at' | 'ended_at' | 'duration') => void
+  typeFilter?: Set<string>
 }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
 
   const grouped = useMemo(() => {
-    const groups = groupIncidentsByDevice(incidents)
+    let groups = groupIncidentsByDevice(incidents)
+    if (typeFilter && typeFilter.size > 0) {
+      groups = groups.filter(g => g.incidents.some(i => typeFilter.has(i.incident_type)))
+    }
     return groups.sort((a, b) => {
       if (sortField === 'started_at') {
         const aTime = new Date(a.started_at).getTime()
@@ -1365,7 +1371,8 @@ function ActiveDeviceIncidentsTable({
         return sortDir === 'asc' ? aDur - bDur : bDur - aDur
       }
     })
-  }, [incidents, sortField, sortDir])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidents, sortField, sortDir, typeFilter])
 
   const sortIcon = (field: string) => sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
 
