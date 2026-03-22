@@ -82,8 +82,20 @@ function formatTimeAgo(isoString: string): string {
 
   if (diffSecs < 60) return `${diffSecs}s ago`
   if (diffSecs < 3600) return `${Math.floor(diffSecs / 60)}m ago`
-  if (diffSecs < 86400) return `${Math.floor(diffSecs / 3600)}h ago`
-  return `${Math.floor(diffSecs / 86400)}d ago`
+
+  const days = Math.floor(diffSecs / 86400)
+  const hours = Math.floor((diffSecs % 86400) / 3600)
+  const minutes = Math.floor((diffSecs % 3600) / 60)
+
+  if (days > 0) {
+    const parts = [`${days}d`]
+    if (hours > 0) parts.push(`${hours}h`)
+    if (minutes > 0 && days < 7) parts.push(`${minutes}m`)
+    return `${parts.join(' ')} ago`
+  }
+  const parts = [`${hours}h`]
+  if (minutes > 0) parts.push(`${minutes}m`)
+  return `${parts.join(' ')} ago`
 }
 
 function formatTimestamp(isoString: string): string {
@@ -1105,21 +1117,9 @@ function ActiveIncidentsTable({
             <th className="text-left px-4 py-3 font-medium">Type</th>
             <th
               className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
-              onClick={() => toggleSort('started_at')}
+              onClick={() => toggleSort(sortField === 'started_at' ? 'duration' : 'started_at')}
             >
-              Started{' '}
-              {sortField === 'started_at' && (
-                <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
-              )}
-            </th>
-            <th
-              className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
-              onClick={() => toggleSort('duration')}
-            >
-              Duration{' '}
-              {sortField === 'duration' && (
-                <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
-              )}
+              When
             </th>
           </tr>
         </thead>
@@ -1185,17 +1185,20 @@ function ActiveIncidentsTable({
                     </div>
                   )}
                 </td>
-                <td className="px-4 py-3">
-                  <div>{formatTimeAgo(group.started_at)}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {formatTimestamp(group.started_at)}
+                <td className="px-4 py-3 text-xs space-y-0.5">
+                  <div><span className="text-muted-foreground">Started:</span> {formatTimestamp(group.started_at)} ({formatTimeAgo(group.started_at)})</div>
+                  {group.is_ongoing ? (
+                    <div><span className="text-muted-foreground">Ended:</span> ongoing</div>
+                  ) : group.duration_seconds != null && (
+                    <div><span className="text-muted-foreground">Ended:</span> {formatTimestamp(new Date(new Date(group.started_at).getTime() + group.duration_seconds * 1000).toISOString())} ({formatTimeAgo(new Date(new Date(group.started_at).getTime() + group.duration_seconds * 1000).toISOString())})</div>
+                  )}
+                  <div>
+                    <span className="text-muted-foreground">Duration:</span>{' '}
+                    {group.is_ongoing
+                      ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
+                      : formatDuration(group.duration_seconds)
+                    }
                   </div>
-                </td>
-                <td className="px-4 py-3">
-                  {group.is_ongoing
-                    ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
-                    : formatDuration(group.duration_seconds)
-                  }
                 </td>
               </tr>
             )
@@ -1346,21 +1349,9 @@ function ActiveDeviceIncidentsTable({
             <th className="text-left px-4 py-3 font-medium">Type</th>
             <th
               className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
-              onClick={() => toggleSort('started_at')}
+              onClick={() => toggleSort(sortField === 'started_at' ? 'duration' : 'started_at')}
             >
-              Started{' '}
-              {sortField === 'started_at' && (
-                <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
-              )}
-            </th>
-            <th
-              className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
-              onClick={() => toggleSort('duration')}
-            >
-              Duration{' '}
-              {sortField === 'duration' && (
-                <span className="text-xs">{sortDir === 'asc' ? '↑' : '↓'}</span>
-              )}
+              When
             </th>
           </tr>
         </thead>
@@ -1415,17 +1406,20 @@ function ActiveDeviceIncidentsTable({
                   </div>
                 )}
               </td>
-              <td className="px-4 py-3">
-                <div>{formatTimeAgo(group.started_at)}</div>
-                <div className="text-xs text-muted-foreground">
-                  {formatTimestamp(group.started_at)}
+              <td className="px-4 py-3 text-xs space-y-0.5">
+                <div><span className="text-muted-foreground">Started:</span> {formatTimestamp(group.started_at)} ({formatTimeAgo(group.started_at)})</div>
+                {group.is_ongoing ? (
+                  <div><span className="text-muted-foreground">Ended:</span> ongoing</div>
+                ) : group.duration_seconds != null && (
+                  <div><span className="text-muted-foreground">Ended:</span> {formatTimestamp(new Date(new Date(group.started_at).getTime() + group.duration_seconds * 1000).toISOString())}</div>
+                )}
+                <div>
+                  <span className="text-muted-foreground">Duration:</span>{' '}
+                  {group.is_ongoing
+                    ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
+                    : formatDuration(group.duration_seconds)
+                  }
                 </div>
-              </td>
-              <td className="px-4 py-3">
-                {group.is_ongoing
-                  ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
-                  : formatDuration(group.duration_seconds)
-                }
               </td>
             </tr>
             )
