@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,11 @@ type ClickHouseDB struct {
 	addr      string
 	httpAddr  string
 	container *tcch.ClickHouseContainer
+
+	// templateDB caches a migrated database name so migrations run once per container.
+	templateOnce sync.Once
+	templateDB   string
+	templateErr  error
 }
 
 // Addr returns the ClickHouse native protocol address (host:port).
@@ -230,10 +236,42 @@ func createClickHouseConn(ctx context.Context, addr, database, username, passwor
 	return conn, nil
 }
 
+// ensureTemplateDB runs migrations once into a cached template database.
+func (db *ClickHouseDB) ensureTemplateDB(ctx context.Context) (string, error) {
+	db.templateOnce.Do(func() {
+		templateName := "test_template_migrated"
+		adminConn, err := createClickHouseConn(ctx, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password)
+		if err != nil {
+			db.templateErr = fmt.Errorf("template admin conn: %w", err)
+			return
+		}
+		defer adminConn.Close()
+
+		if err := adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", templateName)); err != nil {
+			db.templateErr = fmt.Errorf("create template db: %w", err)
+			return
+		}
+		if err := chmigrations.RunMigrations(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), chmigrations.MigrationConfig{
+			Addr:     db.addr,
+			Database: templateName,
+			Username: db.cfg.Username,
+			Password: db.cfg.Password,
+		}); err != nil {
+			db.templateErr = fmt.Errorf("template migrations: %w", err)
+			return
+		}
+		db.templateDB = templateName
+	})
+	return db.templateDB, db.templateErr
+}
+
 // SetupTestClickHouseWithMigrations sets up a test database with full schema migrations.
-// Use this when your test needs the actual table schemas from the indexer migrations.
+// Migrations run once per container into a template database; each test clones from it.
 func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
 	ctx := t.Context()
+
+	templateDB, err := db.ensureTemplateDB(ctx)
+	require.NoError(t, err, "failed to ensure template database")
 
 	// Create a unique database for this test
 	randomSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
@@ -247,14 +285,25 @@ func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
 	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
 	require.NoError(t, err, "failed to create test database")
 
-	// Run migrations (use discard logger to avoid noisy output in CI)
-	err = chmigrations.RunMigrations(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), chmigrations.MigrationConfig{
-		Addr:     db.addr,
-		Database: databaseName,
-		Username: db.cfg.Username,
-		Password: db.cfg.Password,
-	})
-	require.NoError(t, err, "failed to run ClickHouse migrations")
+	// Clone tables and views from template
+	rows, err := adminConn.Query(ctx, "SELECT name, engine_full, create_table_query FROM system.tables WHERE database = $1", templateDB)
+	require.NoError(t, err, "failed to list template tables")
+	defer rows.Close()
+
+	for rows.Next() {
+		var name, engineFull, createQuery string
+		require.NoError(t, rows.Scan(&name, &engineFull, &createQuery))
+		if name == "goose_db_version" {
+			continue
+		}
+		// Replace the database name in the CREATE statement
+		cloneQuery := strings.Replace(createQuery, fmt.Sprintf("%s.", templateDB), fmt.Sprintf("%s.", databaseName), -1)
+		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE TABLE %s", templateDB), fmt.Sprintf("CREATE TABLE %s", databaseName), 1)
+		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE VIEW %s", templateDB), fmt.Sprintf("CREATE VIEW %s", databaseName), 1)
+		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE MATERIALIZED VIEW %s", templateDB), fmt.Sprintf("CREATE MATERIALIZED VIEW %s", databaseName), 1)
+		err := adminConn.Exec(ctx, cloneQuery)
+		require.NoError(t, err, "failed to clone table %s: query=%s", name, cloneQuery)
+	}
 
 	// Create test connection
 	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
