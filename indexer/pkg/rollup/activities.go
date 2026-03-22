@@ -39,49 +39,55 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	start := time.Now()
 
 	// Link latency event_ts is interpolated from on-chain sample headers, which can
-	// be inaccurate when the on-chain writer has gaps. The display timestamp expression
-	// picks ingested_at for recent samples near the epoch head, falling back to event_ts
-	// for old data. This only applies to link latency — other telemetry tables have real
-	// event_ts values.
+	// be inaccurate when the on-chain writer has gaps. For live rollup (recent data
+	// near the epoch head), we use a display timestamp that picks ingested_at for
+	// samples near latest_sample_index, falling back to event_ts for older data.
 	//
-	// The display timestamp is always used for bucketing. For filtering:
-	// - Live rollup (≤15 min window): filter by ingested_at to catch epoch-head samples
-	//   with stale interpolated event_ts.
-	// - Backfill (>15 min window): filter by event_ts. Chunking by ingested_at would
-	//   split samples for the same bucket across chunks (ingested_at can differ from
-	//   event_ts by hours), producing incomplete rollup rows. For old data the display
-	//   timestamp equals event_ts anyway, so filtering and bucketing align.
+	// For backfill, we use event_ts directly for both filtering and bucketing.
+	// The displayTs formula depends on latest_sample_index which grows over time,
+	// making it non-deterministic — re-running a backfill would produce different
+	// results and overwrite correct data via ReplacingMergeTree. Using event_ts
+	// is deterministic and correct for historical data.
 	const displayTs = "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
 
 	isLiveWindow := input.WindowEnd.Sub(input.WindowStart) <= 10*time.Minute
+
+	// For live windows, use displayTs (ingested_at for recent samples) for bucketing
+	// and ingested_at for filtering. For backfill, use event_ts for both.
+	bucketTs := "f.event_ts"
 	filterCol := "f.event_ts"
+	headerJoin := ""
 	if isLiveWindow {
+		bucketTs = displayTs
 		filterCol = "f.ingested_at"
+		headerJoin = `
+			LEFT JOIN (
+				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
+					   max(latest_sample_index) AS latest_sample_index,
+					   any(sampling_interval_us) AS sampling_interval_us
+				FROM fact_dz_device_link_latency_sample_header
+				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
+			) h ON f.origin_device_pk = h.origin_device_pk
+				AND f.target_device_pk = h.target_device_pk
+				AND f.link_pk = h._hdr_link_pk
+				AND f.epoch = h.epoch`
 	}
 
 	latencyQuery := `
 		WITH loss_sub AS (
 			SELECT
 				f.link_pk,
-				toStartOfFiveMinutes(` + displayTs + `) as bucket,
+				toStartOfFiveMinutes(` + bucketTs + `) as bucket,
 				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
 			FROM fact_dz_device_link_latency f
-			JOIN dz_links_current l ON f.link_pk = l.pk
-			LEFT JOIN (
-				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-					   latest_sample_index, sampling_interval_us
-				FROM fact_dz_device_link_latency_sample_header
-			) h ON f.origin_device_pk = h.origin_device_pk
-				AND f.target_device_pk = h.target_device_pk
-				AND f.link_pk = h._hdr_link_pk
-				AND f.epoch = h.epoch
+			JOIN dz_links_current l ON f.link_pk = l.pk` + headerJoin + `
 			WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 			GROUP BY f.link_pk, bucket, direction
 		)
 		SELECT
 			f.link_pk,
-			toStartOfFiveMinutes(` + displayTs + `) as bucket,
+			toStartOfFiveMinutes(` + bucketTs + `) as bucket,
 			if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 			avg(f.rtt_us) as avg_rtt,
 			toFloat64(min(f.rtt_us)) as min_rtt,
@@ -93,17 +99,9 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			max(ls.loss_pct) as loss_pct,
 			toUInt32(count(*)) as samples
 		FROM fact_dz_device_link_latency f
-		JOIN dz_links_current l ON f.link_pk = l.pk
-		LEFT JOIN (
-			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-				   latest_sample_index, sampling_interval_us
-			FROM fact_dz_device_link_latency_sample_header
-		) h ON f.origin_device_pk = h.origin_device_pk
-			AND f.target_device_pk = h.target_device_pk
-			AND f.link_pk = h._hdr_link_pk
-			AND f.epoch = h.epoch
+		JOIN dz_links_current l ON f.link_pk = l.pk` + headerJoin + `
 		LEFT JOIN loss_sub ls ON f.link_pk = ls.link_pk
-			AND toStartOfFiveMinutes(` + displayTs + `) = ls.bucket
+			AND toStartOfFiveMinutes(` + bucketTs + `) = ls.bucket
 			AND if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') = ls.direction
 		WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 		GROUP BY f.link_pk, bucket, direction

@@ -1568,8 +1568,10 @@ func fetchLinkHistoryDataLegacy(ctx context.Context, timeRange string, requested
 			JOIN dz_links_current l ON f.link_pk = l.pk
 			LEFT JOIN (
 				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-					   latest_sample_index, sampling_interval_us
+					   max(latest_sample_index) AS latest_sample_index,
+					   any(sampling_interval_us) AS sampling_interval_us
 				FROM fact_dz_device_link_latency_sample_header
+				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 			) h ON f.origin_device_pk = h.origin_device_pk
 				AND f.target_device_pk = h.target_device_pk
 				AND f.link_pk = h._hdr_link_pk
@@ -1593,8 +1595,10 @@ func fetchLinkHistoryDataLegacy(ctx context.Context, timeRange string, requested
 		JOIN dz_links_current l ON f.link_pk = l.pk
 		LEFT JOIN (
 			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-				   latest_sample_index, sampling_interval_us
+				   max(latest_sample_index) AS latest_sample_index,
+				   any(sampling_interval_us) AS sampling_interval_us
 			FROM fact_dz_device_link_latency_sample_header
+			GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 		) h ON f.origin_device_pk = h.origin_device_pk
 			AND f.target_device_pk = h.target_device_pk
 			AND f.link_pk = h._hdr_link_pk
@@ -2681,8 +2685,10 @@ func fetchDeviceHistoryDataLegacy(ctx context.Context, timeRange string, request
 		FROM fact_dz_device_link_latency f
 		LEFT JOIN (
 			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-				   latest_sample_index, sampling_interval_us
+				   max(latest_sample_index) AS latest_sample_index,
+				   any(sampling_interval_us) AS sampling_interval_us
 			FROM fact_dz_device_link_latency_sample_header
+			GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 		) h ON f.origin_device_pk = h.origin_device_pk
 			AND f.target_device_pk = h.target_device_pk
 			AND f.link_pk = h._hdr_link_pk
@@ -3558,8 +3564,10 @@ func fetchSingleLinkHistoryDataLegacy(ctx context.Context, linkPK string, timeRa
 	singleTimeFilter := fmt.Sprintf("f.ingested_at > now() - INTERVAL %d HOUR", totalHours)
 	singleHeaderJoin := `LEFT JOIN (
 				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-					   latest_sample_index, sampling_interval_us
+					   max(latest_sample_index) AS latest_sample_index,
+					   any(sampling_interval_us) AS sampling_interval_us
 				FROM fact_dz_device_link_latency_sample_header
+				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 			) h ON f.origin_device_pk = h.origin_device_pk
 				AND f.target_device_pk = h.target_device_pk
 				AND f.link_pk = h._hdr_link_pk
@@ -4185,8 +4193,10 @@ func fetchSingleDeviceHistoryDataLegacy(ctx context.Context, devicePK string, ti
 		FROM fact_dz_device_link_latency f
 		LEFT JOIN (
 			SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-				   latest_sample_index, sampling_interval_us
+				   max(latest_sample_index) AS latest_sample_index,
+				   any(sampling_interval_us) AS sampling_interval_us
 			FROM fact_dz_device_link_latency_sample_header
+			GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 		) h ON f.origin_device_pk = h.origin_device_pk
 			AND f.target_device_pk = h.target_device_pk
 			AND f.link_pk = h._hdr_link_pk

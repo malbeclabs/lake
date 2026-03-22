@@ -828,8 +828,10 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	topoDisplayTs := "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
 	topoHeaderJoin := `LEFT JOIN (
 				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-					   latest_sample_index, sampling_interval_us
+					   max(latest_sample_index) AS latest_sample_index,
+					   any(sampling_interval_us) AS sampling_interval_us
 				FROM fact_dz_device_link_latency_sample_header
+				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 			) h ON f.origin_device_pk = h.origin_device_pk
 				AND f.target_device_pk = h.target_device_pk
 				AND f.link_pk = h._hdr_link_pk
@@ -1308,8 +1310,10 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 			LEFT JOIN (
 				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-					   latest_sample_index, sampling_interval_us
+					   max(latest_sample_index) AS latest_sample_index,
+					   any(sampling_interval_us) AS sampling_interval_us
 				FROM fact_dz_device_link_latency_sample_header
+				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 			) h ON f.origin_device_pk = h.origin_device_pk
 				AND f.target_device_pk = h.target_device_pk
 				AND f.link_pk = h._hdr_link_pk
