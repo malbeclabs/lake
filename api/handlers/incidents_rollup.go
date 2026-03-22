@@ -135,20 +135,40 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 	linkSource := "link_rollup_5m FINAL"
 	intfSource := "device_interface_rollup_5m FINAL"
 	if p.UseRaw {
-		// Raw link source: compute per-direction loss from latency probes
+		// Raw link source: compute per-direction loss from latency probes,
+		// resolve ISIS and provisioning state per-bucket from history tables.
 		linkSource = `(
 			SELECT
-				toStartOfFiveMinutes(f.event_ts) AS bucket_ts,
-				f.link_pk AS link_pk,
-				countIf(f.origin_device_pk = l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
-					/ greatest(countIf(f.origin_device_pk = l.side_a_pk), 1) AS a_loss_pct,
-				countIf(f.origin_device_pk != l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
-					/ greatest(countIf(f.origin_device_pk != l.side_a_pk), 1) AS z_loss_pct,
-				false AS isis_down,
-				false AS provisioning
-			FROM fact_dz_device_link_latency f
-			JOIN dz_links_current l ON f.link_pk = l.pk
-			GROUP BY bucket_ts, f.link_pk
+				lb.bucket_ts AS bucket_ts,
+				lb.link_pk AS link_pk,
+				lb.a_loss_pct AS a_loss_pct,
+				lb.z_loss_pct AS z_loss_pct,
+				CASE WHEN ia.link_pk IS NULL THEN false ELSE ia.is_deleted = 1 END AS isis_down,
+				COALESCE(lh.committed_rtt_ns, lc.committed_rtt_ns, 0) = 500000 AS provisioning
+			FROM (
+				SELECT
+					toStartOfFiveMinutes(f.event_ts) AS bucket_ts,
+					f.link_pk AS link_pk,
+					countIf(f.origin_device_pk = l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
+						/ greatest(countIf(f.origin_device_pk = l.side_a_pk), 1) AS a_loss_pct,
+					countIf(f.origin_device_pk != l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
+						/ greatest(countIf(f.origin_device_pk != l.side_a_pk), 1) AS z_loss_pct
+				FROM fact_dz_device_link_latency f
+				JOIN dz_links_current l ON f.link_pk = l.pk
+				GROUP BY bucket_ts, f.link_pk
+			) lb
+			LEFT JOIN (
+				SELECT pk, toStartOfFiveMinutes(snapshot_ts) AS bucket_ts,
+					argMax(committed_rtt_ns, snapshot_ts) AS committed_rtt_ns
+				FROM dim_dz_links_history
+				GROUP BY pk, bucket_ts
+			) lh ON lb.link_pk = lh.pk AND lb.bucket_ts = lh.bucket_ts
+			LEFT JOIN dz_links_current lc ON lb.link_pk = lc.pk
+			LEFT JOIN (
+				SELECT link_pk, argMax(is_deleted, snapshot_ts) AS is_deleted
+				FROM dim_isis_adjacencies_history WHERE link_pk != ''
+				GROUP BY link_pk
+			) ia ON lb.link_pk = ia.link_pk
 		)`
 		// Raw interface source: compute counter sums from raw deltas
 		intfSource = `(
@@ -182,17 +202,16 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 	}
 
 	// ISIS down
-	if !p.UseRaw && (p.TypeFilter == "all" || p.TypeFilter == "isis_down") {
-		// ISIS down only available from rollup (raw doesn't resolve ISIS state)
+	if p.TypeFilter == "all" || p.TypeFilter == "isis_down" {
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT link_pk AS entity_pk, %s AS bucket_ts,
 			toFloat64(1) AS metric_value,
 			'isis_down' AS incident_type
-		FROM link_rollup_5m FINAL
+		FROM %s
 		WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		  AND isis_down = true
 		  AND provisioning = false`,
-			bucketExpr("bucket_ts"), lookbackArg))
+			bucketExpr("bucket_ts"), linkSource, lookbackArg))
 	}
 
 	// No data: missing rows
