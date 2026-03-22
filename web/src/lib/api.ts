@@ -151,11 +151,22 @@ function isRetryableError(error: unknown, status?: number): boolean {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 // Retry wrapper for fetch calls with automatic auth headers
+// forwardSourceParam appends ?source=raw to API URLs when the browser URL has it.
+function forwardSourceParam(url: string): string {
+  const browserSource = new URLSearchParams(window.location.search).get('source')
+  if (browserSource) {
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}source=${encodeURIComponent(browserSource)}`
+  }
+  return url
+}
+
 async function fetchWithRetry(
   url: string,
   options?: RequestInit,
   config = RETRY_CONFIG
 ): Promise<Response> {
+  url = forwardSourceParam(url)
   let lastError: unknown
   let lastStatus: number | undefined
 
