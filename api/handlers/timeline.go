@@ -120,44 +120,21 @@ type UserEntity struct {
 	MetroCode  string `json:"metro_code,omitempty"`
 }
 
-// PacketLossEventDetails contains details for packet loss events
-type PacketLossEventDetails struct {
-	LinkPK          string  `json:"link_pk"`
-	LinkCode        string  `json:"link_code"`
-	LinkType        string  `json:"link_type"`
-	SideAMetro      string  `json:"side_a_metro"`
-	SideZMetro      string  `json:"side_z_metro"`
+// IncidentEventDetails contains details for incident-based timeline events.
+type IncidentEventDetails struct {
+	EntityPK        string  `json:"entity_pk"`
+	EntityCode      string  `json:"entity_code"`
+	EntityType      string  `json:"entity_type"`   // "link" or "device"
+	IncidentType    string  `json:"incident_type"` // "packet_loss", "errors", etc.
+	PeakValue       float64 `json:"peak_value"`
+	DurationSeconds int64   `json:"duration_seconds"`
+	IsOngoing       bool    `json:"is_ongoing"`
+	LinkType        string  `json:"link_type,omitempty"`
+	SideAMetro      string  `json:"side_a_metro,omitempty"`
+	SideZMetro      string  `json:"side_z_metro,omitempty"`
+	Metro           string  `json:"metro,omitempty"`
 	ContributorCode string  `json:"contributor_code,omitempty"`
-	PreviousLossPct float64 `json:"previous_loss_pct"`
-	CurrentLossPct  float64 `json:"current_loss_pct"`
-	Direction       string  `json:"direction"` // "increased" or "decreased"
-}
-
-// InterfaceEventDetails contains details for interface telemetry events
-type InterfaceEventDetails struct {
-	DevicePK           string `json:"device_pk"`
-	DeviceCode         string `json:"device_code"`
-	ContributorCode    string `json:"contributor_code,omitempty"`
-	MetroCode          string `json:"metro_code,omitempty"`
-	InterfaceName      string `json:"interface_name"`
-	LinkPK             string `json:"link_pk,omitempty"`
-	LinkCode           string `json:"link_code,omitempty"`
-	InErrors           int64  `json:"in_errors,omitempty"`
-	OutErrors          int64  `json:"out_errors,omitempty"`
-	InDiscards         int64  `json:"in_discards,omitempty"`
-	OutDiscards        int64  `json:"out_discards,omitempty"`
-	CarrierTransitions int64  `json:"carrier_transitions,omitempty"`
-	IssueType          string `json:"issue_type"` // "errors", "discards", "carrier"
-}
-
-// GroupedInterfaceDetails contains details for grouped interface events (multiple interfaces on same device)
-type GroupedInterfaceDetails struct {
-	DevicePK        string                  `json:"device_pk"`
-	DeviceCode      string                  `json:"device_code"`
-	ContributorCode string                  `json:"contributor_code,omitempty"`
-	MetroCode       string                  `json:"metro_code,omitempty"`
-	IssueType       string                  `json:"issue_type"` // "errors", "discards", "carrier"
-	Interfaces      []InterfaceEventDetails `json:"interfaces"`
+	Status          string  `json:"status,omitempty"`
 }
 
 // ValidatorEventDetails contains details for validator join/leave events
@@ -225,12 +202,6 @@ type TimelineParams struct {
 var internalUserPubkeys = []string{
 	"DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan",
 }
-
-// Packet loss thresholds
-const (
-	PacketLossWarningPct  = 0.1 // 0.1%
-	PacketLossCriticalPct = 1.0 // 1%
-)
 
 // TimelineBoundsResponse contains the available date range for timeline data
 type TimelineBoundsResponse struct {
@@ -416,10 +387,8 @@ func eventMatchesFieldSearch(event TimelineEvent, field, value string) bool {
 			if entity, ok := details.Entity.(DeviceEntity); ok {
 				return contains(entity.Code)
 			}
-		case InterfaceEventDetails:
-			return contains(details.DeviceCode)
-		case GroupedInterfaceDetails:
-			return contains(details.DeviceCode)
+		case IncidentEventDetails:
+			return contains(details.EntityCode)
 		case ValidatorEventDetails:
 			return contains(details.DeviceCode)
 		}
@@ -432,16 +401,8 @@ func eventMatchesFieldSearch(event TimelineEvent, field, value string) bool {
 			if entity, ok := details.Entity.(LinkEntity); ok {
 				return contains(entity.Code) || contains(entity.SideACode) || contains(entity.SideZCode)
 			}
-		case PacketLossEventDetails:
-			return contains(details.LinkCode)
-		case InterfaceEventDetails:
-			return contains(details.LinkCode)
-		case GroupedInterfaceDetails:
-			for _, intf := range details.Interfaces {
-				if contains(intf.LinkCode) {
-					return true
-				}
-			}
+		case IncidentEventDetails:
+			return contains(details.EntityCode)
 		}
 	case "metro":
 		if contains(event.EntityCode) && event.EntityType == "metro" {
@@ -461,12 +422,8 @@ func eventMatchesFieldSearch(event TimelineEvent, field, value string) bool {
 			if entity, ok := details.Entity.(UserEntity); ok {
 				return contains(entity.MetroCode)
 			}
-		case PacketLossEventDetails:
-			return contains(details.SideAMetro) || contains(details.SideZMetro)
-		case InterfaceEventDetails:
-			return contains(details.MetroCode)
-		case GroupedInterfaceDetails:
-			return contains(details.MetroCode)
+		case IncidentEventDetails:
+			return contains(details.SideAMetro) || contains(details.SideZMetro) || contains(details.Metro)
 		case ValidatorEventDetails:
 			return contains(details.MetroCode)
 		}
@@ -485,11 +442,7 @@ func eventMatchesFieldSearch(event TimelineEvent, field, value string) bool {
 			if entity, ok := details.Entity.(ContributorEntity); ok {
 				return contains(entity.Code)
 			}
-		case PacketLossEventDetails:
-			return contains(details.ContributorCode)
-		case InterfaceEventDetails:
-			return contains(details.ContributorCode)
-		case GroupedInterfaceDetails:
+		case IncidentEventDetails:
 			return contains(details.ContributorCode)
 		case ValidatorEventDetails:
 			return contains(details.ContributorCode)
@@ -644,15 +597,10 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(10)
 	var (
-		deviceEvents      []TimelineEvent
-		linkEvents        []TimelineEvent
-		metroEvents       []TimelineEvent
-		contributorEvents []TimelineEvent
-		userEvents        []TimelineEvent
-		packetLossEvents  []TimelineEvent
-		interfaceEvents   []TimelineEvent
-		validatorEvents   []TimelineEvent
-		mu                sync.Mutex
+		entityChangeEvents []TimelineEvent
+		incidentEvents     []TimelineEvent
+		validatorEvents    []TimelineEvent
+		mu                 sync.Mutex
 	)
 
 	// Check if category is requested (empty means all)
@@ -668,106 +616,52 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 
-	// Query device changes
+	// Query consolidated entity changes (devices, links, metros, contributors, users)
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryDeviceChanges(ctx, params.StartTime, params.EndTime)
+			events, err := queryEntityChangeEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
 			if err != nil {
-				slog.Error("error querying device changes", "error", err)
+				slog.Error("error querying entity changes", "error", err)
 				return nil // Don't fail the whole request
 			}
 			mu.Lock()
-			deviceEvents = events
+			entityChangeEvents = events
 			mu.Unlock()
 			return nil
 		})
 	}
 
-	// Query link changes
-	if shouldIncludeCategory("state_change") {
-		g.Go(func() error {
-			events, err := queryLinkChanges(ctx, params.StartTime, params.EndTime)
-			if err != nil {
-				slog.Error("error querying link changes", "error", err)
-				return nil
-			}
-			mu.Lock()
-			linkEvents = events
-			mu.Unlock()
-			return nil
-		})
+	// Query incident events (packet loss, errors, discards, carrier, no_data, isis_down, etc.)
+	hasIncidentCategory := false
+	for _, ic := range incidentCategories {
+		if shouldIncludeCategory(ic) {
+			hasIncidentCategory = true
+			break
+		}
 	}
-
-	// Query metro changes
-	if shouldIncludeCategory("state_change") {
+	if hasIncidentCategory {
 		g.Go(func() error {
-			events, err := queryMetroChanges(ctx, params.StartTime, params.EndTime)
+			events, err := queryIncidentEvents(ctx, params.StartTime, params.EndTime)
 			if err != nil {
-				slog.Error("error querying metro changes", "error", err)
+				slog.Error("error querying incident events", "error", err)
 				return nil
 			}
-			mu.Lock()
-			metroEvents = events
-			mu.Unlock()
-			return nil
-		})
-	}
-
-	// Query contributor changes
-	if shouldIncludeCategory("state_change") {
-		g.Go(func() error {
-			events, err := queryContributorChanges(ctx, params.StartTime, params.EndTime)
-			if err != nil {
-				slog.Error("error querying contributor changes", "error", err)
-				return nil
+			// Filter by requested categories
+			if len(params.Categories) > 0 {
+				catSet := make(map[string]bool, len(params.Categories))
+				for _, c := range params.Categories {
+					catSet[c] = true
+				}
+				filtered := events[:0]
+				for _, e := range events {
+					if catSet[e.Category] {
+						filtered = append(filtered, e)
+					}
+				}
+				events = filtered
 			}
 			mu.Lock()
-			contributorEvents = events
-			mu.Unlock()
-			return nil
-		})
-	}
-
-	// Query user changes (non-validator, non-gossip users)
-	if shouldIncludeCategory("state_change") {
-		g.Go(func() error {
-			events, err := queryUserChanges(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
-			if err != nil {
-				slog.Error("error querying user changes", "error", err)
-				return nil
-			}
-			mu.Lock()
-			userEvents = events
-			mu.Unlock()
-			return nil
-		})
-	}
-
-	// Query packet loss events
-	if shouldIncludeCategory("packet_loss") {
-		g.Go(func() error {
-			events, err := queryPacketLossEvents(ctx, params.StartTime, params.EndTime)
-			if err != nil {
-				slog.Error("error querying packet loss events", "error", err)
-				return nil
-			}
-			mu.Lock()
-			packetLossEvents = events
-			mu.Unlock()
-			return nil
-		})
-	}
-
-	// Query interface telemetry events (carrier, errors, discards)
-	if shouldIncludeCategory("interface_carrier") || shouldIncludeCategory("interface_errors") || shouldIncludeCategory("interface_discards") {
-		g.Go(func() error {
-			events, err := queryInterfaceEvents(ctx, params.StartTime, params.EndTime)
-			if err != nil {
-				slog.Error("error querying interface events", "error", err)
-				return nil
-			}
-			mu.Lock()
-			interfaceEvents = events
+			incidentEvents = events
 			mu.Unlock()
 			return nil
 		})
@@ -874,21 +768,13 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 
 	// Merge all events
 	allEvents := make([]TimelineEvent, 0)
-	allEvents = append(allEvents, deviceEvents...)
-	allEvents = append(allEvents, linkEvents...)
-	allEvents = append(allEvents, metroEvents...)
-	allEvents = append(allEvents, contributorEvents...)
-	allEvents = append(allEvents, userEvents...)
-	allEvents = append(allEvents, packetLossEvents...)
-	allEvents = append(allEvents, interfaceEvents...)
+	allEvents = append(allEvents, entityChangeEvents...)
+	allEvents = append(allEvents, incidentEvents...)
 	allEvents = append(allEvents, validatorEvents...)
 	allEvents = append(allEvents, gossipNetworkEvents...)
 	allEvents = append(allEvents, voteAccountEvents...)
 	allEvents = append(allEvents, stakeChangeEvents...)
 	allEvents = append(allEvents, dzStakeAttrEvents...)
-
-	// Group interface events by device + event type + timestamp
-	allEvents = groupInterfaceEvents(allEvents)
 
 	// Populate DZ total stake share for validator events by walking backwards
 	// from the current DZ total. Only attribution events (with ContributionChangeLamports)
@@ -1024,7 +910,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 				case "alerting":
 					matched = strings.Contains(e.EventType, "_started") || strings.Contains(e.EventType, "_stake_increased")
 				case "resolved":
-					matched = strings.Contains(e.EventType, "_stopped") || strings.Contains(e.EventType, "_recovered") || strings.Contains(e.EventType, "_stake_decreased")
+					matched = strings.Contains(e.EventType, "_stopped") || strings.Contains(e.EventType, "_recovered") || strings.Contains(e.EventType, "_ended") || strings.Contains(e.EventType, "_stake_decreased")
 				}
 				if matched {
 					filtered = append(filtered, e)
@@ -1197,73 +1083,35 @@ func computeHistogram(events []TimelineEvent, startTime, endTime time.Time) []Hi
 	return buckets
 }
 
-func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
-	query := `
-		WITH min_ts AS (
-			SELECT min(snapshot_ts) as ts FROM dim_dz_devices_history
-		),
-		all_history AS (
-			SELECT
-				entity_id,
-				snapshot_ts,
-				pk,
-				code,
-				status,
-				device_type,
-				public_ip,
-				contributor_pk,
-				metro_pk,
-				max_users,
-				is_deleted,
-				attrs_hash,
-				row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as row_num,
-				lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_status,
-				lag(device_type) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_device_type,
-				lag(public_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_public_ip,
-				lag(contributor_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_contributor_pk,
-				lag(metro_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_metro_pk,
-				lag(max_users) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_max_users,
-				lag(attrs_hash) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_attrs_hash,
-				lag(is_deleted) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_is_deleted
-			FROM dim_dz_devices_history
-		)
-		SELECT
-			h.entity_id,
-			h.snapshot_ts,
-			h.pk,
-			h.code,
-			h.status,
-			h.device_type,
-			h.public_ip,
-			h.contributor_pk,
-			h.metro_pk,
-			h.max_users,
-			h.is_deleted,
-			h.prev_status,
-			h.prev_device_type,
-			h.prev_public_ip,
-			h.prev_contributor_pk,
-			h.prev_metro_pk,
-			h.prev_max_users,
-			h.prev_is_deleted,
-			CASE
-				WHEN h.row_num = 1 THEN 'created'
-				WHEN h.is_deleted = 1 AND h.prev_is_deleted = 0 THEN 'deleted'
-				ELSE 'updated'
-			END as change_type,
-			COALESCE(c.code, '') as contributor_code,
-			COALESCE(m.code, '') as metro_code
-		FROM all_history h
-		CROSS JOIN min_ts
-		LEFT JOIN dz_contributors_current c ON h.contributor_pk = c.pk
-		LEFT JOIN dz_metros_current m ON h.metro_pk = m.pk
-		WHERE (h.attrs_hash != h.prev_attrs_hash OR h.row_num = 1)
-		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
-		  -- Exclude initial ingestion events (created at the earliest snapshot time)
-		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC, h.entity_id
-		LIMIT 200
-	`
+// entityChangeRow represents a normalized row from the entity_changes_v view.
+type entityChangeRow struct {
+	EntityType      string
+	EntityID        string
+	EntityPK        string
+	EntityCode      string
+	SnapshotTS      time.Time
+	ChangeType      string
+	ChangedFields   []string
+	NewStatus       string
+	ContributorCode string
+	MetroCode       string
+}
+
+// queryEntityChanges queries the entity_changes_v view for all entity state changes.
+func queryEntityChanges(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]entityChangeRow, error) {
+	internalFilter := ""
+	if !includeInternal && len(internalUserPubkeys) > 0 {
+		internalFilter = fmt.Sprintf(" AND NOT (entity_type = 'user' AND entity_code IN ('%s'))", strings.Join(internalUserPubkeys, "','"))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT entity_type, entity_id, entity_pk, entity_code, snapshot_ts,
+			   change_type, changed_fields, new_status, contributor_code, metro_code
+		FROM entity_changes_v
+		WHERE snapshot_ts >= ? AND snapshot_ts <= ?%s
+		ORDER BY snapshot_ts DESC
+		LIMIT 500
+	`, internalFilter)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
@@ -1273,45 +1121,122 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 	defer rows.Close()
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 
-	var events []TimelineEvent
+	var result []entityChangeRow
 	for rows.Next() {
-		var (
-			entityID          string
-			snapshotTS        time.Time
-			pk                string
-			code              string
-			status            string
-			deviceType        string
-			publicIP          string
-			contributorPK     string
-			metroPK           string
-			maxUsers          int32
-			isDeleted         uint8
-			prevStatus        *string
-			prevDeviceType    *string
-			prevPublicIP      *string
-			prevContributorPK *string
-			prevMetroPK       *string
-			prevMaxUsers      *int32
-			prevIsDeleted     *uint8
-			changeType        string
-			contributorCode   string
-			metroCode         string
-		)
-
+		var r entityChangeRow
 		if err := rows.Scan(
+			&r.EntityType, &r.EntityID, &r.EntityPK, &r.EntityCode, &r.SnapshotTS,
+			&r.ChangeType, &r.ChangedFields, &r.NewStatus, &r.ContributorCode, &r.MetroCode,
+		); err != nil {
+			return nil, fmt.Errorf("entity change scan error: %w", err)
+		}
+		result = append(result, r)
+	}
+	return result, nil
+}
+
+// fetchDeviceChangeDetails batch-fetches device entity details for the given (entity_pk, snapshot_ts) pairs.
+func fetchDeviceChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	// Build pk list and ts range
+	pks := make([]string, len(rows))
+	for i, r := range rows {
+		pks[i] = r.EntityPK
+	}
+
+	query := `
+		WITH target AS (
+			SELECT entity_id, snapshot_ts, pk, code, status, device_type, public_ip,
+				   contributor_pk, metro_pk, max_users,
+				   lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_status,
+				   lag(device_type) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_device_type,
+				   lag(public_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_public_ip,
+				   lag(contributor_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_contributor_pk,
+				   lag(metro_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_metro_pk,
+				   lag(max_users) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_max_users
+			FROM dim_dz_devices_history
+			WHERE pk IN (?)
+		)
+		SELECT t.entity_id, t.snapshot_ts, t.pk, t.code, t.status, t.device_type, t.public_ip,
+			   t.contributor_pk, t.metro_pk, t.max_users,
+			   t.prev_status, t.prev_device_type, t.prev_public_ip,
+			   t.prev_contributor_pk, t.prev_metro_pk, t.prev_max_users,
+			   COALESCE(c.code, '') AS contributor_code,
+			   COALESCE(m.code, '') AS metro_code
+		FROM target t
+		LEFT JOIN dz_contributors_current c ON t.contributor_pk = c.pk
+		LEFT JOIN dz_metros_current m ON t.metro_pk = m.pk
+		WHERE (t.entity_id, t.snapshot_ts) IN (
+			SELECT entity_id, snapshot_ts FROM dim_dz_devices_history
+			WHERE pk IN (?) AND snapshot_ts IN (?)
+		)
+	`
+
+	// Build snapshot_ts list
+	tsList := make([]time.Time, len(rows))
+	for i, r := range rows {
+		tsList[i] = r.SnapshotTS
+	}
+
+	start := time.Now()
+	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	if err != nil {
+		return nil, err
+	}
+	defer dbRows.Close()
+	metrics.RecordClickHouseQuery(time.Since(start), err)
+
+	// Build a set of requested (entityID, snapshotTS) for fast lookup
+	type rowKey struct {
+		entityID   string
+		snapshotTS time.Time
+	}
+	requested := make(map[rowKey]entityChangeRow, len(rows))
+	for _, r := range rows {
+		requested[rowKey{r.EntityID, r.SnapshotTS}] = r
+	}
+
+	result := make(map[string]EntityChangeDetails)
+	for dbRows.Next() {
+		var (
+			entityID        string
+			snapshotTS      time.Time
+			pk, code        string
+			status          string
+			deviceType      string
+			publicIP        string
+			contributorPK   string
+			metroPK         string
+			maxUsers        int32
+			prevStatus      *string
+			prevDeviceType  *string
+			prevPublicIP    *string
+			prevContribPK   *string
+			prevMetroPK     *string
+			prevMaxUsers    *int32
+			contributorCode string
+			metroCode       string
+		)
+		if err := dbRows.Scan(
 			&entityID, &snapshotTS, &pk, &code, &status, &deviceType, &publicIP,
-			&contributorPK, &metroPK, &maxUsers, &isDeleted,
-			&prevStatus, &prevDeviceType, &prevPublicIP, &prevContributorPK,
-			&prevMetroPK, &prevMaxUsers, &prevIsDeleted, &changeType,
+			&contributorPK, &metroPK, &maxUsers,
+			&prevStatus, &prevDeviceType, &prevPublicIP, &prevContribPK, &prevMetroPK, &prevMaxUsers,
 			&contributorCode, &metroCode,
 		); err != nil {
-			return nil, fmt.Errorf("device scan error: %w", err)
+			return nil, fmt.Errorf("device detail scan error: %w", err)
 		}
 
-		// Build changes list for updates
+		key := rowKey{entityID, snapshotTS}
+		feedRow, ok := requested[key]
+		if !ok {
+			continue
+		}
+
 		var changes []FieldChange
-		if changeType == "updated" {
+		if feedRow.ChangeType == "updated" {
 			if prevStatus != nil && *prevStatus != status {
 				changes = append(changes, FieldChange{Field: "status", OldValue: *prevStatus, NewValue: status})
 			}
@@ -1321,8 +1246,8 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 			if prevPublicIP != nil && *prevPublicIP != publicIP {
 				changes = append(changes, FieldChange{Field: "public_ip", OldValue: *prevPublicIP, NewValue: publicIP})
 			}
-			if prevContributorPK != nil && *prevContributorPK != contributorPK {
-				changes = append(changes, FieldChange{Field: "contributor", OldValue: *prevContributorPK, NewValue: contributorPK})
+			if prevContribPK != nil && *prevContribPK != contributorPK {
+				changes = append(changes, FieldChange{Field: "contributor", OldValue: *prevContribPK, NewValue: contributorPK})
 			}
 			if prevMetroPK != nil && *prevMetroPK != metroPK {
 				changes = append(changes, FieldChange{Field: "metro", OldValue: *prevMetroPK, NewValue: metroPK})
@@ -1330,45 +1255,6 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 			if prevMaxUsers != nil && *prevMaxUsers != maxUsers {
 				changes = append(changes, FieldChange{Field: "max_users", OldValue: *prevMaxUsers, NewValue: maxUsers})
 			}
-		}
-
-		var title string
-		var severity string
-		var eventType string
-
-		switch changeType {
-		case "created":
-			title = fmt.Sprintf("Device %s created", code)
-			severity = "info"
-			eventType = "entity_created"
-		case "deleted":
-			title = fmt.Sprintf("Device %s deleted", code)
-			severity = "warning"
-			eventType = "entity_deleted"
-		default:
-			if len(changes) == 1 {
-				// Single field change - make title more specific
-				c := changes[0]
-				switch c.Field {
-				case "status":
-					if status == "activated" {
-						title = fmt.Sprintf("Device %s activated", code)
-					} else if status == "disabled" {
-						title = fmt.Sprintf("Device %s disabled", code)
-						severity = "warning"
-					} else {
-						title = fmt.Sprintf("Device %s status: %s → %s", code, c.OldValue, c.NewValue)
-					}
-				default:
-					title = fmt.Sprintf("Device %s %s changed", code, c.Field)
-				}
-			} else {
-				title = fmt.Sprintf("Device %s updated (%d fields)", code, len(changes))
-			}
-			if severity == "" {
-				severity = "info"
-			}
-			eventType = "entity_updated"
 		}
 
 		entity := DeviceEntity{
@@ -1384,138 +1270,95 @@ func queryDeviceChanges(ctx context.Context, startTime, endTime time.Time) ([]Ti
 			MetroCode:       metroCode,
 		}
 
-		events = append(events, TimelineEvent{
-			ID:         generateEventID(entityID, snapshotTS, eventType),
-			EventType:  eventType,
-			Timestamp:  snapshotTS.Format(time.RFC3339),
-			Category:   "state_change",
-			Severity:   severity,
-			Title:      title,
-			EntityType: "device",
-			EntityPK:   pk,
-			EntityCode: code,
-			Details: EntityChangeDetails{
-				ChangeType: changeType,
-				Changes:    changes,
-				Entity:     entity,
-			},
-		})
+		mapKey := entityID + snapshotTS.Format(time.RFC3339Nano)
+		result[mapKey] = EntityChangeDetails{
+			ChangeType: feedRow.ChangeType,
+			Changes:    changes,
+			Entity:     entity,
+		}
 	}
-
-	return events, nil
+	return result, nil
 }
 
-func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+// fetchLinkChangeDetails batch-fetches link entity details for the given feed rows.
+func fetchLinkChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	pks := make([]string, len(rows))
+	tsList := make([]time.Time, len(rows))
+	for i, r := range rows {
+		pks[i] = r.EntityPK
+		tsList[i] = r.SnapshotTS
+	}
+
 	query := `
-		WITH min_ts AS (
-			SELECT min(snapshot_ts) as ts FROM dim_dz_links_history
-		),
-		all_history AS (
-			SELECT
-				entity_id,
-				snapshot_ts,
-				pk,
-				code,
-				status,
-				link_type,
-				tunnel_net,
-				contributor_pk,
-				side_a_pk,
-				side_z_pk,
-				side_a_iface_name,
-				side_z_iface_name,
-				committed_rtt_ns,
-				committed_jitter_ns,
-				bandwidth_bps,
-				isis_delay_override_ns,
-				is_deleted,
-				attrs_hash,
-				row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as row_num,
-				lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_status,
-				lag(link_type) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_link_type,
-				lag(tunnel_net) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_tunnel_net,
-				lag(contributor_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_contributor_pk,
-				lag(side_a_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_side_a_pk,
-				lag(side_z_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_side_z_pk,
-				lag(committed_rtt_ns) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_committed_rtt_ns,
-				lag(committed_jitter_ns) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_committed_jitter_ns,
-				lag(bandwidth_bps) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_bandwidth_bps,
-				lag(isis_delay_override_ns) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_isis_delay_override_ns,
-				lag(attrs_hash) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_attrs_hash,
-				lag(is_deleted) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_is_deleted
+		WITH target AS (
+			SELECT entity_id, snapshot_ts, pk, code, status, link_type, tunnel_net,
+				   contributor_pk, side_a_pk, side_z_pk, side_a_iface_name, side_z_iface_name,
+				   committed_rtt_ns, committed_jitter_ns, bandwidth_bps, isis_delay_override_ns,
+				   lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_status,
+				   lag(link_type) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_link_type,
+				   lag(tunnel_net) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_tunnel_net,
+				   lag(contributor_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_contributor_pk,
+				   lag(side_a_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_side_a_pk,
+				   lag(side_z_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_side_z_pk,
+				   lag(committed_rtt_ns) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_committed_rtt_ns,
+				   lag(committed_jitter_ns) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_committed_jitter_ns,
+				   lag(bandwidth_bps) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_bandwidth_bps,
+				   lag(isis_delay_override_ns) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_isis_delay_override_ns
 			FROM dim_dz_links_history
+			WHERE pk IN (?)
 		)
-		SELECT
-			h.entity_id,
-			h.snapshot_ts,
-			h.pk,
-			h.code,
-			h.status,
-			h.link_type,
-			h.tunnel_net,
-			h.contributor_pk,
-			h.side_a_pk,
-			h.side_z_pk,
-			h.side_a_iface_name,
-			h.side_z_iface_name,
-			h.committed_rtt_ns,
-			h.committed_jitter_ns,
-			h.bandwidth_bps,
-			h.isis_delay_override_ns,
-			h.is_deleted,
-			h.prev_status,
-			h.prev_link_type,
-			h.prev_tunnel_net,
-			h.prev_contributor_pk,
-			h.prev_side_a_pk,
-			h.prev_side_z_pk,
-			h.prev_committed_rtt_ns,
-			h.prev_committed_jitter_ns,
-			h.prev_bandwidth_bps,
-			h.prev_isis_delay_override_ns,
-			h.prev_is_deleted,
-			CASE
-				WHEN h.row_num = 1 THEN 'created'
-				WHEN h.is_deleted = 1 AND h.prev_is_deleted = 0 THEN 'deleted'
-				ELSE 'updated'
-			END as change_type,
-			COALESCE(c.code, '') as contributor_code,
-			COALESCE(da.code, '') as side_a_code,
-			COALESCE(dz.code, '') as side_z_code,
-			COALESCE(ma.code, '') as side_a_metro_code,
-			COALESCE(mz.code, '') as side_z_metro_code,
-			COALESCE(ma.pk, '') as side_a_metro_pk,
-			COALESCE(mz.pk, '') as side_z_metro_pk
-		FROM all_history h
-		CROSS JOIN min_ts
-		LEFT JOIN dz_contributors_current c ON h.contributor_pk = c.pk
-		LEFT JOIN dz_devices_current da ON h.side_a_pk = da.pk
-		LEFT JOIN dz_devices_current dz ON h.side_z_pk = dz.pk
+		SELECT t.entity_id, t.snapshot_ts, t.pk, t.code, t.status, t.link_type, t.tunnel_net,
+			   t.contributor_pk, t.side_a_pk, t.side_z_pk, t.side_a_iface_name, t.side_z_iface_name,
+			   t.committed_rtt_ns, t.committed_jitter_ns, t.bandwidth_bps, t.isis_delay_override_ns,
+			   t.prev_status, t.prev_link_type, t.prev_tunnel_net, t.prev_contributor_pk,
+			   t.prev_side_a_pk, t.prev_side_z_pk, t.prev_committed_rtt_ns, t.prev_committed_jitter_ns,
+			   t.prev_bandwidth_bps, t.prev_isis_delay_override_ns,
+			   COALESCE(c.code, '') AS contributor_code,
+			   COALESCE(da.code, '') AS side_a_code,
+			   COALESCE(dz.code, '') AS side_z_code,
+			   COALESCE(ma.code, '') AS side_a_metro_code,
+			   COALESCE(mz.code, '') AS side_z_metro_code,
+			   COALESCE(ma.pk, '') AS side_a_metro_pk,
+			   COALESCE(mz.pk, '') AS side_z_metro_pk
+		FROM target t
+		LEFT JOIN dz_contributors_current c ON t.contributor_pk = c.pk
+		LEFT JOIN dz_devices_current da ON t.side_a_pk = da.pk
+		LEFT JOIN dz_devices_current dz ON t.side_z_pk = dz.pk
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-		WHERE (h.attrs_hash != h.prev_attrs_hash OR h.row_num = 1)
-		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
-		  -- Exclude initial ingestion events (created at the earliest snapshot time)
-		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC, h.entity_id
-		LIMIT 200
+		WHERE (t.entity_id, t.snapshot_ts) IN (
+			SELECT entity_id, snapshot_ts FROM dim_dz_links_history
+			WHERE pk IN (?) AND snapshot_ts IN (?)
+		)
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer dbRows.Close()
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 
-	var events []TimelineEvent
-	for rows.Next() {
+	type rowKey struct {
+		entityID   string
+		snapshotTS time.Time
+	}
+	requested := make(map[rowKey]entityChangeRow, len(rows))
+	for _, r := range rows {
+		requested[rowKey{r.EntityID, r.SnapshotTS}] = r
+	}
+
+	result := make(map[string]EntityChangeDetails)
+	for dbRows.Next() {
 		var (
 			entityID              string
 			snapshotTS            time.Time
-			pk                    string
-			code                  string
+			pk, code              string
 			status                string
 			linkType              string
 			tunnelNet             string
@@ -1528,7 +1371,6 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 			committedJitterNs     int64
 			bandwidthBps          int64
 			isisDelayOverride     int64
-			isDeleted             uint8
 			prevStatus            *string
 			prevLinkType          *string
 			prevTunnelNet         *string
@@ -1539,8 +1381,6 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 			prevCommittedJitter   *int64
 			prevBandwidthBps      *int64
 			prevISISDelayOverride *int64
-			prevIsDeleted         *uint8
-			changeType            string
 			contributorCode       string
 			sideACode             string
 			sideZCode             string
@@ -1549,23 +1389,27 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 			sideAMetroPK          string
 			sideZMetroPK          string
 		)
-
-		if err := rows.Scan(
+		if err := dbRows.Scan(
 			&entityID, &snapshotTS, &pk, &code, &status, &linkType, &tunnelNet,
 			&contributorPK, &sideAPK, &sideZPK, &sideAIfaceName, &sideZIfaceName,
-			&committedRttNs, &committedJitterNs, &bandwidthBps, &isisDelayOverride, &isDeleted,
+			&committedRttNs, &committedJitterNs, &bandwidthBps, &isisDelayOverride,
 			&prevStatus, &prevLinkType, &prevTunnelNet, &prevContributorPK,
 			&prevSideAPK, &prevSideZPK, &prevCommittedRttNs, &prevCommittedJitter,
-			&prevBandwidthBps, &prevISISDelayOverride, &prevIsDeleted, &changeType,
+			&prevBandwidthBps, &prevISISDelayOverride,
 			&contributorCode, &sideACode, &sideZCode, &sideAMetroCode, &sideZMetroCode,
 			&sideAMetroPK, &sideZMetroPK,
 		); err != nil {
-			return nil, fmt.Errorf("link scan error: %w", err)
+			return nil, fmt.Errorf("link detail scan error: %w", err)
 		}
 
-		// Build changes list for updates
+		key := rowKey{entityID, snapshotTS}
+		feedRow, ok := requested[key]
+		if !ok {
+			continue
+		}
+
 		var changes []FieldChange
-		if changeType == "updated" {
+		if feedRow.ChangeType == "updated" {
 			if prevStatus != nil && *prevStatus != status {
 				changes = append(changes, FieldChange{Field: "status", OldValue: *prevStatus, NewValue: status})
 			}
@@ -1598,50 +1442,6 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 			}
 		}
 
-		var title string
-		var severity string
-		var eventType string
-
-		switch changeType {
-		case "created":
-			title = fmt.Sprintf("Link %s created", code)
-			severity = "info"
-			eventType = "entity_created"
-		case "deleted":
-			title = fmt.Sprintf("Link %s deleted", code)
-			severity = "warning"
-			eventType = "entity_deleted"
-		default:
-			if len(changes) == 1 {
-				c := changes[0]
-				switch c.Field {
-				case "status":
-					if status == "activated" {
-						title = fmt.Sprintf("Link %s activated", code)
-					} else if status == "disabled" {
-						title = fmt.Sprintf("Link %s disabled", code)
-						severity = "warning"
-					} else {
-						title = fmt.Sprintf("Link %s status: %s → %s", code, c.OldValue, c.NewValue)
-					}
-				case "bandwidth":
-					title = fmt.Sprintf("Link %s bandwidth changed", code)
-				case "committed_rtt":
-					title = fmt.Sprintf("Link %s committed RTT changed", code)
-				case "isis_delay_override":
-					title = fmt.Sprintf("Link %s ISIS delay override changed", code)
-				default:
-					title = fmt.Sprintf("Link %s %s changed", code, c.Field)
-				}
-			} else {
-				title = fmt.Sprintf("Link %s updated (%d fields)", code, len(changes))
-			}
-			if severity == "" {
-				severity = "info"
-			}
-			eventType = "entity_updated"
-		}
-
 		entity := LinkEntity{
 			PK:                pk,
 			Code:              code,
@@ -1666,112 +1466,92 @@ func queryLinkChanges(ctx context.Context, startTime, endTime time.Time) ([]Time
 			SideZMetroPK:      sideZMetroPK,
 		}
 
-		events = append(events, TimelineEvent{
-			ID:         generateEventID(entityID, snapshotTS, eventType),
-			EventType:  eventType,
-			Timestamp:  snapshotTS.Format(time.RFC3339),
-			Category:   "state_change",
-			Severity:   severity,
-			Title:      title,
-			EntityType: "link",
-			EntityPK:   pk,
-			EntityCode: code,
-			Details: EntityChangeDetails{
-				ChangeType: changeType,
-				Changes:    changes,
-				Entity:     entity,
-			},
-		})
+		mapKey := entityID + snapshotTS.Format(time.RFC3339Nano)
+		result[mapKey] = EntityChangeDetails{
+			ChangeType: feedRow.ChangeType,
+			Changes:    changes,
+			Entity:     entity,
+		}
 	}
-
-	return events, nil
+	return result, nil
 }
 
-func queryMetroChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+// fetchMetroChangeDetails batch-fetches metro entity details for the given feed rows.
+func fetchMetroChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	pks := make([]string, len(rows))
+	tsList := make([]time.Time, len(rows))
+	for i, r := range rows {
+		pks[i] = r.EntityPK
+		tsList[i] = r.SnapshotTS
+	}
+
 	query := `
-		WITH min_ts AS (
-			SELECT min(snapshot_ts) as ts FROM dim_dz_metros_history
-		),
-		all_history AS (
-			SELECT
-				entity_id,
-				snapshot_ts,
-				pk,
-				code,
-				name,
-				longitude,
-				latitude,
-				is_deleted,
-				attrs_hash,
-				row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as row_num,
-				lag(name) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_name,
-				lag(longitude) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_longitude,
-				lag(latitude) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_latitude,
-				lag(attrs_hash) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_attrs_hash,
-				lag(is_deleted) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_is_deleted
+		WITH target AS (
+			SELECT entity_id, snapshot_ts, pk, code, name, longitude, latitude,
+				   lag(name) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_name,
+				   lag(longitude) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_longitude,
+				   lag(latitude) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_latitude
 			FROM dim_dz_metros_history
+			WHERE pk IN (?)
 		)
-		SELECT
-			h.entity_id,
-			h.snapshot_ts,
-			h.pk,
-			h.code,
-			h.name,
-			h.longitude,
-			h.latitude,
-			h.is_deleted,
-			h.prev_name,
-			h.prev_longitude,
-			h.prev_latitude,
-			h.prev_is_deleted,
-			CASE
-				WHEN h.row_num = 1 THEN 'created'
-				WHEN h.is_deleted = 1 AND h.prev_is_deleted = 0 THEN 'deleted'
-				ELSE 'updated'
-			END as change_type
-		FROM all_history h
-		CROSS JOIN min_ts
-		WHERE (h.attrs_hash != h.prev_attrs_hash OR h.row_num = 1)
-		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
-		  -- Exclude initial ingestion events (created at the earliest snapshot time)
-		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC, h.entity_id
-		LIMIT 100
+		SELECT t.entity_id, t.snapshot_ts, t.pk, t.code, t.name, t.longitude, t.latitude,
+			   t.prev_name, t.prev_longitude, t.prev_latitude
+		FROM target t
+		WHERE (t.entity_id, t.snapshot_ts) IN (
+			SELECT entity_id, snapshot_ts FROM dim_dz_metros_history
+			WHERE pk IN (?) AND snapshot_ts IN (?)
+		)
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer dbRows.Close()
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 
-	var events []TimelineEvent
-	for rows.Next() {
+	type rowKey struct {
+		entityID   string
+		snapshotTS time.Time
+	}
+	requested := make(map[rowKey]entityChangeRow, len(rows))
+	for _, r := range rows {
+		requested[rowKey{r.EntityID, r.SnapshotTS}] = r
+	}
+
+	result := make(map[string]EntityChangeDetails)
+	for dbRows.Next() {
 		var (
 			entityID      string
 			snapshotTS    time.Time
-			pk            string
-			code          string
+			pk, code      string
 			name          string
 			longitude     float64
 			latitude      float64
-			isDeleted     uint8
 			prevName      *string
 			prevLongitude *float64
 			prevLatitude  *float64
-			prevIsDeleted *uint8
-			changeType    string
 		)
-
-		if err := rows.Scan(&entityID, &snapshotTS, &pk, &code, &name, &longitude, &latitude, &isDeleted, &prevName, &prevLongitude, &prevLatitude, &prevIsDeleted, &changeType); err != nil {
-			return nil, fmt.Errorf("metro scan error: %w", err)
+		if err := dbRows.Scan(
+			&entityID, &snapshotTS, &pk, &code, &name, &longitude, &latitude,
+			&prevName, &prevLongitude, &prevLatitude,
+		); err != nil {
+			return nil, fmt.Errorf("metro detail scan error: %w", err)
 		}
 
-		// Build changes list
+		key := rowKey{entityID, snapshotTS}
+		feedRow, ok := requested[key]
+		if !ok {
+			continue
+		}
+
 		var changes []FieldChange
-		if changeType == "updated" {
+		if feedRow.ChangeType == "updated" {
 			if prevName != nil && *prevName != name {
 				changes = append(changes, FieldChange{Field: "name", OldValue: *prevName, NewValue: name})
 			}
@@ -1783,30 +1563,6 @@ func queryMetroChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			}
 		}
 
-		var title string
-		var eventType string
-
-		switch changeType {
-		case "created":
-			title = fmt.Sprintf("Metro %s added", code)
-			eventType = "entity_created"
-		case "deleted":
-			title = fmt.Sprintf("Metro %s removed", code)
-			eventType = "entity_deleted"
-		default:
-			if len(changes) == 1 {
-				c := changes[0]
-				if c.Field == "name" {
-					title = fmt.Sprintf("Metro %s renamed: %s → %s", code, c.OldValue, c.NewValue)
-				} else {
-					title = fmt.Sprintf("Metro %s %s changed", code, c.Field)
-				}
-			} else {
-				title = fmt.Sprintf("Metro %s updated (%d fields)", code, len(changes))
-			}
-			eventType = "entity_updated"
-		}
-
 		entity := MetroEntity{
 			PK:        pk,
 			Code:      code,
@@ -1815,103 +1571,87 @@ func queryMetroChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 			Latitude:  latitude,
 		}
 
-		events = append(events, TimelineEvent{
-			ID:         generateEventID(entityID, snapshotTS, eventType),
-			EventType:  eventType,
-			Timestamp:  snapshotTS.Format(time.RFC3339),
-			Category:   "state_change",
-			Severity:   "info",
-			Title:      title,
-			EntityType: "metro",
-			EntityPK:   pk,
-			EntityCode: code,
-			Details: EntityChangeDetails{
-				ChangeType: changeType,
-				Changes:    changes,
-				Entity:     entity,
-			},
-		})
+		mapKey := entityID + snapshotTS.Format(time.RFC3339Nano)
+		result[mapKey] = EntityChangeDetails{
+			ChangeType: feedRow.ChangeType,
+			Changes:    changes,
+			Entity:     entity,
+		}
 	}
-
-	return events, nil
+	return result, nil
 }
 
-func queryContributorChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+// fetchContributorChangeDetails batch-fetches contributor entity details for the given feed rows.
+func fetchContributorChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	pks := make([]string, len(rows))
+	tsList := make([]time.Time, len(rows))
+	for i, r := range rows {
+		pks[i] = r.EntityPK
+		tsList[i] = r.SnapshotTS
+	}
+
 	query := `
-		WITH min_ts AS (
-			SELECT min(snapshot_ts) as ts FROM dim_dz_contributors_history
-		),
-		all_history AS (
-			SELECT
-				entity_id,
-				snapshot_ts,
-				pk,
-				code,
-				name,
-				is_deleted,
-				attrs_hash,
-				row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as row_num,
-				lag(name) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_name,
-				lag(code) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_code,
-				lag(attrs_hash) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_attrs_hash,
-				lag(is_deleted) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_is_deleted
+		WITH target AS (
+			SELECT entity_id, snapshot_ts, pk, code, name,
+				   lag(code) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_code,
+				   lag(name) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_name
 			FROM dim_dz_contributors_history
+			WHERE pk IN (?)
 		)
-		SELECT
-			h.entity_id,
-			h.snapshot_ts,
-			h.pk,
-			h.code,
-			h.name,
-			h.is_deleted,
-			h.prev_code,
-			h.prev_name,
-			h.prev_is_deleted,
-			CASE
-				WHEN h.row_num = 1 THEN 'created'
-				WHEN h.is_deleted = 1 AND h.prev_is_deleted = 0 THEN 'deleted'
-				ELSE 'updated'
-			END as change_type
-		FROM all_history h
-		CROSS JOIN min_ts
-		WHERE (h.attrs_hash != h.prev_attrs_hash OR h.row_num = 1)
-		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
-		  -- Exclude initial ingestion events (created at the earliest snapshot time)
-		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC, h.entity_id
-		LIMIT 100
+		SELECT t.entity_id, t.snapshot_ts, t.pk, t.code, t.name,
+			   t.prev_code, t.prev_name
+		FROM target t
+		WHERE (t.entity_id, t.snapshot_ts) IN (
+			SELECT entity_id, snapshot_ts FROM dim_dz_contributors_history
+			WHERE pk IN (?) AND snapshot_ts IN (?)
+		)
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer dbRows.Close()
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 
-	var events []TimelineEvent
-	for rows.Next() {
-		var (
-			entityID      string
-			snapshotTS    time.Time
-			pk            string
-			code          string
-			name          string
-			isDeleted     uint8
-			prevCode      *string
-			prevName      *string
-			prevIsDeleted *uint8
-			changeType    string
-		)
+	type rowKey struct {
+		entityID   string
+		snapshotTS time.Time
+	}
+	requested := make(map[rowKey]entityChangeRow, len(rows))
+	for _, r := range rows {
+		requested[rowKey{r.EntityID, r.SnapshotTS}] = r
+	}
 
-		if err := rows.Scan(&entityID, &snapshotTS, &pk, &code, &name, &isDeleted, &prevCode, &prevName, &prevIsDeleted, &changeType); err != nil {
-			return nil, fmt.Errorf("contributor scan error: %w", err)
+	result := make(map[string]EntityChangeDetails)
+	for dbRows.Next() {
+		var (
+			entityID   string
+			snapshotTS time.Time
+			pk, code   string
+			name       string
+			prevCode   *string
+			prevName   *string
+		)
+		if err := dbRows.Scan(
+			&entityID, &snapshotTS, &pk, &code, &name, &prevCode, &prevName,
+		); err != nil {
+			return nil, fmt.Errorf("contributor detail scan error: %w", err)
 		}
 
-		// Build changes list
+		key := rowKey{entityID, snapshotTS}
+		feedRow, ok := requested[key]
+		if !ok {
+			continue
+		}
+
 		var changes []FieldChange
-		if changeType == "updated" {
+		if feedRow.ChangeType == "updated" {
 			if prevCode != nil && *prevCode != code {
 				changes = append(changes, FieldChange{Field: "code", OldValue: *prevCode, NewValue: code})
 			}
@@ -1920,180 +1660,119 @@ func queryContributorChanges(ctx context.Context, startTime, endTime time.Time) 
 			}
 		}
 
-		var title string
-		var eventType string
-
-		switch changeType {
-		case "created":
-			title = fmt.Sprintf("Contributor %s added", code)
-			eventType = "entity_created"
-		case "deleted":
-			title = fmt.Sprintf("Contributor %s removed", code)
-			eventType = "entity_deleted"
-		default:
-			if len(changes) == 1 {
-				c := changes[0]
-				if c.Field == "name" {
-					title = fmt.Sprintf("Contributor %s renamed: %s → %s", code, c.OldValue, c.NewValue)
-				} else if c.Field == "code" {
-					title = fmt.Sprintf("Contributor code changed: %s → %s", c.OldValue, c.NewValue)
-				} else {
-					title = fmt.Sprintf("Contributor %s %s changed", code, c.Field)
-				}
-			} else {
-				title = fmt.Sprintf("Contributor %s updated (%d fields)", code, len(changes))
-			}
-			eventType = "entity_updated"
-		}
-
 		entity := ContributorEntity{
 			PK:   pk,
 			Code: code,
 			Name: name,
 		}
 
-		events = append(events, TimelineEvent{
-			ID:         generateEventID(entityID, snapshotTS, eventType),
-			EventType:  eventType,
-			Timestamp:  snapshotTS.Format(time.RFC3339),
-			Category:   "state_change",
-			Severity:   "info",
-			Title:      title,
-			EntityType: "contributor",
-			EntityPK:   pk,
-			EntityCode: code,
-			Details: EntityChangeDetails{
-				ChangeType: changeType,
-				Changes:    changes,
-				Entity:     entity,
-			},
-		})
+		mapKey := entityID + snapshotTS.Format(time.RFC3339Nano)
+		result[mapKey] = EntityChangeDetails{
+			ChangeType: feedRow.ChangeType,
+			Changes:    changes,
+			Entity:     entity,
+		}
 	}
-
-	return events, nil
+	return result, nil
 }
 
-func queryUserChanges(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
-	// Build internal user filter
-	internalFilter := ""
-	if !includeInternal && len(internalUserPubkeys) > 0 {
-		internalFilter = fmt.Sprintf(" AND owner_pubkey NOT IN ('%s')", strings.Join(internalUserPubkeys, "','"))
+// fetchUserChangeDetails batch-fetches user entity details for the given feed rows.
+func fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	if len(rows) == 0 {
+		return nil, nil
 	}
 
-	query := fmt.Sprintf(`
-		WITH min_ts AS (
-			SELECT min(snapshot_ts) as ts FROM dim_dz_users_history
-		),
-		all_history AS (
-			SELECT
-				entity_id,
-				snapshot_ts,
-				pk,
-				owner_pubkey,
-				kind,
-				status,
-				client_ip,
-				dz_ip,
-				device_pk,
-				tunnel_id,
-				is_deleted,
-				attrs_hash,
-				row_number() OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as row_num,
-				lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_status,
-				lag(kind) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_kind,
-				lag(client_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_client_ip,
-				lag(dz_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_dz_ip,
-				lag(device_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_device_pk,
-				lag(tunnel_id) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_tunnel_id,
-				lag(attrs_hash) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_attrs_hash,
-				lag(is_deleted) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) as prev_is_deleted
+	pks := make([]string, len(rows))
+	tsList := make([]time.Time, len(rows))
+	for i, r := range rows {
+		pks[i] = r.EntityPK
+		tsList[i] = r.SnapshotTS
+	}
+
+	query := `
+		WITH target AS (
+			SELECT entity_id, snapshot_ts, pk, owner_pubkey, kind, status, client_ip, dz_ip,
+				   device_pk, tunnel_id,
+				   lag(status) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_status,
+				   lag(kind) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_kind,
+				   lag(client_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_client_ip,
+				   lag(dz_ip) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_dz_ip,
+				   lag(device_pk) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_device_pk,
+				   lag(tunnel_id) OVER (PARTITION BY entity_id ORDER BY snapshot_ts, ingested_at, op_id) AS prev_tunnel_id
 			FROM dim_dz_users_history
-			WHERE kind NOT IN ('validator', 'gossip_only')%s
+			WHERE pk IN (?) AND kind NOT IN ('validator', 'gossip_only')
 		)
-		SELECT
-			h.entity_id,
-			h.snapshot_ts,
-			h.pk,
-			h.owner_pubkey,
-			h.kind,
-			h.status,
-			h.client_ip,
-			h.dz_ip,
-			h.device_pk,
-			h.tunnel_id,
-			h.is_deleted,
-			h.prev_status,
-			h.prev_kind,
-			h.prev_client_ip,
-			h.prev_dz_ip,
-			h.prev_device_pk,
-			h.prev_tunnel_id,
-			h.prev_is_deleted,
-			CASE
-				WHEN h.row_num = 1 THEN 'created'
-				WHEN h.is_deleted = 1 AND h.prev_is_deleted = 0 THEN 'deleted'
-				ELSE 'updated'
-			END as change_type,
-			COALESCE(d.code, '') as device_code,
-			COALESCE(m.code, '') as metro_code
-		FROM all_history h
-		CROSS JOIN min_ts
-		LEFT JOIN dz_devices_current d ON h.device_pk = d.pk
+		SELECT t.entity_id, t.snapshot_ts, t.pk, t.owner_pubkey, t.kind, t.status,
+			   t.client_ip, t.dz_ip, t.device_pk, t.tunnel_id,
+			   t.prev_status, t.prev_kind, t.prev_client_ip, t.prev_dz_ip,
+			   t.prev_device_pk, t.prev_tunnel_id,
+			   COALESCE(d.code, '') AS device_code,
+			   COALESCE(m.code, '') AS metro_code
+		FROM target t
+		LEFT JOIN dz_devices_current d ON t.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		WHERE (h.attrs_hash != h.prev_attrs_hash OR h.row_num = 1)
-		  AND h.snapshot_ts >= ? AND h.snapshot_ts <= ?
-		  -- Exclude initial ingestion events (created at the earliest snapshot time)
-		  AND NOT (h.row_num = 1 AND h.snapshot_ts = min_ts.ts)
-		ORDER BY h.snapshot_ts DESC, h.entity_id
-		LIMIT 200
-	`, internalFilter)
+		WHERE (t.entity_id, t.snapshot_ts) IN (
+			SELECT entity_id, snapshot_ts FROM dim_dz_users_history
+			WHERE pk IN (?) AND snapshot_ts IN (?)
+		)
+	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer dbRows.Close()
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 
-	var events []TimelineEvent
-	for rows.Next() {
-		var (
-			entityID      string
-			snapshotTS    time.Time
-			pk            string
-			ownerPubkey   string
-			kind          string
-			status        string
-			clientIP      string
-			dzIP          string
-			devicePK      string
-			tunnelID      int32
-			isDeleted     uint8
-			prevStatus    *string
-			prevKind      *string
-			prevClientIP  *string
-			prevDZIP      *string
-			prevDevicePK  *string
-			prevTunnelID  *int32
-			prevIsDeleted *uint8
-			changeType    string
-			deviceCode    string
-			metroCode     string
-		)
+	type rowKey struct {
+		entityID   string
+		snapshotTS time.Time
+	}
+	requested := make(map[rowKey]entityChangeRow, len(rows))
+	for _, r := range rows {
+		requested[rowKey{r.EntityID, r.SnapshotTS}] = r
+	}
 
-		if err := rows.Scan(
-			&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status, &clientIP, &dzIP,
-			&devicePK, &tunnelID, &isDeleted,
-			&prevStatus, &prevKind, &prevClientIP, &prevDZIP, &prevDevicePK, &prevTunnelID, &prevIsDeleted,
-			&changeType, &deviceCode, &metroCode,
+	result := make(map[string]EntityChangeDetails)
+	for dbRows.Next() {
+		var (
+			entityID     string
+			snapshotTS   time.Time
+			pk           string
+			ownerPubkey  string
+			kind         string
+			status       string
+			clientIP     string
+			dzIP         string
+			devicePK     string
+			tunnelID     int32
+			prevStatus   *string
+			prevKind     *string
+			prevClientIP *string
+			prevDZIP     *string
+			prevDevicePK *string
+			prevTunnelID *int32
+			deviceCode   string
+			metroCode    string
+		)
+		if err := dbRows.Scan(
+			&entityID, &snapshotTS, &pk, &ownerPubkey, &kind, &status,
+			&clientIP, &dzIP, &devicePK, &tunnelID,
+			&prevStatus, &prevKind, &prevClientIP, &prevDZIP, &prevDevicePK, &prevTunnelID,
+			&deviceCode, &metroCode,
 		); err != nil {
-			return nil, fmt.Errorf("user scan error: %w", err)
+			return nil, fmt.Errorf("user detail scan error: %w", err)
 		}
 
-		// Build changes list
+		key := rowKey{entityID, snapshotTS}
+		feedRow, ok := requested[key]
+		if !ok {
+			continue
+		}
+
 		var changes []FieldChange
-		if changeType == "updated" {
+		if feedRow.ChangeType == "updated" {
 			if prevStatus != nil && *prevStatus != status {
 				changes = append(changes, FieldChange{Field: "status", OldValue: *prevStatus, NewValue: status})
 			}
@@ -2114,56 +1793,6 @@ func queryUserChanges(ctx context.Context, startTime, endTime time.Time, include
 			}
 		}
 
-		var title string
-		var description string
-		var severity string
-		var eventType string
-		displayCode := ownerPubkey[:8] + "..."
-
-		switch changeType {
-		case "created":
-			if deviceCode != "" {
-				title = fmt.Sprintf("User %s connected to %s", displayCode, deviceCode)
-			} else {
-				title = fmt.Sprintf("User %s created", displayCode)
-			}
-			severity = "info"
-			eventType = "entity_created"
-		case "deleted":
-			if deviceCode != "" {
-				title = fmt.Sprintf("User %s disconnected from %s", displayCode, deviceCode)
-			} else {
-				title = fmt.Sprintf("User %s deleted", displayCode)
-			}
-			severity = "warning"
-			eventType = "entity_deleted"
-		default:
-			if len(changes) == 1 {
-				c := changes[0]
-				switch c.Field {
-				case "status":
-					if status == "activated" {
-						title = fmt.Sprintf("User %s activated", displayCode)
-					} else if status == "disabled" {
-						title = fmt.Sprintf("User %s disabled", displayCode)
-						severity = "warning"
-					} else {
-						title = fmt.Sprintf("User %s status: %s → %s", displayCode, c.OldValue, c.NewValue)
-					}
-				case "device":
-					title = fmt.Sprintf("User %s moved to %s", displayCode, deviceCode)
-				default:
-					title = fmt.Sprintf("User %s %s changed", displayCode, c.Field)
-				}
-			} else {
-				title = fmt.Sprintf("User %s updated (%d fields)", displayCode, len(changes))
-			}
-			if severity == "" {
-				severity = "info"
-			}
-			eventType = "entity_updated"
-		}
-
 		entity := UserEntity{
 			PK:          pk,
 			OwnerPubkey: ownerPubkey,
@@ -2177,97 +1806,287 @@ func queryUserChanges(ctx context.Context, startTime, endTime time.Time, include
 			MetroCode:   metroCode,
 		}
 
-		events = append(events, TimelineEvent{
-			ID:          generateEventID(entityID, snapshotTS, eventType),
-			EventType:   eventType,
-			Timestamp:   snapshotTS.Format(time.RFC3339),
-			Category:    "state_change",
-			Severity:    severity,
-			Title:       title,
-			Description: description,
-			EntityType:  "user",
-			EntityPK:    pk,
-			EntityCode:  ownerPubkey, // Full pubkey - frontend handles truncation
-			Details: EntityChangeDetails{
-				ChangeType: changeType,
-				Changes:    changes,
-				Entity:     entity,
-			},
+		mapKey := entityID + snapshotTS.Format(time.RFC3339Nano)
+		result[mapKey] = EntityChangeDetails{
+			ChangeType: feedRow.ChangeType,
+			Changes:    changes,
+			Entity:     entity,
+		}
+	}
+	return result, nil
+}
+
+// batchFetchEntityDetails fetches full entity details for all feed rows, grouped by entity type.
+func batchFetchEntityDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+	// Group rows by entity type
+	grouped := make(map[string][]entityChangeRow)
+	for _, r := range rows {
+		grouped[r.EntityType] = append(grouped[r.EntityType], r)
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+	var mu sync.Mutex
+	result := make(map[string]EntityChangeDetails)
+
+	fetchAndMerge := func(fetcher func(context.Context, []entityChangeRow) (map[string]EntityChangeDetails, error), typeRows []entityChangeRow) {
+		g.Go(func() error {
+			details, err := fetcher(ctx, typeRows)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			for k, v := range details {
+				result[k] = v
+			}
+			mu.Unlock()
+			return nil
 		})
+	}
+
+	if typeRows, ok := grouped["device"]; ok {
+		fetchAndMerge(fetchDeviceChangeDetails, typeRows)
+	}
+	if typeRows, ok := grouped["link"]; ok {
+		fetchAndMerge(fetchLinkChangeDetails, typeRows)
+	}
+	if typeRows, ok := grouped["metro"]; ok {
+		fetchAndMerge(fetchMetroChangeDetails, typeRows)
+	}
+	if typeRows, ok := grouped["contributor"]; ok {
+		fetchAndMerge(fetchContributorChangeDetails, typeRows)
+	}
+	if typeRows, ok := grouped["user"]; ok {
+		fetchAndMerge(fetchUserChangeDetails, typeRows)
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// buildEntityChangeTitle builds the title for an entity change event.
+func buildEntityChangeTitle(row entityChangeRow, details *EntityChangeDetails) string {
+	entityLabel := strings.Title(row.EntityType) //nolint:staticcheck
+	code := row.EntityCode
+
+	// User codes are pubkeys - truncate for display
+	if row.EntityType == "user" && len(code) > 8 {
+		code = code[:8] + "..."
+	}
+
+	switch row.ChangeType {
+	case "created":
+		switch row.EntityType {
+		case "metro":
+			return fmt.Sprintf("Metro %s added", code)
+		case "contributor":
+			return fmt.Sprintf("Contributor %s added", code)
+		case "user":
+			if details != nil {
+				if entity, ok := details.Entity.(UserEntity); ok && entity.DeviceCode != "" {
+					return fmt.Sprintf("User %s connected to %s", code, entity.DeviceCode)
+				}
+			}
+			return fmt.Sprintf("User %s created", code)
+		default:
+			return fmt.Sprintf("%s %s created", entityLabel, code)
+		}
+	case "deleted":
+		switch row.EntityType {
+		case "metro":
+			return fmt.Sprintf("Metro %s removed", code)
+		case "contributor":
+			return fmt.Sprintf("Contributor %s removed", code)
+		case "user":
+			if details != nil {
+				if entity, ok := details.Entity.(UserEntity); ok && entity.DeviceCode != "" {
+					return fmt.Sprintf("User %s disconnected from %s", code, entity.DeviceCode)
+				}
+			}
+			return fmt.Sprintf("User %s deleted", code)
+		default:
+			return fmt.Sprintf("%s %s deleted", entityLabel, code)
+		}
+	default:
+		// Updated
+		changes := row.ChangedFields
+		if details != nil && len(details.Changes) > 0 {
+			// Use detail changes for more accurate count
+			changes = make([]string, len(details.Changes))
+			for i, c := range details.Changes {
+				changes[i] = c.Field
+			}
+		}
+
+		if len(changes) == 1 {
+			field := changes[0]
+			switch field {
+			case "status":
+				switch row.EntityType {
+				case "device":
+					if row.NewStatus == "activated" {
+						return fmt.Sprintf("Device %s activated", code)
+					} else if row.NewStatus == "disabled" {
+						return fmt.Sprintf("Device %s disabled", code)
+					}
+				case "link":
+					if row.NewStatus == "activated" {
+						return fmt.Sprintf("Link %s activated", code)
+					} else if row.NewStatus == "disabled" {
+						return fmt.Sprintf("Link %s disabled", code)
+					}
+				case "user":
+					if row.NewStatus == "activated" {
+						return fmt.Sprintf("User %s activated", code)
+					} else if row.NewStatus == "disabled" {
+						return fmt.Sprintf("User %s disabled", code)
+					}
+				}
+				if details != nil && len(details.Changes) == 1 {
+					c := details.Changes[0]
+					return fmt.Sprintf("%s %s status: %s → %s", entityLabel, code, c.OldValue, c.NewValue)
+				}
+				return fmt.Sprintf("%s %s status changed", entityLabel, code)
+			case "name":
+				if details != nil && len(details.Changes) == 1 {
+					c := details.Changes[0]
+					return fmt.Sprintf("%s %s renamed: %s → %s", entityLabel, code, c.OldValue, c.NewValue)
+				}
+				return fmt.Sprintf("%s %s renamed", entityLabel, code)
+			case "code":
+				if row.EntityType == "contributor" && details != nil && len(details.Changes) == 1 {
+					c := details.Changes[0]
+					return fmt.Sprintf("Contributor code changed: %s → %s", c.OldValue, c.NewValue)
+				}
+			case "bandwidth":
+				return fmt.Sprintf("Link %s bandwidth changed", code)
+			case "committed_rtt":
+				return fmt.Sprintf("Link %s committed RTT changed", code)
+			case "isis_delay_override":
+				return fmt.Sprintf("Link %s ISIS delay override changed", code)
+			case "device":
+				if row.EntityType == "user" && details != nil {
+					if entity, ok := details.Entity.(UserEntity); ok && entity.DeviceCode != "" {
+						return fmt.Sprintf("User %s moved to %s", code, entity.DeviceCode)
+					}
+				}
+			}
+			return fmt.Sprintf("%s %s %s changed", entityLabel, code, field)
+		}
+		return fmt.Sprintf("%s %s updated (%d fields)", entityLabel, code, len(changes))
+	}
+}
+
+// buildEntityChangeSeverity determines the severity for an entity change event.
+func buildEntityChangeSeverity(row entityChangeRow) string {
+	switch row.ChangeType {
+	case "deleted":
+		return "warning"
+	case "updated":
+		if row.NewStatus == "disabled" {
+			return "warning"
+		}
+	}
+	return "info"
+}
+
+// queryEntityChangeEvents queries the entity_changes_v view and batch-fetches details,
+// returning fully assembled TimelineEvent slice.
+func queryEntityChangeEvents(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
+	feedRows, err := queryEntityChanges(ctx, startTime, endTime, includeInternal)
+	if err != nil {
+		return nil, fmt.Errorf("entity changes feed: %w", err)
+	}
+	if len(feedRows) == 0 {
+		return nil, nil
+	}
+
+	detailMap, err := batchFetchEntityDetails(ctx, feedRows)
+	if err != nil {
+		return nil, fmt.Errorf("entity changes details: %w", err)
+	}
+
+	events := make([]TimelineEvent, 0, len(feedRows))
+	for _, row := range feedRows {
+		var eventType string
+		switch row.ChangeType {
+		case "created":
+			eventType = "entity_created"
+		case "deleted":
+			eventType = "entity_deleted"
+		default:
+			eventType = "entity_updated"
+		}
+
+		mapKey := row.EntityID + row.SnapshotTS.Format(time.RFC3339Nano)
+		details, hasDetails := detailMap[mapKey]
+
+		title := buildEntityChangeTitle(row, func() *EntityChangeDetails {
+			if hasDetails {
+				return &details
+			}
+			return nil
+		}())
+
+		severity := buildEntityChangeSeverity(row)
+
+		event := TimelineEvent{
+			ID:         generateEventID(row.EntityID, row.SnapshotTS, eventType),
+			EventType:  eventType,
+			Timestamp:  row.SnapshotTS.Format(time.RFC3339),
+			Category:   "state_change",
+			Severity:   severity,
+			Title:      title,
+			EntityType: row.EntityType,
+			EntityPK:   row.EntityPK,
+			EntityCode: row.EntityCode,
+		}
+
+		if hasDetails {
+			event.Details = details
+		} else {
+			// Fallback: construct minimal details from feed row
+			event.Details = EntityChangeDetails{
+				ChangeType: row.ChangeType,
+			}
+		}
+
+		events = append(events, event)
 	}
 
 	return events, nil
 }
 
-func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
-	// Detect packet loss transitions (started/recovered) using hourly aggregates
-	// Look back 1 hour to detect transitions at the boundary
-	lookbackStart := startTime.Add(-1 * time.Hour)
+// incidentCategories lists all incident-related timeline categories.
+var incidentCategories = []string{
+	"packet_loss", "errors", "fcs", "discards", "carrier",
+	"no_data", "isis_down", "isis_overload", "isis_unreachable",
+}
 
+func queryIncidentEvents(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	query := `
-		WITH hourly_loss AS (
-			SELECT
-				link_pk,
-				toStartOfHour(event_ts) as hour,
-				countIf(loss = true OR rtt_us = 0) * 100.0 / count(*) as loss_pct,
-				count(*) as samples
-			FROM fact_dz_device_link_latency
-			WHERE event_ts >= ? AND event_ts <= ?
-			GROUP BY link_pk, hour
-			HAVING samples >= 10
-		),
-		with_prev AS (
-			SELECT
-				link_pk,
-				hour,
-				loss_pct,
-				lag(loss_pct) OVER (PARTITION BY link_pk ORDER BY hour) as prev_loss_pct
-			FROM hourly_loss
-		),
-		transitions AS (
-			SELECT
-				link_pk,
-				hour,
-				loss_pct,
-				prev_loss_pct,
-				CASE
-					WHEN loss_pct >= 0.1 AND (prev_loss_pct < 0.1 OR prev_loss_pct IS NULL) THEN 'started'
-					WHEN loss_pct < 0.1 AND prev_loss_pct >= 0.1 THEN 'recovered'
-				END as transition_type,
-				CASE
-					WHEN loss_pct >= 1.0 THEN 'critical'
-					WHEN loss_pct >= 0.1 THEN 'warning'
-					ELSE 'info'
-				END as severity
-			FROM with_prev
-		)
-		SELECT
-			t.link_pk,
-			t.hour,
-			t.loss_pct,
-			COALESCE(t.prev_loss_pct, 0) as prev_loss_pct,
-			t.transition_type,
-			t.severity,
-			l.code as link_code,
-			l.link_type,
-			COALESCE(ma.code, '') as side_a_metro,
-			COALESCE(mz.code, '') as side_z_metro,
-			COALESCE(c.code, '') as contributor_code
-		FROM transitions t
-		JOIN dz_links_current l ON t.link_pk = l.pk
-		LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
-		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
-		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
-		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-		WHERE t.transition_type IS NOT NULL
-		  AND t.hour >= ?
-		ORDER BY t.hour DESC, t.link_pk
-		LIMIT 200
+		SELECT 'link' AS entity_type, entity_pk, incident_type, started_at, ended_at,
+			is_ongoing, peak_value, duration_seconds,
+			link_code AS entity_code, contributor_code,
+			link_type, side_a_metro, side_z_metro, status,
+			'' AS metro
+		FROM link_incidents_v
+		WHERE started_at <= ? AND (ended_at >= ? OR is_ongoing)
+		UNION ALL
+		SELECT 'device', entity_pk, incident_type, started_at, ended_at,
+			is_ongoing, peak_value, duration_seconds,
+			device_code, contributor_code,
+			'' AS link_type, '' AS side_a_metro, '' AS side_z_metro, status,
+			metro
+		FROM device_incidents_v
+		WHERE started_at <= ? AND (ended_at >= ? OR is_ongoing)
+		ORDER BY started_at DESC
+		LIMIT 400
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, lookbackStart, endTime, startTime)
+	rows, err := envDB(ctx).Query(ctx, query, endTime, startTime, endTime, startTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2277,273 +2096,136 @@ func queryPacketLossEvents(ctx context.Context, startTime, endTime time.Time) ([
 	var events []TimelineEvent
 	for rows.Next() {
 		var (
-			linkPK          string
-			hour            time.Time
-			lossPct         float64
-			prevLossPct     float64
-			transitionType  string
-			severity        string
-			linkCode        string
+			entityType      string
+			entityPK        string
+			incidentType    string
+			startedAt       time.Time
+			endedAt         time.Time
+			isOngoing       bool
+			peakValue       float64
+			durationSeconds int64
+			entityCode      string
+			contributorCode string
 			linkType        string
 			sideAMetro      string
 			sideZMetro      string
-			contributorCode string
+			status          string
+			metro           string
 		)
 
-		if err := rows.Scan(&linkPK, &hour, &lossPct, &prevLossPct, &transitionType, &severity, &linkCode, &linkType, &sideAMetro, &sideZMetro, &contributorCode); err != nil {
-			return nil, fmt.Errorf("packet loss event scan error: %w", err)
+		if err := rows.Scan(
+			&entityType, &entityPK, &incidentType, &startedAt, &endedAt,
+			&isOngoing, &peakValue, &durationSeconds,
+			&entityCode, &contributorCode,
+			&linkType, &sideAMetro, &sideZMetro, &status,
+			&metro,
+		); err != nil {
+			return nil, fmt.Errorf("incident event scan error: %w", err)
 		}
 
-		var title string
-		var eventType string
-		if transitionType == "started" {
-			title = fmt.Sprintf("Packet loss started on %s", linkCode)
-			eventType = "packet_loss_started"
-		} else {
-			title = fmt.Sprintf("Packet loss recovered on %s", linkCode)
-			eventType = "packet_loss_recovered"
-			severity = "success" // Recovery is success (green)
+		details := IncidentEventDetails{
+			EntityPK:        entityPK,
+			EntityCode:      entityCode,
+			EntityType:      entityType,
+			IncidentType:    incidentType,
+			PeakValue:       peakValue,
+			DurationSeconds: durationSeconds,
+			IsOngoing:       isOngoing,
+			LinkType:        linkType,
+			SideAMetro:      sideAMetro,
+			SideZMetro:      sideZMetro,
+			Metro:           metro,
+			ContributorCode: contributorCode,
+			Status:          status,
 		}
 
+		severity := timelineIncidentSeverity(incidentType, peakValue)
+
+		// Emit incident_started event
+		startTitle := fmt.Sprintf("%s started on %s", incidentTypeLabel(incidentType), entityCode)
 		events = append(events, TimelineEvent{
-			ID:          generateEventID(linkPK, hour, eventType),
-			EventType:   eventType,
-			Timestamp:   hour.Format(time.RFC3339),
-			Category:    "packet_loss",
-			Severity:    severity,
-			Title:       title,
-			Description: "",
-			EntityType:  "link",
-			EntityPK:    linkPK,
-			EntityCode:  linkCode,
-			Details: PacketLossEventDetails{
-				LinkPK:          linkPK,
-				LinkCode:        linkCode,
-				LinkType:        linkType,
-				SideAMetro:      sideAMetro,
-				SideZMetro:      sideZMetro,
-				ContributorCode: contributorCode,
-				PreviousLossPct: prevLossPct,
-				CurrentLossPct:  lossPct,
-				Direction:       transitionType,
-			},
+			ID:         generateEventID(entityPK, startedAt, "incident_started_"+incidentType),
+			EventType:  "incident_started",
+			Timestamp:  startedAt.Format(time.RFC3339),
+			Category:   incidentType,
+			Severity:   severity,
+			Title:      startTitle,
+			EntityType: entityType,
+			EntityPK:   entityPK,
+			EntityCode: entityCode,
+			Details:    details,
 		})
+
+		// Emit incident_ended event (only if not ongoing)
+		if !isOngoing {
+			endTitle := fmt.Sprintf("%s ended on %s", incidentTypeLabel(incidentType), entityCode)
+			events = append(events, TimelineEvent{
+				ID:         generateEventID(entityPK, endedAt, "incident_ended_"+incidentType),
+				EventType:  "incident_ended",
+				Timestamp:  endedAt.Format(time.RFC3339),
+				Category:   incidentType,
+				Severity:   "success",
+				Title:      endTitle,
+				EntityType: entityType,
+				EntityPK:   entityPK,
+				EntityCode: entityCode,
+				Details:    details,
+			})
+		}
 	}
 
 	return events, nil
 }
 
-func queryInterfaceEvents(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
-	// Detect interface issue transitions (started/stopped) using hourly aggregates with lag()
-	// We need to look at 1 hour before startTime to detect transitions at the boundary
-	lookbackStart := startTime.Add(-1 * time.Hour)
-
-	query := `
-		WITH hourly AS (
-			SELECT
-				toStartOfHour(ic.event_ts) as hour,
-				ic.device_pk,
-				ic.intf,
-				any(ic.link_pk) as link_pk,
-				sum(greatest(0, COALESCE(ic.in_errors_delta, 0))) as in_errors,
-				sum(greatest(0, COALESCE(ic.out_errors_delta, 0))) as out_errors,
-				sum(greatest(0, COALESCE(ic.in_discards_delta, 0))) as in_discards,
-				sum(greatest(0, COALESCE(ic.out_discards_delta, 0))) as out_discards,
-				sum(greatest(0, COALESCE(ic.carrier_transitions_delta, 0))) as carrier_transitions
-			FROM fact_dz_device_interface_counters ic
-			WHERE ic.event_ts >= ? AND ic.event_ts <= ?
-			GROUP BY hour, ic.device_pk, ic.intf
-		),
-		with_prev AS (
-			SELECT
-				hour,
-				device_pk,
-				intf,
-				link_pk,
-				in_errors,
-				out_errors,
-				in_discards,
-				out_discards,
-				carrier_transitions,
-				in_errors + out_errors as total_errors,
-				in_discards + out_discards as total_discards,
-				lag(in_errors + out_errors) OVER (PARTITION BY device_pk, intf ORDER BY hour) as prev_total_errors,
-				lag(in_discards + out_discards) OVER (PARTITION BY device_pk, intf ORDER BY hour) as prev_total_discards,
-				lag(carrier_transitions) OVER (PARTITION BY device_pk, intf ORDER BY hour) as prev_carrier_transitions
-			FROM hourly
-		),
-		transitions AS (
-			SELECT
-				hour,
-				device_pk,
-				intf,
-				link_pk,
-				in_errors,
-				out_errors,
-				in_discards,
-				out_discards,
-				carrier_transitions,
-				total_errors,
-				total_discards,
-				CASE
-					WHEN total_errors > 0 AND (prev_total_errors = 0 OR prev_total_errors IS NULL) THEN 'errors_started'
-					WHEN total_errors = 0 AND prev_total_errors > 0 THEN 'errors_stopped'
-					WHEN total_discards > 0 AND (prev_total_discards = 0 OR prev_total_discards IS NULL) THEN 'discards_started'
-					WHEN total_discards = 0 AND prev_total_discards > 0 THEN 'discards_stopped'
-					WHEN carrier_transitions > 0 AND (prev_carrier_transitions = 0 OR prev_carrier_transitions IS NULL) THEN 'carrier_started'
-					WHEN carrier_transitions = 0 AND prev_carrier_transitions > 0 THEN 'carrier_stopped'
-				END as transition_type
-			FROM with_prev
-		)
-		SELECT
-			t.hour,
-			t.device_pk,
-			t.intf,
-			t.link_pk,
-			t.in_errors,
-			t.out_errors,
-			t.in_discards,
-			t.out_discards,
-			t.carrier_transitions,
-			t.transition_type,
-			d.code as device_code,
-			COALESCE(l.code, '') as link_code,
-			COALESCE(c.code, '') as contributor_code,
-			COALESCE(m.code, '') as metro_code
-		FROM transitions t
-		JOIN dz_devices_current d ON t.device_pk = d.pk
-		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
-		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_links_current l ON t.link_pk = l.pk
-		WHERE t.transition_type IS NOT NULL
-		  AND t.hour >= ?
-		  AND d.status = 'activated'
-		ORDER BY t.hour DESC, t.device_pk, t.intf
-		LIMIT 200
-	`
-
-	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, lookbackStart, endTime, startTime)
-	if err != nil {
-		return nil, err
+// timelineIncidentSeverity maps incident type and peak value to timeline severity
+// (critical/warning/info — not the incidents page "incident"/"degraded" scale).
+func timelineIncidentSeverity(incidentType string, peakValue float64) string {
+	switch incidentType {
+	case "packet_loss":
+		if peakValue >= 50 {
+			return "critical"
+		}
+		return "warning"
+	case "carrier", "isis_down", "isis_overload", "isis_unreachable":
+		return "critical"
+	case "errors", "fcs":
+		if peakValue >= 100 {
+			return "critical"
+		}
+		return "warning"
+	case "no_data":
+		return "warning"
+	case "discards":
+		return "info"
+	default:
+		return "warning"
 	}
-	defer rows.Close()
-	metrics.RecordClickHouseQuery(time.Since(start), err)
+}
 
-	var events []TimelineEvent
-	for rows.Next() {
-		var (
-			hour               time.Time
-			devicePK           string
-			intf               string
-			linkPK             string
-			inErrors           int64
-			outErrors          int64
-			inDiscards         int64
-			outDiscards        int64
-			carrierTransitions int64
-			transitionType     string
-			deviceCode         string
-			linkCode           string
-			contributorCode    string
-			metroCode          string
-		)
-
-		if err := rows.Scan(&hour, &devicePK, &intf, &linkPK, &inErrors, &outErrors, &inDiscards, &outDiscards, &carrierTransitions, &transitionType, &deviceCode, &linkCode, &contributorCode, &metroCode); err != nil {
-			return nil, fmt.Errorf("interface event scan error: %w", err)
-		}
-
-		var title string
-		var eventType string
-		var issueType string
-		var category string
-		var severity string
-
-		totalErrors := inErrors + outErrors
-		totalDiscards := inDiscards + outDiscards
-
-		// Build interface identifier - include link code if available
-		intfDesc := fmt.Sprintf("%s %s", deviceCode, intf)
-		if linkCode != "" {
-			intfDesc = fmt.Sprintf("%s %s (%s)", deviceCode, intf, linkCode)
-		}
-
-		switch transitionType {
-		case "errors_started":
-			title = fmt.Sprintf("Interface errors started on %s", intfDesc)
-			eventType = "interface_errors_started"
-			issueType = "errors"
-			category = "interface_errors"
-			if totalErrors > 100 {
-				severity = "critical"
-			} else {
-				severity = "warning"
-			}
-		case "errors_stopped":
-			title = fmt.Sprintf("Interface errors stopped on %s", intfDesc)
-			eventType = "interface_errors_stopped"
-			issueType = "errors"
-			category = "interface_errors"
-			severity = "success"
-		case "discards_started":
-			title = fmt.Sprintf("Interface discards started on %s", intfDesc)
-			eventType = "interface_discards_started"
-			issueType = "discards"
-			category = "interface_discards"
-			if totalDiscards > 1000 {
-				severity = "warning"
-			} else {
-				severity = "info"
-			}
-		case "discards_stopped":
-			title = fmt.Sprintf("Interface discards stopped on %s", intfDesc)
-			eventType = "interface_discards_stopped"
-			issueType = "discards"
-			category = "interface_discards"
-			severity = "success"
-		case "carrier_started":
-			title = fmt.Sprintf("Carrier transitions started on %s", intfDesc)
-			eventType = "interface_carrier_started"
-			issueType = "carrier"
-			category = "interface_carrier"
-			severity = "warning"
-		case "carrier_stopped":
-			title = fmt.Sprintf("Carrier transitions stopped on %s", intfDesc)
-			eventType = "interface_carrier_stopped"
-			issueType = "carrier"
-			category = "interface_carrier"
-			severity = "success"
-		}
-
-		events = append(events, TimelineEvent{
-			ID:         generateEventID(devicePK+intf, hour, eventType),
-			EventType:  eventType,
-			Timestamp:  hour.Format(time.RFC3339),
-			Category:   category,
-			Severity:   severity,
-			Title:      title,
-			EntityType: "device",
-			EntityPK:   devicePK,
-			EntityCode: deviceCode,
-			Details: InterfaceEventDetails{
-				DevicePK:           devicePK,
-				DeviceCode:         deviceCode,
-				ContributorCode:    contributorCode,
-				MetroCode:          metroCode,
-				InterfaceName:      intf,
-				LinkPK:             linkPK,
-				LinkCode:           linkCode,
-				InErrors:           inErrors,
-				OutErrors:          outErrors,
-				InDiscards:         inDiscards,
-				OutDiscards:        outDiscards,
-				CarrierTransitions: carrierTransitions,
-				IssueType:          issueType,
-			},
-		})
+// incidentTypeLabel returns a human-readable label for an incident type.
+func incidentTypeLabel(incidentType string) string {
+	switch incidentType {
+	case "packet_loss":
+		return "Packet loss"
+	case "errors":
+		return "Errors"
+	case "fcs":
+		return "FCS errors"
+	case "discards":
+		return "Discards"
+	case "carrier":
+		return "Carrier transitions"
+	case "no_data":
+		return "No data"
+	case "isis_down":
+		return "ISIS down"
+	case "isis_overload":
+		return "ISIS overload"
+	case "isis_unreachable":
+		return "ISIS unreachable"
+	default:
+		return incidentType
 	}
-
-	return events, nil
 }
 
 func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
@@ -3541,108 +3223,6 @@ func queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error
 	return info, nil
 }
 
-// groupInterfaceEvents groups interface events by device, event type, and timestamp.
-// When multiple interfaces on the same device have the same issue at the same time,
-// they are consolidated into a single event with GroupedInterfaceDetails.
-func groupInterfaceEvents(events []TimelineEvent) []TimelineEvent {
-	// Key: devicePK + eventType + timestamp
-	type groupKey struct {
-		DevicePK  string
-		EventType string
-		Timestamp string
-	}
-
-	// Map to collect events by group key
-	groups := make(map[groupKey][]TimelineEvent)
-	var nonInterfaceEvents []TimelineEvent
-
-	for _, event := range events {
-		// Only group interface events
-		if details, ok := event.Details.(InterfaceEventDetails); ok {
-			key := groupKey{
-				DevicePK:  details.DevicePK,
-				EventType: event.EventType,
-				Timestamp: event.Timestamp,
-			}
-			groups[key] = append(groups[key], event)
-		} else {
-			nonInterfaceEvents = append(nonInterfaceEvents, event)
-		}
-	}
-
-	// Build result with grouped events
-	result := nonInterfaceEvents
-
-	for key, groupEvents := range groups {
-		if len(groupEvents) == 1 {
-			// Single interface, keep as-is
-			result = append(result, groupEvents[0])
-		} else {
-			// Multiple interfaces, create grouped event
-			first := groupEvents[0]
-			firstDetails := first.Details.(InterfaceEventDetails)
-
-			// Collect all interface details
-			interfaces := make([]InterfaceEventDetails, 0, len(groupEvents))
-			for _, e := range groupEvents {
-				interfaces = append(interfaces, e.Details.(InterfaceEventDetails))
-			}
-
-			// Sort interfaces by name for consistent display
-			sort.Slice(interfaces, func(i, j int) bool {
-				return interfaces[i].InterfaceName < interfaces[j].InterfaceName
-			})
-
-			// Build title based on event type
-			var title string
-			switch key.EventType {
-			case "interface_carrier_started":
-				title = fmt.Sprintf("Carrier transitions started on %d interfaces on %s", len(interfaces), firstDetails.DeviceCode)
-			case "interface_carrier_stopped":
-				title = fmt.Sprintf("Carrier transitions stopped on %d interfaces on %s", len(interfaces), firstDetails.DeviceCode)
-			case "interface_errors_started":
-				title = fmt.Sprintf("Interface errors started on %d interfaces on %s", len(interfaces), firstDetails.DeviceCode)
-			case "interface_errors_stopped":
-				title = fmt.Sprintf("Interface errors stopped on %d interfaces on %s", len(interfaces), firstDetails.DeviceCode)
-			case "interface_discards_started":
-				title = fmt.Sprintf("Interface discards started on %d interfaces on %s", len(interfaces), firstDetails.DeviceCode)
-			case "interface_discards_stopped":
-				title = fmt.Sprintf("Interface discards stopped on %d interfaces on %s", len(interfaces), firstDetails.DeviceCode)
-			default:
-				title = fmt.Sprintf("%d interface events on %s", len(interfaces), firstDetails.DeviceCode)
-			}
-
-			result = append(result, TimelineEvent{
-				ID:         generateEventID(firstDetails.DevicePK, mustParseTime(first.Timestamp), key.EventType+"_grouped"),
-				EventType:  key.EventType,
-				Timestamp:  first.Timestamp,
-				Category:   first.Category,
-				Severity:   first.Severity,
-				Title:      title,
-				EntityType: "device",
-				EntityPK:   firstDetails.DevicePK,
-				EntityCode: firstDetails.DeviceCode,
-				Details: GroupedInterfaceDetails{
-					DevicePK:        firstDetails.DevicePK,
-					DeviceCode:      firstDetails.DeviceCode,
-					ContributorCode: firstDetails.ContributorCode,
-					MetroCode:       firstDetails.MetroCode,
-					IssueType:       firstDetails.IssueType,
-					Interfaces:      interfaces,
-				},
-			})
-		}
-	}
-
-	return result
-}
-
-// mustParseTime parses an RFC3339 timestamp or returns zero time on error
-func mustParseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
-
 // fetchDefaultTimelineData fetches timeline data with default parameters for caching.
 // This returns the same data as GetTimeline with default params: 24h range, all categories,
 // all entity types except gossip_node, dz_filter="on_dz", limit=50, offset=0.
@@ -3660,13 +3240,8 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(10)
 	var (
-		deviceEvents        []TimelineEvent
-		linkEvents          []TimelineEvent
-		metroEvents         []TimelineEvent
-		contributorEvents   []TimelineEvent
-		userEvents          []TimelineEvent
-		packetLossEvents    []TimelineEvent
-		interfaceEvents     []TimelineEvent
+		entityChangeEvents  []TimelineEvent
+		incidentEvents      []TimelineEvent
 		validatorEvents     []TimelineEvent
 		gossipNetworkEvents []TimelineEvent
 		voteAccountEvents   []TimelineEvent
@@ -3676,93 +3251,28 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Query all event types (all categories included by default)
 
-	// Device changes
+	// Consolidated entity changes (devices, links, metros, contributors, users)
 	g.Go(func() error {
-		events, err := queryDeviceChanges(ctx, startTime, endTime)
+		events, err := queryEntityChangeEvents(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Info("cache: device changes query unsuccessful", "detail", err)
+			slog.Info("cache: entity changes query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
-		deviceEvents = events
+		entityChangeEvents = events
 		mu.Unlock()
 		return nil
 	})
 
-	// Link changes
+	// Incident events (packet loss, errors, discards, carrier, no_data, isis_down, etc.)
 	g.Go(func() error {
-		events, err := queryLinkChanges(ctx, startTime, endTime)
+		events, err := queryIncidentEvents(ctx, startTime, endTime)
 		if err != nil {
-			slog.Info("cache: link changes query unsuccessful", "detail", err)
+			slog.Info("cache: incident events query unsuccessful", "detail", err)
 			return nil
 		}
 		mu.Lock()
-		linkEvents = events
-		mu.Unlock()
-		return nil
-	})
-
-	// Metro changes
-	g.Go(func() error {
-		events, err := queryMetroChanges(ctx, startTime, endTime)
-		if err != nil {
-			slog.Info("cache: metro changes query unsuccessful", "detail", err)
-			return nil
-		}
-		mu.Lock()
-		metroEvents = events
-		mu.Unlock()
-		return nil
-	})
-
-	// Contributor changes
-	g.Go(func() error {
-		events, err := queryContributorChanges(ctx, startTime, endTime)
-		if err != nil {
-			slog.Info("cache: contributor changes query unsuccessful", "detail", err)
-			return nil
-		}
-		mu.Lock()
-		contributorEvents = events
-		mu.Unlock()
-		return nil
-	})
-
-	// User changes (exclude internal users by default)
-	g.Go(func() error {
-		events, err := queryUserChanges(ctx, startTime, endTime, false)
-		if err != nil {
-			slog.Info("cache: user changes query unsuccessful", "detail", err)
-			return nil
-		}
-		mu.Lock()
-		userEvents = events
-		mu.Unlock()
-		return nil
-	})
-
-	// Packet loss events
-	g.Go(func() error {
-		events, err := queryPacketLossEvents(ctx, startTime, endTime)
-		if err != nil {
-			slog.Info("cache: packet loss events query unsuccessful", "detail", err)
-			return nil
-		}
-		mu.Lock()
-		packetLossEvents = events
-		mu.Unlock()
-		return nil
-	})
-
-	// Interface events
-	g.Go(func() error {
-		events, err := queryInterfaceEvents(ctx, startTime, endTime)
-		if err != nil {
-			slog.Info("cache: interface events query unsuccessful", "detail", err)
-			return nil
-		}
-		mu.Lock()
-		interfaceEvents = events
+		incidentEvents = events
 		mu.Unlock()
 		return nil
 	})
@@ -3825,20 +3335,12 @@ func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Merge all events
 	allEvents := make([]TimelineEvent, 0)
-	allEvents = append(allEvents, deviceEvents...)
-	allEvents = append(allEvents, linkEvents...)
-	allEvents = append(allEvents, metroEvents...)
-	allEvents = append(allEvents, contributorEvents...)
-	allEvents = append(allEvents, userEvents...)
-	allEvents = append(allEvents, packetLossEvents...)
-	allEvents = append(allEvents, interfaceEvents...)
+	allEvents = append(allEvents, entityChangeEvents...)
+	allEvents = append(allEvents, incidentEvents...)
 	allEvents = append(allEvents, validatorEvents...)
 	allEvents = append(allEvents, gossipNetworkEvents...)
 	allEvents = append(allEvents, voteAccountEvents...)
 	allEvents = append(allEvents, stakeChangeEvents...)
-
-	// Group interface events
-	allEvents = groupInterfaceEvents(allEvents)
 
 	// Filter by default entity types (exclude gossip_node)
 	filtered := make([]TimelineEvent, 0)
