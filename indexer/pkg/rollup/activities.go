@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -24,6 +25,22 @@ func tableRef(sourceDB, table string) string {
 		return fmt.Sprintf("`%s`.`%s`", sourceDB, table)
 	}
 	return table
+}
+
+// bucketKey identifies a (link/device, 5-minute bucket) pair for state resolution.
+type bucketKey struct {
+	linkPK string
+	bucket time.Time
+}
+
+// sortedTimes returns the keys of a time set sorted ascending.
+func sortedTimes(m map[time.Time]struct{}) []time.Time {
+	times := make([]time.Time, 0, len(m))
+	for t := range m {
+		times = append(times, t)
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	return times
 }
 
 // logRollup logs a rollup computation result, including the source database if set.
@@ -142,10 +159,6 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	}
 	defer rows.Close()
 
-	type bucketKey struct {
-		linkPK string
-		bucket time.Time
-	}
 	type bucketData struct {
 		a *LinkLatencyStats
 		z *LinkLatencyStats
@@ -187,14 +200,20 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 		linkPKs[bk.linkPK] = struct{}{}
 	}
 
-	// Resolve link status and provisioning from dim_dz_links_history
-	linkState, err := a.resolveLinkState(ctx, linkPKs, input.WindowStart, input.WindowEnd, srcDB)
+	// Collect unique bucket timestamps
+	bucketTimes := make(map[time.Time]struct{})
+	for bk := range bucketMap {
+		bucketTimes[bk.bucket] = struct{}{}
+	}
+
+	// Resolve link status and provisioning per (link, bucket) from dim_dz_links_history
+	linkState, err := a.resolveLinkState(ctx, linkPKs, bucketTimes, input.WindowStart, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve link state: %w", err)
 	}
 
-	// Resolve ISIS adjacency status from dim_isis_adjacencies_history
-	isisDown, err := a.resolveISISAdjacency(ctx, linkPKs, input.WindowStart, input.WindowEnd, srcDB)
+	// Resolve ISIS adjacency status per (link, bucket) from dim_isis_adjacencies_history
+	isisDown, err := a.resolveISISAdjacency(ctx, linkPKs, bucketTimes, input.WindowStart, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ISIS adjacency: %w", err)
 	}
@@ -231,12 +250,12 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			b.Z = *bd.z
 		}
 
-		// Apply state
-		if ls, ok := linkState[bk.linkPK]; ok {
+		// Apply per-bucket state
+		if ls, ok := linkState[bk]; ok {
 			b.Status = ls.status
 			b.Provisioning = ls.provisioning
 		}
-		if down, ok := isisDown[bk.linkPK]; ok {
+		if down, ok := isisDown[bk]; ok {
 			b.ISISDown = down
 		}
 
@@ -254,16 +273,16 @@ type linkStateInfo struct {
 	provisioning bool
 }
 
-// resolveLinkState queries dim_dz_links_history to get the most recent status and
-// committed_rtt_ns for each link as of the window end time.
-func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time, sourceDB string) (map[string]linkStateInfo, error) {
+// resolveLinkState queries dim_dz_links_history to get the status and provisioning
+// flag for each (link, bucket) pair. For each bucket, it finds the latest state
+// as of the bucket's end time (bucket + 5min).
+func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]struct{}, bucketTimes map[time.Time]struct{}, _, windowEnd time.Time, sourceDB string) (map[bucketKey]linkStateInfo, error) {
+	// Query all state entries up to windowEnd (covers baseline + in-window changes)
 	query := `
-		SELECT pk,
-			argMax(status, snapshot_ts) as status,
-			argMax(committed_rtt_ns, snapshot_ts) as committed_rtt_ns
+		SELECT pk, snapshot_ts, status, committed_rtt_ns
 		FROM ` + tableRef(sourceDB, "dim_dz_links_history") + `
 		WHERE snapshot_ts <= $1
-		GROUP BY pk
+		ORDER BY pk, snapshot_ts
 	`
 	rows, err := a.ClickHouse.Query(ctx, query, windowEnd)
 	if err != nil {
@@ -271,33 +290,67 @@ func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]st
 	}
 	defer rows.Close()
 
-	result := make(map[string]linkStateInfo)
+	type entry struct {
+		ts    time.Time
+		state linkStateInfo
+	}
+	entriesByLink := make(map[string][]entry)
 	for rows.Next() {
 		var pk, status string
+		var ts time.Time
 		var committedRttNs int64
-		if err := rows.Scan(&pk, &status, &committedRttNs); err != nil {
+		if err := rows.Scan(&pk, &ts, &status, &committedRttNs); err != nil {
 			return nil, fmt.Errorf("link state scan: %w", err)
 		}
 		if _, ok := linkPKs[pk]; ok {
-			result[pk] = linkStateInfo{
-				status:       status,
-				provisioning: committedRttNs == provisioningSentinel,
+			entriesByLink[pk] = append(entriesByLink[pk], entry{
+				ts: ts.UTC(),
+				state: linkStateInfo{
+					status:       status,
+					provisioning: committedRttNs == provisioningSentinel,
+				},
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("link state rows: %w", err)
+	}
+
+	// For each (link, bucket), find the latest entry with ts <= bucket end (bucket + 5m)
+	const bucketWidth = 5 * time.Minute
+	result := make(map[bucketKey]linkStateInfo)
+	sortedBuckets := sortedTimes(bucketTimes)
+	for pk := range linkPKs {
+		entries := entriesByLink[pk]
+		if len(entries) == 0 {
+			continue
+		}
+		entryIdx := 0
+		var current linkStateInfo
+		for _, bt := range sortedBuckets {
+			bucketEnd := bt.Add(bucketWidth)
+			for entryIdx < len(entries) && !entries[entryIdx].ts.After(bucketEnd) {
+				current = entries[entryIdx].state
+				entryIdx++
+			}
+			if current.status != "" {
+				result[bucketKey{linkPK: pk, bucket: bt}] = current
 			}
 		}
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
-// resolveISISAdjacency queries dim_isis_adjacencies_history to determine if each link
-// had an ISIS adjacency at the window end time. A link is "ISIS down" if its latest
-// adjacency record is deleted (is_deleted=1) or if no adjacency record exists.
-func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time, sourceDB string) (map[string]bool, error) {
+// resolveISISAdjacency queries dim_isis_adjacencies_history to determine if each
+// (link, bucket) pair has an ISIS adjacency. For each bucket, it finds the latest
+// adjacency state as of the bucket's end time (bucket + 5min).
+func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[string]struct{}, bucketTimes map[time.Time]struct{}, _, windowEnd time.Time, sourceDB string) (map[bucketKey]bool, error) {
+	// Query all adjacency entries up to windowEnd
 	query := `
-		SELECT link_pk,
-			argMax(is_deleted, snapshot_ts) as is_deleted
+		SELECT link_pk, snapshot_ts, is_deleted
 		FROM ` + tableRef(sourceDB, "dim_isis_adjacencies_history") + `
 		WHERE snapshot_ts <= $1 AND link_pk != ''
-		GROUP BY link_pk
+		ORDER BY link_pk, snapshot_ts
 	`
 	rows, err := a.ClickHouse.Query(ctx, query, windowEnd)
 	if err != nil {
@@ -305,20 +358,50 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 	}
 	defer rows.Close()
 
-	// Only links that appear in ISIS adjacency history can be ISIS down.
-	// Links with no adjacency history are not ISIS links — they default to false.
-	result := make(map[string]bool)
+	type entry struct {
+		ts        time.Time
+		isDeleted bool
+	}
+	entriesByLink := make(map[string][]entry)
 	for rows.Next() {
 		var linkPK string
+		var ts time.Time
 		var isDeleted uint8
-		if err := rows.Scan(&linkPK, &isDeleted); err != nil {
+		if err := rows.Scan(&linkPK, &ts, &isDeleted); err != nil {
 			return nil, fmt.Errorf("ISIS adjacency scan: %w", err)
 		}
 		if _, ok := linkPKs[linkPK]; ok {
-			result[linkPK] = isDeleted == 1
+			entriesByLink[linkPK] = append(entriesByLink[linkPK], entry{
+				ts:        ts.UTC(),
+				isDeleted: isDeleted == 1,
+			})
 		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ISIS adjacency rows: %w", err)
+	}
+
+	// For each (link, bucket), find the latest entry with ts <= bucket end (bucket + 5m)
+	const bucketWidth = 5 * time.Minute
+	result := make(map[bucketKey]bool)
+	sortedBuckets := sortedTimes(bucketTimes)
+	for pk := range linkPKs {
+		entries := entriesByLink[pk]
+		if len(entries) == 0 {
+			continue // not an ISIS link
+		}
+		entryIdx := 0
+		current := true // no entries yet = down
+		for _, bt := range sortedBuckets {
+			bucketEnd := bt.Add(bucketWidth)
+			for entryIdx < len(entries) && !entries[entryIdx].ts.After(bucketEnd) {
+				current = entries[entryIdx].isDeleted
+				entryIdx++
+			}
+			result[bucketKey{linkPK: pk, bucket: bt}] = current
+		}
+	}
+	return result, nil
 }
 
 // ComputeDeviceInterfaceRollup queries interface counters and traffic rates for

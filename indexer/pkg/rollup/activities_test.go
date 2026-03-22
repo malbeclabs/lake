@@ -240,7 +240,8 @@ func TestComputeLinkRollup_ISISDown(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, buckets, 1)
-	assert.True(t, buckets[0].ISISDown)
+	// Link with no ISIS adjacency history is not an ISIS link — ISISDown should be false
+	assert.False(t, buckets[0].ISISDown)
 }
 
 // --- Device interface rollup tests ---
