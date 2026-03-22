@@ -34,6 +34,11 @@ type LinkBucket struct {
 	A LinkLatencyStats `json:"a"`
 	// Direction Z→A (probes originating from side_z)
 	Z LinkLatencyStats `json:"z"`
+
+	// Entity state resolved from history tables at write time
+	Status       string `json:"status"`       // activated, soft-drained, hard-drained, suspended
+	Provisioning bool   `json:"provisioning"` // true when committed_rtt_ns = 1000000000
+	ISISDown     bool   `json:"isis_down"`    // true when no ISIS adjacency at bucket time
 }
 
 // InterfaceRateStats holds percentile distribution for a traffic rate metric
@@ -56,6 +61,14 @@ type DeviceInterfaceBucket struct {
 	Intf       string    `json:"intf"`
 	IngestedAt time.Time `json:"ingested_at"`
 
+	// Link context from fact table
+	LinkPK   string `json:"link_pk"`
+	LinkSide string `json:"link_side"`
+
+	// User context
+	UserTunnelID *int64 `json:"user_tunnel_id"` // Nullable
+	UserPK       string `json:"user_pk"`
+
 	// Error/discard counters
 	InErrors           uint64 `json:"in_errors"`
 	OutErrors          uint64 `json:"out_errors"`
@@ -69,6 +82,11 @@ type DeviceInterfaceBucket struct {
 	OutBps InterfaceRateStats `json:"out_bps"`
 	InPps  InterfaceRateStats `json:"in_pps"`
 	OutPps InterfaceRateStats `json:"out_pps"`
+
+	// Entity state resolved from history tables at write time
+	Status          string `json:"status"`           // activated, soft-drained, hard-drained, suspended
+	ISISOverload    bool   `json:"isis_overload"`    // device has ISIS overload bit set
+	ISISUnreachable bool   `json:"isis_unreachable"` // device is ISIS unreachable
 }
 
 // BackfillInput configures a backfill run.

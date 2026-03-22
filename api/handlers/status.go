@@ -1397,14 +1397,15 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	resp, err := fetchLinkHistoryData(ctx, timeRange, requestedBuckets)
+	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
+	resp, err := fetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
 		if dberror.IsTransient(err) {
 			cancel()
 			var retryCancel context.CancelFunc
 			ctx, retryCancel = context.WithTimeout(r.Context(), timeout)
 			defer retryCancel()
-			resp, err = fetchLinkHistoryData(ctx, timeRange, requestedBuckets)
+			resp, err = fetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
 		}
 	}
 	if err != nil {
@@ -1434,9 +1435,14 @@ func snapBucketMinutes(raw int) int {
 	return 5
 }
 
-// fetchLinkHistoryData performs the actual link history data fetch from the database.
-// This is called by both the cache refresh and direct requests.
-func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int) (*LinkHistoryResponse, error) {
+// fetchLinkHistoryData delegates to the rollup-based implementation.
+func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
+	return fetchLinkHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
+}
+
+// fetchLinkHistoryDataLegacy performs the actual link history data fetch from the database.
+// This is the pre-rollup implementation, kept for reference during migration.
+func fetchLinkHistoryDataLegacy(ctx context.Context, timeRange string, requestedBuckets int) (*LinkHistoryResponse, error) { //nolint:unused
 	start := time.Now()
 
 	// Configure bucket size based on time range and requested bucket count
@@ -2508,7 +2514,8 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	resp, err := fetchDeviceHistoryData(ctx, timeRange, requestedBuckets)
+	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
+	resp, err := fetchDeviceHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
 		slog.Error("fetchDeviceHistoryData error", "error", err)
 		http.Error(w, "Failed to fetch device history", http.StatusInternalServerError)
@@ -2521,8 +2528,14 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchDeviceHistoryData performs the actual device history data fetch from the database.
-func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuckets int) (*DeviceHistoryResponse, error) {
+// fetchDeviceHistoryData delegates to the rollup-based implementation.
+func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
+	return fetchDeviceHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
+}
+
+// fetchDeviceHistoryDataLegacy performs the actual device history data fetch from the database.
+// This is the pre-rollup implementation, kept for reference during migration.
+func fetchDeviceHistoryDataLegacy(ctx context.Context, timeRange string, requestedBuckets int) (*DeviceHistoryResponse, error) { //nolint:unused
 	start := time.Now()
 
 	// Configure bucket size based on time range and requested bucket count
@@ -3045,7 +3058,7 @@ func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuck
 	return resp, nil
 }
 
-func classifyDeviceStatus(totalErrors, totalDiscards uint64, carrierTransitions uint64) string {
+func classifyDeviceStatus(totalErrors, totalDiscards uint64, carrierTransitions uint64) string { //nolint:unused
 	return health.ClassifyDeviceStatus(totalErrors, totalDiscards, carrierTransitions)
 }
 
@@ -3102,6 +3115,10 @@ func GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 }
 
 func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) {
+	return fetchInterfaceIssuesFromRollup(ctx, duration)
+}
+
+func fetchInterfaceIssuesDataLegacy(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) { //nolint:unused
 	// Convert duration to hours for the SQL interval
 	hours := int(duration.Hours())
 
@@ -3240,6 +3257,10 @@ func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {
+	return fetchDeviceInterfaceHistoryFromRollup(ctx, devicePK, timeRange, requestedBuckets)
+}
+
+func fetchDeviceInterfaceHistoryDataLegacy(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) { //nolint:unused
 	// Calculate bucket size based on time range and requested buckets
 	var totalHours int
 	switch timeRange {
@@ -3457,6 +3478,10 @@ func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
+	return fetchSingleLinkHistoryFromRollup(ctx, linkPK, timeRange, requestedBuckets)
+}
+
+func fetchSingleLinkHistoryDataLegacy(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) { //nolint:unused
 	// Calculate bucket size based on time range and requested buckets
 	var totalMinutes int
 	switch timeRange {
@@ -4026,6 +4051,10 @@ func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) {
+	return fetchSingleDeviceHistoryFromRollup(ctx, devicePK, timeRange, requestedBuckets)
+}
+
+func fetchSingleDeviceHistoryDataLegacy(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) { //nolint:unused
 	// Calculate bucket size based on time range and requested buckets
 	var totalMinutes int
 	switch timeRange {

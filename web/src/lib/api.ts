@@ -1395,10 +1395,11 @@ export interface LinkHistoryResponse {
   bucket_count: number    // Number of buckets
 }
 
-export async function fetchLinkHistory(timeRange?: string, buckets?: number): Promise<LinkHistoryResponse> {
+export async function fetchLinkHistory(timeRange?: string, buckets?: number, filter?: string): Promise<LinkHistoryResponse> {
   const params = new URLSearchParams()
   if (timeRange) params.set('range', timeRange)
   if (buckets) params.set('buckets', buckets.toString())
+  if (filter) params.set('filter', filter)
   const url = `/api/status/link-history${params.toString() ? '?' + params.toString() : ''}`
   const res = await fetchWithRetry(url)
   if (!res.ok) {
@@ -1469,10 +1470,11 @@ export interface DeviceHistoryResponse {
   bucket_count: number    // Number of buckets
 }
 
-export async function fetchDeviceHistory(timeRange?: string, buckets?: number): Promise<DeviceHistoryResponse> {
+export async function fetchDeviceHistory(timeRange?: string, buckets?: number, filter?: string): Promise<DeviceHistoryResponse> {
   const params = new URLSearchParams()
   if (timeRange) params.set('range', timeRange)
   if (buckets) params.set('buckets', buckets.toString())
+  if (filter) params.set('filter', filter)
   const url = `/api/status/device-history${params.toString() ? '?' + params.toString() : ''}`
   const res = await fetchWithRetry(url)
   if (!res.ok) {

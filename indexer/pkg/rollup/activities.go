@@ -22,17 +22,48 @@ func safeHeartbeat(ctx context.Context, details ...any) {
 	activity.RecordHeartbeat(ctx, details...)
 }
 
+// provisioningSentinel is the committed_rtt_ns value that indicates a link is provisioning.
+const provisioningSentinel int64 = 1_000_000_000
+
+// tunnelKey identifies a user tunnel on a specific device.
+type tunnelKey struct {
+	devicePK string
+	tunnelID int64
+}
+
 // ComputeLinkRollup queries probe telemetry for the given time window and returns
 // link rollup buckets with per-direction latency percentiles and loss.
+// Entity state (status, provisioning, ISIS down) is resolved from history tables.
 func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkInput) ([]LinkBucket, error) {
 	safeHeartbeat(ctx, "computing link rollup")
 	start := time.Now()
+
+	// Link latency event_ts is interpolated from on-chain sample headers, which can
+	// be inaccurate when the on-chain writer has gaps. The display timestamp expression
+	// picks ingested_at for recent samples near the epoch head, falling back to event_ts
+	// for old data. This only applies to link latency — other telemetry tables have real
+	// event_ts values.
+	//
+	// The display timestamp is always used for bucketing. For filtering:
+	// - Live rollup (≤15 min window): filter by ingested_at to catch epoch-head samples
+	//   with stale interpolated event_ts.
+	// - Backfill (>15 min window): filter by event_ts. Chunking by ingested_at would
+	//   split samples for the same bucket across chunks (ingested_at can differ from
+	//   event_ts by hours), producing incomplete rollup rows. For old data the display
+	//   timestamp equals event_ts anyway, so filtering and bucketing align.
+	const displayTs = "if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts)"
+
+	isLiveWindow := input.WindowEnd.Sub(input.WindowStart) <= 15*time.Minute
+	filterCol := "f.event_ts"
+	if isLiveWindow {
+		filterCol = "f.ingested_at"
+	}
 
 	latencyQuery := `
 		WITH loss_sub AS (
 			SELECT
 				f.link_pk,
-				toStartOfFiveMinutes(f.ingested_at) as bucket,
+				toStartOfFiveMinutes(` + displayTs + `) as bucket,
 				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
 			FROM fact_dz_device_link_latency f
@@ -45,12 +76,12 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 				AND f.target_device_pk = h.target_device_pk
 				AND f.link_pk = h._hdr_link_pk
 				AND f.epoch = h.epoch
-			WHERE f.ingested_at >= $1 AND f.ingested_at < $2
+			WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 			GROUP BY f.link_pk, bucket, direction
 		)
 		SELECT
 			f.link_pk,
-			toStartOfFiveMinutes(f.ingested_at) as bucket,
+			toStartOfFiveMinutes(` + displayTs + `) as bucket,
 			if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 			avg(f.rtt_us) as avg_rtt,
 			toFloat64(min(f.rtt_us)) as min_rtt,
@@ -72,9 +103,9 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			AND f.link_pk = h._hdr_link_pk
 			AND f.epoch = h.epoch
 		LEFT JOIN loss_sub ls ON f.link_pk = ls.link_pk
-			AND toStartOfFiveMinutes(f.ingested_at) = ls.bucket
+			AND toStartOfFiveMinutes(` + displayTs + `) = ls.bucket
 			AND if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') = ls.direction
-		WHERE f.ingested_at >= $1 AND f.ingested_at < $2
+		WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 		GROUP BY f.link_pk, bucket, direction
 		ORDER BY f.link_pk, bucket, direction
 	`
@@ -119,6 +150,32 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 		return nil, fmt.Errorf("link latency rows: %w", err)
 	}
 
+	if len(bucketMap) == 0 {
+		a.Log.Info("computed link rollup buckets",
+			"count", 0,
+			"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
+			"duration", time.Since(start))
+		return nil, nil
+	}
+
+	// Collect unique link PKs for state resolution
+	linkPKs := make(map[string]struct{})
+	for bk := range bucketMap {
+		linkPKs[bk.linkPK] = struct{}{}
+	}
+
+	// Resolve link status and provisioning from dim_dz_links_history
+	linkState, err := a.resolveLinkState(ctx, linkPKs, input.WindowStart, input.WindowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve link state: %w", err)
+	}
+
+	// Resolve ISIS adjacency status from dim_isis_adjacencies_history
+	isisDown, err := a.resolveISISAdjacency(ctx, linkPKs, input.WindowStart, input.WindowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ISIS adjacency: %w", err)
+	}
+
 	now := time.Now()
 	var buckets []LinkBucket
 
@@ -134,6 +191,16 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 		if bd.z != nil {
 			b.Z = *bd.z
 		}
+
+		// Apply state
+		if ls, ok := linkState[bk.linkPK]; ok {
+			b.Status = ls.status
+			b.Provisioning = ls.provisioning
+		}
+		if down, ok := isisDown[bk.linkPK]; ok {
+			b.ISISDown = down
+		}
+
 		buckets = append(buckets, b)
 	}
 
@@ -145,8 +212,82 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	return buckets, nil
 }
 
+// linkStateInfo holds resolved link status and provisioning flag.
+type linkStateInfo struct {
+	status       string
+	provisioning bool
+}
+
+// resolveLinkState queries dim_dz_links_history to get the most recent status and
+// committed_rtt_ns for each link as of the window end time.
+func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time) (map[string]linkStateInfo, error) {
+	query := `
+		SELECT pk,
+			argMax(status, snapshot_ts) as status,
+			argMax(committed_rtt_ns, snapshot_ts) as committed_rtt_ns
+		FROM dim_dz_links_history
+		WHERE snapshot_ts <= $1
+		GROUP BY pk
+	`
+	rows, err := a.ClickHouse.Query(ctx, query, windowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("link state query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]linkStateInfo)
+	for rows.Next() {
+		var pk, status string
+		var committedRttNs int64
+		if err := rows.Scan(&pk, &status, &committedRttNs); err != nil {
+			return nil, fmt.Errorf("link state scan: %w", err)
+		}
+		if _, ok := linkPKs[pk]; ok {
+			result[pk] = linkStateInfo{
+				status:       status,
+				provisioning: committedRttNs == provisioningSentinel,
+			}
+		}
+	}
+	return result, rows.Err()
+}
+
+// resolveISISAdjacency queries dim_isis_adjacencies_history to determine if each link
+// had an ISIS adjacency at the window end time. A link is "ISIS down" if its latest
+// adjacency record is deleted (is_deleted=1) or if no adjacency record exists.
+func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time) (map[string]bool, error) {
+	query := `
+		SELECT link_pk,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_adjacencies_history
+		WHERE snapshot_ts <= $1 AND link_pk != ''
+		GROUP BY link_pk
+	`
+	rows, err := a.ClickHouse.Query(ctx, query, windowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("ISIS adjacency query: %w", err)
+	}
+	defer rows.Close()
+
+	// Only links that appear in ISIS adjacency history can be ISIS down.
+	// Links with no adjacency history are not ISIS links — they default to false.
+	result := make(map[string]bool)
+	for rows.Next() {
+		var linkPK string
+		var isDeleted uint8
+		if err := rows.Scan(&linkPK, &isDeleted); err != nil {
+			return nil, fmt.Errorf("ISIS adjacency scan: %w", err)
+		}
+		if _, ok := linkPKs[linkPK]; ok {
+			result[linkPK] = isDeleted == 1
+		}
+	}
+	return result, rows.Err()
+}
+
 // ComputeDeviceInterfaceRollup queries interface counters and traffic rates for
 // the given time window and returns per-device, per-interface rollup buckets.
+// Link context (link_pk, link_side), user context, and device state are resolved.
 func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input BackfillChunkInput) ([]DeviceInterfaceBucket, error) {
 	safeHeartbeat(ctx, "computing device interface rollup")
 	start := time.Now()
@@ -156,6 +297,11 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 			device_pk,
 			intf,
 			toStartOfFiveMinutes(event_ts) as bucket,
+			-- Link context: take the most common link_pk/link_side in the bucket
+			anyIf(link_pk, link_pk != '') as link_pk,
+			anyIf(link_side, link_side != '') as link_side,
+			-- User context: take any non-null tunnel ID
+			anyIf(user_tunnel_id, user_tunnel_id IS NOT NULL) as user_tunnel_id,
 			-- Error/discard counters
 			toUInt64(SUM(greatest(0, in_errors_delta))) as in_errors,
 			toUInt64(SUM(greatest(0, out_errors_delta))) as out_errors,
@@ -215,6 +361,8 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 		b.IngestedAt = now
 		if err := rows.Scan(
 			&b.DevicePK, &b.Intf, &b.BucketTS,
+			&b.LinkPK, &b.LinkSide,
+			&b.UserTunnelID,
 			&b.InErrors, &b.OutErrors, &b.InFcsErrors, &b.InDiscards, &b.OutDiscards, &b.CarrierTransitions,
 			&b.InBps.Avg, &b.InBps.Min, &b.InBps.P50, &b.InBps.P90, &b.InBps.P95, &b.InBps.P99, &b.InBps.Max,
 			&b.OutBps.Avg, &b.OutBps.Min, &b.OutBps.P50, &b.OutBps.P90, &b.OutBps.P95, &b.OutBps.P99, &b.OutBps.Max,
@@ -230,12 +378,173 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 		return nil, fmt.Errorf("device interface rows: %w", err)
 	}
 
+	if len(buckets) == 0 {
+		a.Log.Info("computed device interface rollup buckets",
+			"count", 0,
+			"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
+			"duration", time.Since(start))
+		return nil, nil
+	}
+
+	// Collect unique device PKs and (device_pk, tunnel_id) pairs for state resolution
+	devicePKs := make(map[string]struct{})
+	tunnelKeys := make(map[tunnelKey]struct{})
+	for i := range buckets {
+		devicePKs[buckets[i].DevicePK] = struct{}{}
+		if buckets[i].UserTunnelID != nil {
+			tunnelKeys[tunnelKey{buckets[i].DevicePK, *buckets[i].UserTunnelID}] = struct{}{}
+		}
+	}
+
+	// Resolve device status from dim_dz_devices_history
+	deviceStatus, err := a.resolveDeviceStatus(ctx, devicePKs, input.WindowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve device status: %w", err)
+	}
+
+	// Resolve ISIS device state from dim_isis_devices_history
+	isisDeviceState, err := a.resolveISISDeviceState(ctx, devicePKs, input.WindowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve ISIS device state: %w", err)
+	}
+
+	// Resolve user PKs from dim_dz_users_history
+	userPKs, err := a.resolveUserPKs(ctx, tunnelKeys, input.WindowEnd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve user PKs: %w", err)
+	}
+
+	// Apply resolved state to buckets
+	for i := range buckets {
+		b := &buckets[i]
+		if status, ok := deviceStatus[b.DevicePK]; ok {
+			b.Status = status
+		}
+		if state, ok := isisDeviceState[b.DevicePK]; ok {
+			b.ISISOverload = state.overload
+			b.ISISUnreachable = state.unreachable
+		}
+		if b.UserTunnelID != nil {
+			tk := tunnelKey{b.DevicePK, *b.UserTunnelID}
+			if pk, ok := userPKs[tk]; ok {
+				b.UserPK = pk
+			}
+		}
+	}
+
 	a.Log.Info("computed device interface rollup buckets",
 		"count", len(buckets),
 		"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
 		"duration", time.Since(start))
 
 	return buckets, nil
+}
+
+// resolveDeviceStatus queries dim_dz_devices_history to get the most recent status
+// for each device as of the given time.
+func (a *Activities) resolveDeviceStatus(ctx context.Context, devicePKs map[string]struct{}, asOf time.Time) (map[string]string, error) {
+	query := `
+		SELECT pk,
+			argMax(status, snapshot_ts) as status
+		FROM dim_dz_devices_history
+		WHERE snapshot_ts <= $1
+		GROUP BY pk
+	`
+	rows, err := a.ClickHouse.Query(ctx, query, asOf)
+	if err != nil {
+		return nil, fmt.Errorf("device status query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var pk, status string
+		if err := rows.Scan(&pk, &status); err != nil {
+			return nil, fmt.Errorf("device status scan: %w", err)
+		}
+		if _, ok := devicePKs[pk]; ok {
+			result[pk] = status
+		}
+	}
+	return result, rows.Err()
+}
+
+// isisDeviceStateInfo holds resolved ISIS device state.
+type isisDeviceStateInfo struct {
+	overload    bool
+	unreachable bool
+}
+
+// resolveISISDeviceState queries dim_isis_devices_history to get ISIS overload and
+// unreachable flags for each device as of the given time.
+func (a *Activities) resolveISISDeviceState(ctx context.Context, devicePKs map[string]struct{}, asOf time.Time) (map[string]isisDeviceStateInfo, error) {
+	query := `
+		SELECT device_pk,
+			argMax(overload, snapshot_ts) as overload,
+			argMax(node_unreachable, snapshot_ts) as node_unreachable,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_isis_devices_history
+		WHERE snapshot_ts <= $1 AND device_pk != ''
+		GROUP BY device_pk
+	`
+	rows, err := a.ClickHouse.Query(ctx, query, asOf)
+	if err != nil {
+		return nil, fmt.Errorf("ISIS device state query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]isisDeviceStateInfo)
+	for rows.Next() {
+		var devicePK string
+		var overload, unreachable, isDeleted uint8
+		if err := rows.Scan(&devicePK, &overload, &unreachable, &isDeleted); err != nil {
+			return nil, fmt.Errorf("ISIS device state scan: %w", err)
+		}
+		if _, ok := devicePKs[devicePK]; ok && isDeleted == 0 {
+			result[devicePK] = isisDeviceStateInfo{
+				overload:    overload == 1,
+				unreachable: unreachable == 1,
+			}
+		}
+	}
+	return result, rows.Err()
+}
+
+// resolveUserPKs queries dim_dz_users_history to map (device_pk, tunnel_id) pairs
+// to user PKs as of the given time.
+func (a *Activities) resolveUserPKs(ctx context.Context, tunnelKeys map[tunnelKey]struct{}, asOf time.Time) (map[tunnelKey]string, error) {
+	if len(tunnelKeys) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT device_pk, tunnel_id,
+			argMax(pk, snapshot_ts) as pk,
+			argMax(is_deleted, snapshot_ts) as is_deleted
+		FROM dim_dz_users_history
+		WHERE snapshot_ts <= $1
+		GROUP BY device_pk, tunnel_id
+	`
+	rows, err := a.ClickHouse.Query(ctx, query, asOf)
+	if err != nil {
+		return nil, fmt.Errorf("user PK query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[tunnelKey]string)
+	for rows.Next() {
+		var devicePK, pk string
+		var tunnelID int32
+		var isDeleted uint8
+		if err := rows.Scan(&devicePK, &tunnelID, &pk, &isDeleted); err != nil {
+			return nil, fmt.Errorf("user PK scan: %w", err)
+		}
+		tk := tunnelKey{devicePK, int64(tunnelID)}
+		if _, ok := tunnelKeys[tk]; ok && isDeleted == 0 {
+			result[tk] = pk
+		}
+	}
+	return result, rows.Err()
 }
 
 // WriteLinkBuckets batch inserts link rollup buckets into ClickHouse.
@@ -248,7 +557,8 @@ func (a *Activities) WriteLinkBuckets(ctx context.Context, buckets []LinkBucket)
 	batch, err := a.ClickHouse.PrepareBatch(ctx, `INSERT INTO link_rollup_5m (
 		bucket_ts, link_pk, ingested_at,
 		a_avg_rtt_us, a_min_rtt_us, a_p50_rtt_us, a_p90_rtt_us, a_p95_rtt_us, a_p99_rtt_us, a_max_rtt_us, a_loss_pct, a_samples,
-		z_avg_rtt_us, z_min_rtt_us, z_p50_rtt_us, z_p90_rtt_us, z_p95_rtt_us, z_p99_rtt_us, z_max_rtt_us, z_loss_pct, z_samples
+		z_avg_rtt_us, z_min_rtt_us, z_p50_rtt_us, z_p90_rtt_us, z_p95_rtt_us, z_p99_rtt_us, z_max_rtt_us, z_loss_pct, z_samples,
+		status, provisioning, isis_down
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare batch: %w", err)
@@ -259,6 +569,7 @@ func (a *Activities) WriteLinkBuckets(ctx context.Context, buckets []LinkBucket)
 			b.BucketTS, b.LinkPK, b.IngestedAt,
 			b.A.AvgRttUs, b.A.MinRttUs, b.A.P50RttUs, b.A.P90RttUs, b.A.P95RttUs, b.A.P99RttUs, b.A.MaxRttUs, b.A.LossPct, b.A.Samples,
 			b.Z.AvgRttUs, b.Z.MinRttUs, b.Z.P50RttUs, b.Z.P90RttUs, b.Z.P95RttUs, b.Z.P99RttUs, b.Z.MaxRttUs, b.Z.LossPct, b.Z.Samples,
+			b.Status, b.Provisioning, b.ISISDown,
 		); err != nil {
 			return fmt.Errorf("append batch: %w", err)
 		}
@@ -281,11 +592,13 @@ func (a *Activities) WriteDeviceInterfaceBuckets(ctx context.Context, buckets []
 
 	batch, err := a.ClickHouse.PrepareBatch(ctx, `INSERT INTO device_interface_rollup_5m (
 		bucket_ts, device_pk, intf, ingested_at,
+		link_pk, link_side, user_tunnel_id, user_pk,
 		in_errors, out_errors, in_fcs_errors, in_discards, out_discards, carrier_transitions,
 		avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
 		avg_out_bps, min_out_bps, p50_out_bps, p90_out_bps, p95_out_bps, p99_out_bps, max_out_bps,
 		avg_in_pps, min_in_pps, p50_in_pps, p90_in_pps, p95_in_pps, p99_in_pps, max_in_pps,
-		avg_out_pps, min_out_pps, p50_out_pps, p90_out_pps, p95_out_pps, p99_out_pps, max_out_pps
+		avg_out_pps, min_out_pps, p50_out_pps, p90_out_pps, p95_out_pps, p99_out_pps, max_out_pps,
+		status, isis_overload, isis_unreachable
 	)`)
 	if err != nil {
 		return fmt.Errorf("prepare batch: %w", err)
@@ -294,11 +607,13 @@ func (a *Activities) WriteDeviceInterfaceBuckets(ctx context.Context, buckets []
 	for _, b := range buckets {
 		if err := batch.Append(
 			b.BucketTS, b.DevicePK, b.Intf, b.IngestedAt,
+			b.LinkPK, b.LinkSide, b.UserTunnelID, b.UserPK,
 			b.InErrors, b.OutErrors, b.InFcsErrors, b.InDiscards, b.OutDiscards, b.CarrierTransitions,
 			b.InBps.Avg, b.InBps.Min, b.InBps.P50, b.InBps.P90, b.InBps.P95, b.InBps.P99, b.InBps.Max,
 			b.OutBps.Avg, b.OutBps.Min, b.OutBps.P50, b.OutBps.P90, b.OutBps.P95, b.OutBps.P99, b.OutBps.Max,
 			b.InPps.Avg, b.InPps.Min, b.InPps.P50, b.InPps.P90, b.InPps.P95, b.InPps.P99, b.InPps.Max,
 			b.OutPps.Avg, b.OutPps.Min, b.OutPps.P50, b.OutPps.P90, b.OutPps.P95, b.OutPps.P99, b.OutPps.Max,
+			b.Status, b.ISISOverload, b.ISISUnreachable,
 		); err != nil {
 			return fmt.Errorf("append batch: %w", err)
 		}
