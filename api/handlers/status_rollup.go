@@ -263,6 +263,27 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			WHERE f.event_ts >= $1
 			GROUP BY bucket_ts, f.link_pk
 		),
+		-- Link state as of each bucket's end time (bucket_ts + 5min).
+		-- Uses argMax over all snapshots up to that point per link.
+		link_state_asof AS (
+			SELECT
+				lb.bucket_ts AS ls_bucket, lb.link_pk AS ls_pk,
+				argMax(lh.status, lh.snapshot_ts) AS status,
+				argMax(lh.committed_rtt_ns, lh.snapshot_ts) AS committed_rtt_ns
+			FROM latency_buckets lb
+			JOIN dim_dz_links_history lh ON lb.link_pk = lh.pk AND lh.snapshot_ts <= lb.bucket_ts + INTERVAL 5 MINUTE
+			GROUP BY ls_bucket, ls_pk
+		),
+		-- ISIS adjacency state as of each bucket's end time
+		isis_state_asof AS (
+			SELECT
+				lb.bucket_ts AS is_bucket, lb.link_pk AS is_pk,
+				argMax(ih.is_deleted, ih.snapshot_ts) AS is_deleted
+			FROM latency_buckets lb
+			JOIN dim_isis_adjacencies_history ih ON lb.link_pk = ih.link_pk AND ih.snapshot_ts <= lb.bucket_ts + INTERVAL 5 MINUTE
+			WHERE ih.link_pk != ''
+			GROUP BY is_bucket, is_pk
+		),
 		raw_source AS (
 			SELECT
 				lb.bucket_ts AS bucket_ts, lb.link_pk AS link_pk,
@@ -270,16 +291,15 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				lb.a_p95_rtt_us, lb.a_p99_rtt_us, lb.a_max_rtt_us, lb.a_loss_pct, lb.a_samples,
 				lb.z_avg_rtt_us, lb.z_min_rtt_us, lb.z_p50_rtt_us, lb.z_p90_rtt_us,
 				lb.z_p95_rtt_us, lb.z_p99_rtt_us, lb.z_max_rtt_us, lb.z_loss_pct, lb.z_samples,
-				COALESCE(lc.status, '') AS status,
-				lc.committed_rtt_ns = 500000 AS provisioning,
-				CASE WHEN ia.link_pk IS NULL THEN false ELSE ia.is_deleted = 1 END AS isis_down
+				COALESCE(ls.status, '') AS status,
+				COALESCE(ls.committed_rtt_ns, 0) = 500000 AS provisioning,
+				CASE
+					WHEN ia.is_pk IS NULL THEN false
+					ELSE ia.is_deleted = 1
+				END AS isis_down
 			FROM latency_buckets lb
-			LEFT JOIN dz_links_current lc ON lb.link_pk = lc.pk
-			LEFT JOIN (
-				SELECT link_pk, argMax(is_deleted, snapshot_ts) AS is_deleted
-				FROM dim_isis_adjacencies_history WHERE link_pk != ''
-				GROUP BY link_pk
-			) ia ON lb.link_pk = ia.link_pk
+			LEFT JOIN link_state_asof ls ON lb.link_pk = ls.ls_pk AND lb.bucket_ts = ls.ls_bucket
+			LEFT JOIN isis_state_asof ia ON lb.link_pk = ia.is_pk AND lb.bucket_ts = ia.is_bucket
 		),
 		agg AS (
 			SELECT

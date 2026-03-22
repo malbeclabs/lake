@@ -55,15 +55,18 @@ func seedInterfaceRollup(t *testing.T, bucketTS time.Time, devicePK, intf, linkP
 
 func seedLinkMetadata(t *testing.T, pk, code, linkType, contributorPK, sideAPK, sideZPK string, bandwidthBps, committedRttNs int64, status string) {
 	t.Helper()
+	seedLinkMetadataAt(t, pk, code, linkType, contributorPK, sideAPK, sideZPK, bandwidthBps, committedRttNs, status, time.Now())
+}
+
+func seedLinkMetadataAt(t *testing.T, pk, code, linkType, contributorPK, sideAPK, sideZPK string, bandwidthBps, committedRttNs int64, status string, snapshotTS time.Time) {
+	t.Helper()
 	ctx := t.Context()
-	now := time.Now()
-	// Seed dim tables so dz_links_current view resolves
 	err := config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history (
 		entity_id, snapshot_ts, ingested_at, op_id, is_deleted,
 		pk, code, link_type, status, contributor_pk, side_a_pk, side_z_pk,
 		bandwidth_bps, committed_rtt_ns
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-		pk, now, now, "00000000-0000-0000-0000-000000000001", uint8(0),
+		pk, snapshotTS, snapshotTS, "00000000-0000-0000-0000-000000000001", uint8(0),
 		pk, code, linkType, status, contributorPK, sideAPK, sideZPK,
 		bandwidthBps, committedRttNs,
 	)
@@ -305,11 +308,12 @@ func TestLinkRollupVsRaw(t *testing.T) {
 	seedContributor(t, "contrib-1", "acme")
 	seedDeviceMetadata(t, "dev-a", "DEV-A", "router", "contrib-1", "metro-a", 10, "activated")
 	seedDeviceMetadata(t, "dev-z", "DEV-Z", "router", "contrib-1", "metro-z", 10, "activated")
-	seedLinkMetadata(t, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-z", 10_000_000_000, 500_000, "activated")
-
 	// Seed raw latency probes: 20 probes per direction in one 5-minute bucket
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 	bucketTS := now.Add(-10 * time.Minute)
+
+	// Seed link metadata with snapshot_ts before the latency bucket so raw state resolution works
+	seedLinkMetadataAt(t, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-z", 10_000_000_000, 500_000, "activated", bucketTS.Add(-time.Hour))
 	for i := range 20 {
 		ts := bucketTS.Add(time.Duration(i) * 10 * time.Second)
 		// Direction A: dev-a → dev-z, RTT 100-290us
