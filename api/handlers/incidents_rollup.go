@@ -42,10 +42,66 @@ func rollupBucketMinutes(d time.Duration) int {
 	return 5
 }
 
+// isDefaultLinkThresholds returns true if the params use default thresholds that match
+// the link_incidents_v view (loss ≥ 10%, counters ≥ 1, coalesce gap 180 min, bucket 5 min).
+func isDefaultLinkThresholds(p incidentQueryParams) bool {
+	return p.LossThreshold == 10 &&
+		p.ErrorsThreshold == 1 &&
+		p.FCSThreshold == 1 &&
+		p.DiscardsThreshold == 1 &&
+		p.CarrierThreshold == 1 &&
+		p.CoalesceGapMin == 180 &&
+		rollupBucketMinutes(p.Duration) == 5
+}
+
+// buildLinkIncidentsViewQuery builds a simple query against the link_incidents_v view.
+func buildLinkIncidentsViewQuery(p incidentQueryParams) (string, []any) {
+	startSecs := int64(p.Duration.Seconds())
+	var args []any
+	argIdx := 1
+
+	addArg := func(v any) string {
+		args = append(args, v)
+		s := fmt.Sprintf("$%d", argIdx)
+		argIdx++
+		return s
+	}
+
+	startArg := addArg(startSecs)
+
+	var typeClause string
+	if p.TypeFilter != "all" {
+		typeArg := addArg(p.TypeFilter)
+		typeClause = fmt.Sprintf("AND incident_type = %s", typeArg)
+	}
+
+	filterClauses, filterArgs := buildLinkFilterClauses(p.Filters, argIdx)
+	args = append(args, filterArgs...)
+
+	query := fmt.Sprintf(`
+SELECT
+	entity_pk, incident_type, started_at, ended_at, is_ongoing,
+	peak_value, total_buckets, duration_seconds,
+	link_code, link_type, status, side_a_metro, side_z_metro, contributor_code
+FROM link_incidents_v
+WHERE (ended_at >= now() - INTERVAL %s SECOND OR is_ongoing)
+  %s
+  %s
+ORDER BY started_at DESC`,
+		startArg, typeClause, filterClauses)
+
+	return query, args
+}
+
 // buildLinkIncidentsQuery builds a single SQL query that detects all link incident types
 // using UNION ALL across rollup tables, with gap-and-island detection, coalescing,
 // min-duration filtering, and metadata JOINs all in SQL.
 func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
+	// Use the view for default thresholds
+	if isDefaultLinkThresholds(p) {
+		return buildLinkIncidentsViewQuery(p)
+	}
+
 	bucketMin := rollupBucketMinutes(p.Duration)
 	startSecs := int64(p.Duration.Seconds())
 	// Add 1 day lookback so incidents starting before the window get their true start
@@ -387,8 +443,64 @@ func fetchLinkIncidentsFromRollup(ctx context.Context, conn driver.Conn, p incid
 	return incidents, nil
 }
 
+// isDefaultDeviceThresholds returns true if the params use default thresholds that match
+// the device_incidents_v view (counters ≥ 1, coalesce gap 180 min, bucket 5 min, no link intfs).
+func isDefaultDeviceThresholds(p incidentQueryParams) bool {
+	return p.ErrorsThreshold == 1 &&
+		p.FCSThreshold == 1 &&
+		p.DiscardsThreshold == 1 &&
+		p.CarrierThreshold == 1 &&
+		p.CoalesceGapMin == 180 &&
+		rollupBucketMinutes(p.Duration) == 5 &&
+		!p.IncludeLinkIntfs
+}
+
+// buildDeviceIncidentsViewQuery builds a simple query against the device_incidents_v view.
+func buildDeviceIncidentsViewQuery(p incidentQueryParams) (string, []any) {
+	startSecs := int64(p.Duration.Seconds())
+	var args []any
+	argIdx := 1
+
+	addArg := func(v any) string {
+		args = append(args, v)
+		s := fmt.Sprintf("$%d", argIdx)
+		argIdx++
+		return s
+	}
+
+	startArg := addArg(startSecs)
+
+	var typeClause string
+	if p.TypeFilter != "all" {
+		typeArg := addArg(p.TypeFilter)
+		typeClause = fmt.Sprintf("AND incident_type = %s", typeArg)
+	}
+
+	filterClauses, filterArgs := buildDeviceFilterClauses(p.Filters, argIdx)
+	args = append(args, filterArgs...)
+
+	query := fmt.Sprintf(`
+SELECT
+	entity_pk, incident_type, started_at, ended_at, is_ongoing,
+	peak_value, total_buckets, duration_seconds,
+	device_code, device_type, status, metro, contributor_code
+FROM device_incidents_v
+WHERE (ended_at >= now() - INTERVAL %s SECOND OR is_ongoing)
+  %s
+  %s
+ORDER BY started_at DESC`,
+		startArg, typeClause, filterClauses)
+
+	return query, args
+}
+
 // buildDeviceIncidentsQuery builds a single SQL query that detects all device incident types.
 func buildDeviceIncidentsQuery(p incidentQueryParams) (string, []any) {
+	// Use the view for default thresholds
+	if isDefaultDeviceThresholds(p) {
+		return buildDeviceIncidentsViewQuery(p)
+	}
+
 	bucketMin := rollupBucketMinutes(p.Duration)
 	startSecs := int64(p.Duration.Seconds())
 	lookbackSecs := int64((p.Duration + 24*time.Hour).Seconds())

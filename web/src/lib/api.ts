@@ -3087,14 +3087,14 @@ export interface TimelineEvent {
   id: string
   event_type: string
   timestamp: string
-  category: 'state_change' | 'packet_loss' | 'interface_carrier' | 'interface_errors' | 'interface_discards'
+  category: string
   severity: 'info' | 'warning' | 'critical' | 'success'
   title: string
   description?: string
   entity_type: string
   entity_pk: string
   entity_code: string
-  details?: EntityChangeDetails | PacketLossEventDetails | InterfaceEventDetails | ValidatorEventDetails
+  details?: EntityChangeDetails | IncidentEventDetails | ValidatorEventDetails
 }
 
 export interface EntityChangeDetails {
@@ -3173,36 +3173,20 @@ export interface UserEntity {
   metro_code?: string
 }
 
-export interface PacketLossEventDetails {
-  link_pk: string
-  link_code: string
-  link_type: string
-  side_a_metro: string
-  side_z_metro: string
-  previous_loss_pct: number
-  current_loss_pct: number
-  direction: 'increased' | 'decreased'
-}
-
-export interface InterfaceEventDetails {
-  device_pk: string
-  device_code: string
-  interface_name: string
-  link_pk?: string
-  link_code?: string
-  in_errors?: number
-  out_errors?: number
-  in_discards?: number
-  out_discards?: number
-  carrier_transitions?: number
-  issue_type: 'errors' | 'discards' | 'carrier'
-}
-
-export interface GroupedInterfaceDetails {
-  device_pk: string
-  device_code: string
-  issue_type: 'errors' | 'discards' | 'carrier'
-  interfaces: InterfaceEventDetails[]
+export interface IncidentEventDetails {
+  entity_pk: string
+  entity_code: string
+  entity_type: 'link' | 'device'
+  incident_type: string
+  peak_value: number
+  duration_seconds: number
+  is_ongoing: boolean
+  link_type?: string
+  side_a_metro?: string
+  side_z_metro?: string
+  metro?: string
+  contributor_code?: string
+  status?: string
 }
 
 export interface ValidatorEventDetails {

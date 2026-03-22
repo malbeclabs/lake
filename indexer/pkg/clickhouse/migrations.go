@@ -118,11 +118,21 @@ func Down(ctx context.Context, log *slog.Logger, cfg MigrationConfig) error {
 		return err
 	}
 
-	if _, err := provider.Down(ctx); err != nil {
+	res, err := provider.Down(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to roll back migration: %w", err)
 	}
 
-	log.Info("ClickHouse migration rolled back successfully")
+	if res == nil {
+		log.Info("no ClickHouse migrations to roll back")
+		return nil
+	}
+
+	log.Info("ClickHouse migration rolled back successfully",
+		"version", res.Source.Version,
+		"name", res.Source.Path,
+		"duration", res.Duration,
+	)
 	return nil
 }
 
@@ -141,11 +151,24 @@ func DownTo(ctx context.Context, log *slog.Logger, cfg MigrationConfig, version 
 		return err
 	}
 
-	if _, err := provider.DownTo(ctx, version); err != nil {
+	results, err := provider.DownTo(ctx, version)
+	if err != nil {
 		return fmt.Errorf("failed to roll back migrations: %w", err)
 	}
 
-	log.Info("ClickHouse migrations rolled back successfully", "version", version)
+	if len(results) == 0 {
+		log.Info("no ClickHouse migrations to roll back")
+		return nil
+	}
+
+	for _, res := range results {
+		log.Info("rolled back ClickHouse migration",
+			"version", res.Source.Version,
+			"name", res.Source.Path,
+			"duration", res.Duration,
+		)
+	}
+	log.Info("ClickHouse migrations rolled back successfully", "count", len(results), "target_version", version)
 	return nil
 }
 

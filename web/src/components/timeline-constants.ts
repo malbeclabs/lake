@@ -1,6 +1,6 @@
 import type { ActionFilter } from '@/lib/api'
 
-export type Category = 'state_change' | 'packet_loss' | 'interface_carrier' | 'interface_errors' | 'interface_discards'
+export type Category = 'state_change' | 'packet_loss' | 'errors' | 'fcs' | 'discards' | 'carrier' | 'no_data' | 'isis_down' | 'isis_overload' | 'isis_unreachable'
 export type EntityType = 'device' | 'link' | 'metro' | 'contributor' | 'user' | 'validator' | 'gossip_node'
 export type DZFilter = 'on_dz' | 'off_dz' | 'all'
 export type MinStakeOption = '0' | '0.01' | '0.05' | '0.1' | '0.5' | '1' | '1.5' | '2'
@@ -10,7 +10,7 @@ export const ALL_DZ_ENTITIES: EntityType[] = ['device', 'link', 'metro', 'contri
 export const ALL_SOLANA_ENTITIES: EntityType[] = ['validator', 'gossip_node']
 export const ALL_ENTITY_TYPES: EntityType[] = [...ALL_DZ_ENTITIES, ...ALL_SOLANA_ENTITIES]
 export const DEFAULT_ENTITY_TYPES: EntityType[] = ALL_ENTITY_TYPES.filter(e => e !== 'gossip_node')
-export const ALL_CATEGORIES: Category[] = ['state_change', 'packet_loss', 'interface_carrier', 'interface_errors', 'interface_discards']
+export const ALL_CATEGORIES: Category[] = ['state_change', 'packet_loss', 'errors', 'fcs', 'discards', 'carrier', 'no_data', 'isis_down', 'isis_overload', 'isis_unreachable']
 
 export const presets: { label: string; params: Record<string, string> }[] = [
   { label: 'Links added', params: { range: '7d', entities: 'link', categories: 'state_change', actions: 'added', dz: 'on_dz' } },
@@ -18,8 +18,8 @@ export const presets: { label: string; params: Record<string, string> }[] = [
   { label: 'Validator connections', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed', dz: 'on_dz', min_stake: '0.01' } },
   { label: 'DZ stake changes', params: { range: '7d', entities: 'validator', categories: 'state_change', actions: 'added,removed,changed,alerting,resolved', dz: 'on_dz', min_stake: '0.01' } },
   { label: 'Link/device updates', params: { range: '24h', entities: 'device,link', categories: 'state_change', actions: 'changed', dz: 'on_dz' } },
-  { label: 'Link ops', params: { range: '24h', entities: 'link,device', categories: 'packet_loss,interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
-  { label: 'Device ops', params: { range: '24h', entities: 'device', categories: 'interface_carrier,interface_errors,interface_discards', dz: 'on_dz' } },
+  { label: 'Link ops', params: { range: '24h', entities: 'link,device', categories: 'packet_loss,errors,fcs,discards,carrier,no_data,isis_down', dz: 'on_dz' } },
+  { label: 'Device ops', params: { range: '24h', entities: 'device', categories: 'errors,fcs,discards,carrier,no_data,isis_overload,isis_unreachable', dz: 'on_dz' } },
 ]
 
 // Helper to parse a comma-separated URL param into a Set, with validation

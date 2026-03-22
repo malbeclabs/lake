@@ -76,9 +76,14 @@ const actionOptions: { value: ActionFilter; label: string; icon: typeof Plus }[]
 const categoryOptions: { value: Category; label: string; icon: typeof Server }[] = [
   { value: 'state_change', label: 'State Changes', icon: GitCommit },
   { value: 'packet_loss', label: 'Packet Loss', icon: Wifi },
-  { value: 'interface_carrier', label: 'Carrier Transitions', icon: WifiOff },
-  { value: 'interface_errors', label: 'Errors', icon: AlertOctagon },
-  { value: 'interface_discards', label: 'Discards', icon: AlertTriangle },
+  { value: 'errors', label: 'Errors', icon: AlertOctagon },
+  { value: 'fcs', label: 'FCS Errors', icon: AlertOctagon },
+  { value: 'discards', label: 'Discards', icon: AlertTriangle },
+  { value: 'carrier', label: 'Carrier Transitions', icon: WifiOff },
+  { value: 'no_data', label: 'No Data', icon: WifiOff },
+  { value: 'isis_down', label: 'ISIS Down', icon: AlertTriangle },
+  { value: 'isis_overload', label: 'ISIS Overload', icon: AlertTriangle },
+  { value: 'isis_unreachable', label: 'ISIS Unreachable', icon: AlertTriangle },
 ]
 
 const dzEntityOptions: { value: EntityType; label: string; icon: typeof Server }[] = [

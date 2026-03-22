@@ -23,9 +23,7 @@ import { cn } from '@/lib/utils'
 import type {
   TimelineEvent,
   EntityChangeDetails,
-  PacketLossEventDetails,
-  InterfaceEventDetails,
-  GroupedInterfaceDetails,
+  IncidentEventDetails,
   ValidatorEventDetails,
   FieldChange,
   DeviceEntity,
@@ -49,24 +47,17 @@ const severityIcons: Record<string, typeof Info> = {
   success: CheckCircle2,
 }
 
-// Get severity color class based on count thresholds
-function getSeverityColor(value: number, thresholds: { low: number; medium: number; high: number }): string {
-  if (value >= thresholds.high) return 'text-red-600 font-semibold'
-  if (value >= thresholds.medium) return 'text-orange-500 font-medium'
-  if (value >= thresholds.low) return 'text-amber-500'
-  return 'text-muted-foreground'
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const mins = Math.floor(seconds / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  const remainMins = mins % 60
+  if (hours < 24) return remainMins > 0 ? `${hours}h ${remainMins}m` : `${hours}h`
+  const days = Math.floor(hours / 24)
+  const remainHours = hours % 24
+  return remainHours > 0 ? `${days}d ${remainHours}h` : `${days}d`
 }
-
-function getLossColor(pct: number): string {
-  if (pct >= 5) return 'text-red-600 font-semibold'
-  if (pct >= 1) return 'text-orange-500 font-medium'
-  if (pct >= 0.1) return 'text-amber-500'
-  return 'text-muted-foreground'
-}
-
-const errorThresholds = { low: 10, medium: 100, high: 1000 }
-const discardThresholds = { low: 100, medium: 1000, high: 10000 }
-const carrierThresholds = { low: 1, medium: 5, high: 10 }
 
 import { formatTimeAgo } from './timeline-constants'
 
@@ -257,7 +248,7 @@ function EventDetails({ event }: { event: TimelineEvent }) {
     )
   }
 
-  if (event.event_type.startsWith('packet_loss') || event.event_type.startsWith('interface_')) {
+  if (event.event_type === 'incident_started' || event.event_type === 'incident_ended') {
     return null
   }
 
@@ -319,8 +310,8 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
   const [expanded, setExpanded] = useState(false)
   const SeverityIcon = severityIcons[event.severity]
   const hasDetails = event.details && Object.keys(event.details).length > 0
-    && !event.event_type.startsWith('interface_')
-    && !event.event_type.startsWith('packet_loss')
+    && event.event_type !== 'incident_started'
+    && event.event_type !== 'incident_ended'
 
   const changeDetails = event.category === 'state_change' && event.details && 'change_type' in event.details
     ? event.details as EntityChangeDetails
@@ -332,36 +323,9 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
     ? event.details as ValidatorEventDetails
     : undefined
 
-  const packetLossDetails = event.event_type.startsWith('packet_loss') && event.details && 'current_loss_pct' in event.details
-    ? event.details as PacketLossEventDetails
+  const incidentDetails = (event.event_type === 'incident_started' || event.event_type === 'incident_ended') && event.details && 'incident_type' in event.details
+    ? event.details as IncidentEventDetails
     : undefined
-
-  const singleInterfaceDetails = event.event_type.startsWith('interface_') && event.details && 'interface_name' in event.details
-    ? event.details as InterfaceEventDetails
-    : undefined
-  const groupedInterfaceDetails = event.event_type.startsWith('interface_') && event.details && 'interfaces' in event.details
-    ? event.details as GroupedInterfaceDetails
-    : undefined
-
-  const interfaceTotals = (() => {
-    if (singleInterfaceDetails) {
-      return {
-        interfaces: [singleInterfaceDetails],
-        carrierTransitions: singleInterfaceDetails.carrier_transitions || 0,
-        errors: (singleInterfaceDetails.in_errors || 0) + (singleInterfaceDetails.out_errors || 0),
-        discards: (singleInterfaceDetails.in_discards || 0) + (singleInterfaceDetails.out_discards || 0),
-      }
-    }
-    if (groupedInterfaceDetails) {
-      return {
-        interfaces: groupedInterfaceDetails.interfaces,
-        carrierTransitions: groupedInterfaceDetails.interfaces.reduce((sum, i) => sum + (i.carrier_transitions || 0), 0),
-        errors: groupedInterfaceDetails.interfaces.reduce((sum, i) => sum + (i.in_errors || 0) + (i.out_errors || 0), 0),
-        discards: groupedInterfaceDetails.interfaces.reduce((sum, i) => sum + (i.in_discards || 0) + (i.out_discards || 0), 0),
-      }
-    }
-    return null
-  })()
 
   const userEntity = event.entity_type === 'user' && changeDetails?.entity
     ? changeDetails.entity as UserEntity
@@ -439,6 +403,12 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
             <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
               <RotateCcw className="h-2.5 w-2.5" />
               Recovered
+            </span>
+          )}
+          {event.event_type.endsWith('_ended') && (
+            <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">
+              <Square className="h-2.5 w-2.5" />
+              Ended
             </span>
           )}
           {/* Validator/Gossip node badges */}
@@ -562,54 +532,35 @@ export function TimelineEventCard({ event, isNew }: { event: TimelineEvent; isNe
           </div>
         )}
 
-        {/* Packet loss */}
-        {packetLossDetails && (
+        {/* Incident events */}
+        {incidentDetails && (
           <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-            <div>
-              Route: <FilterButton value={packetLossDetails.side_a_metro} field="metro" className="font-medium text-foreground">{packetLossDetails.side_a_metro}</FilterButton>
-              {' → '}
-              <FilterButton value={packetLossDetails.side_z_metro} field="metro" className="font-medium text-foreground">{packetLossDetails.side_z_metro}</FilterButton>
-            </div>
-            <div>
-              Loss: <span className={getLossColor(packetLossDetails.current_loss_pct)}>{packetLossDetails.current_loss_pct.toFixed(2)}%</span>
-              {packetLossDetails.previous_loss_pct !== undefined && (
-                <span className="text-muted-foreground"> (was {packetLossDetails.previous_loss_pct.toFixed(2)}%)</span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Interface events */}
-        {interfaceTotals && (
-          <div className="text-xs text-muted-foreground mt-1 space-y-1">
-            {interfaceTotals.carrierTransitions > 0 && (
-              <div>Carrier transitions: <span className={getSeverityColor(interfaceTotals.carrierTransitions, carrierThresholds)}>{interfaceTotals.carrierTransitions}</span></div>
+            {incidentDetails.entity_type === 'link' && incidentDetails.side_a_metro && incidentDetails.side_z_metro && (
+              <div>
+                Route: <FilterButton value={incidentDetails.side_a_metro} field="metro" className="font-medium text-foreground">{incidentDetails.side_a_metro}</FilterButton>
+                {' → '}
+                <FilterButton value={incidentDetails.side_z_metro} field="metro" className="font-medium text-foreground">{incidentDetails.side_z_metro}</FilterButton>
+              </div>
             )}
-            {interfaceTotals.errors > 0 && (
-              <div>Errors: <span className={getSeverityColor(interfaceTotals.errors, errorThresholds)}>{interfaceTotals.errors}</span></div>
+            {incidentDetails.entity_type === 'device' && incidentDetails.metro && (
+              <div>
+                Metro: <FilterButton value={incidentDetails.metro} field="metro" className="font-medium text-foreground">{incidentDetails.metro}</FilterButton>
+              </div>
             )}
-            {interfaceTotals.discards > 0 && (
-              <div>Discards: <span className={getSeverityColor(interfaceTotals.discards, discardThresholds)}>{interfaceTotals.discards}</span></div>
+            {incidentDetails.peak_value > 0 && (
+              <div>Peak: <span className="font-medium text-foreground">
+                {incidentDetails.incident_type === 'packet_loss' ? `${incidentDetails.peak_value.toFixed(1)}%` : Math.round(incidentDetails.peak_value).toLocaleString()}
+              </span></div>
             )}
-            <div className="flex flex-wrap gap-1">
-              {interfaceTotals.interfaces.map((intf, i) => {
-                const carrier = intf.carrier_transitions || 0
-                const errors = (intf.in_errors || 0) + (intf.out_errors || 0)
-                const discards = (intf.in_discards || 0) + (intf.out_discards || 0)
-                const count = carrier > 0 ? carrier : errors > 0 ? errors : discards
-                const colorClass = carrier > 0
-                  ? getSeverityColor(carrier, carrierThresholds)
-                  : errors > 0
-                    ? getSeverityColor(errors, errorThresholds)
-                    : getSeverityColor(discards, discardThresholds)
-                return (
-                  <span key={i} className="bg-muted px-1.5 py-0.5 rounded text-[10px]">
-                    {intf.interface_name}
-                    {count > 0 && <span className={colorClass}> ({count})</span>}
-                  </span>
-                )
-              })}
-            </div>
+            {incidentDetails.duration_seconds > 0 && !incidentDetails.is_ongoing && (
+              <div>Duration: <span className="font-medium text-foreground">{formatDuration(incidentDetails.duration_seconds)}</span></div>
+            )}
+            {incidentDetails.is_ongoing && (
+              <div><span className="font-medium text-amber-600">Ongoing</span></div>
+            )}
+            {incidentDetails.contributor_code && (
+              <div>Contributor: <FilterButton value={incidentDetails.contributor_code} field="contributor" className="font-medium text-foreground">{incidentDetails.contributor_code}</FilterButton></div>
+            )}
           </div>
         )}
 
