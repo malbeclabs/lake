@@ -1372,8 +1372,8 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try to serve from cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && pageCache != nil {
+	// Try to serve from cache first (cache only holds mainnet data, skip for raw source)
+	if isMainnet(r.Context()) && pageCache != nil && r.URL.Query().Get("source") == "" {
 		if cached := pageCache.GetLinkHistory(timeRange, requestedBuckets); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
@@ -1536,8 +1536,8 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Try to serve from cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && pageCache != nil {
+	// Try to serve from cache first (cache only holds mainnet data, skip for raw source)
+	if isMainnet(r.Context()) && pageCache != nil && r.URL.Query().Get("source") == "" {
 		if cached := pageCache.GetDeviceHistory(timeRange, requestedBuckets); cached != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")

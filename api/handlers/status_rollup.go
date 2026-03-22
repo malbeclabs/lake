@@ -664,7 +664,7 @@ func rawInterfaceSource() string {
 			false AS isis_overload,
 			false AS isis_unreachable,
 			anyIf(ic.user_tunnel_id, ic.user_tunnel_id IS NOT NULL) AS user_tunnel_id,
-			anyIf(ic.user_pk, ic.user_pk != '') AS user_pk
+			'' AS user_pk
 		FROM fact_dz_device_interface_counters ic
 		LEFT JOIN dz_devices_current dc ON ic.device_pk = dc.pk
 		GROUP BY bucket_ts, ic.device_pk, ic.intf, status
