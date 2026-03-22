@@ -439,7 +439,7 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			avg(avg_out_pps) as avg_out_pps,
 			max(max_out_pps) as max_out_pps,
 			-- Entity state
-			argMax(status, bucket_ts) as status,
+			argMax(status, bucket_ts) as agg_status,
 			max(isis_overload) as isis_overload,
 			max(isis_unreachable) as isis_unreachable,
 			max(status IN ('soft-drained', 'hard-drained')) as was_drained,
