@@ -228,19 +228,112 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 		args = append(args, linkPKs)
 	}
 
-	// Source table: rollup table or raw fact table computed inline.
-	// Both produce the same column schema so the outer re-bucketing CTE is identical.
-	sourceTable := "link_rollup_5m FINAL"
+	// Build the query. In raw mode, we prepend CTEs that compute from fact tables
+	// and reference them as the source. In rollup mode, we read directly from the table.
+	var query string
 	if params.UseRaw {
-		sourceTable = rawLinkSource()
-	}
-
-	// Use a CTE to first aggregate, then compute sample-weighted averages.
-	// Aliases must not collide with column names — ClickHouse resolves aliases
-	// within the same SELECT, so `sum(a_samples) as a_samples` would cause
-	// other expressions referencing a_samples to see the aggregate, producing
-	// "aggregate inside aggregate" errors.
-	query := fmt.Sprintf(`
+		query = fmt.Sprintf(`
+		WITH
+		latency_buckets AS (
+			SELECT
+				toStartOfFiveMinutes(f.event_ts) AS bucket_ts,
+				f.link_pk AS link_pk,
+				avgIf(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_avg_rtt_us,
+				toFloat64(minIf(f.rtt_us, f.origin_device_pk = l.side_a_pk)) AS a_min_rtt_us,
+				quantileIf(0.50)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p50_rtt_us,
+				quantileIf(0.90)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p90_rtt_us,
+				quantileIf(0.95)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p95_rtt_us,
+				quantileIf(0.99)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p99_rtt_us,
+				toFloat64(maxIf(f.rtt_us, f.origin_device_pk = l.side_a_pk)) AS a_max_rtt_us,
+				countIf(f.origin_device_pk = l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
+					/ greatest(countIf(f.origin_device_pk = l.side_a_pk), 1) AS a_loss_pct,
+				toUInt32(countIf(f.origin_device_pk = l.side_a_pk)) AS a_samples,
+				avgIf(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_avg_rtt_us,
+				toFloat64(minIf(f.rtt_us, f.origin_device_pk != l.side_a_pk)) AS z_min_rtt_us,
+				quantileIf(0.50)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p50_rtt_us,
+				quantileIf(0.90)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p90_rtt_us,
+				quantileIf(0.95)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p95_rtt_us,
+				quantileIf(0.99)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p99_rtt_us,
+				toFloat64(maxIf(f.rtt_us, f.origin_device_pk != l.side_a_pk)) AS z_max_rtt_us,
+				countIf(f.origin_device_pk != l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
+					/ greatest(countIf(f.origin_device_pk != l.side_a_pk), 1) AS z_loss_pct,
+				toUInt32(countIf(f.origin_device_pk != l.side_a_pk)) AS z_samples
+			FROM fact_dz_device_link_latency f
+			JOIN dz_links_current l ON f.link_pk = l.pk
+			WHERE f.event_ts >= $1
+			GROUP BY bucket_ts, f.link_pk
+		),
+		raw_source AS (
+			SELECT
+				lb.bucket_ts AS bucket_ts, lb.link_pk AS link_pk,
+				lb.a_avg_rtt_us, lb.a_min_rtt_us, lb.a_p50_rtt_us, lb.a_p90_rtt_us,
+				lb.a_p95_rtt_us, lb.a_p99_rtt_us, lb.a_max_rtt_us, lb.a_loss_pct, lb.a_samples,
+				lb.z_avg_rtt_us, lb.z_min_rtt_us, lb.z_p50_rtt_us, lb.z_p90_rtt_us,
+				lb.z_p95_rtt_us, lb.z_p99_rtt_us, lb.z_max_rtt_us, lb.z_loss_pct, lb.z_samples,
+				COALESCE(lc.status, '') AS status,
+				lc.committed_rtt_ns = 500000 AS provisioning,
+				CASE WHEN ia.link_pk IS NULL THEN false ELSE ia.is_deleted = 1 END AS isis_down
+			FROM latency_buckets lb
+			LEFT JOIN dz_links_current lc ON lb.link_pk = lc.pk
+			LEFT JOIN (
+				SELECT link_pk, argMax(is_deleted, snapshot_ts) AS is_deleted
+				FROM dim_isis_adjacencies_history WHERE link_pk != ''
+				GROUP BY link_pk
+			) ia ON lb.link_pk = ia.link_pk
+		),
+		agg AS (
+			SELECT
+				%s as display_bucket,
+				link_pk,
+				sumIf(a_avg_rtt_us * a_samples, a_samples > 0) as a_w_avg,
+				sumIf(a_p50_rtt_us * a_samples, a_samples > 0) as a_w_p50,
+				sumIf(a_p90_rtt_us * a_samples, a_samples > 0) as a_w_p90,
+				sumIf(a_p95_rtt_us * a_samples, a_samples > 0) as a_w_p95,
+				sumIf(a_p99_rtt_us * a_samples, a_samples > 0) as a_w_p99,
+				minIf(a_min_rtt_us, a_samples > 0) as a_min,
+				maxIf(a_max_rtt_us, a_samples > 0) as a_max,
+				max(a_loss_pct) as a_loss,
+				toUInt64(sum(a_samples)) as a_n,
+				sumIf(z_avg_rtt_us * z_samples, z_samples > 0) as z_w_avg,
+				sumIf(z_p50_rtt_us * z_samples, z_samples > 0) as z_w_p50,
+				sumIf(z_p90_rtt_us * z_samples, z_samples > 0) as z_w_p90,
+				sumIf(z_p95_rtt_us * z_samples, z_samples > 0) as z_w_p95,
+				sumIf(z_p99_rtt_us * z_samples, z_samples > 0) as z_w_p99,
+				minIf(z_min_rtt_us, z_samples > 0) as z_min,
+				maxIf(z_max_rtt_us, z_samples > 0) as z_max,
+				max(z_loss_pct) as z_loss,
+				toUInt64(sum(z_samples)) as z_n,
+				argMax(status, bucket_ts) as agg_status,
+				argMax(provisioning, bucket_ts) as agg_provisioning,
+				max(isis_down) as agg_isis_down,
+				max(status IN ('soft-drained', 'hard-drained')) as agg_was_drained
+			FROM raw_source
+			WHERE bucket_ts >= $1%s
+			GROUP BY display_bucket, link_pk
+		)
+		SELECT
+			display_bucket, link_pk,
+			if(a_n > 0, a_w_avg / a_n, 0) as a_avg_rtt_us,
+			a_min as a_min_rtt_us,
+			if(a_n > 0, a_w_p50 / a_n, 0) as a_p50_rtt_us,
+			if(a_n > 0, a_w_p90 / a_n, 0) as a_p90_rtt_us,
+			if(a_n > 0, a_w_p95 / a_n, 0) as a_p95_rtt_us,
+			if(a_n > 0, a_w_p99 / a_n, 0) as a_p99_rtt_us,
+			a_max as a_max_rtt_us, a_loss as a_loss_pct, a_n as a_samples,
+			if(z_n > 0, z_w_avg / z_n, 0) as z_avg_rtt_us,
+			z_min as z_min_rtt_us,
+			if(z_n > 0, z_w_p50 / z_n, 0) as z_p50_rtt_us,
+			if(z_n > 0, z_w_p90 / z_n, 0) as z_p90_rtt_us,
+			if(z_n > 0, z_w_p95 / z_n, 0) as z_p95_rtt_us,
+			if(z_n > 0, z_w_p99 / z_n, 0) as z_p99_rtt_us,
+			z_max as z_max_rtt_us, z_loss as z_loss_pct, z_n as z_samples,
+			agg_status as status, agg_provisioning as provisioning, agg_isis_down as isis_down,
+			agg_was_drained as was_drained
+		FROM agg
+		ORDER BY link_pk, display_bucket
+	`, bucketExpr, filterClause)
+	} else {
+		query = fmt.Sprintf(`
 		WITH agg AS (
 			SELECT
 				%s as display_bucket,
@@ -267,7 +360,7 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				argMax(provisioning, bucket_ts) as agg_provisioning,
 				max(isis_down) as agg_isis_down,
 				max(status IN ('soft-drained', 'hard-drained')) as agg_was_drained
-			FROM %s
+			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= $1%s
 			GROUP BY display_bucket, link_pk
 		)
@@ -291,7 +384,8 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			agg_was_drained as was_drained
 		FROM agg
 		ORDER BY link_pk, display_bucket
-	`, bucketExpr, sourceTable, filterClause)
+	`, bucketExpr, filterClause)
+	}
 
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
@@ -521,71 +615,23 @@ func bucketIntervalExpr(column string, bucketMinutes int) string {
 	return fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", column, bucketMinutes)
 }
 
-// rawLinkSource returns a subquery that computes link_rollup_5m-equivalent columns
-// from the raw fact_dz_device_link_latency table. The output has the same column names
-// as link_rollup_5m so the outer re-bucketing CTE works identically.
-func rawLinkSource() string {
-	return `(
-		SELECT
-			toStartOfFiveMinutes(f.event_ts) AS bucket_ts,
-			f.link_pk AS link_pk,
-			-- Direction A
-			avgIf(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_avg_rtt_us,
-			toFloat64(minIf(f.rtt_us, f.origin_device_pk = l.side_a_pk)) AS a_min_rtt_us,
-			quantileIf(0.50)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p50_rtt_us,
-			quantileIf(0.90)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p90_rtt_us,
-			quantileIf(0.95)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p95_rtt_us,
-			quantileIf(0.99)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p99_rtt_us,
-			toFloat64(maxIf(f.rtt_us, f.origin_device_pk = l.side_a_pk)) AS a_max_rtt_us,
-			countIf(f.origin_device_pk = l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
-				/ greatest(countIf(f.origin_device_pk = l.side_a_pk), 1) AS a_loss_pct,
-			toUInt32(countIf(f.origin_device_pk = l.side_a_pk)) AS a_samples,
-			-- Direction Z
-			avgIf(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_avg_rtt_us,
-			toFloat64(minIf(f.rtt_us, f.origin_device_pk != l.side_a_pk)) AS z_min_rtt_us,
-			quantileIf(0.50)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p50_rtt_us,
-			quantileIf(0.90)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p90_rtt_us,
-			quantileIf(0.95)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p95_rtt_us,
-			quantileIf(0.99)(f.rtt_us, f.origin_device_pk != l.side_a_pk) AS z_p99_rtt_us,
-			toFloat64(maxIf(f.rtt_us, f.origin_device_pk != l.side_a_pk)) AS z_max_rtt_us,
-			countIf(f.origin_device_pk != l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
-				/ greatest(countIf(f.origin_device_pk != l.side_a_pk), 1) AS z_loss_pct,
-			toUInt32(countIf(f.origin_device_pk != l.side_a_pk)) AS z_samples,
-			-- State: resolve from current tables (per-bucket state resolution not available in raw mode)
-			COALESCE(lc.status, '') AS status,
-			lc.committed_rtt_ns = 500000 AS provisioning,
-			ia.link_pk IS NULL OR ia.is_deleted = 1 AS isis_down
-		FROM fact_dz_device_link_latency f
-		JOIN dz_links_current l ON f.link_pk = l.pk
-		LEFT JOIN dz_links_current lc ON f.link_pk = lc.pk
-		LEFT JOIN (
-			SELECT link_pk, argMax(is_deleted, snapshot_ts) AS is_deleted
-			FROM dim_isis_adjacencies_history
-			WHERE link_pk != ''
-			GROUP BY link_pk
-		) ia ON f.link_pk = ia.link_pk
-		GROUP BY bucket_ts, f.link_pk, status, provisioning, isis_down
-	)`
-}
-
-// rawInterfaceSource returns a subquery that computes device_interface_rollup_5m-equivalent
-// columns from the raw fact_dz_device_interface_counters table.
+// rawInterfaceSource returns a flat subquery (no CTEs) that computes
+// device_interface_rollup_5m-equivalent columns from raw fact tables.
+// State uses current tables since ClickHouse doesn't support CTEs in subqueries.
 func rawInterfaceSource() string {
 	return `(
 		SELECT
 			toStartOfFiveMinutes(ic.event_ts) AS bucket_ts,
-			ic.device_pk,
-			ic.intf,
+			ic.device_pk AS device_pk,
+			ic.intf AS intf,
 			anyIf(ic.link_pk, ic.link_pk != '') AS link_pk,
 			anyIf(ic.link_side, ic.link_side != '') AS link_side,
-			-- Error/discard counters
 			toUInt64(SUM(greatest(0, ic.in_errors_delta))) AS in_errors,
 			toUInt64(SUM(greatest(0, ic.out_errors_delta))) AS out_errors,
 			toUInt64(SUM(greatest(0, ic.in_fcs_errors_delta))) AS in_fcs_errors,
 			toUInt64(SUM(greatest(0, ic.in_discards_delta))) AS in_discards,
 			toUInt64(SUM(greatest(0, ic.out_discards_delta))) AS out_discards,
 			toUInt64(SUM(greatest(0, ic.carrier_transitions_delta))) AS carrier_transitions,
-			-- Traffic rates (BPS)
 			avgIf(ic.in_octets_delta * 8 / ic.delta_duration, ic.delta_duration > 0 AND ic.in_octets_delta >= 0) AS avg_in_bps,
 			minIf(ic.in_octets_delta * 8 / ic.delta_duration, ic.delta_duration > 0 AND ic.in_octets_delta >= 0) AS min_in_bps,
 			quantileIf(0.50)(ic.in_octets_delta * 8 / ic.delta_duration, ic.delta_duration > 0 AND ic.in_octets_delta >= 0) AS p50_in_bps,
@@ -600,7 +646,6 @@ func rawInterfaceSource() string {
 			quantileIf(0.95)(ic.out_octets_delta * 8 / ic.delta_duration, ic.delta_duration > 0 AND ic.out_octets_delta >= 0) AS p95_out_bps,
 			quantileIf(0.99)(ic.out_octets_delta * 8 / ic.delta_duration, ic.delta_duration > 0 AND ic.out_octets_delta >= 0) AS p99_out_bps,
 			maxIf(ic.out_octets_delta * 8 / ic.delta_duration, ic.delta_duration > 0 AND ic.out_octets_delta >= 0) AS max_out_bps,
-			-- Traffic rates (PPS)
 			avgIf(ic.in_pkts_delta / ic.delta_duration, ic.delta_duration > 0 AND ic.in_pkts_delta >= 0) AS avg_in_pps,
 			minIf(ic.in_pkts_delta / ic.delta_duration, ic.delta_duration > 0 AND ic.in_pkts_delta >= 0) AS min_in_pps,
 			quantileIf(0.50)(ic.in_pkts_delta / ic.delta_duration, ic.delta_duration > 0 AND ic.in_pkts_delta >= 0) AS p50_in_pps,
@@ -615,13 +660,11 @@ func rawInterfaceSource() string {
 			quantileIf(0.95)(ic.out_pkts_delta / ic.delta_duration, ic.delta_duration > 0 AND ic.out_pkts_delta >= 0) AS p95_out_pps,
 			quantileIf(0.99)(ic.out_pkts_delta / ic.delta_duration, ic.delta_duration > 0 AND ic.out_pkts_delta >= 0) AS p99_out_pps,
 			maxIf(ic.out_pkts_delta / ic.delta_duration, ic.delta_duration > 0 AND ic.out_pkts_delta >= 0) AS max_out_pps,
-			-- User context
-			anyIf(ic.user_tunnel_id, ic.user_tunnel_id IS NOT NULL) AS user_tunnel_id,
-			anyIf(ic.user_pk, ic.user_pk != '') AS user_pk,
-			-- State: resolve from current tables
 			COALESCE(dc.status, '') AS status,
 			false AS isis_overload,
-			false AS isis_unreachable
+			false AS isis_unreachable,
+			anyIf(ic.user_tunnel_id, ic.user_tunnel_id IS NOT NULL) AS user_tunnel_id,
+			anyIf(ic.user_pk, ic.user_pk != '') AS user_pk
 		FROM fact_dz_device_interface_counters ic
 		LEFT JOIN dz_devices_current dc ON ic.device_pk = dc.pk
 		GROUP BY bucket_ts, ic.device_pk, ic.intf, status
