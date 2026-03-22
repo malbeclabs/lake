@@ -11,7 +11,7 @@ import (
 
 const (
 	// rollupInterval is how often the rollup workflow computes new buckets.
-	rollupInterval = 60 * time.Second
+	rollupInterval = 30 * time.Second
 
 	// continueAsNewThreshold is the number of iterations before the workflow
 	// uses continue-as-new to reset history and avoid unbounded growth.
