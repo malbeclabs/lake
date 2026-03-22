@@ -66,7 +66,11 @@ function formatDuration(seconds: number | undefined): string {
   }
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
-  return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+  const mins = Math.floor((seconds % 3600) / 60)
+  const parts = [`${days}d`]
+  if (hours > 0) parts.push(`${hours}h`)
+  if (mins > 0 && days < 7) parts.push(`${mins}m`)
+  return parts.join(' ')
 }
 
 
@@ -440,7 +444,8 @@ export function IncidentsPage() {
   }, [deviceData?.drained, hasTypeFilter, selectedTypes])
 
   // Sort state for active view
-  const [sortField, setSortField] = useState<'started_at' | 'duration'>('started_at')
+  type SortField = 'started_at' | 'ended_at' | 'duration'
+  const [sortField, setSortField] = useState<SortField>('started_at')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   // Generic sort helper for incidents of either type
@@ -451,6 +456,10 @@ export function IncidentsPage() {
         const aTime = new Date(a.started_at).getTime()
         const bTime = new Date(b.started_at).getTime()
         return sortDir === 'asc' ? aTime - bTime : bTime - aTime
+      } else if (sortField === 'ended_at') {
+        const aEnd = a.is_ongoing ? Infinity : new Date(a.started_at).getTime() + (a.duration_seconds || 0) * 1000
+        const bEnd = b.is_ongoing ? Infinity : new Date(b.started_at).getTime() + (b.duration_seconds || 0) * 1000
+        return sortDir === 'asc' ? aEnd - bEnd : bEnd - aEnd
       } else {
         const aDur = a.is_ongoing ? Infinity : (a.duration_seconds || 0)
         const bDur = b.is_ongoing ? Infinity : (b.duration_seconds || 0)
@@ -524,7 +533,7 @@ export function IncidentsPage() {
     }
   }, [scope, linkData?.active, deviceData?.active])
 
-  const toggleSort = (field: 'started_at' | 'duration') => {
+  const toggleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
     } else {
@@ -1085,7 +1094,7 @@ function ActiveIncidentsTable({
   incidents: LinkIncident[]
   sortField: string
   sortDir: string
-  toggleSort: (field: 'started_at' | 'duration') => void
+  toggleSort: (field: 'started_at' | 'ended_at' | 'duration') => void
   coalesceGapMinutes?: number
 }) {
   // Stable timestamp for computing ongoing durations — avoids calling Date.now() during render
@@ -1099,6 +1108,10 @@ function ActiveIncidentsTable({
         const aTime = new Date(a.started_at).getTime()
         const bTime = new Date(b.started_at).getTime()
         return sortDir === 'asc' ? aTime - bTime : bTime - aTime
+      } else if (sortField === 'ended_at') {
+        const aEnd = a.is_ongoing ? Infinity : new Date(a.started_at).getTime() + (a.duration_seconds || 0) * 1000
+        const bEnd = b.is_ongoing ? Infinity : new Date(b.started_at).getTime() + (b.duration_seconds || 0) * 1000
+        return sortDir === 'asc' ? aEnd - bEnd : bEnd - aEnd
       } else {
         const aDur = a.is_ongoing ? Infinity : (a.duration_seconds || 0)
         const bDur = b.is_ongoing ? Infinity : (b.duration_seconds || 0)
@@ -1107,19 +1120,23 @@ function ActiveIncidentsTable({
     })
   }, [incidents, coalesceGapMinutes, sortField, sortDir])
 
+  const sortIcon = (field: string) => sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+
   return (
     <div className="overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-muted/50">
           <tr>
             <th className="text-left px-4 py-3 font-medium">Link</th>
-            <th className="text-left px-4 py-3 font-medium">Route</th>
             <th className="text-left px-4 py-3 font-medium">Type</th>
-            <th
-              className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
-              onClick={() => toggleSort(sortField === 'started_at' ? 'duration' : 'started_at')}
-            >
-              When
+            <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground" onClick={() => toggleSort('started_at')}>
+              Started{sortIcon('started_at')}
+            </th>
+            <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground" onClick={() => toggleSort('ended_at')}>
+              Ended{sortIcon('ended_at')}
+            </th>
+            <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground" onClick={() => toggleSort('duration')}>
+              Duration{sortIcon('duration')}
             </th>
           </tr>
         </thead>
@@ -1153,12 +1170,11 @@ function ActiveIncidentsTable({
                     {group.link_code}
                     <ExternalLink className="h-3 w-3" />
                   </Link>
-                  <div className="text-xs text-muted-foreground">{group.contributor_code} · {group.link_type}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="font-mono">
-                    {group.side_a_metro} &rarr; {group.side_z_metro}
-                  </span>
+                  <div className="text-xs text-muted-foreground">
+                    {group.contributor_code} · {group.link_type}
+                    <span className="mx-1">·</span>
+                    <span className="font-mono">{group.side_a_metro} &rarr; {group.side_z_metro}</span>
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -1185,20 +1201,28 @@ function ActiveIncidentsTable({
                     </div>
                   )}
                 </td>
-                <td className="px-4 py-3 text-xs space-y-0.5">
-                  <div><span className="text-muted-foreground">Started:</span> {formatTimestamp(group.started_at)} ({formatTimeAgo(group.started_at)})</div>
+                <td className="px-4 py-3">
+                  <div>{formatTimeAgo(group.started_at)}</div>
+                  <div className="text-xs text-muted-foreground">{formatTimestamp(group.started_at)}</div>
+                </td>
+                <td className="px-4 py-3">
                   {group.is_ongoing ? (
-                    <div><span className="text-muted-foreground">Ended:</span> ongoing</div>
-                  ) : group.duration_seconds != null && (
-                    <div><span className="text-muted-foreground">Ended:</span> {formatTimestamp(new Date(new Date(group.started_at).getTime() + group.duration_seconds * 1000).toISOString())} ({formatTimeAgo(new Date(new Date(group.started_at).getTime() + group.duration_seconds * 1000).toISOString())})</div>
-                  )}
-                  <div>
-                    <span className="text-muted-foreground">Duration:</span>{' '}
-                    {group.is_ongoing
-                      ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
-                      : formatDuration(group.duration_seconds)
-                    }
-                  </div>
+                    <div className="text-muted-foreground">ongoing</div>
+                  ) : group.duration_seconds != null && (() => {
+                    const endedIso = new Date(new Date(group.started_at).getTime() + group.duration_seconds! * 1000).toISOString()
+                    return (
+                      <>
+                        <div>{formatTimeAgo(endedIso)}</div>
+                        <div className="text-xs text-muted-foreground">{formatTimestamp(endedIso)}</div>
+                      </>
+                    )
+                  })()}
+                </td>
+                <td className="px-4 py-3">
+                  {group.is_ongoing
+                    ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
+                    : formatDuration(group.duration_seconds)
+                  }
                 </td>
               </tr>
             )
@@ -1319,7 +1343,7 @@ function ActiveDeviceIncidentsTable({
   incidents: DeviceIncident[]
   sortField: string
   sortDir: string
-  toggleSort: (field: 'started_at' | 'duration') => void
+  toggleSort: (field: 'started_at' | 'ended_at' | 'duration') => void
 }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const renderTimestamp = useMemo(() => Date.now(), [incidents])
@@ -1331,6 +1355,10 @@ function ActiveDeviceIncidentsTable({
         const aTime = new Date(a.started_at).getTime()
         const bTime = new Date(b.started_at).getTime()
         return sortDir === 'asc' ? aTime - bTime : bTime - aTime
+      } else if (sortField === 'ended_at') {
+        const aEnd = a.is_ongoing ? Infinity : new Date(a.started_at).getTime() + (a.duration_seconds || 0) * 1000
+        const bEnd = b.is_ongoing ? Infinity : new Date(b.started_at).getTime() + (b.duration_seconds || 0) * 1000
+        return sortDir === 'asc' ? aEnd - bEnd : bEnd - aEnd
       } else {
         const aDur = a.is_ongoing ? Infinity : (a.duration_seconds || 0)
         const bDur = b.is_ongoing ? Infinity : (b.duration_seconds || 0)
@@ -1339,19 +1367,23 @@ function ActiveDeviceIncidentsTable({
     })
   }, [incidents, sortField, sortDir])
 
+  const sortIcon = (field: string) => sortField === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+
   return (
     <div className="overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-muted/50">
           <tr>
             <th className="text-left px-4 py-3 font-medium">Device</th>
-            <th className="text-left px-4 py-3 font-medium">Metro</th>
             <th className="text-left px-4 py-3 font-medium">Type</th>
-            <th
-              className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground"
-              onClick={() => toggleSort(sortField === 'started_at' ? 'duration' : 'started_at')}
-            >
-              When
+            <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground" onClick={() => toggleSort('started_at')}>
+              Started{sortIcon('started_at')}
+            </th>
+            <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground" onClick={() => toggleSort('ended_at')}>
+              Ended{sortIcon('ended_at')}
+            </th>
+            <th className="text-left px-4 py-3 font-medium cursor-pointer hover:text-foreground" onClick={() => toggleSort('duration')}>
+              Duration{sortIcon('duration')}
             </th>
           </tr>
         </thead>
@@ -1381,10 +1413,10 @@ function ActiveDeviceIncidentsTable({
                   {group.device_code}
                   <ExternalLink className="h-3 w-3" />
                 </Link>
-                <div className="text-xs text-muted-foreground">{group.contributor_code} · {group.device_type}</div>
-              </td>
-              <td className="px-4 py-3">
-                <span className="font-mono">{group.metro}</span>
+                <div className="text-xs text-muted-foreground">
+                  {group.contributor_code} · {group.device_type}
+                  {group.metro && <><span className="mx-1">·</span><span className="font-mono">{group.metro}</span></>}
+                </div>
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -1406,20 +1438,28 @@ function ActiveDeviceIncidentsTable({
                   </div>
                 )}
               </td>
-              <td className="px-4 py-3 text-xs space-y-0.5">
-                <div><span className="text-muted-foreground">Started:</span> {formatTimestamp(group.started_at)} ({formatTimeAgo(group.started_at)})</div>
+              <td className="px-4 py-3">
+                <div>{formatTimeAgo(group.started_at)}</div>
+                <div className="text-xs text-muted-foreground">{formatTimestamp(group.started_at)}</div>
+              </td>
+              <td className="px-4 py-3">
                 {group.is_ongoing ? (
-                  <div><span className="text-muted-foreground">Ended:</span> ongoing</div>
-                ) : group.duration_seconds != null && (
-                  <div><span className="text-muted-foreground">Ended:</span> {formatTimestamp(new Date(new Date(group.started_at).getTime() + group.duration_seconds * 1000).toISOString())}</div>
-                )}
-                <div>
-                  <span className="text-muted-foreground">Duration:</span>{' '}
-                  {group.is_ongoing
-                    ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
-                    : formatDuration(group.duration_seconds)
-                  }
-                </div>
+                  <div className="text-muted-foreground">ongoing</div>
+                ) : group.duration_seconds != null && (() => {
+                  const endedIso = new Date(new Date(group.started_at).getTime() + group.duration_seconds! * 1000).toISOString()
+                  return (
+                    <>
+                      <div>{formatTimeAgo(endedIso)}</div>
+                      <div className="text-xs text-muted-foreground">{formatTimestamp(endedIso)}</div>
+                    </>
+                  )
+                })()}
+              </td>
+              <td className="px-4 py-3">
+                {group.is_ongoing
+                  ? formatDuration(Math.floor((renderTimestamp - new Date(group.started_at).getTime()) / 1000))
+                  : formatDuration(group.duration_seconds)
+                }
               </td>
             </tr>
             )
