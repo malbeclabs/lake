@@ -91,13 +91,15 @@ type DeviceInterfaceBucket struct {
 
 // BackfillInput configures a backfill run.
 type BackfillInput struct {
-	StartTime time.Time
-	EndTime   time.Time
-	ChunkSize time.Duration // default 1h
+	StartTime      time.Time
+	EndTime        time.Time
+	ChunkSize      time.Duration // default 1h
+	SourceDatabase string        // if set, read from this database (e.g. remote proxy tables)
 }
 
 // BackfillChunkInput configures a single backfill chunk.
 type BackfillChunkInput struct {
-	WindowStart time.Time
-	WindowEnd   time.Time
+	WindowStart    time.Time
+	WindowEnd      time.Time
+	SourceDatabase string // if set, read from this database (e.g. remote proxy tables)
 }

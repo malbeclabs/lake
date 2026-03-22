@@ -118,6 +118,7 @@ func run() error {
 	endTimeAgoFlag := flag.Duration("end-time-ago", 0, "End time as duration ago from now (e.g. 1h)")
 	chunkIntervalFlag := flag.Duration("chunk-interval", 1*time.Hour, "Chunk interval for usage backfill")
 	queryDelayFlag := flag.Duration("query-delay", 5*time.Second, "Delay between InfluxDB queries to avoid rate limits")
+	sourceDatabaseFlag := flag.String("source-database", "", "Source database for rollup backfill (e.g. 'lake' for remote proxy tables)")
 
 	// PostgreSQL configuration
 	pgHostFlag := flag.String("pg-host", "localhost", "PostgreSQL host (or set POSTGRES_HOST env var)")
@@ -458,9 +459,10 @@ func run() error {
 			return fmt.Errorf("--start-time or --start-time-ago is required for --start-backfill-rollup")
 		}
 		return admin.BackfillRollup(log, admin.BackfillRollupConfig{
-			StartTime:     startTime,
-			EndTime:       endTime,
-			ChunkInterval: *chunkIntervalFlag,
+			StartTime:      startTime,
+			EndTime:        endTime,
+			ChunkInterval:  *chunkIntervalFlag,
+			SourceDatabase: *sourceDatabaseFlag,
 		})
 	}
 

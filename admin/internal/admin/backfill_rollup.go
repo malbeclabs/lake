@@ -13,9 +13,10 @@ import (
 
 // BackfillRollupConfig holds configuration for the backfill-rollup command.
 type BackfillRollupConfig struct {
-	StartTime     time.Time
-	EndTime       time.Time
-	ChunkInterval time.Duration
+	StartTime      time.Time
+	EndTime        time.Time
+	ChunkInterval  time.Duration
+	SourceDatabase string // if set, read source data from this database (e.g. remote proxy tables)
 }
 
 // BackfillRollup starts the BackfillRollupWorkflow on Temporal.
@@ -44,9 +45,10 @@ func BackfillRollup(log *slog.Logger, cfg BackfillRollupConfig) error {
 	defer c.Close()
 
 	input := rollup.BackfillInput{
-		StartTime: cfg.StartTime,
-		EndTime:   cfg.EndTime,
-		ChunkSize: cfg.ChunkInterval,
+		StartTime:      cfg.StartTime,
+		EndTime:        cfg.EndTime,
+		ChunkSize:      cfg.ChunkInterval,
+		SourceDatabase: cfg.SourceDatabase,
 	}
 
 	workflowID := fmt.Sprintf("rollup-backfill-%d", time.Now().Unix())
@@ -58,12 +60,17 @@ func BackfillRollup(log *slog.Logger, cfg BackfillRollupConfig) error {
 		return fmt.Errorf("start backfill workflow: %w", err)
 	}
 
-	log.Info("started rollup backfill workflow",
+	logAttrs := []any{
 		"workflow_id", run.GetID(),
 		"run_id", run.GetRunID(),
 		"start", cfg.StartTime.Format(time.RFC3339),
 		"end", cfg.EndTime.Format(time.RFC3339),
-		"chunk", cfg.ChunkInterval)
+		"chunk", cfg.ChunkInterval,
+	}
+	if cfg.SourceDatabase != "" {
+		logAttrs = append(logAttrs, "source_database", cfg.SourceDatabase)
+	}
+	log.Info("started rollup backfill workflow", logAttrs...)
 
 	log.Info("waiting for completion...")
 	if err := run.Get(context.Background(), nil); err != nil {

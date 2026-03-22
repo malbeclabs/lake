@@ -16,6 +16,29 @@ type Activities struct {
 	Log        *slog.Logger
 }
 
+// tableRef returns a qualified table reference. If sourceDB is non-empty, the
+// table is prefixed with the database name (e.g. "lake.fact_dz_device_link_latency").
+// This allows backfill activities to read from remote proxy tables.
+func tableRef(sourceDB, table string) string {
+	if sourceDB != "" {
+		return fmt.Sprintf("`%s`.`%s`", sourceDB, table)
+	}
+	return table
+}
+
+// logRollup logs a rollup computation result, including the source database if set.
+func (a *Activities) logRollup(msg string, count int, input BackfillChunkInput, duration time.Duration) {
+	attrs := []any{
+		"count", count,
+		"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
+		"duration", duration,
+	}
+	if input.SourceDatabase != "" {
+		attrs = append(attrs, "source_database", input.SourceDatabase)
+	}
+	a.Log.Info(msg, attrs...)
+}
+
 // safeHeartbeat records a heartbeat if running inside a Temporal activity context.
 func safeHeartbeat(ctx context.Context, details ...any) {
 	defer func() { recover() }() //nolint:errcheck
@@ -57,6 +80,11 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	bucketTs := "f.event_ts"
 	filterCol := "f.event_ts"
 	headerJoin := ""
+	srcDB := input.SourceDatabase
+	factLatency := tableRef(srcDB, "fact_dz_device_link_latency")
+	factLatencyHeader := tableRef(srcDB, "fact_dz_device_link_latency_sample_header")
+	linksCurrent := tableRef(srcDB, "dz_links_current")
+
 	if isLiveWindow {
 		bucketTs = displayTs
 		filterCol = "f.ingested_at"
@@ -65,7 +93,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
 					   max(latest_sample_index) AS latest_sample_index,
 					   any(sampling_interval_us) AS sampling_interval_us
-				FROM fact_dz_device_link_latency_sample_header
+				FROM ` + factLatencyHeader + `
 				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 			) h ON f.origin_device_pk = h.origin_device_pk
 				AND f.target_device_pk = h.target_device_pk
@@ -80,8 +108,8 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 				toStartOfFiveMinutes(` + bucketTs + `) as bucket,
 				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
-			FROM fact_dz_device_link_latency f
-			JOIN dz_links_current l ON f.link_pk = l.pk` + headerJoin + `
+			FROM ` + factLatency + ` f
+			JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 			WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 			GROUP BY f.link_pk, bucket, direction
 		)
@@ -98,8 +126,8 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			toFloat64(max(f.rtt_us)) as max_rtt,
 			max(ls.loss_pct) as loss_pct,
 			toUInt32(count(*)) as samples
-		FROM fact_dz_device_link_latency f
-		JOIN dz_links_current l ON f.link_pk = l.pk` + headerJoin + `
+		FROM ` + factLatency + ` f
+		JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 		LEFT JOIN loss_sub ls ON f.link_pk = ls.link_pk
 			AND toStartOfFiveMinutes(` + bucketTs + `) = ls.bucket
 			AND if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') = ls.direction
@@ -149,10 +177,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	}
 
 	if len(bucketMap) == 0 {
-		a.Log.Info("computed link rollup buckets",
-			"count", 0,
-			"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
-			"duration", time.Since(start))
+		a.logRollup("computed link rollup buckets", 0, input, time.Since(start))
 		return nil, nil
 	}
 
@@ -163,13 +188,13 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 	}
 
 	// Resolve link status and provisioning from dim_dz_links_history
-	linkState, err := a.resolveLinkState(ctx, linkPKs, input.WindowStart, input.WindowEnd)
+	linkState, err := a.resolveLinkState(ctx, linkPKs, input.WindowStart, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve link state: %w", err)
 	}
 
 	// Resolve ISIS adjacency status from dim_isis_adjacencies_history
-	isisDown, err := a.resolveISISAdjacency(ctx, linkPKs, input.WindowStart, input.WindowEnd)
+	isisDown, err := a.resolveISISAdjacency(ctx, linkPKs, input.WindowStart, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ISIS adjacency: %w", err)
 	}
@@ -218,10 +243,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 		buckets = append(buckets, b)
 	}
 
-	a.Log.Info("computed link rollup buckets",
-		"count", len(buckets),
-		"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
-		"duration", time.Since(start))
+	a.logRollup("computed link rollup buckets", len(buckets), input, time.Since(start))
 
 	return buckets, nil
 }
@@ -234,12 +256,12 @@ type linkStateInfo struct {
 
 // resolveLinkState queries dim_dz_links_history to get the most recent status and
 // committed_rtt_ns for each link as of the window end time.
-func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time) (map[string]linkStateInfo, error) {
+func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time, sourceDB string) (map[string]linkStateInfo, error) {
 	query := `
 		SELECT pk,
 			argMax(status, snapshot_ts) as status,
 			argMax(committed_rtt_ns, snapshot_ts) as committed_rtt_ns
-		FROM dim_dz_links_history
+		FROM ` + tableRef(sourceDB, "dim_dz_links_history") + `
 		WHERE snapshot_ts <= $1
 		GROUP BY pk
 	`
@@ -269,11 +291,11 @@ func (a *Activities) resolveLinkState(ctx context.Context, linkPKs map[string]st
 // resolveISISAdjacency queries dim_isis_adjacencies_history to determine if each link
 // had an ISIS adjacency at the window end time. A link is "ISIS down" if its latest
 // adjacency record is deleted (is_deleted=1) or if no adjacency record exists.
-func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time) (map[string]bool, error) {
+func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[string]struct{}, _, windowEnd time.Time, sourceDB string) (map[string]bool, error) {
 	query := `
 		SELECT link_pk,
 			argMax(is_deleted, snapshot_ts) as is_deleted
-		FROM dim_isis_adjacencies_history
+		FROM ` + tableRef(sourceDB, "dim_isis_adjacencies_history") + `
 		WHERE snapshot_ts <= $1 AND link_pk != ''
 		GROUP BY link_pk
 	`
@@ -305,6 +327,9 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input BackfillChunkInput) ([]DeviceInterfaceBucket, error) {
 	safeHeartbeat(ctx, "computing device interface rollup")
 	start := time.Now()
+
+	srcDB := input.SourceDatabase
+	factCounters := tableRef(srcDB, "fact_dz_device_interface_counters")
 
 	query := `
 		SELECT
@@ -355,7 +380,7 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 			quantileIf(0.95)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p95_out_pps,
 			quantileIf(0.99)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p99_out_pps,
 			maxIf(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as max_out_pps
-		FROM fact_dz_device_interface_counters
+		FROM ` + factCounters + `
 		WHERE event_ts >= $1 AND event_ts < $2
 		GROUP BY device_pk, intf, bucket
 		ORDER BY device_pk, intf, bucket
@@ -393,10 +418,7 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 	}
 
 	if len(buckets) == 0 {
-		a.Log.Info("computed device interface rollup buckets",
-			"count", 0,
-			"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
-			"duration", time.Since(start))
+		a.logRollup("computed device interface rollup buckets", 0, input, time.Since(start))
 		return nil, nil
 	}
 
@@ -411,19 +433,19 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 	}
 
 	// Resolve device status from dim_dz_devices_history
-	deviceStatus, err := a.resolveDeviceStatus(ctx, devicePKs, input.WindowEnd)
+	deviceStatus, err := a.resolveDeviceStatus(ctx, devicePKs, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve device status: %w", err)
 	}
 
 	// Resolve ISIS device state from dim_isis_devices_history
-	isisDeviceState, err := a.resolveISISDeviceState(ctx, devicePKs, input.WindowEnd)
+	isisDeviceState, err := a.resolveISISDeviceState(ctx, devicePKs, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve ISIS device state: %w", err)
 	}
 
 	// Resolve user PKs from dim_dz_users_history
-	userPKs, err := a.resolveUserPKs(ctx, tunnelKeys, input.WindowEnd)
+	userPKs, err := a.resolveUserPKs(ctx, tunnelKeys, input.WindowEnd, srcDB)
 	if err != nil {
 		return nil, fmt.Errorf("resolve user PKs: %w", err)
 	}
@@ -446,21 +468,18 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 		}
 	}
 
-	a.Log.Info("computed device interface rollup buckets",
-		"count", len(buckets),
-		"window", fmt.Sprintf("[%s, %s)", input.WindowStart.Format(time.RFC3339), input.WindowEnd.Format(time.RFC3339)),
-		"duration", time.Since(start))
+	a.logRollup("computed device interface rollup buckets", len(buckets), input, time.Since(start))
 
 	return buckets, nil
 }
 
 // resolveDeviceStatus queries dim_dz_devices_history to get the most recent status
 // for each device as of the given time.
-func (a *Activities) resolveDeviceStatus(ctx context.Context, devicePKs map[string]struct{}, asOf time.Time) (map[string]string, error) {
+func (a *Activities) resolveDeviceStatus(ctx context.Context, devicePKs map[string]struct{}, asOf time.Time, sourceDB string) (map[string]string, error) {
 	query := `
 		SELECT pk,
 			argMax(status, snapshot_ts) as status
-		FROM dim_dz_devices_history
+		FROM ` + tableRef(sourceDB, "dim_dz_devices_history") + `
 		WHERE snapshot_ts <= $1
 		GROUP BY pk
 	`
@@ -491,13 +510,13 @@ type isisDeviceStateInfo struct {
 
 // resolveISISDeviceState queries dim_isis_devices_history to get ISIS overload and
 // unreachable flags for each device as of the given time.
-func (a *Activities) resolveISISDeviceState(ctx context.Context, devicePKs map[string]struct{}, asOf time.Time) (map[string]isisDeviceStateInfo, error) {
+func (a *Activities) resolveISISDeviceState(ctx context.Context, devicePKs map[string]struct{}, asOf time.Time, sourceDB string) (map[string]isisDeviceStateInfo, error) {
 	query := `
 		SELECT device_pk,
 			argMax(overload, snapshot_ts) as overload,
 			argMax(node_unreachable, snapshot_ts) as node_unreachable,
 			argMax(is_deleted, snapshot_ts) as is_deleted
-		FROM dim_isis_devices_history
+		FROM ` + tableRef(sourceDB, "dim_isis_devices_history") + `
 		WHERE snapshot_ts <= $1 AND device_pk != ''
 		GROUP BY device_pk
 	`
@@ -526,7 +545,7 @@ func (a *Activities) resolveISISDeviceState(ctx context.Context, devicePKs map[s
 
 // resolveUserPKs queries dim_dz_users_history to map (device_pk, tunnel_id) pairs
 // to user PKs as of the given time.
-func (a *Activities) resolveUserPKs(ctx context.Context, tunnelKeys map[tunnelKey]struct{}, asOf time.Time) (map[tunnelKey]string, error) {
+func (a *Activities) resolveUserPKs(ctx context.Context, tunnelKeys map[tunnelKey]struct{}, asOf time.Time, sourceDB string) (map[tunnelKey]string, error) {
 	if len(tunnelKeys) == 0 {
 		return nil, nil
 	}
@@ -535,7 +554,7 @@ func (a *Activities) resolveUserPKs(ctx context.Context, tunnelKeys map[tunnelKe
 		SELECT device_pk, tunnel_id,
 			argMax(pk, snapshot_ts) as pk,
 			argMax(is_deleted, snapshot_ts) as is_deleted
-		FROM dim_dz_users_history
+		FROM ` + tableRef(sourceDB, "dim_dz_users_history") + `
 		WHERE snapshot_ts <= $1
 		GROUP BY device_pk, tunnel_id
 	`

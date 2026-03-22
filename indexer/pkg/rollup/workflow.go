@@ -98,8 +98,9 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 		}
 
 		chunk := BackfillChunkInput{
-			WindowStart: chunkStart,
-			WindowEnd:   chunkEnd,
+			WindowStart:    chunkStart,
+			WindowEnd:      chunkEnd,
+			SourceDatabase: input.SourceDatabase,
 		}
 
 		runIteration(ctx, logger, chunk)
