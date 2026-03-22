@@ -127,10 +127,15 @@ func fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requested
 			bk := linkBucketKey{LinkPK: pk, BucketTS: bucketStart}
 			rollup := linkRollupMap[bk]
 
-			// Drain status from rollup (baked in at write time)
+			// Drain status from rollup (baked in at write time).
+			// Use WasDrained to catch drains that started and ended within the bucket.
 			drainStatus := ""
-			if rollup != nil && health.IsDrainedStatus(rollup.Status) {
-				drainStatus = rollup.Status
+			if rollup != nil && (health.IsDrainedStatus(rollup.Status) || rollup.WasDrained) {
+				if health.IsDrainedStatus(rollup.Status) {
+					drainStatus = rollup.Status
+				} else {
+					drainStatus = "soft-drained" // was drained at some point in this bucket
+				}
 			} else if rollup == nil && currentDrainStatus != "" {
 				drainStatus = currentDrainStatus
 			}
@@ -514,8 +519,12 @@ func fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string, request
 
 				// Drain status from rollup
 				drainStatus := ""
-				if health.IsDrainedStatus(row.Status) {
-					drainStatus = row.Status
+				if health.IsDrainedStatus(row.Status) || row.WasDrained {
+					if health.IsDrainedStatus(row.Status) {
+						drainStatus = row.Status
+					} else {
+						drainStatus = "soft-drained"
+					}
 				}
 				if drainStatus != "" {
 					status = "disabled"
@@ -838,8 +847,12 @@ func fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRa
 		rollup := linkRollupMap[bk]
 
 		drainStatus := ""
-		if rollup != nil && health.IsDrainedStatus(rollup.Status) {
-			drainStatus = rollup.Status
+		if rollup != nil && (health.IsDrainedStatus(rollup.Status) || rollup.WasDrained) {
+			if health.IsDrainedStatus(rollup.Status) {
+				drainStatus = rollup.Status
+			} else {
+				drainStatus = "soft-drained"
+			}
 		}
 
 		if rollup != nil && (rollup.ASamples > 0 || rollup.ZSamples > 0) {

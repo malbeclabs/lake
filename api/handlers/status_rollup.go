@@ -184,9 +184,10 @@ type linkRollupRow struct {
 	ZSamples  uint64
 
 	// Entity state (baked in at rollup write time)
-	Status       string
-	Provisioning bool
-	ISISDown     bool
+	Status       string // latest status in display bucket
+	Provisioning bool   // latest provisioning flag
+	ISISDown     bool   // true if ISIS was down in any sub-bucket
+	WasDrained   bool   // true if link was drained in any sub-bucket
 }
 
 // linkBucketKey uniquely identifies a link+bucket combination.
@@ -241,7 +242,8 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				toUInt64(sum(z_samples)) as z_n,
 				argMax(status, bucket_ts) as agg_status,
 				argMax(provisioning, bucket_ts) as agg_provisioning,
-				argMax(isis_down, bucket_ts) as agg_isis_down
+				max(isis_down) as agg_isis_down,
+				max(status IN ('soft-drained', 'hard-drained')) as agg_was_drained
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= $1%s
 			GROUP BY display_bucket, link_pk
@@ -262,7 +264,8 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			if(z_n > 0, z_w_p95 / z_n, 0) as z_p95_rtt_us,
 			if(z_n > 0, z_w_p99 / z_n, 0) as z_p99_rtt_us,
 			z_max as z_max_rtt_us, z_loss as z_loss_pct, z_n as z_samples,
-			agg_status as status, agg_provisioning as provisioning, agg_isis_down as isis_down
+			agg_status as status, agg_provisioning as provisioning, agg_isis_down as isis_down,
+			agg_was_drained as was_drained
 		FROM agg
 		ORDER BY link_pk, display_bucket
 	`, bucketExpr, filterClause)
@@ -280,7 +283,7 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			&r.BucketTS, &r.LinkPK,
 			&r.AAvgRttUs, &r.AMinRttUs, &r.AP50RttUs, &r.AP90RttUs, &r.AP95RttUs, &r.AP99RttUs, &r.AMaxRttUs, &r.ALossPct, &r.ASamples,
 			&r.ZAvgRttUs, &r.ZMinRttUs, &r.ZP50RttUs, &r.ZP90RttUs, &r.ZP95RttUs, &r.ZP99RttUs, &r.ZMaxRttUs, &r.ZLossPct, &r.ZSamples,
-			&r.Status, &r.Provisioning, &r.ISISDown,
+			&r.Status, &r.Provisioning, &r.ISISDown, &r.WasDrained,
 		); err != nil {
 			return nil, fmt.Errorf("link rollup scan: %w", err)
 		}
@@ -346,10 +349,11 @@ type interfaceRollupRow struct {
 	AvgOutPps float64
 	MaxOutPps float64
 
-	// Entity state (latest in display bucket)
-	Status          string
-	ISISOverload    bool
-	ISISUnreachable bool
+	// Entity state
+	Status          string // latest in display bucket
+	ISISOverload    bool   // true if overload in any sub-bucket
+	ISISUnreachable bool   // true if unreachable in any sub-bucket
+	WasDrained      bool   // true if drained in any sub-bucket
 
 	// User context (for user traffic queries)
 	UserPK string
@@ -434,10 +438,11 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			max(max_in_pps) as max_in_pps,
 			avg(avg_out_pps) as avg_out_pps,
 			max(max_out_pps) as max_out_pps,
-			-- Entity state: latest in display bucket
+			-- Entity state
 			argMax(status, bucket_ts) as status,
-			argMax(isis_overload, bucket_ts) as isis_overload,
-			argMax(isis_unreachable, bucket_ts) as isis_unreachable,
+			max(isis_overload) as isis_overload,
+			max(isis_unreachable) as isis_unreachable,
+			max(status IN ('soft-drained', 'hard-drained')) as was_drained,
 			-- User context
 			anyIf(user_pk, user_pk != '') as user_pk
 		FROM device_interface_rollup_5m FINAL
@@ -462,7 +467,7 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			&r.InErrors, &r.OutErrors, &r.InFcsErrors, &r.InDiscards, &r.OutDiscards, &r.CarrierTransitions,
 			&r.AvgInBps, &r.MaxInBps, &r.AvgOutBps, &r.MaxOutBps,
 			&r.AvgInPps, &r.MaxInPps, &r.AvgOutPps, &r.MaxOutPps,
-			&r.Status, &r.ISISOverload, &r.ISISUnreachable,
+			&r.Status, &r.ISISOverload, &r.ISISUnreachable, &r.WasDrained,
 			&r.UserPK,
 		); err != nil {
 			return nil, fmt.Errorf("interface rollup scan: %w", err)
