@@ -319,7 +319,8 @@ func fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requested
 		// Determine if link is down (high loss in recent data or ISIS down)
 		isDown := false
 		// Check most recent non-collecting bucket for very high loss
-		for _, h := range hourStatuses {
+		for i := len(hourStatuses) - 1; i >= 0; i-- {
+			h := hourStatuses[i]
 			if h.Collecting {
 				continue
 			}

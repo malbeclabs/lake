@@ -172,10 +172,10 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
     <div className="relative">
       <div className="flex gap-[2px]">
         {hours.map((hour, index) => {
-          const effectiveStatus = getEffectiveStatus(hour, committedRttUs)
+          const effectiveStatus = getEffectiveStatus(hour)
           const drainStatus = hour.drain_status || ''
           const drainLabel = getDrainLabel(drainStatus)
-          const prevStatus = index > 0 ? getEffectiveStatus(hours[index - 1], committedRttUs) : undefined
+          const prevStatus = index > 0 ? getEffectiveStatus(hours[index - 1]) : undefined
           return (
           <div
             key={hour.hour}

@@ -879,7 +879,7 @@ export function LinkStatusTimelines({
         let count = 0
         const recentStart = Math.max(0, link.hours.length - RECENT_BUCKETS)
         for (let i = 0; i < link.hours.length; i++) {
-          const sev = statusSeverity(getEffectiveStatus(link.hours[i], link.committed_rtt_us))
+          const sev = statusSeverity(getEffectiveStatus(link.hours[i]))
           if (sev > 0) {
             count++
             if (sev > worst) worst = sev
