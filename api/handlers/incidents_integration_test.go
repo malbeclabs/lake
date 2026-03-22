@@ -522,3 +522,107 @@ func TestGetDeviceIncidents_ISISOverload(t *testing.T) {
 	}
 	assert.True(t, found, "should detect isis_overload incident")
 }
+
+// TestLinkIncidentsRollupVsRaw seeds raw latency data and rollup data,
+// then verifies both source paths detect the same packet loss incident.
+func TestLinkIncidentsRollupVsRaw(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	ctx := t.Context()
+
+	// Seed dimension data
+	seedMetro(t, "metro-a", "NYC")
+	seedMetro(t, "metro-z", "LAX")
+	seedContributor(t, "contrib-1", "acme")
+	seedDeviceMetadata(t, "dev-a", "DEV-A", "router", "contrib-1", "metro-a", 10, "activated")
+	seedDeviceMetadata(t, "dev-z", "DEV-Z", "router", "contrib-1", "metro-z", 10, "activated")
+	seedLinkMetadataAt(t, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-z", 10_000_000_000, 500_000, "activated",
+		time.Now().Add(-24*time.Hour))
+
+	// Seed 8 consecutive 5-minute buckets with 100% packet loss (40 minutes)
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	baseTime := now.Add(-2 * time.Hour)
+	for i := range 8 {
+		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
+		// Raw latency: all probes are losses
+		for j := range 10 {
+			probeTS := ts.Add(time.Duration(j) * 20 * time.Second)
+			// Direction A
+			require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				probeTS, probeTS, int64(1), int32(i*20+j), "dev-a", "dev-z", "link-1", int64(0), true))
+			// Direction Z
+			require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				probeTS, probeTS, int64(1), int32(200+i*20+j), "dev-z", "dev-a", "link-1", int64(0), true))
+		}
+		// Corresponding rollup row
+		seedLinkRollup(t, ts, "link-1", 0, 0, 100, 100, 10, 10, "activated", false, false)
+	}
+	// Healthy buckets before and after
+	healthyBefore := baseTime.Add(-5 * time.Minute)
+	healthyAfter := baseTime.Add(40 * time.Minute)
+	seedLinkRollup(t, healthyBefore, "link-1", 100, 100, 0, 0, 10, 10, "activated", false, false)
+	seedLinkRollup(t, healthyAfter, "link-1", 100, 100, 0, 0, 10, 10, "activated", false, false)
+	for _, ts := range []time.Time{healthyBefore, healthyAfter} {
+		for j := range 10 {
+			probeTS := ts.Add(time.Duration(j) * 20 * time.Second)
+			require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				probeTS, probeTS, int64(1), int32(500+j), "dev-a", "dev-z", "link-1", int64(100), false))
+			require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				probeTS, probeTS, int64(1), int32(600+j), "dev-z", "dev-a", "link-1", int64(100), false))
+		}
+	}
+
+	// Query rollup path
+	reqRollup := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5", nil)
+	rrRollup := httptest.NewRecorder()
+	handlers.GetLinkIncidents(rrRollup, reqRollup)
+	require.Equal(t, http.StatusOK, rrRollup.Code)
+
+	var rollupResp handlers.LinkIncidentsResponse
+	require.NoError(t, json.NewDecoder(rrRollup.Body).Decode(&rollupResp))
+
+	// Query raw path
+	reqRaw := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5&source=raw", nil)
+	rrRaw := httptest.NewRecorder()
+	handlers.GetLinkIncidents(rrRaw, reqRaw)
+	require.Equal(t, http.StatusOK, rrRaw.Code)
+
+	var rawResp handlers.LinkIncidentsResponse
+	require.NoError(t, json.NewDecoder(rrRaw.Body).Decode(&rawResp))
+
+	// Both should detect the same packet loss incident
+	require.NotEmpty(t, rollupResp.Active, "rollup should detect packet loss")
+	require.NotEmpty(t, rawResp.Active, "raw should detect packet loss")
+
+	// Find the packet_loss incident in each
+	var rollupInc, rawInc *handlers.LinkIncident
+	for i := range rollupResp.Active {
+		if rollupResp.Active[i].IncidentType == "packet_loss" {
+			rollupInc = &rollupResp.Active[i]
+			break
+		}
+	}
+	for i := range rawResp.Active {
+		if rawResp.Active[i].IncidentType == "packet_loss" {
+			rawInc = &rawResp.Active[i]
+			break
+		}
+	}
+	require.NotNil(t, rollupInc, "rollup should have packet_loss incident")
+	require.NotNil(t, rawInc, "raw should have packet_loss incident")
+
+	// Incident timing should match
+	assert.Equal(t, rollupInc.StartedAt, rawInc.StartedAt, "started_at should match")
+	assert.Equal(t, rollupInc.IsOngoing, rawInc.IsOngoing, "is_ongoing should match")
+	if rollupInc.EndedAt != nil && rawInc.EndedAt != nil {
+		assert.Equal(t, *rollupInc.EndedAt, *rawInc.EndedAt, "ended_at should match")
+	}
+	assert.Equal(t, rollupInc.LinkCode, rawInc.LinkCode, "link_code should match")
+}

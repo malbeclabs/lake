@@ -199,6 +199,10 @@ func parseIntParam(value string, defaultVal int64) int64 {
 func isDefaultIncidentsRequest(r *http.Request) bool {
 	q := r.URL.Query()
 
+	if q.Get("source") != "" {
+		return false
+	}
+
 	rangeParam := q.Get("range")
 	if rangeParam != "" && rangeParam != "24h" {
 		return false
@@ -297,7 +301,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	filterStr := r.URL.Query().Get("filter")
 	filters := parseIncidentFilters(filterStr)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := statusContext(r, 30*time.Second)
 	defer cancel()
 
 	params := incidentQueryParams{
@@ -312,6 +316,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 		CoalesceGapMin:    coalesceGapMin,
 		TypeFilter:        incidentType,
 		Filters:           filters,
+		UseRaw:            isRawSource(ctx),
 	}
 
 	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, envDB(ctx), params)
@@ -435,7 +440,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	filterStr := r.URL.Query().Get("filter")
 	filters := parseIncidentFilters(filterStr)
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := statusContext(r, 30*time.Second)
 	defer cancel()
 
 	params := incidentQueryParams{
@@ -450,6 +455,7 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		CoalesceGapMin:    coalesceGapMin,
 		TypeFilter:        incidentType,
 		Filters:           filters,
+		UseRaw:            isRawSource(ctx),
 	}
 
 	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, envDB(ctx), params)

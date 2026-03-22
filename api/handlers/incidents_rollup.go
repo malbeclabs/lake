@@ -32,6 +32,7 @@ type incidentQueryParams struct {
 	TypeFilter        string // "all", "packet_loss", "errors", etc.
 	Filters           []IncidentFilter
 	IncludeLinkIntfs  bool // for device incidents: include link-associated interfaces
+	UseRaw            bool // query raw fact tables instead of rollup tables
 }
 
 // rollupBucketMinutes returns bucket size in minutes based on duration.
@@ -97,8 +98,8 @@ ORDER BY started_at DESC`,
 // using UNION ALL across rollup tables, with gap-and-island detection, coalescing,
 // min-duration filtering, and metadata JOINs all in SQL.
 func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
-	// Use the view for default thresholds
-	if isDefaultLinkThresholds(p) {
+	// Use the view for default thresholds (not in raw mode)
+	if isDefaultLinkThresholds(p) && !p.UseRaw {
 		return buildLinkIncidentsViewQuery(p)
 	}
 
@@ -130,22 +131,59 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 	lookbackArg := addArg(lookbackSecs) // $1
 	startArg := addArg(startSecs)       // $2
 
-	// Packet loss from link_rollup_5m
+	// Source tables: rollup or raw fact tables
+	linkSource := "link_rollup_5m FINAL"
+	intfSource := "device_interface_rollup_5m FINAL"
+	if p.UseRaw {
+		// Raw link source: compute per-direction loss from latency probes
+		linkSource = `(
+			SELECT
+				toStartOfFiveMinutes(f.event_ts) AS bucket_ts,
+				f.link_pk AS link_pk,
+				countIf(f.origin_device_pk = l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
+					/ greatest(countIf(f.origin_device_pk = l.side_a_pk), 1) AS a_loss_pct,
+				countIf(f.origin_device_pk != l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
+					/ greatest(countIf(f.origin_device_pk != l.side_a_pk), 1) AS z_loss_pct,
+				false AS isis_down,
+				false AS provisioning
+			FROM fact_dz_device_link_latency f
+			JOIN dz_links_current l ON f.link_pk = l.pk
+			GROUP BY bucket_ts, f.link_pk
+		)`
+		// Raw interface source: compute counter sums from raw deltas
+		intfSource = `(
+			SELECT
+				toStartOfFiveMinutes(ic.event_ts) AS bucket_ts,
+				anyIf(ic.link_pk, ic.link_pk != '') AS link_pk,
+				toUInt64(SUM(greatest(0, ic.in_errors_delta))) AS in_errors,
+				toUInt64(SUM(greatest(0, ic.out_errors_delta))) AS out_errors,
+				toUInt64(SUM(greatest(0, ic.in_fcs_errors_delta))) AS in_fcs_errors,
+				toUInt64(SUM(greatest(0, ic.in_discards_delta))) AS in_discards,
+				toUInt64(SUM(greatest(0, ic.out_discards_delta))) AS out_discards,
+				toUInt64(SUM(greatest(0, ic.carrier_transitions_delta))) AS carrier_transitions
+			FROM fact_dz_device_interface_counters ic
+			WHERE ic.link_pk != ''
+			GROUP BY bucket_ts, ic.device_pk, ic.intf
+		)`
+	}
+
+	// Packet loss
 	if p.TypeFilter == "all" || p.TypeFilter == "packet_loss" {
 		lossThreshArg := addArg(p.LossThreshold)
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT link_pk AS entity_pk, %s AS bucket_ts,
 			greatest(a_loss_pct, z_loss_pct) AS metric_value,
 			'packet_loss' AS incident_type
-		FROM link_rollup_5m FINAL
+		FROM %s
 		WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		  AND provisioning = false
 		  AND greatest(a_loss_pct, z_loss_pct) >= %s`,
-			bucketExpr("bucket_ts"), lookbackArg, lossThreshArg))
+			bucketExpr("bucket_ts"), linkSource, lookbackArg, lossThreshArg))
 	}
 
-	// ISIS down from link_rollup_5m
-	if p.TypeFilter == "all" || p.TypeFilter == "isis_down" {
+	// ISIS down
+	if !p.UseRaw && (p.TypeFilter == "all" || p.TypeFilter == "isis_down") {
+		// ISIS down only available from rollup (raw doesn't resolve ISIS state)
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT link_pk AS entity_pk, %s AS bucket_ts,
 			toFloat64(1) AS metric_value,
@@ -157,14 +195,18 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			bucketExpr("bucket_ts"), lookbackArg))
 	}
 
-	// No data: missing rollup rows (3+ consecutive missing buckets = 15min gap)
+	// No data: missing rows
 	if p.TypeFilter == "all" || p.TypeFilter == "no_data" {
+		noDataSource := "link_rollup_5m FINAL"
+		if p.UseRaw {
+			noDataSource = linkSource
+		}
 		aboveParts = append(aboveParts, fmt.Sprintf(`
 		SELECT al.link_pk AS entity_pk, e.bucket_ts AS bucket_ts,
 			toFloat64(1) AS metric_value,
 			'no_data' AS incident_type
 		FROM (
-			SELECT DISTINCT link_pk FROM link_rollup_5m FINAL
+			SELECT DISTINCT link_pk FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND - INTERVAL 1 HOUR
 			  AND provisioning = false
 		) al
@@ -173,14 +215,14 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 			FROM numbers(toUInt64(dateDiff('second', now() - INTERVAL %s SECOND, now()) / 300))
 		) e
 		LEFT JOIN (
-			SELECT link_pk, bucket_ts FROM link_rollup_5m FINAL
+			SELECT link_pk, bucket_ts FROM %s
 			WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		) a ON al.link_pk = a.link_pk AND e.bucket_ts = a.bucket_ts
 		WHERE a.bucket_ts IS NULL`,
-			lookbackArg, lookbackArg, lookbackArg, lookbackArg))
+			noDataSource, lookbackArg, lookbackArg, lookbackArg, noDataSource, lookbackArg))
 	}
 
-	// Counter types from device_interface_rollup_5m grouped by link_pk
+	// Counter types
 	counterTypes := []struct {
 		name      string
 		expr      string
@@ -201,12 +243,12 @@ func buildLinkIncidentsQuery(p incidentQueryParams) (string, []any) {
 		SELECT link_pk AS entity_pk, %s AS bucket_ts,
 			toFloat64(%s) AS metric_value,
 			'%s' AS incident_type
-		FROM device_interface_rollup_5m FINAL
+		FROM %s
 		WHERE bucket_ts >= now() - INTERVAL %s SECOND
 		  AND link_pk != ''
 		GROUP BY link_pk, bucket_ts
 		HAVING metric_value >= %s`,
-			bucketExpr("bucket_ts"), ct.expr, ct.name, lookbackArg, threshArg))
+			bucketExpr("bucket_ts"), ct.expr, ct.name, intfSource, lookbackArg, threshArg))
 	}
 
 	if len(aboveParts) == 0 {
