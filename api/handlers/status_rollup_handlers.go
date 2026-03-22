@@ -18,6 +18,7 @@ func fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requested
 	db := envDB(ctx)
 
 	params := parseBucketParams(timeRange, requestedBuckets)
+	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 
@@ -393,6 +394,7 @@ func fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string, request
 	db := envDB(ctx)
 
 	params := parseBucketParams(timeRange, requestedBuckets)
+	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 
@@ -684,6 +686,7 @@ func fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.Duration)
 func fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {
 	db := envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
+	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 
@@ -778,6 +781,7 @@ func fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, devicePK string,
 func fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
 	db := envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
+	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 
@@ -957,6 +961,7 @@ func fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRa
 func fetchSingleDeviceHistoryFromRollup(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) {
 	db := envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
+	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
 	now := time.Now().UTC()
 

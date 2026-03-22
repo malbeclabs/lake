@@ -291,3 +291,87 @@ func TestQueryLinkRollup_StateColumns(t *testing.T) {
 	assert.True(t, states["link-prov"].provisioning)
 	assert.True(t, states["link-isis"].isisDown)
 }
+
+// TestLinkRollupVsRaw seeds raw latency data and rollup data from it,
+// then verifies that querying with UseRaw=true produces equivalent results
+// to querying the rollup table.
+func TestLinkRollupVsRaw(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	ctx := t.Context()
+
+	// Seed dimension data
+	seedMetro(t, "metro-a", "NYC")
+	seedMetro(t, "metro-z", "LAX")
+	seedContributor(t, "contrib-1", "acme")
+	seedDeviceMetadata(t, "dev-a", "DEV-A", "router", "contrib-1", "metro-a", 10, "activated")
+	seedDeviceMetadata(t, "dev-z", "DEV-Z", "router", "contrib-1", "metro-z", 10, "activated")
+	seedLinkMetadata(t, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-z", 10_000_000_000, 500_000, "activated")
+
+	// Seed raw latency probes: 20 probes per direction in one 5-minute bucket
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	bucketTS := now.Add(-10 * time.Minute)
+	for i := range 20 {
+		ts := bucketTS.Add(time.Duration(i) * 10 * time.Second)
+		// Direction A: dev-a → dev-z, RTT 100-290us
+		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+			(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			ts, ts, int64(1), int32(i), "dev-a", "dev-z", "link-1", int64(100+i*10), false))
+		// Direction Z: dev-z → dev-a, RTT 200-390us
+		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+			(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			ts, ts, int64(1), int32(20+i), "dev-z", "dev-a", "link-1", int64(200+i*10), false))
+	}
+
+	// Also seed the corresponding rollup row (what the rollup worker would produce)
+	seedLinkRollup(t, bucketTS, "link-1", 195.0, 295.0, 0, 0, 20, 20, "activated", false, false)
+
+	// Query with rollup source (UseRaw=false)
+	params := handlers.ExportParseBucketParams("1h", 12) // 5-min buckets
+	rollupResult, err := handlers.ExportQueryLinkRollup(ctx, config.DB, params)
+	require.NoError(t, err)
+
+	// Query with raw source (UseRaw=true)
+	paramsRaw := handlers.ExportParseBucketParams("1h", 12)
+	paramsRaw.UseRaw = true
+	rawResult, err := handlers.ExportQueryLinkRollup(ctx, config.DB, paramsRaw)
+	require.NoError(t, err)
+
+	// Both should have data for link-1
+	require.NotEmpty(t, rollupResult, "rollup result should not be empty")
+	require.NotEmpty(t, rawResult, "raw result should not be empty")
+
+	// Find the matching bucket in each result
+	var rollupRow, rawRow *handlers.ExportLinkRollupRow
+	for _, r := range rollupResult {
+		if r.LinkPK == "link-1" {
+			rollupRow = r
+			break
+		}
+	}
+	for _, r := range rawResult {
+		if r.LinkPK == "link-1" {
+			rawRow = r
+			break
+		}
+	}
+	require.NotNil(t, rollupRow, "rollup should have link-1 data")
+	require.NotNil(t, rawRow, "raw should have link-1 data")
+
+	// Sample counts should match
+	assert.Equal(t, rollupRow.ASamples, rawRow.ASamples, "A samples should match")
+	assert.Equal(t, rollupRow.ZSamples, rawRow.ZSamples, "Z samples should match")
+
+	// Latency should be close (rollup seeds approximate values, raw computes exact)
+	assert.InDelta(t, rollupRow.AAvgRttUs, rawRow.AAvgRttUs, 5.0, "A avg RTT should be close")
+	assert.InDelta(t, rollupRow.ZAvgRttUs, rawRow.ZAvgRttUs, 5.0, "Z avg RTT should be close")
+
+	// Loss should match (both 0%)
+	assert.InDelta(t, rollupRow.ALossPct, rawRow.ALossPct, 0.1, "A loss should match")
+	assert.InDelta(t, rollupRow.ZLossPct, rawRow.ZLossPct, 0.1, "Z loss should match")
+
+	// Status should match
+	assert.Equal(t, rollupRow.Status, rawRow.Status, "status should match")
+	assert.Equal(t, rollupRow.ISISDown, rawRow.ISISDown, "isis_down should match")
+}
