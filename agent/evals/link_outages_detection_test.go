@@ -263,6 +263,19 @@ func seedLinkOutagesDetectionData(t *testing.T, ctx context.Context, conn clickh
 		}, nil
 	})
 	require.NoError(t, err)
+
+	// Seed link_rollup_5m so healthy links have data (avoids no_data incidents).
+	// Status-based outages (drain/undrain) are detected via dz_link_status_changes, not rollup.
+	recentBucket := now.Add(-5 * time.Minute).Truncate(5 * time.Minute)
+	err = conn.Exec(ctx, `
+		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at,
+			a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples,
+			z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples,
+			status, provisioning, isis_down) VALUES
+		($1, 'link1', $2, 45000, 47000, 0, 10, 45000, 47000, 0, 10, 'activated', false, false),
+		($1, 'link3', $2, 12000, 13000, 0, 10, 12000, 13000, 0, 10, 'activated', false, false)
+	`, recentBucket, now)
+	require.NoError(t, err)
 }
 
 // validateLinkOutagesDetectionQuery validates that key data exists in the database

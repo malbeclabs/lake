@@ -337,6 +337,87 @@ func seedNetworkLinkIncidentTimelineData(t *testing.T, ctx context.Context, conn
 		}, nil
 	})
 	require.NoError(t, err)
+
+	// Seed link_rollup_5m for the incident timeline.
+	// T-5h to T-2h: packet loss (50% loss = well above 10% threshold)
+	// T-4h to T-1h: status soft-drained
+	// T-2h to now: recovery / healthy
+	type rollupRow struct {
+		bucketTS time.Time
+		lossPct  float64
+		status   string
+	}
+	rollupRows := []rollupRow{
+		// T-6h: normal
+		{now.Add(-6 * time.Hour), 0, "activated"},
+		// T-5h: issues start (packet loss)
+		{now.Add(-5*time.Hour - 30*time.Minute), 50.0, "activated"},
+		{now.Add(-5 * time.Hour), 25.0, "activated"},
+		// T-4h: drained + loss continues
+		{now.Add(-4*time.Hour - 30*time.Minute), 50.0, "soft-drained"},
+		{now.Add(-4 * time.Hour), 50.0, "soft-drained"},
+		{now.Add(-3*time.Hour - 30*time.Minute), 50.0, "soft-drained"},
+		{now.Add(-3 * time.Hour), 50.0, "soft-drained"},
+		// T-2h: recovery begins
+		{now.Add(-2*time.Hour - 30*time.Minute), 16.0, "soft-drained"},
+		{now.Add(-2 * time.Hour), 0, "soft-drained"},
+		// T-1h: undrained, healthy
+		{now.Add(-1 * time.Hour), 0, "activated"},
+		{now.Add(-30 * time.Minute), 0, "activated"},
+		{now, 0, "activated"},
+	}
+	for _, r := range rollupRows {
+		bucketTS := r.bucketTS.Truncate(5 * time.Minute)
+		err = conn.Exec(ctx, `
+			INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at,
+				a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples,
+				z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples,
+				status, provisioning, isis_down) VALUES
+			($1, 'link1', $2, 50000, 60000, $3, 10, 50000, 60000, $3, 10, $4, false, false)
+		`, bucketTS, now, r.lossPct, r.status)
+		require.NoError(t, err)
+	}
+
+	// Seed device_interface_rollup_5m for errors and carrier transitions.
+	type intfRollupRow struct {
+		bucketTS           time.Time
+		devicePK           string
+		intf               string
+		linkPK             string
+		linkSide           string
+		inErrors           uint64
+		outErrors          uint64
+		carrierTransitions uint64
+		inDiscards         uint64
+		outDiscards        uint64
+	}
+	intfRollupRows := []intfRollupRow{
+		// T-5h: errors start
+		{now.Add(-5 * time.Hour), "device1", "Ethernet1", "link1", "A", 5, 3, 0, 2, 1},
+		{now.Add(-5 * time.Hour), "device2", "Ethernet1", "link1", "Z", 4, 2, 0, 1, 1},
+		// T-4h: errors + carrier transitions increase
+		{now.Add(-4 * time.Hour), "device1", "Ethernet1", "link1", "A", 15, 10, 2, 8, 5},
+		{now.Add(-4 * time.Hour), "device2", "Ethernet1", "link1", "Z", 12, 8, 1, 6, 4},
+		// T-3h: issues continue
+		{now.Add(-3 * time.Hour), "device1", "Ethernet1", "link1", "A", 18, 12, 3, 10, 6},
+		{now.Add(-3 * time.Hour), "device2", "Ethernet1", "link1", "Z", 14, 9, 2, 7, 5},
+		// T-2h: recovery begins
+		{now.Add(-2 * time.Hour), "device1", "Ethernet1", "link1", "A", 8, 5, 1, 4, 2},
+		{now.Add(-2 * time.Hour), "device2", "Ethernet1", "link1", "Z", 6, 4, 0, 3, 2},
+		// T-1h: minimal errors
+		{now.Add(-1 * time.Hour), "device1", "Ethernet1", "link1", "A", 2, 1, 0, 1, 0},
+		{now.Add(-1 * time.Hour), "device2", "Ethernet1", "link1", "Z", 1, 1, 0, 0, 0},
+	}
+	for _, r := range intfRollupRows {
+		bucketTS := r.bucketTS.Truncate(5 * time.Minute)
+		err = conn.Exec(ctx, `
+			INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, link_side, ingested_at,
+				in_errors, out_errors, carrier_transitions, in_discards, out_discards) VALUES
+			($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		`, bucketTS, r.devicePK, r.intf, r.linkPK, r.linkSide, now,
+			r.inErrors, r.outErrors, r.carrierTransitions, r.inDiscards, r.outDiscards)
+		require.NoError(t, err)
+	}
 }
 
 // validateNetworkLinkIncidentTimelineQuery validates that key data exists in the database

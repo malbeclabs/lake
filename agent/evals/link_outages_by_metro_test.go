@@ -355,6 +355,21 @@ func seedLinkOutagesByMetroData(t *testing.T, ctx context.Context, conn clickhou
 		}, nil
 	})
 	require.NoError(t, err)
+
+	// Seed link_rollup_5m for nyc-sao-2 (link4) packet loss incident.
+	// T-5d to T-4d: ~3.3% loss per hour, aggregate to ~10%+ per 5m bucket during loss window.
+	// Also seed healthy buckets for other links so they don't appear as no_data incidents.
+	for h := 0; h < 24; h++ {
+		bucketTS := now.Add(-5*24*time.Hour + time.Duration(h)*time.Hour).Truncate(5 * time.Minute)
+		err = conn.Exec(ctx, `
+			INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at,
+				a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples,
+				z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples,
+				status, provisioning, isis_down) VALUES
+			($1, 'link4', $2, 50000, 55000, 15.0, 30, 50000, 55000, 0, 30, 'activated', false, false)
+		`, bucketTS, now)
+		require.NoError(t, err)
+	}
 }
 
 // validateLinkOutagesByMetroQuery validates that key data exists in the database
