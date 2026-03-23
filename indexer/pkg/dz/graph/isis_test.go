@@ -830,9 +830,9 @@ func TestStore_SyncISIS_AdjacencyRemoval(t *testing.T) {
 			},
 		},
 		{
-			SystemID: "ac10.0017.0000.00-00",
-			Hostname: "SW-DZX-FRA-01",
-			RouterID: "172.16.0.23",
+			SystemID:  "ac10.0017.0000.00-00",
+			Hostname:  "SW-DZX-FRA-01",
+			RouterID:  "172.16.0.23",
 			Neighbors: []isis.Neighbor{
 				// dzd-fra-01 adjacency is gone (empty neighbors for this link)
 			},
