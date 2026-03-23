@@ -41,6 +41,12 @@ func clearTestData(t *testing.T, chClient clickhouse.Client) {
 		"dim_dz_devices_history",
 		"dim_dz_metros_history",
 		"dim_dz_contributors_history",
+		// ISIS staging tables
+		"stg_dim_isis_adjacencies_snapshot",
+		"stg_dim_isis_devices_snapshot",
+		// ISIS history tables
+		"dim_isis_adjacencies_history",
+		"dim_isis_devices_history",
 	}
 
 	for _, table := range tables {

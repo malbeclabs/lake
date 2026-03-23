@@ -3,6 +3,7 @@ package graph
 import (
 	"testing"
 
+	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
@@ -708,6 +709,175 @@ func TestStore_SyncISIS_HardDrainedLinkIncludesAdjacency(t *testing.T) {
 	require.NoError(t, err)
 	count, _ := record.Get("count")
 	require.Equal(t, int64(1), count, "expected ISIS_ADJACENT even for hard-drained link")
+}
+
+// TestStore_SyncISIS_AdjacencyRemoval verifies that when an ISIS adjacency
+// disappears from the S3 snapshot, it gets a tombstone in ClickHouse history
+// and no longer appears in the current view.
+func TestStore_SyncISIS_AdjacencyRemoval(t *testing.T) {
+	chClient := testClickHouseClient(t)
+	neo4jClient := testNeo4jClient(t)
+	log := laketesting.NewLogger()
+	ctx := t.Context()
+
+	clearTestData(t, chClient)
+
+	store, err := dzsvc.NewStore(dzsvc.StoreConfig{
+		Logger:     log,
+		ClickHouse: chClient,
+	})
+	require.NoError(t, err)
+
+	// Set up two devices and a link with tunnel_net 172.16.1.250/31
+	contributors := []dzsvc.Contributor{
+		{PK: "contrib1", Code: "test1", Name: "Test Contributor 1"},
+	}
+	err = store.ReplaceContributors(ctx, contributors)
+	require.NoError(t, err)
+
+	metros := []dzsvc.Metro{
+		{PK: "metro1", Code: "FRA", Name: "Frankfurt", Longitude: 8.6821, Latitude: 50.1109},
+	}
+	err = store.ReplaceMetros(ctx, metros)
+	require.NoError(t, err)
+
+	devices := []dzsvc.Device{
+		{PK: "deviceA", Status: "active", DeviceType: "router", Code: "dzd-fra-01", PublicIP: "1.2.3.4", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "deviceB", Status: "active", DeviceType: "router", Code: "fr2-dzx-001", PublicIP: "1.2.3.5", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+		{PK: "deviceC", Status: "active", DeviceType: "router", Code: "dzd-tok-01", PublicIP: "1.2.3.6", ContributorPK: "contrib1", MetroPK: "metro1", MaxUsers: 100},
+	}
+	err = store.ReplaceDevices(ctx, devices)
+	require.NoError(t, err)
+
+	links := []dzsvc.Link{
+		{PK: "linkAB", Status: "activated", Code: "dzd-fra-01:fr2-dzx-001", TunnelNet: "172.16.1.250/31", ContributorPK: "contrib1", SideAPK: "deviceA", SideZPK: "deviceB", SideAIfaceName: "eth0", SideZIfaceName: "eth0", LinkType: "DZX", CommittedRTTNs: 1000000, CommittedJitterNs: 100000, Bandwidth: 100000000000},
+		{PK: "linkAC", Status: "activated", Code: "dzd-fra-01:dzd-tok-01", TunnelNet: "172.16.1.234/31", ContributorPK: "contrib1", SideAPK: "deviceA", SideZPK: "deviceC", SideAIfaceName: "eth1", SideZIfaceName: "eth0", LinkType: "WAN", CommittedRTTNs: 100000000, CommittedJitterNs: 1000000, Bandwidth: 10000000000},
+	}
+	err = store.ReplaceLinks(ctx, links)
+	require.NoError(t, err)
+
+	graphStore, err := NewStore(StoreConfig{
+		Logger:     log,
+		Neo4j:      neo4jClient,
+		ClickHouse: chClient,
+	})
+	require.NoError(t, err)
+
+	err = graphStore.Sync(ctx)
+	require.NoError(t, err)
+
+	// --- Snapshot 1: Both adjacencies present ---
+	// dzd-fra-01 sees fr2-dzx-001 (via 172.16.1.251) and dzd-tok-01 (via 172.16.1.235)
+	// fr2-dzx-001 sees dzd-fra-01 (via 172.16.1.250)
+	lsps1 := []isis.LSP{
+		{
+			SystemID: "ac10.01c4.0000.00-00",
+			Hostname: "dzd-fra-01",
+			RouterID: "172.16.1.196",
+			Neighbors: []isis.Neighbor{
+				{SystemID: "SW-DZX-FRA-01.00", Metric: 255, NeighborAddr: "172.16.1.251", AdjSIDs: []uint32{132769}},
+				{SystemID: "dzd-tok-01.00", Metric: 1000000, NeighborAddr: "172.16.1.235", AdjSIDs: []uint32{132768}},
+			},
+		},
+		{
+			SystemID: "ac10.0017.0000.00-00",
+			Hostname: "SW-DZX-FRA-01",
+			RouterID: "172.16.0.23",
+			Neighbors: []isis.Neighbor{
+				{SystemID: "dzd-fra-01.00", Metric: 255, NeighborAddr: "172.16.1.250", AdjSIDs: []uint32{100008}},
+			},
+		},
+		{
+			SystemID: "ac10.0099.0000.00-00",
+			Hostname: "dzd-tok-01",
+			RouterID: "172.16.1.200",
+			Neighbors: []isis.Neighbor{
+				{SystemID: "dzd-fra-01.00", Metric: 1000000, NeighborAddr: "172.16.1.234", AdjSIDs: []uint32{132770}},
+			},
+		},
+	}
+
+	err = graphStore.SyncISIS(ctx, lsps1)
+	require.NoError(t, err)
+
+	// Verify adjacencies were written to ClickHouse
+	conn, err := chClient.Conn(ctx)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	syncCtx := clickhouse.ContextWithSyncInsert(ctx)
+
+	var currentCount uint64
+	rows, err := conn.Query(syncCtx, "SELECT count() FROM isis_adjacencies_current WHERE link_pk = 'linkAB'")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&currentCount))
+	rows.Close()
+	require.Equal(t, uint64(2), currentCount, "expected 2 adjacency rows for linkAB (one from each side)")
+
+	// --- Snapshot 2: Adjacency removed ---
+	// dzd-fra-01 no longer sees fr2-dzx-001 (neighbor dropped from LSP)
+	// fr2-dzx-001 no longer sees dzd-fra-01
+	// dzd-fra-01 still sees dzd-tok-01
+	lsps2 := []isis.LSP{
+		{
+			SystemID: "ac10.01c4.0000.00-00",
+			Hostname: "dzd-fra-01",
+			RouterID: "172.16.1.196",
+			Neighbors: []isis.Neighbor{
+				// Only dzd-tok-01 remains; fr2-dzx-001 adjacency is gone
+				{SystemID: "dzd-tok-01.00", Metric: 1000000, NeighborAddr: "172.16.1.235", AdjSIDs: []uint32{132768}},
+			},
+		},
+		{
+			SystemID: "ac10.0017.0000.00-00",
+			Hostname: "SW-DZX-FRA-01",
+			RouterID: "172.16.0.23",
+			Neighbors: []isis.Neighbor{
+				// dzd-fra-01 adjacency is gone (empty neighbors for this link)
+			},
+		},
+		{
+			SystemID: "ac10.0099.0000.00-00",
+			Hostname: "dzd-tok-01",
+			RouterID: "172.16.1.200",
+			Neighbors: []isis.Neighbor{
+				{SystemID: "dzd-fra-01.00", Metric: 1000000, NeighborAddr: "172.16.1.234", AdjSIDs: []uint32{132770}},
+			},
+		},
+	}
+
+	err = graphStore.SyncISIS(ctx, lsps2)
+	require.NoError(t, err)
+
+	// Verify the removed adjacency got a tombstone in history
+	var deletedCount uint64
+	rows, err = conn.Query(syncCtx, `
+		SELECT count() FROM dim_isis_adjacencies_history
+		WHERE link_pk = 'linkAB' AND is_deleted = 1
+	`)
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&deletedCount))
+	rows.Close()
+	require.Equal(t, uint64(2), deletedCount, "expected 2 tombstone rows for the removed linkAB adjacencies")
+
+	// Verify the adjacency no longer appears in the current view
+	rows, err = conn.Query(syncCtx, "SELECT count() FROM isis_adjacencies_current WHERE link_pk = 'linkAB'")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&currentCount))
+	rows.Close()
+	require.Equal(t, uint64(0), currentCount, "expected 0 current adjacencies for linkAB after removal")
+
+	// Verify the other link's adjacencies still exist
+	var otherCount uint64
+	rows, err = conn.Query(syncCtx, "SELECT count() FROM isis_adjacencies_current WHERE link_pk = 'linkAC'")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&otherCount))
+	rows.Close()
+	require.Equal(t, uint64(2), otherCount, "expected 2 current adjacencies for linkAC to still exist")
 }
 
 func TestParseTunnelNet31(t *testing.T) {

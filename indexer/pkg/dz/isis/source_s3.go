@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -75,29 +74,28 @@ func NewS3Source(ctx context.Context, cfg S3SourceConfig) (*S3Source, error) {
 // FetchLatest retrieves the most recent IS-IS dump from S3.
 // Files are named with timestamp prefixes (YYYY-MM-DDTHH-MM-SSZ_upload_data.json),
 // so the latest file is the alphabetically last one.
+//
+// To avoid listing the entire bucket (which can exceed the 1000-object page
+// limit), we prefix the listing with today's date. If no files exist for
+// today yet (e.g. just after midnight UTC), we fall back to yesterday.
 func (s *S3Source) FetchLatest(ctx context.Context) (*Dump, error) {
-	// List objects in the bucket
-	listOutput, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucket),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list objects: %w", err)
-	}
-
-	if len(listOutput.Contents) == 0 {
-		return nil, fmt.Errorf("no objects found in bucket %s", s.bucket)
-	}
-
-	// Sort keys descending to get the latest (alphabetically last)
-	keys := make([]string, 0, len(listOutput.Contents))
-	for _, obj := range listOutput.Contents {
-		if obj.Key != nil {
-			keys = append(keys, *obj.Key)
+	// List the last 3 days to handle clock skew, delayed uploads, and
+	// the window around midnight UTC. Pick the latest key across all days.
+	now := time.Now().UTC()
+	var latestKey string
+	for daysBack := 0; daysBack < 3; daysBack++ {
+		prefix := now.AddDate(0, 0, -daysBack).Format("2006-01-02")
+		key, err := s.latestKeyForDate(ctx, prefix)
+		if err != nil {
+			return nil, err
+		}
+		if key > latestKey {
+			latestKey = key
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
-
-	latestKey := keys[0]
+	if latestKey == "" {
+		return nil, fmt.Errorf("no objects found in bucket %s", s.bucket)
+	}
 
 	// Fetch the latest object
 	getOutput, err := s.client.GetObject(ctx, &s3.GetObjectInput{
@@ -119,6 +117,28 @@ func (s *S3Source) FetchLatest(ctx context.Context) (*Dump, error) {
 		RawJSON:   data,
 		FileName:  latestKey,
 	}, nil
+}
+
+// latestKeyForDate lists objects with the given date prefix (YYYY-MM-DD) and
+// returns the alphabetically last key, or "" if no objects match.
+func (s *S3Source) latestKeyForDate(ctx context.Context, datePrefix string) (string, error) {
+	var latestKey string
+	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket),
+		Prefix: aws.String(datePrefix),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to list objects with prefix %s: %w", datePrefix, err)
+		}
+		for _, obj := range page.Contents {
+			if obj.Key != nil && *obj.Key > latestKey {
+				latestKey = *obj.Key
+			}
+		}
+	}
+	return latestKey, nil
 }
 
 // Close releases resources. For S3Source, this is a no-op.
