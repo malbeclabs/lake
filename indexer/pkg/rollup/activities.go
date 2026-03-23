@@ -391,14 +391,18 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 			continue // not an ISIS link
 		}
 		entryIdx := 0
-		current := true // no entries yet = down
+		seenEntry := false
+		current := false
 		for _, bt := range sortedBuckets {
 			bucketEnd := bt.Add(bucketWidth)
 			for entryIdx < len(entries) && !entries[entryIdx].ts.After(bucketEnd) {
 				current = entries[entryIdx].isDeleted
+				seenEntry = true
 				entryIdx++
 			}
-			result[bucketKey{linkPK: pk, bucket: bt}] = current
+			if seenEntry {
+				result[bucketKey{linkPK: pk, bucket: bt}] = current
+			}
 		}
 	}
 	return result, nil
