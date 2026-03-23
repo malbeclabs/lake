@@ -2804,20 +2804,41 @@ function MetroIssuesFilterCard({
 
 // Metros tab content
 function MetrosContent({
-  linkHistory,
   criticalLinks,
-  isLoading,
+  criticalLinksLoading,
   metroNames,
 }: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  linkHistory: any
   criticalLinks: CriticalLinksResponse | undefined
-  isLoading: boolean
+  criticalLinksLoading: boolean
   metroNames: Map<string, string>
 }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
   const [healthFilters, setHealthFilters] = useState<MetroHealthFilter[]>(['healthy', 'degraded', 'unhealthy'])
   const [issueFilters, setIssueFilters] = useState<MetroIssueFilter[]>(['has_issues', 'has_spof', 'no_issues'])
+
+  // Bucket count based on time range
+  const buckets = (() => {
+    switch (timeRange) {
+      case '3h': return 36
+      case '6h': return 36
+      case '12h': return 48
+      case '24h': return 72
+      case '3d': return 72
+      case '7d': return 84
+      default: return 72
+    }
+  })()
+
+  // Fetch link history for the selected time range
+  const { data: linkHistory } = useQuery({
+    queryKey: ['link-history', timeRange, buckets],
+    queryFn: () => fetchLinkHistory(timeRange, buckets),
+    refetchInterval: 60_000,
+    staleTime: timeRange === '24h' ? 30_000 : 0,
+    placeholderData: keepPreviousData,
+  })
+
+  const isLoading = !linkHistory || criticalLinksLoading
 
   // Build critical link set
   const criticalLinkSet = useMemo(() => {
@@ -3080,7 +3101,7 @@ export function StatusPage() {
         ) : activeTab === 'devices' ? (
           <DevicesContent status={status} />
         ) : (
-          <MetrosContent linkHistory={linkHistory} criticalLinks={criticalLinks} isLoading={!linkHistory || criticalLinksLoading} metroNames={metroNames} />
+          <MetrosContent criticalLinks={criticalLinks} criticalLinksLoading={criticalLinksLoading} metroNames={metroNames} />
         )}
       </div>
     </div>
