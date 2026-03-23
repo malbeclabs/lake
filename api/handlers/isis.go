@@ -1731,227 +1731,12 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	start := time.Now()
-
-	session := config.Neo4jSession(ctx)
-	defer session.Close(ctx)
-
-	response := MetroPathLatencyResponse{
-		Optimize: optimize,
-		Paths:    []MetroPathLatency{},
-	}
-
-	// Build Cypher query based on optimization strategy
-	var cypher string
-	if optimize == "latency" {
-		// Use Dijkstra for latency-optimized paths
-		cypher = `
-			MATCH (m1:Metro)<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro)<-[:LOCATED_IN]-(d2:Device)
-			WHERE m1.pk < m2.pk
-			  AND d1.isis_system_id IS NOT NULL
-			  AND d2.isis_system_id IS NOT NULL
-			WITH m1, m2, d1, d2
-			CALL apoc.algo.dijkstra(d1, d2, 'ISIS_ADJACENT', 'metric') YIELD path, weight
-			WITH m1, m2, path, weight,
-			     length(path) AS hops,
-			     reduce(minBw = 9999999999999, r IN relationships(path) |
-			       CASE WHEN coalesce(r.bandwidth_bps, 9999999999999) < minBw
-			            THEN coalesce(r.bandwidth_bps, 9999999999999) ELSE minBw END) AS bottleneckBw
-			WITH m1, m2,
-			     min(weight) AS bestMetric,
-			     min(hops) AS bestHops,
-			     max(bottleneckBw) AS bestBottleneck
-			RETURN m1.pk AS fromPK, m1.code AS fromCode,
-			       m2.pk AS toPK, m2.code AS toCode,
-			       bestMetric AS metric, bestHops AS hops, bestBottleneck AS bottleneck
-			ORDER BY fromCode, toCode
-		`
-	} else if optimize == "bandwidth" {
-		// For bandwidth, we want the path with maximum bottleneck bandwidth
-		// This requires finding all paths and selecting the widest one
-		cypher = `
-			MATCH (m1:Metro)<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro)<-[:LOCATED_IN]-(d2:Device)
-			WHERE m1.pk < m2.pk
-			  AND d1.isis_system_id IS NOT NULL
-			  AND d2.isis_system_id IS NOT NULL
-			WITH m1, m2, d1, d2
-			MATCH path = shortestPath((d1)-[:ISIS_ADJACENT*]-(d2))
-			WITH m1, m2, path,
-			     length(path) AS hops,
-			     reduce(total = 0, r IN relationships(path) | total + coalesce(r.metric, 0)) AS metric,
-			     reduce(minBw = 9999999999999, r IN relationships(path) |
-			       CASE WHEN coalesce(r.bandwidth_bps, 9999999999999) < minBw
-			            THEN coalesce(r.bandwidth_bps, 9999999999999) ELSE minBw END) AS bottleneckBw
-			WITH m1, m2, hops, metric, bottleneckBw
-			ORDER BY m1.pk, m2.pk, bottleneckBw DESC
-			WITH m1, m2, collect({hops: hops, metric: metric, bottleneck: bottleneckBw})[0] AS best
-			RETURN m1.pk AS fromPK, m1.code AS fromCode,
-			       m2.pk AS toPK, m2.code AS toCode,
-			       best.metric AS metric, best.hops AS hops, best.bottleneck AS bottleneck
-			ORDER BY fromCode, toCode
-		`
-	} else {
-		// Default: fewest hops
-		cypher = `
-			MATCH (m1:Metro)<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro)<-[:LOCATED_IN]-(d2:Device)
-			WHERE m1.pk < m2.pk
-			  AND d1.isis_system_id IS NOT NULL
-			  AND d2.isis_system_id IS NOT NULL
-			WITH m1, m2, d1, d2
-			MATCH path = shortestPath((d1)-[:ISIS_ADJACENT*]-(d2))
-			WITH m1, m2, path,
-			     length(path) AS hops,
-			     reduce(total = 0, r IN relationships(path) | total + coalesce(r.metric, 0)) AS metric,
-			     reduce(minBw = 9999999999999, r IN relationships(path) |
-			       CASE WHEN coalesce(r.bandwidth_bps, 9999999999999) < minBw
-			            THEN coalesce(r.bandwidth_bps, 9999999999999) ELSE minBw END) AS bottleneckBw
-			WITH m1, m2, min(hops) AS bestHops, min(metric) AS bestMetric, max(bottleneckBw) AS bestBottleneck
-			RETURN m1.pk AS fromPK, m1.code AS fromCode,
-			       m2.pk AS toPK, m2.code AS toCode,
-			       bestMetric AS metric, bestHops AS hops, bestBottleneck AS bottleneck
-			ORDER BY fromCode, toCode
-		`
-	}
-
-	result, err := session.Run(ctx, cypher, nil)
+	response, err := fetchMetroPathLatencyData(ctx, optimize)
 	if err != nil {
-		slog.Error("metro path latency query error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
+		slog.Error("metro path latency error", "error", err)
+		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
 		return
 	}
-
-	records, err := result.Collect(ctx)
-	if err != nil {
-		slog.Error("metro path latency collect error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	// Build map of metro paths
-	pathMap := make(map[string]*MetroPathLatency)
-	for _, record := range records {
-		fromPK, _ := record.Get("fromPK")
-		fromCode, _ := record.Get("fromCode")
-		toPK, _ := record.Get("toPK")
-		toCode, _ := record.Get("toCode")
-		metric, _ := record.Get("metric")
-		hops, _ := record.Get("hops")
-		bottleneck, _ := record.Get("bottleneck")
-
-		metricVal := asFloat64(metric)
-		bottleneckVal := asFloat64(bottleneck)
-		if bottleneckVal > 1e12 {
-			bottleneckVal = 0 // No bandwidth data
-		}
-
-		path := &MetroPathLatency{
-			FromMetroPK:      asString(fromPK),
-			FromMetroCode:    asString(fromCode),
-			ToMetroPK:        asString(toPK),
-			ToMetroCode:      asString(toCode),
-			PathLatencyMs:    metricVal / 1000.0, // Convert microseconds to milliseconds
-			HopCount:         int(asInt64(hops)),
-			BottleneckBwGbps: bottleneckVal / 1e9, // Convert bps to Gbps
-		}
-
-		// Store in map for both directions
-		key1 := asString(fromCode) + ":" + asString(toCode)
-		key2 := asString(toCode) + ":" + asString(fromCode)
-		pathMap[key1] = path
-		pathMap[key2] = &MetroPathLatency{
-			FromMetroPK:      asString(toPK),
-			FromMetroCode:    asString(toCode),
-			ToMetroPK:        asString(fromPK),
-			ToMetroCode:      asString(fromCode),
-			PathLatencyMs:    path.PathLatencyMs,
-			HopCount:         path.HopCount,
-			BottleneckBwGbps: path.BottleneckBwGbps,
-		}
-	}
-
-	// Now fetch internet latency data from ClickHouse for comparison
-	internetQuery := `
-		SELECT
-			least(ma.code, mz.code) AS metro1,
-			greatest(ma.code, mz.code) AS metro2,
-			round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms
-		FROM fact_dz_internet_metro_latency f
-		JOIN dz_metros_current ma ON f.origin_metro_pk = ma.pk
-		JOIN dz_metros_current mz ON f.target_metro_pk = mz.pk
-		WHERE f.event_ts >= now() - INTERVAL 24 HOUR
-		  AND ma.code != mz.code
-		GROUP BY metro1, metro2
-	`
-
-	rows, err := safeQueryRows(ctx, internetQuery)
-	if err != nil {
-		slog.Error("metro path latency internet query error", "error", err)
-		response.Error = "failed to fetch internet latency data"
-		writeJSON(w, response)
-		return
-	}
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var metro1, metro2 string
-			var avgRttMs float64
-			if err := rows.Scan(&metro1, &metro2, &avgRttMs); err != nil {
-				response.Error = fmt.Sprintf("failed to scan internet latency row: %v", err)
-				writeJSON(w, response)
-				return
-			}
-			// Update both directions in pathMap
-			key1 := metro1 + ":" + metro2
-			key2 := metro2 + ":" + metro1
-			if p, ok := pathMap[key1]; ok {
-				p.InternetLatencyMs = avgRttMs
-				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
-					p.ImprovementPct = &pct
-				}
-			}
-			if p, ok := pathMap[key2]; ok {
-				p.InternetLatencyMs = avgRttMs
-				if avgRttMs > 0 && p.PathLatencyMs > 0 {
-					pct := (avgRttMs - p.PathLatencyMs) / avgRttMs * 100
-					p.ImprovementPct = &pct
-				}
-			}
-		}
-	}
-
-	// Convert map to slice and compute summary
-	var totalImprovement float64
-	var maxImprovement float64
-	var pairsWithInternet int
-
-	for _, path := range pathMap {
-		response.Paths = append(response.Paths, *path)
-		if path.ImprovementPct != nil {
-			pairsWithInternet++
-			totalImprovement += *path.ImprovementPct
-			if *path.ImprovementPct > maxImprovement {
-				maxImprovement = *path.ImprovementPct
-			}
-		}
-	}
-
-	response.Summary.TotalPairs = len(response.Paths)
-	response.Summary.PairsWithInternet = pairsWithInternet
-	if pairsWithInternet > 0 {
-		response.Summary.AvgImprovementPct = totalImprovement / float64(pairsWithInternet)
-	}
-	response.Summary.MaxImprovementPct = maxImprovement
-
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, nil)
-
-	slog.Info("metro path latency completed", "optimize", optimize, "paths", len(response.Paths), "duration", duration)
 
 	writeJSON(w, response)
 }
@@ -1965,132 +1750,45 @@ func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
-	defer session.Close(ctx)
+	// Load the in-memory topology graph using committed latency from link topology.
+	// This uses Device-Link-Device (CONNECTS) relationships with committed_rtt_ns
+	// as edge weights, which gives accurate latency values (unlike ISIS_ADJACENT
+	// metrics which can be artificially low on transit switches).
+	g, err := loadTopologyGraph(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("loading topology graph: %w", err)
+	}
 
 	response := &MetroPathLatencyResponse{
 		Optimize: optimize,
 		Paths:    []MetroPathLatency{},
 	}
 
-	// Build Cypher query based on optimization strategy
-	var cypher string
-	if optimize == "latency" {
-		cypher = `
-			MATCH (m1:Metro)<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro)<-[:LOCATED_IN]-(d2:Device)
-			WHERE m1.pk < m2.pk
-			  AND d1.isis_system_id IS NOT NULL
-			  AND d2.isis_system_id IS NOT NULL
-			WITH m1, m2, d1, d2
-			CALL apoc.algo.dijkstra(d1, d2, 'ISIS_ADJACENT', 'metric') YIELD path, weight
-			WITH m1, m2, path, weight,
-			     length(path) AS hops,
-			     reduce(minBw = 9999999999999, r IN relationships(path) |
-			       CASE WHEN coalesce(r.bandwidth_bps, 9999999999999) < minBw
-			            THEN coalesce(r.bandwidth_bps, 9999999999999) ELSE minBw END) AS bottleneckBw
-			WITH m1, m2,
-			     min(weight) AS bestMetric,
-			     min(hops) AS bestHops,
-			     max(bottleneckBw) AS bestBottleneck
-			RETURN m1.pk AS fromPK, m1.code AS fromCode,
-			       m2.pk AS toPK, m2.code AS toCode,
-			       bestMetric AS metric, bestHops AS hops, bestBottleneck AS bottleneck
-			ORDER BY fromCode, toCode
-		`
-	} else if optimize == "bandwidth" {
-		cypher = `
-			MATCH (m1:Metro)<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro)<-[:LOCATED_IN]-(d2:Device)
-			WHERE m1.pk < m2.pk
-			  AND d1.isis_system_id IS NOT NULL
-			  AND d2.isis_system_id IS NOT NULL
-			WITH m1, m2, d1, d2
-			MATCH path = shortestPath((d1)-[:ISIS_ADJACENT*]-(d2))
-			WITH m1, m2, path,
-			     length(path) AS hops,
-			     reduce(total = 0, r IN relationships(path) | total + coalesce(r.metric, 0)) AS metric,
-			     reduce(minBw = 9999999999999, r IN relationships(path) |
-			       CASE WHEN coalesce(r.bandwidth_bps, 9999999999999) < minBw
-			            THEN coalesce(r.bandwidth_bps, 9999999999999) ELSE minBw END) AS bottleneckBw
-			WITH m1, m2, hops, metric, bottleneckBw
-			ORDER BY m1.pk, m2.pk, bottleneckBw DESC
-			WITH m1, m2, collect({hops: hops, metric: metric, bottleneck: bottleneckBw})[0] AS best
-			RETURN m1.pk AS fromPK, m1.code AS fromCode,
-			       m2.pk AS toPK, m2.code AS toCode,
-			       best.metric AS metric, best.hops AS hops, best.bottleneck AS bottleneck
-			ORDER BY fromCode, toCode
-		`
-	} else {
-		// Default: fewest hops
-		cypher = `
-			MATCH (m1:Metro)<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro)<-[:LOCATED_IN]-(d2:Device)
-			WHERE m1.pk < m2.pk
-			  AND d1.isis_system_id IS NOT NULL
-			  AND d2.isis_system_id IS NOT NULL
-			WITH m1, m2, d1, d2
-			MATCH path = shortestPath((d1)-[:ISIS_ADJACENT*]-(d2))
-			WITH m1, m2, path,
-			     length(path) AS hops,
-			     reduce(total = 0, r IN relationships(path) | total + coalesce(r.metric, 0)) AS metric,
-			     reduce(minBw = 9999999999999, r IN relationships(path) |
-			       CASE WHEN coalesce(r.bandwidth_bps, 9999999999999) < minBw
-			            THEN coalesce(r.bandwidth_bps, 9999999999999) ELSE minBw END) AS bottleneckBw
-			WITH m1, m2, min(hops) AS bestHops, min(metric) AS bestMetric, max(bottleneckBw) AS bestBottleneck
-			RETURN m1.pk AS fromPK, m1.code AS fromCode,
-			       m2.pk AS toPK, m2.code AS toCode,
-			       bestMetric AS metric, bestHops AS hops, bestBottleneck AS bottleneck
-			ORDER BY fromCode, toCode
-		`
-	}
-
-	result, err := session.Run(ctx, cypher, nil)
-	if err != nil {
-		return nil, fmt.Errorf("neo4j query error: %w", err)
-	}
-
-	records, err := result.Collect(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("neo4j collect error: %w", err)
-	}
+	// Compute best paths between all metro pairs using in-memory Dijkstra
+	metroPaths := computeMetroPairPaths(g)
 
 	// Build map of metro paths
 	pathMap := make(map[string]*MetroPathLatency)
-	for _, record := range records {
-		fromPK, _ := record.Get("fromPK")
-		fromCode, _ := record.Get("fromCode")
-		toPK, _ := record.Get("toPK")
-		toCode, _ := record.Get("toCode")
-		metric, _ := record.Get("metric")
-		hops, _ := record.Get("hops")
-		bottleneck, _ := record.Get("bottleneck")
-
-		metricVal := asFloat64(metric)
-		bottleneckVal := asFloat64(bottleneck)
-		if bottleneckVal > 1e12 {
-			bottleneckVal = 0 // No bandwidth data
-		}
-
+	for _, mp := range metroPaths {
 		path := &MetroPathLatency{
-			FromMetroPK:      asString(fromPK),
-			FromMetroCode:    asString(fromCode),
-			ToMetroPK:        asString(toPK),
-			ToMetroCode:      asString(toCode),
-			PathLatencyMs:    metricVal / 1000.0, // Convert microseconds to milliseconds
-			HopCount:         int(asInt64(hops)),
-			BottleneckBwGbps: bottleneckVal / 1e9, // Convert bps to Gbps
+			FromMetroPK:      mp.FromMetroPK,
+			FromMetroCode:    mp.FromMetroCode,
+			ToMetroPK:        mp.ToMetroPK,
+			ToMetroCode:      mp.ToMetroCode,
+			PathLatencyMs:    float64(mp.Path.TotalMetric) / 1000.0, // Convert microseconds to milliseconds
+			HopCount:         mp.HopCount,
+			BottleneckBwGbps: float64(mp.BottleneckBps) / 1e9, // Convert bps to Gbps
 		}
 
 		// Store in map for both directions
-		key1 := asString(fromCode) + ":" + asString(toCode)
-		key2 := asString(toCode) + ":" + asString(fromCode)
+		key1 := mp.FromMetroCode + ":" + mp.ToMetroCode
+		key2 := mp.ToMetroCode + ":" + mp.FromMetroCode
 		pathMap[key1] = path
 		pathMap[key2] = &MetroPathLatency{
-			FromMetroPK:      asString(toPK),
-			FromMetroCode:    asString(toCode),
-			ToMetroPK:        asString(fromPK),
-			ToMetroCode:      asString(fromCode),
+			FromMetroPK:      mp.ToMetroPK,
+			FromMetroCode:    mp.ToMetroCode,
+			ToMetroPK:        mp.FromMetroPK,
+			ToMetroCode:      mp.FromMetroCode,
 			PathLatencyMs:    path.PathLatencyMs,
 			HopCount:         path.HopCount,
 			BottleneckBwGbps: path.BottleneckBwGbps,
@@ -2216,9 +1914,6 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
-	defer session.Close(ctx)
-
 	response := MetroPathDetailResponse{
 		FromMetroCode: fromCode,
 		ToMetroCode:   toCode,
@@ -2226,110 +1921,56 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 		Hops:          []MetroPathDetailHop{},
 	}
 
-	// Build query based on optimization mode
-	var cypher string
-	if optimize == "latency" {
-		cypher = `
-			MATCH (m1:Metro {code: $from})<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro {code: $to})<-[:LOCATED_IN]-(d2:Device)
-			WHERE d1.isis_system_id IS NOT NULL AND d2.isis_system_id IS NOT NULL
-			WITH d1, d2
-			CALL apoc.algo.dijkstra(d1, d2, 'ISIS_ADJACENT', 'metric') YIELD path, weight
-			WITH path, weight
-			ORDER BY weight
-			LIMIT 1
-			WITH path, nodes(path) AS pathNodes, relationships(path) AS pathRels
-			UNWIND range(0, size(pathNodes)-1) AS idx
-			WITH pathNodes, pathRels, pathNodes[idx] AS node,
-			     CASE WHEN idx < size(pathRels) THEN pathRels[idx] ELSE null END AS rel
-			MATCH (node)-[:LOCATED_IN]->(m:Metro)
-			RETURN node.pk AS devicePK, node.code AS deviceCode,
-			       m.pk AS metroPK, m.code AS metroCode,
-			       coalesce(rel.metric, 0) AS linkMetric,
-			       coalesce(rel.bandwidth_bps, 0) AS linkBw
-		`
-	} else {
-		cypher = `
-			MATCH (m1:Metro {code: $from})<-[:LOCATED_IN]-(d1:Device)
-			MATCH (m2:Metro {code: $to})<-[:LOCATED_IN]-(d2:Device)
-			WHERE d1.isis_system_id IS NOT NULL AND d2.isis_system_id IS NOT NULL
-			WITH d1, d2
-			MATCH path = shortestPath((d1)-[:ISIS_ADJACENT*]-(d2))
-			WITH path
-			ORDER BY length(path)
-			LIMIT 1
-			WITH path, nodes(path) AS pathNodes, relationships(path) AS pathRels
-			UNWIND range(0, size(pathNodes)-1) AS idx
-			WITH pathNodes, pathRels, pathNodes[idx] AS node,
-			     CASE WHEN idx < size(pathRels) THEN pathRels[idx] ELSE null END AS rel
-			MATCH (node)-[:LOCATED_IN]->(m:Metro)
-			RETURN node.pk AS devicePK, node.code AS deviceCode,
-			       m.pk AS metroPK, m.code AS metroCode,
-			       coalesce(rel.metric, 0) AS linkMetric,
-			       coalesce(rel.bandwidth_bps, 0) AS linkBw
-		`
-	}
-
-	result, err := session.Run(ctx, cypher, map[string]any{
-		"from": fromCode,
-		"to":   toCode,
-	})
+	// Load in-memory topology graph with committed latency
+	g, err := loadTopologyGraph(ctx)
 	if err != nil {
-		slog.Error("metro path detail query error", "error", err)
+		slog.Error("metro path detail graph load error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
 	}
 
-	records, err := result.Collect(ctx)
-	if err != nil {
-		slog.Error("metro path detail collect error", "error", err)
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	if len(records) == 0 {
+	// Find best path between the two metros
+	mp := computeMetroPathDetail(g, fromCode, toCode)
+	if mp == nil {
 		response.Error = "No path found between metros"
 		writeJSON(w, response)
 		return
 	}
 
-	var totalMetric int64
-	var minBandwidth float64 = 1e15
+	var totalMetric uint32
+	var minBandwidth uint64
 
-	for _, record := range records {
-		devicePK, _ := record.Get("devicePK")
-		deviceCode, _ := record.Get("deviceCode")
-		metroPK, _ := record.Get("metroPK")
-		metroCode, _ := record.Get("metroCode")
-		linkMetric, _ := record.Get("linkMetric")
-		linkBw, _ := record.Get("linkBw")
-
-		metric := asInt64(linkMetric)
-		bw := asFloat64(linkBw)
+	for i, nodePK := range mp.Path.Nodes {
+		info := g.Nodes[nodePK]
+		var linkMetric uint32
+		var linkBw uint64
+		if i < len(mp.Path.Nodes)-1 {
+			linkMetric = edgeMetric(g, nodePK, mp.Path.Nodes[i+1])
+			linkBw = edgeBandwidth(g, nodePK, mp.Path.Nodes[i+1])
+		}
 
 		hop := MetroPathDetailHop{
-			DevicePK:    asString(devicePK),
-			DeviceCode:  asString(deviceCode),
-			MetroPK:     asString(metroPK),
-			MetroCode:   asString(metroCode),
-			LinkMetric:  metric,
-			LinkLatency: float64(metric) / 1000.0, // Convert to ms
-			LinkBwGbps:  bw / 1e9,
+			DevicePK:    info.PK,
+			DeviceCode:  info.Code,
+			MetroPK:     info.MetroPK,
+			MetroCode:   info.MetroCode,
+			LinkMetric:  int64(linkMetric),
+			LinkLatency: float64(linkMetric) / 1000.0, // Convert to ms
+			LinkBwGbps:  float64(linkBw) / 1e9,
 		}
 
 		response.Hops = append(response.Hops, hop)
-		totalMetric += metric
-		if bw > 0 && bw < minBandwidth {
-			minBandwidth = bw
+		totalMetric += linkMetric
+		if linkBw > 0 && (minBandwidth == 0 || linkBw < minBandwidth) {
+			minBandwidth = linkBw
 		}
 	}
 
 	response.TotalLatencyMs = float64(totalMetric) / 1000.0
 	response.TotalHops = len(response.Hops) - 1
-	if minBandwidth < 1e15 {
-		response.BottleneckBwGbps = minBandwidth / 1e9
+	if minBandwidth > 0 {
+		response.BottleneckBwGbps = float64(minBandwidth) / 1e9
 	}
 
 	// Fetch internet latency for comparison

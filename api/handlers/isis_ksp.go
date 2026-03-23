@@ -15,8 +15,9 @@ import (
 // Graph types for in-memory shortest path computation.
 
 type kspEdge struct {
-	To     string
-	Metric uint32
+	To           string
+	Metric       uint32
+	BandwidthBps uint64
 }
 
 type kspGraph struct {
@@ -58,6 +59,7 @@ func loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 		OPTIONAL MATCH (b)-[:LOCATED_IN]->(mB:Metro)
 		RETURN a.pk AS a_pk, b.pk AS b_pk,
 		       l.committed_rtt_ns AS committed_rtt_ns,
+		       coalesce(l.bandwidth, 0) AS bandwidth_bps,
 		       a.code AS a_code, a.status AS a_status, a.device_type AS a_type,
 		       mA.pk AS a_metro_pk, mA.code AS a_metro_code,
 		       b.code AS b_code, b.status AS b_status, b.device_type AS b_type,
@@ -83,10 +85,11 @@ func loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 		if metric == 0 {
 			metric = 1
 		}
+		bwBps := uint64(asInt64(recGet(rec, "bandwidth_bps")))
 
 		// Bidirectional edges
-		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{To: bPK, Metric: metric})
-		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{To: aPK, Metric: metric})
+		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{To: bPK, Metric: metric, BandwidthBps: bwBps})
+		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{To: aPK, Metric: metric, BandwidthBps: bwBps})
 
 		if _, ok := g.Nodes[aPK]; !ok {
 			g.Nodes[aPK] = kspNodeInfo{
@@ -410,4 +413,156 @@ func (h *candidateHeap) Pop() any {
 	x := old[n-1]
 	*h = old[:n-1]
 	return x
+}
+
+// metroPairPath holds the best path between two metros.
+type metroPairPath struct {
+	FromMetroPK   string
+	FromMetroCode string
+	ToMetroPK     string
+	ToMetroCode   string
+	Path          *kspPath
+	HopCount      int
+	BottleneckBps uint64
+}
+
+// computeMetroPairPaths finds the shortest path between every pair of metros
+// using the in-memory topology graph with committed latency as edge weights.
+func computeMetroPairPaths(g *kspGraph) []metroPairPath {
+	// Group device PKs by metro
+	metroDevices := make(map[string][]string) // metroCode -> []devicePK
+	metroInfo := make(map[string]struct {
+		pk   string
+		code string
+	})
+
+	for pk, info := range g.Nodes {
+		if info.MetroCode == "" {
+			continue
+		}
+		metroDevices[info.MetroCode] = append(metroDevices[info.MetroCode], pk)
+		metroInfo[info.MetroCode] = struct {
+			pk   string
+			code string
+		}{pk: info.MetroPK, code: info.MetroCode}
+	}
+
+	// Collect sorted metro codes for deterministic ordering
+	metroCodes := make([]string, 0, len(metroDevices))
+	for code := range metroDevices {
+		metroCodes = append(metroCodes, code)
+	}
+	slices.Sort(metroCodes)
+
+	var results []metroPairPath
+
+	// For each unique metro pair, find the best path across all device pairs
+	for i := 0; i < len(metroCodes); i++ {
+		for j := i + 1; j < len(metroCodes); j++ {
+			m1Code := metroCodes[i]
+			m2Code := metroCodes[j]
+			m1Info := metroInfo[m1Code]
+			m2Info := metroInfo[m2Code]
+
+			var bestPath *kspPath
+			for _, d1 := range metroDevices[m1Code] {
+				for _, d2 := range metroDevices[m2Code] {
+					p := dijkstra(g, d1, d2, nil, nil)
+					if p != nil && (bestPath == nil || p.TotalMetric < bestPath.TotalMetric) {
+						bestPath = p
+					}
+				}
+			}
+
+			if bestPath == nil {
+				continue
+			}
+
+			// Compute hop count and bottleneck bandwidth
+			hopCount := len(bestPath.Nodes) - 1
+			var bottleneckBps uint64 = 0
+			for k := 0; k < hopCount; k++ {
+				bw := edgeBandwidth(g, bestPath.Nodes[k], bestPath.Nodes[k+1])
+				if bw > 0 && (bottleneckBps == 0 || bw < bottleneckBps) {
+					bottleneckBps = bw
+				}
+			}
+
+			results = append(results, metroPairPath{
+				FromMetroPK:   m1Info.pk,
+				FromMetroCode: m1Info.code,
+				ToMetroPK:     m2Info.pk,
+				ToMetroCode:   m2Info.code,
+				Path:          bestPath,
+				HopCount:      hopCount,
+				BottleneckBps: bottleneckBps,
+			})
+		}
+	}
+
+	return results
+}
+
+// computeMetroPathDetail finds the best path between two specific metros
+// and returns the hop-by-hop breakdown.
+func computeMetroPathDetail(g *kspGraph, fromCode, toCode string) *metroPairPath {
+	// Find devices in each metro
+	var fromDevices, toDevices []string
+	var fromMetroPK, toMetroPK string
+	for pk, info := range g.Nodes {
+		if info.MetroCode == fromCode {
+			fromDevices = append(fromDevices, pk)
+			fromMetroPK = info.MetroPK
+		} else if info.MetroCode == toCode {
+			toDevices = append(toDevices, pk)
+			toMetroPK = info.MetroPK
+		}
+	}
+
+	if len(fromDevices) == 0 || len(toDevices) == 0 {
+		return nil
+	}
+
+	var bestPath *kspPath
+	for _, d1 := range fromDevices {
+		for _, d2 := range toDevices {
+			p := dijkstra(g, d1, d2, nil, nil)
+			if p != nil && (bestPath == nil || p.TotalMetric < bestPath.TotalMetric) {
+				bestPath = p
+			}
+		}
+	}
+
+	if bestPath == nil {
+		return nil
+	}
+
+	hopCount := len(bestPath.Nodes) - 1
+	var bottleneckBps uint64 = 0
+	for k := 0; k < hopCount; k++ {
+		bw := edgeBandwidth(g, bestPath.Nodes[k], bestPath.Nodes[k+1])
+		if bw > 0 && (bottleneckBps == 0 || bw < bottleneckBps) {
+			bottleneckBps = bw
+		}
+	}
+
+	return &metroPairPath{
+		FromMetroPK:   fromMetroPK,
+		FromMetroCode: fromCode,
+		ToMetroPK:     toMetroPK,
+		ToMetroCode:   toCode,
+		Path:          bestPath,
+		HopCount:      hopCount,
+		BottleneckBps: bottleneckBps,
+	}
+}
+
+// edgeBandwidth returns the bandwidth of the edge from→to in the graph.
+func edgeBandwidth(g *kspGraph, from, to string) uint64 {
+	for _, e := range g.Adj[from] {
+		if e.To == to {
+			return e.BandwidthBps
+		}
+	}
+	return 0
 }
