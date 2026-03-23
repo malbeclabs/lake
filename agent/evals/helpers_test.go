@@ -323,13 +323,21 @@ func getDebugLevel() (int, bool) {
 	return debugLevel, debugLevel > 0
 }
 
-// newAnthropicLLMClient creates an Anthropic LLM client for the workflow
+// newAnthropicLLMClient creates an Anthropic LLM client for the workflow.
+// Override the model with EVAL_MODEL env var. Options:
+//   - claude-haiku-4-5      (default, fast/cheap)
+//   - claude-sonnet-4-5     (more capable, slower)
+//   - claude-opus-4-5       (most capable, slowest)
 func newAnthropicLLMClient(t *testing.T) workflow.LLMClient {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	require.NotEmpty(t, apiKey, "ANTHROPIC_API_KEY must be set for Anthropic tests")
 
+	model := anthropic.ModelClaudeHaiku4_5
+	if m := os.Getenv("EVAL_MODEL"); m != "" {
+		model = anthropic.Model(m)
+	}
 	return workflow.NewAnthropicLLMClient(
-		anthropic.ModelClaudeHaiku4_5, // Use Haiku for faster/cheaper eval tests
+		model,
 		4096,
 	)
 }

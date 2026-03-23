@@ -36,6 +36,7 @@ cd web && bun run build   # Build frontend (runs tsc first)
 ./scripts/run-evals.sh -s              # Short mode (code validation only, no API calls)
 ./scripts/run-evals.sh -r 2            # Retry failed tests up to 2 times
 ./scripts/run-evals.sh -f 'NetworkHealth'  # Filter to specific tests
+EVAL_MODEL=claude-sonnet-4-5 ./scripts/run-evals.sh  # Use a different model (default: claude-haiku-4-5)
 ```
 
 Output goes to `eval-runs/<timestamp>/` with:
