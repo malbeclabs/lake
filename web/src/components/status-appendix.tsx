@@ -588,7 +588,7 @@ export function StatusAppendix() {
 
           <h3 className="font-medium mt-4 mb-2">Views</h3>
           <ul className="text-sm text-muted-foreground space-y-2 ml-5 list-disc">
-            <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_links_health_current</code> — Current health state of each link with boolean flags (is_provisioning, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark)</li>
+            <li><code className="bg-muted px-1 py-0.5 rounded text-xs">link_rollup_5m</code> — Per-link latency and loss metrics in 5-minute buckets with per-direction data (A→Z, Z→A) and state columns (status, provisioning, isis_down)</li>
             <li><code className="bg-muted px-1 py-0.5 rounded text-xs">dz_link_status_changes</code> — Historical status transitions for links</li>
           </ul>
 

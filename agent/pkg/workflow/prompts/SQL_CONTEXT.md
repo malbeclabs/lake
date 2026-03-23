@@ -125,7 +125,7 @@ SELECT MAX(peak) FROM per_window
 | `solana_validators_on_dz_connections` | All connection events with `first_connected_ts`, device_code, device_metro_code |
 | `solana_validators_disconnections` | Validators that left DZ (vote_pubkey, activated_stake_sol, device_code, device_metro_code, connected_ts, disconnected_ts) |
 | `solana_validators_new_connections` | Recently connected validators with device_code, device_metro_code |
-| `dz_links_health_current` | Current link health (status, packet loss, latency vs committed, is_dark, is_down) |
+| `link_rollup_5m` | Per-link latency/loss rollup in 5-minute buckets with per-direction metrics (a_avg_rtt_us, z_avg_rtt_us, a_loss_pct, z_loss_pct, a_samples, z_samples) plus state columns (status, provisioning, isis_down) |
 | `dz_link_status_changes` | Link status transitions with timestamps (previous_status, new_status, changed_ts) |
 | `dz_vs_internet_latency_comparison` | Compare DZ vs public internet latency for **directly-connected** metro pairs only. For latency between non-adjacent metros (e.g., NYC-TYO), use `execute_cypher` to find the path first. |
 
@@ -192,11 +192,14 @@ FROM solana_validators_off_dz_current
 WHERE city = 'Tokyo'
 ORDER BY activated_stake_sol DESC LIMIT 10;
 
--- Links with current issues
-SELECT code, status, is_soft_drained, is_hard_drained, is_isis_soft_drained,
-       has_packet_loss, loss_pct, exceeds_committed_rtt, is_dark, is_down
-FROM dz_links_health_current
-WHERE is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark OR is_down;
+-- Links with current issues (using most recent rollup bucket)
+SELECT l.code, r.status, greatest(r.a_loss_pct, r.z_loss_pct) as loss_pct,
+       r.provisioning, r.isis_down,
+       greatest(r.a_loss_pct, r.z_loss_pct) >= 100 as is_down
+FROM link_rollup_5m r FINAL
+JOIN dz_links_current l ON r.link_pk = l.pk
+WHERE r.bucket_ts >= now() - INTERVAL 10 MINUTE
+  AND (greatest(r.a_loss_pct, r.z_loss_pct) > 0 OR r.isis_down OR r.status IN ('soft-drained', 'hard-drained'));
 
 -- Link status changes in past 7 days
 SELECT link_code, previous_status, new_status, changed_ts
@@ -256,7 +259,7 @@ SELECT code, status, metro_pk FROM dz_devices_current WHERE status = 'drained';
 ```
 
 **For "network health" questions**, check and list:
-1. Link issues from `dz_links_health_current` - **query individual rows** with code, loss_pct, and boolean flags (is_down, is_provisioning, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark). Do NOT aggregate into counts — list each affected link by code.
+1. Link issues from `link_rollup_5m` (most recent buckets) - **query individual rows** with link code, loss_pct, status, provisioning, isis_down. Join to `dz_links_current` for link code. Do NOT aggregate into counts — list each affected link by code.
 2. Drained devices - **MUST list specific device codes**
 3. Interface errors from `fact_dz_device_interface_counters` - include device code and **actual numeric counts**
 
@@ -636,34 +639,53 @@ ORDER BY stake_sol DESC
 ```
 
 ### Link Health & Status
-**Use `dz_links_health_current` for current state** and **`dz_link_status_changes` for history**.
+**Use `link_rollup_5m` for current and historical link health** and **`dz_link_status_changes` for status transition history**.
 
-**`dz_links_health_current` columns:**
+**`link_rollup_5m` columns:**
 | Column | Description |
 |--------|-------------|
-| `is_provisioning` | Link has committed_rtt_ns = 1000ms (placeholder, not yet operational) |
-| `is_soft_drained` | Link status is 'soft-drained' |
-| `is_hard_drained` | Link status is 'hard-drained' |
-| `is_isis_soft_drained` | ISIS delay override set to 1000ms |
-| `has_packet_loss` | Loss >= 1% in last hour |
-| `loss_pct` | Packet loss percentage (last hour) |
-| `exceeds_committed_rtt` | Avg latency exceeds committed RTT |
-| `avg_rtt_us`, `p95_rtt_us` | Latency metrics (last hour) |
-| `is_dark` | No telemetry in last 2 hours |
-| `is_down` | 100% packet loss in last 5 minutes (link currently down) |
+| `bucket_ts` | 5-minute bucket timestamp |
+| `link_pk` | Link primary key (join to `dz_links_current` for code/metro) |
+| `a_avg_rtt_us`, `z_avg_rtt_us` | Average RTT per direction (A→Z, Z→A) |
+| `a_p95_rtt_us`, `z_p95_rtt_us` | P95 RTT per direction |
+| `a_loss_pct`, `z_loss_pct` | Packet loss percentage per direction |
+| `a_samples`, `z_samples` | Sample count per direction |
+| `status` | Link status at bucket time (activated, soft-drained, hard-drained) |
+| `provisioning` | True if link was provisioning (not yet operational) |
+| `isis_down` | True if ISIS adjacency was down |
+
+**Derived conditions (compute in queries):**
+- **is_down**: `greatest(a_loss_pct, z_loss_pct) >= 100` in the most recent bucket
+- **has_packet_loss**: `greatest(a_loss_pct, z_loss_pct) > 0`
+- **no_data / is_dark**: Link has no rows in recent buckets (e.g., last 10 minutes)
 
 ```sql
--- Links with current issues
-SELECT code, side_a_metro, side_z_metro, status, loss_pct,
-       is_provisioning, is_soft_drained, is_hard_drained, is_isis_soft_drained, has_packet_loss, exceeds_committed_rtt, is_dark, is_down
-FROM dz_links_health_current
-WHERE is_provisioning OR is_soft_drained OR is_hard_drained OR is_isis_soft_drained OR has_packet_loss OR exceeds_committed_rtt OR is_dark OR is_down;
+-- Links with current issues (most recent bucket)
+SELECT l.code, ma.code as side_a_metro, mz.code as side_z_metro,
+       r.status, greatest(r.a_loss_pct, r.z_loss_pct) as loss_pct,
+       r.provisioning, r.isis_down,
+       greatest(r.a_loss_pct, r.z_loss_pct) >= 100 as is_down
+FROM link_rollup_5m r FINAL
+JOIN dz_links_current l ON r.link_pk = l.pk
+JOIN dz_devices_current da ON l.side_a_pk = da.pk
+JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+JOIN dz_metros_current ma ON da.metro_pk = ma.pk
+JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
+WHERE r.bucket_ts >= now() - INTERVAL 10 MINUTE
+  AND (greatest(r.a_loss_pct, r.z_loss_pct) > 0 OR r.isis_down OR r.status IN ('soft-drained', 'hard-drained'));
 
 -- Links with issues in a specific metro
-SELECT code, status, loss_pct, is_dark, is_down
-FROM dz_links_health_current
-WHERE (side_a_metro = 'sao' OR side_z_metro = 'sao')
-  AND (is_soft_drained OR is_hard_drained OR has_packet_loss OR is_dark OR is_down);
+SELECT l.code, r.status, greatest(r.a_loss_pct, r.z_loss_pct) as loss_pct, r.isis_down,
+       greatest(r.a_loss_pct, r.z_loss_pct) >= 100 as is_down
+FROM link_rollup_5m r FINAL
+JOIN dz_links_current l ON r.link_pk = l.pk
+JOIN dz_devices_current da ON l.side_a_pk = da.pk
+JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+JOIN dz_metros_current ma ON da.metro_pk = ma.pk
+JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
+WHERE r.bucket_ts >= now() - INTERVAL 10 MINUTE
+  AND (ma.code = 'sao' OR mz.code = 'sao')
+  AND (greatest(r.a_loss_pct, r.z_loss_pct) > 0 OR r.isis_down OR r.status IN ('soft-drained', 'hard-drained'));
 ```
 
 **`dz_link_status_changes` for history:**
@@ -724,8 +746,8 @@ ORDER BY date DESC;
 **"Outage" can mean multiple things - check ALL sources:**
 
 1. **Status-based outages** → `dz_link_status_changes` (soft-drained, hard-drained)
-2. **Packet loss outages** → `fact_dz_device_link_latency` (loss percentage)
-3. **Current health issues** → `dz_links_health_current` (combined view)
+2. **Packet loss outages** → `link_rollup_5m` (loss percentage per direction)
+3. **Current health issues** → `link_rollup_5m` (most recent buckets)
 
 **For questions about "outages", "issues", or "problems" on links, query BOTH:**
 

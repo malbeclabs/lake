@@ -282,6 +282,18 @@ func seedHealthyNetworkData(t *testing.T, ctx context.Context, conn clickhouse.C
 	})
 	require.NoError(t, err)
 
+	// Seed link_rollup_5m - all healthy (no loss)
+	bucketRecent := now.Add(-5 * time.Minute).Truncate(5 * time.Minute)
+	err = conn.Exec(ctx, `
+		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at,
+			a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples,
+			z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples,
+			status, provisioning, isis_down) VALUES
+		($1, 'link1', $2, 50500, 51000, 0, 2, 49000, 49000, 0, 1, 'activated', false, false),
+		($1, 'link2', $2, 75000, 75000, 0, 1, 73000, 73000, 0, 1, 'activated', false, false)
+	`, bucketRecent, now)
+	require.NoError(t, err)
+
 	// Seed interface usage - NO errors, discards, or carrier transitions (healthy)
 	ifaceUsageDS, err := dztelemusage.NewDeviceInterfaceCountersDataset(log)
 	require.NoError(t, err)
@@ -453,6 +465,24 @@ func seedNetworkHealthSummaryData(t *testing.T, ctx context.Context, conn clickh
 			s.ipdvUs,         // ipdv_us
 		}, nil
 	})
+	require.NoError(t, err)
+
+	// Seed link_rollup_5m with pre-aggregated data matching the latency samples above.
+	// This is what the agent queries for link health. All links need recent buckets
+	// so the agent sees them when querying recent data.
+	// link1 (nyc-lon): ~40% loss, link2 (chi-nyc): healthy,
+	// link4 (tok-fra): 75% loss, link6 (was-chi): 100% loss (down)
+	bucketRecent := now.Add(-5 * time.Minute).Truncate(5 * time.Minute)
+	err = conn.Exec(ctx, `
+		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at,
+			a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples,
+			z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples,
+			status, provisioning, isis_down) VALUES
+		($1, 'link1', $2, 50500, 51000, 33.3, 3, 49000, 49000, 50.0, 2, 'activated', false, false),
+		($1, 'link2', $2, 75000, 75000, 0, 1, 73000, 73000, 0, 1, 'activated', false, false),
+		($1, 'link4', $2, 0, 0, 100.0, 2, 180000, 180000, 50.0, 2, 'activated', false, false),
+		($1, 'link6', $2, 0, 0, 100.0, 2, 0, 0, 100.0, 2, 'activated', false, false)
+	`, bucketRecent, now)
 	require.NoError(t, err)
 
 	// Seed interface usage - mix of link interfaces and non-link interfaces

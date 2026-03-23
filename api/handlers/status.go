@@ -535,7 +535,13 @@ func fetchStatusData(ctx context.Context) *StatusResponse {
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
-			LEFT JOIN dz_links_health_current h ON l.pk = h.pk
+			LEFT JOIN (
+				SELECT link_pk,
+					argMax(greatest(a_loss_pct, z_loss_pct) >= 100, bucket_ts) as is_down
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 10 MINUTE
+				GROUP BY link_pk
+			) h ON l.pk = h.link_pk
 			LEFT JOIN (
 				SELECT link_pk,
 					avg(rtt_us) as avg_rtt_us,

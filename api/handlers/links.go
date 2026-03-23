@@ -252,28 +252,40 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	query := `
+		WITH link_health AS (
+			SELECT
+				link_pk,
+				sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
+				greatest(max(a_p95_rtt_us), max(z_p95_rtt_us)) as p95_rtt_us,
+				sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_pct,
+				argMax(greatest(a_loss_pct, z_loss_pct) >= 100, bucket_ts) as is_down,
+				max(bucket_ts) < now() - INTERVAL 10 MINUTE as is_dark
+			FROM link_rollup_5m FINAL
+			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
+			GROUP BY link_pk
+		)
 		SELECT
-			h.pk AS link_pk,
+			l.pk AS link_pk,
 			l.side_a_pk,
 			COALESCE(da.code, '') AS side_a_code,
 			l.side_z_pk,
 			COALESCE(dz.code, '') AS side_z_code,
-			h.avg_rtt_us,
-			h.p95_rtt_us,
-			h.committed_rtt_ns,
-			h.loss_pct,
-			toUInt8(h.exceeds_committed_rtt) AS exceeds_committed_rtt,
-			toUInt8(h.has_packet_loss) AS has_packet_loss,
-			toUInt8(h.is_dark) AS is_dark,
-			toUInt8(h.is_down) AS is_down
-		FROM dz_links_health_current h
-		JOIN dz_links_current l ON h.pk = l.pk
+			COALESCE(h.avg_rtt_us, 0) as avg_rtt_us,
+			COALESCE(h.p95_rtt_us, 0) as p95_rtt_us,
+			l.committed_rtt_ns,
+			COALESCE(h.loss_pct, 0) as loss_pct,
+			toUInt8(COALESCE(h.avg_rtt_us, 0) > l.committed_rtt_ns / 1000.0 AND l.committed_rtt_ns != ?) AS exceeds_committed_rtt,
+			toUInt8(COALESCE(h.loss_pct, 0) > 0) AS has_packet_loss,
+			toUInt8(h.link_pk IS NULL OR h.is_dark) AS is_dark,
+			toUInt8(COALESCE(h.is_down, false)) AS is_down
+		FROM dz_links_current l
 		LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 		LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+		LEFT JOIN link_health h ON l.pk = h.link_pk
 		WHERE l.side_a_pk != '' AND l.side_z_pk != ''
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
