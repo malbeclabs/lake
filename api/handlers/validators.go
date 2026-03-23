@@ -87,12 +87,32 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 		whereFilter = " AND " + filterClause
 	}
 
-	// Base CTE query for validators data
+	// Single query using window functions for counts to avoid repeating expensive CTEs.
 	// NOTE: We avoid JOINing _current views (which use window functions) with each other
 	// directly, as ClickHouse incorrectly correlates the window functions across views
 	// in the same JOIN chain. Instead, we use IN for the on_dz boolean check and join
 	// the DZ metadata (dz_ip_info) separately via gossip_ip after the gossip join.
-	baseQuery := `
+
+	// Build sort clause using output column names
+	sortFieldsForQuery := map[string]string{
+		"vote":       "vote_pubkey",
+		"node":       "node_pubkey",
+		"stake":      "activated_stake_lamports",
+		"share":      "activated_stake_lamports",
+		"commission": "commission",
+		"dz":         "on_dz",
+		"device":     "device_code",
+		"city":       "city",
+		"country":    "country",
+		"in":         "in_bps",
+		"out":        "out_bps",
+		"skip":       "skip_rate",
+		"version":    "version",
+		"client":     "software_client",
+	}
+	orderBy := sort.OrderByClause(sortFieldsForQuery)
+
+	query := `
 		WITH total_stake AS (
 			SELECT sum(activated_stake_lamports) as total
 			FROM solana_vote_accounts_current
@@ -101,7 +121,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 		dz_ip_info AS (
 			SELECT
 				u.client_ip,
-				any(u.tunnel_id) as tunnel_id,
+				any(d.pk) as device_pk,
 				any(d.code) as device_code,
 				any(m.code) as metro_code
 			FROM dz_users_current u
@@ -114,38 +134,25 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 		),
 		traffic_rates AS (
 			SELECT
-				user_tunnel_id,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
-				AND user_tunnel_id IS NOT NULL
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY user_tunnel_id
+				device_pk,
+				SUM(avg_in_bps) as in_bps,
+				SUM(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
+			GROUP BY device_pk
 		),
 		skip_rates AS (
 			SELECT
 				leader_identity_pubkey,
-				CASE WHEN leader_slots_assigned_cum > 0
-					THEN (leader_slots_assigned_cum - blocks_produced_cum) * 100.0 / leader_slots_assigned_cum
-					ELSE 0
-				END as skip_rate
+				ROUND(
+					(MAX(leader_slots_assigned_cum) - MAX(blocks_produced_cum)) * 100.0
+					/ NULLIF(MAX(leader_slots_assigned_cum), 0),
+					2
+				) as skip_rate
 			FROM fact_solana_block_production
-			WHERE event_ts >= now() - INTERVAL 1 DAY
-				AND (leader_identity_pubkey, event_ts) IN (
-				SELECT leader_identity_pubkey, max(event_ts)
-				FROM fact_solana_block_production
-				WHERE event_ts >= now() - INTERVAL 1 DAY
-				GROUP BY leader_identity_pubkey
-			)
+			WHERE event_ts > now() - INTERVAL 24 HOUR
+			GROUP BY leader_identity_pubkey
+			HAVING MAX(leader_slots_assigned_cum) > 0
 		),
 		validatorsapp_data AS (
 			SELECT
@@ -200,51 +207,13 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 				vg.software_client
 			FROM validators_with_gossip vg
 			LEFT JOIN dz_ip_info di ON vg.gossip_ip = di.client_ip
-			LEFT JOIN traffic_rates tr ON di.tunnel_id = tr.user_tunnel_id
+			LEFT JOIN traffic_rates tr ON di.device_pk = tr.device_pk
 		)
-	`
-
-	// Get total count (with filter)
-	countQuery := baseQuery + `SELECT count(DISTINCT vote_pubkey) FROM validators_data WHERE 1=1` + whereFilter
-	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
-		slog.Error("validators count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get on_dz count (with filter)
-	onDZCountQuery := baseQuery + `SELECT count(DISTINCT vote_pubkey) FROM validators_data WHERE on_dz = true` + whereFilter
-	var onDZCount uint64
-	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
-		slog.Warn("validators on_dz count query failed", "error", err)
-		onDZCount = 0
-	}
-
-	// Build sort clause using output column names
-	sortFieldsForQuery := map[string]string{
-		"vote":       "vote_pubkey",
-		"node":       "node_pubkey",
-		"stake":      "activated_stake_lamports",
-		"share":      "activated_stake_lamports",
-		"commission": "commission",
-		"dz":         "on_dz",
-		"device":     "device_code",
-		"city":       "city",
-		"country":    "country",
-		"in":         "in_bps",
-		"out":        "out_bps",
-		"skip":       "skip_rate",
-		"version":    "version",
-		"client":     "software_client",
-	}
-	orderBy := sort.OrderByClause(sortFieldsForQuery)
-
-	// Main query
-	query := baseQuery + `
 		SELECT vote_pubkey, node_pubkey, stake_sol, stake_share, commission,
 			on_dz, device_code, metro_code, city, country, in_bps, out_bps, skip_rate, version,
-			software_client
+			software_client,
+			count() OVER () as _total,
+			countIf(on_dz = true) OVER () as _on_dz_count
 		FROM validators_data
 		WHERE 1=1` + whereFilter + `
 		` + orderBy + `
@@ -264,6 +233,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var validators []ValidatorListItem
+	var total, onDZCount uint64
 	for rows.Next() {
 		var v ValidatorListItem
 		if err := rows.Scan(
@@ -282,6 +252,8 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 			&v.SkipRate,
 			&v.Version,
 			&v.SoftwareClient,
+			&total,
+			&onDZCount,
 		); err != nil {
 			slog.Error("validators row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -358,8 +330,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		dz_ip_info AS (
 			SELECT
 				u.client_ip,
-				any(u.tunnel_id) as tunnel_id,
-				any(u.device_pk) as device_pk,
+				any(d.pk) as device_pk,
 				any(d.code) as device_code,
 				any(d.metro_pk) as metro_pk,
 				any(m.code) as metro_code
@@ -373,38 +344,25 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		),
 		traffic_rates AS (
 			SELECT
-				user_tunnel_id,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
-				AND user_tunnel_id IS NOT NULL
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY user_tunnel_id
+				device_pk,
+				SUM(avg_in_bps) as in_bps,
+				SUM(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
+			GROUP BY device_pk
 		),
 		skip_rates AS (
 			SELECT
 				leader_identity_pubkey,
-				CASE WHEN leader_slots_assigned_cum > 0
-					THEN (leader_slots_assigned_cum - blocks_produced_cum) * 100.0 / leader_slots_assigned_cum
-					ELSE 0
-				END as skip_rate
+				ROUND(
+					(MAX(leader_slots_assigned_cum) - MAX(blocks_produced_cum)) * 100.0
+					/ NULLIF(MAX(leader_slots_assigned_cum), 0),
+					2
+				) as skip_rate
 			FROM fact_solana_block_production
-			WHERE event_ts >= now() - INTERVAL 1 DAY
-				AND (leader_identity_pubkey, event_ts) IN (
-				SELECT leader_identity_pubkey, max(event_ts)
-				FROM fact_solana_block_production
-				WHERE event_ts >= now() - INTERVAL 1 DAY
-				GROUP BY leader_identity_pubkey
-			)
+			WHERE event_ts > now() - INTERVAL 24 HOUR
+			GROUP BY leader_identity_pubkey
+			HAVING MAX(leader_slots_assigned_cum) > 0
 		),
 		validatorsapp_data AS (
 			SELECT
@@ -442,7 +400,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey
 		LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 		LEFT JOIN dz_ip_info di ON g.gossip_ip = di.client_ip
-		LEFT JOIN traffic_rates tr ON di.tunnel_id = tr.user_tunnel_id
+		LEFT JOIN traffic_rates tr ON di.device_pk = tr.device_pk
 		LEFT JOIN skip_rates sr ON v.node_pubkey = sr.leader_identity_pubkey
 		LEFT JOIN validatorsapp_data va ON v.vote_pubkey = va.vote_account
 		WHERE v.vote_pubkey = ?

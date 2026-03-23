@@ -74,8 +74,10 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 		whereFilter = " AND " + filterClause
 	}
 
-	// Base CTE query for gossip nodes data
-	baseQuery := `
+	// Single query using window functions for counts to avoid repeating expensive CTEs.
+	orderBy := sort.OrderByClause(gossipNodeSortFields)
+
+	query := `
 		WITH dz_nodes AS (
 			SELECT
 				u.client_ip,
@@ -114,37 +116,11 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN dz_nodes dz ON g.gossip_ip = dz.client_ip
 			LEFT JOIN validator_stake vs ON g.pubkey = vs.node_pubkey
 		)
-	`
-
-	// Get total count (with filter)
-	countQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE 1=1` + whereFilter
-	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, filterArgs...).Scan(&total); err != nil {
-		slog.Error("gossip nodes count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Get on_dz count (with filter)
-	onDZCountQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE on_dz = true` + whereFilter
-	var onDZCount uint64
-	if err := envDB(ctx).QueryRow(ctx, onDZCountQuery, filterArgs...).Scan(&onDZCount); err != nil {
-		slog.Warn("gossip nodes on_dz count query failed", "error", err)
-		onDZCount = 0
-	}
-
-	// Get validator count (with filter)
-	validatorCountQuery := baseQuery + `SELECT count(*) FROM gossip_data WHERE is_validator = true` + whereFilter
-	var validatorCount uint64
-	if err := envDB(ctx).QueryRow(ctx, validatorCountQuery, filterArgs...).Scan(&validatorCount); err != nil {
-		slog.Warn("gossip nodes validator count query failed", "error", err)
-		validatorCount = 0
-	}
-
-	orderBy := sort.OrderByClause(gossipNodeSortFields)
-	query := baseQuery + `
 		SELECT pubkey, gossip_ip, gossip_port, version, city, country,
-			on_dz, device_code, metro_code, stake_sol, is_validator
+			on_dz, device_code, metro_code, stake_sol, is_validator,
+			count() OVER () as _total,
+			countIf(on_dz = true) OVER () as _on_dz_count,
+			countIf(is_validator = true) OVER () as _validator_count
 		FROM gossip_data
 		WHERE 1=1` + whereFilter + `
 		` + orderBy + `
@@ -164,6 +140,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var nodes []GossipNodeListItem
+	var total, onDZCount, validatorCount uint64
 	for rows.Next() {
 		var n GossipNodeListItem
 		if err := rows.Scan(
@@ -178,6 +155,9 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 			&n.MetroCode,
 			&n.StakeSol,
 			&n.IsValidator,
+			&total,
+			&onDZCount,
+			&validatorCount,
 		); err != nil {
 			slog.Error("gossip nodes row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
