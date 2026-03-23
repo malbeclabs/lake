@@ -47,22 +47,13 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	query := `
 		WITH traffic_rates AS (
 			SELECT
-				user_tunnel_id,
-				device_pk,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
-				AND user_tunnel_id IS NOT NULL
-				AND delta_duration > 0
-				AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
-			GROUP BY user_tunnel_id, device_pk
+				user_pk,
+				SUM(avg_in_bps) as in_bps,
+				SUM(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
+				AND user_pk != ''
+			GROUP BY user_pk
 		)
 		SELECT
 			u.pk,
@@ -83,7 +74,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
-		LEFT JOIN traffic_rates tr ON u.tunnel_id = tr.user_tunnel_id AND u.device_pk = tr.device_pk
+		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		ORDER BY u.owner_pubkey
 		LIMIT ? OFFSET ?
 	`
@@ -189,22 +180,13 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 	query := `
 		WITH traffic_rates AS (
 			SELECT
-				user_tunnel_id,
-				device_pk,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
-				AND user_tunnel_id IS NOT NULL
-				AND delta_duration > 0
-				AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
-			GROUP BY user_tunnel_id, device_pk
+				user_pk,
+				SUM(avg_in_bps) as in_bps,
+				SUM(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
+				AND user_pk != ''
+			GROUP BY user_pk
 		),
 		solana_info AS (
 			SELECT
@@ -250,7 +232,7 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 		LEFT JOIN dz_tenants_current t ON u.tenant_pk = t.pk
-		LEFT JOIN traffic_rates tr ON u.tunnel_id = tr.user_tunnel_id AND u.device_pk = tr.device_pk
+		LEFT JOIN traffic_rates tr ON u.pk = tr.user_pk
 		LEFT JOIN solana_info si ON u.client_ip = si.gossip_ip
 		CROSS JOIN total_stake ts
 		WHERE u.pk = ?

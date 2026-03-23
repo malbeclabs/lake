@@ -121,6 +121,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 		dz_ip_info AS (
 			SELECT
 				u.client_ip,
+				any(u.pk) as user_pk,
 				any(d.pk) as device_pk,
 				any(d.code) as device_code,
 				any(m.code) as metro_code
@@ -134,12 +135,13 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 		),
 		traffic_rates AS (
 			SELECT
-				device_pk,
+				user_pk,
 				SUM(avg_in_bps) as in_bps,
 				SUM(avg_out_bps) as out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
-			GROUP BY device_pk
+				AND user_pk != ''
+			GROUP BY user_pk
 		),
 		skip_rates AS (
 			SELECT
@@ -207,7 +209,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 				vg.software_client
 			FROM validators_with_gossip vg
 			LEFT JOIN dz_ip_info di ON vg.gossip_ip = di.client_ip
-			LEFT JOIN traffic_rates tr ON di.device_pk = tr.device_pk
+			LEFT JOIN traffic_rates tr ON di.user_pk = tr.user_pk
 		)
 		SELECT vote_pubkey, node_pubkey, stake_sol, stake_share, commission,
 			on_dz, device_code, metro_code, city, country, in_bps, out_bps, skip_rate, version,
@@ -330,6 +332,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		dz_ip_info AS (
 			SELECT
 				u.client_ip,
+				any(u.pk) as user_pk,
 				any(d.pk) as device_pk,
 				any(d.code) as device_code,
 				any(d.metro_pk) as metro_pk,
@@ -344,12 +347,13 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		),
 		traffic_rates AS (
 			SELECT
-				device_pk,
+				user_pk,
 				SUM(avg_in_bps) as in_bps,
 				SUM(avg_out_bps) as out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
-			GROUP BY device_pk
+				AND user_pk != ''
+			GROUP BY user_pk
 		),
 		skip_rates AS (
 			SELECT
@@ -400,7 +404,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN solana_gossip_nodes_current g ON v.node_pubkey = g.pubkey
 		LEFT JOIN geoip_records_current geo ON g.gossip_ip = geo.ip
 		LEFT JOIN dz_ip_info di ON g.gossip_ip = di.client_ip
-		LEFT JOIN traffic_rates tr ON di.device_pk = tr.device_pk
+		LEFT JOIN traffic_rates tr ON di.user_pk = tr.user_pk
 		LEFT JOIN skip_rates sr ON v.node_pubkey = sr.leader_identity_pubkey
 		LEFT JOIN validatorsapp_data va ON v.vote_pubkey = va.vote_account
 		WHERE v.vote_pubkey = ?
