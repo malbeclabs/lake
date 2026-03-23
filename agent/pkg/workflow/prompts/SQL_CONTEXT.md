@@ -665,53 +665,37 @@ ORDER BY changed_ts DESC;
 
 ### Link & Device Incidents
 
-**Use `link_incidents_v` for link incidents and `device_incidents_v` for device incidents.** These views detect incidents from rollup data (last 8 days), group consecutive above-threshold buckets into incidents, and join link/device metadata.
-
-**`link_incidents_v` columns:**
-`entity_pk`, `incident_type`, `started_at`, `ended_at`, `is_ongoing`, `peak_value`, `total_buckets`, `duration_seconds`, `link_code`, `link_type`, `status`, `side_a_metro`, `side_z_metro`, `contributor_code`
-
-**Incident types:** `packet_loss` (loss >= 10%), `isis_down`, `no_data` (missing rollup rows), `errors`, `fcs`, `discards`, `carrier`
-
-```sql
--- All ongoing link incidents
-SELECT link_code, incident_type, started_at, peak_value, duration_seconds, side_a_metro, side_z_metro
-FROM link_incidents_v
-WHERE is_ongoing = true;
-
--- Incidents for links in a specific metro
-SELECT link_code, incident_type, started_at, ended_at, is_ongoing, peak_value, duration_seconds
-FROM link_incidents_v
-WHERE side_a_metro = 'sao' OR side_z_metro = 'sao'
-ORDER BY started_at DESC;
-
--- Incident timeline for a specific link
-SELECT incident_type, started_at, ended_at, is_ongoing, peak_value, duration_seconds
-FROM link_incidents_v
-WHERE link_code = 'nyc-lon-1'
-ORDER BY started_at DESC;
-```
-
-**`device_incidents_v`** has the same structure but for devices: `entity_pk`, `incident_type`, `started_at`, `ended_at`, `is_ongoing`, `peak_value`, `total_buckets`, `duration_seconds`, `device_code`, `device_type`, `status`, `metro`, `contributor_code`. Types: `errors`, `fcs`, `discards`, `carrier`, `no_data`, `isis_overload`, `isis_unreachable`.
-
 **CRITICAL: For questions about "outages", "issues", or "problems", you MUST query BOTH:**
 1. `link_incidents_v` — covers packet loss, ISIS down, errors, no data
 2. `dz_link_status_changes` — covers drain events (soft-drained, hard-drained)
 
 **Do NOT query just one.** Drain events have no rollup data (they won't appear in `link_incidents_v`). Packet loss has no status change (it won't appear in `dz_link_status_changes`).
 
+**`link_incidents_v`** detects incidents from rollup data (last 8 days), groups consecutive above-threshold buckets into incidents, and joins link metadata.
+
+Columns: `entity_pk`, `incident_type`, `started_at`, `ended_at`, `is_ongoing`, `peak_value`, `total_buckets`, `duration_seconds`, `link_code`, `link_type`, `status`, `side_a_metro`, `side_z_metro`, `contributor_code`
+
+Incident types: `packet_loss` (loss >= 10%), `isis_down`, `no_data` (missing rollup rows), `errors`, `fcs`, `discards`, `carrier`
+
+**`device_incidents_v`** — same structure for devices. Columns: `entity_pk`, `incident_type`, `started_at`, `ended_at`, `is_ongoing`, `peak_value`, `total_buckets`, `duration_seconds`, `device_code`, `device_type`, `status`, `metro`, `contributor_code`. Types: `errors`, `fcs`, `discards`, `carrier`, `no_data`, `isis_overload`, `isis_unreachable`.
+
 ```sql
--- Query 1: Telemetry-based incidents
+-- Telemetry-based incidents (packet loss, errors, ISIS down, etc.)
 SELECT link_code, incident_type, started_at, ended_at, is_ongoing, peak_value, duration_seconds
 FROM link_incidents_v
-WHERE side_a_metro = 'sao' OR side_z_metro = 'sao'
 ORDER BY started_at DESC;
 
--- Query 2: Status-based outages (drain events) — ALWAYS run this too!
+-- Status-based outages (drain events) — ALWAYS run this too!
 SELECT link_code, previous_status, new_status, changed_ts, side_a_metro, side_z_metro
 FROM dz_link_status_changes
-WHERE (side_a_metro = 'sao' OR side_z_metro = 'sao')
-  AND changed_ts > now() - INTERVAL 30 DAY
+WHERE changed_ts > now() - INTERVAL 30 DAY
 ORDER BY changed_ts DESC;
+
+-- Incident timeline for a specific link
+SELECT incident_type, started_at, ended_at, is_ongoing, peak_value, duration_seconds
+FROM link_incidents_v
+WHERE link_code = 'nyc-lon-1'
+ORDER BY started_at DESC;
 ```
 
 ### Validators by Region/Metro
