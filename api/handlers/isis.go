@@ -2044,103 +2044,76 @@ func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := config.Neo4jSession(ctx)
-	defer session.Close(ctx)
-
 	response := MetroPathsResponse{
 		Paths: []MetroPath{},
 	}
 
-	// Get metro codes first
-	metroCypher := `
-		MATCH (m1:Metro {pk: $fromPK}), (m2:Metro {pk: $toPK})
-		RETURN m1.code AS fromCode, m2.code AS toCode
-	`
-	metroResult, err := session.Run(ctx, metroCypher, map[string]any{
-		"fromPK": fromPK,
-		"toPK":   toPK,
+	// Load in-memory topology graph with committed latency
+	g, err := loadTopologyGraph(ctx)
+	if err != nil {
+		response.Error = err.Error()
+		writeJSON(w, response)
+		return
+	}
+
+	// Find metro codes and devices from the graph
+	var fromDevices, toDevices []string
+	for pk, info := range g.Nodes {
+		if info.MetroPK == fromPK {
+			response.FromMetroCode = info.MetroCode
+			fromDevices = append(fromDevices, pk)
+		} else if info.MetroPK == toPK {
+			response.ToMetroCode = info.MetroCode
+			toDevices = append(toDevices, pk)
+		}
+	}
+
+	// Find k-shortest paths across all device pairs between the two metros
+	type rankedPath struct {
+		path kspPath
+	}
+	var allPaths []rankedPath
+	for _, d1 := range fromDevices {
+		for _, d2 := range toDevices {
+			paths := yenKSP(g, d1, d2, k)
+			for _, p := range paths {
+				allPaths = append(allPaths, rankedPath{path: p})
+			}
+		}
+	}
+
+	// Sort by total metric and take top k
+	slices.SortFunc(allPaths, func(a, b rankedPath) int {
+		if a.path.TotalMetric != b.path.TotalMetric {
+			if a.path.TotalMetric < b.path.TotalMetric {
+				return -1
+			}
+			return 1
+		}
+		return len(a.path.Nodes) - len(b.path.Nodes)
 	})
-	if err != nil {
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-	if metroResult.Next(ctx) {
-		record := metroResult.Record()
-		fromCode, _ := record.Get("fromCode")
-		toCode, _ := record.Get("toCode")
-		response.FromMetroCode = asString(fromCode)
-		response.ToMetroCode = asString(toCode)
+	if len(allPaths) > k {
+		allPaths = allPaths[:k]
 	}
 
-	// Find k-shortest paths between any devices in the two metros using Yen's algorithm
-	pathsCypher := `
-		MATCH (m1:Metro {pk: $fromPK})<-[:LOCATED_IN]-(d1:Device)
-		MATCH (m2:Metro {pk: $toPK})<-[:LOCATED_IN]-(d2:Device)
-		WHERE d1.isis_system_id IS NOT NULL AND d2.isis_system_id IS NOT NULL
-		WITH d1, d2
-		CALL apoc.algo.dijkstra(d1, d2, 'ISIS_ADJACENT', 'metric') YIELD path, weight
-		WITH path, weight
-		ORDER BY weight
-		LIMIT $k
-		WITH path, weight, nodes(path) AS pathNodes
-		UNWIND range(0, size(pathNodes)-1) AS idx
-		WITH path, weight, pathNodes, idx, pathNodes[idx] AS node
-		OPTIONAL MATCH (node)-[:LOCATED_IN]->(m:Metro)
-		WITH path, weight, idx, node, m
-		ORDER BY path, idx
-		WITH path, weight, collect({pk: node.pk, code: node.code, metroPK: m.pk, metroCode: m.code}) AS hopList
-		RETURN hopList, weight AS totalMetric, size(hopList)-1 AS totalHops
-	`
-
-	result, err := session.Run(ctx, pathsCypher, map[string]any{
-		"fromPK": fromPK,
-		"toPK":   toPK,
-		"k":      k,
-	})
-	if err != nil {
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	records, err := result.Collect(ctx)
-	if err != nil {
-		response.Error = err.Error()
-		writeJSON(w, response)
-		return
-	}
-
-	for _, record := range records {
-		hopListVal, _ := record.Get("hopList")
-		totalMetricVal, _ := record.Get("totalMetric")
-		totalHopsVal, _ := record.Get("totalHops")
-
-		hopList, _ := hopListVal.([]any)
-		totalMetric := asInt64(totalMetricVal)
-		totalHops := int(asInt64(totalHopsVal))
-
+	for _, rp := range allPaths {
+		p := rp.path
+		totalMetric := int64(p.TotalMetric)
 		path := MetroPath{
 			Hops:        []MetroPathsHop{},
-			TotalHops:   totalHops,
+			TotalHops:   len(p.Nodes) - 1,
 			TotalMetric: totalMetric,
-			LatencyMs:   float64(totalMetric) / 1000.0, // Convert microseconds to ms
+			LatencyMs:   float64(totalMetric) / 1000.0,
 		}
 
-		for _, hopVal := range hopList {
-			hopMap, ok := hopVal.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			hop := MetroPathsHop{
-				DevicePK:   asString(hopMap["pk"]),
-				DeviceCode: asString(hopMap["code"]),
-				MetroPK:    asString(hopMap["metroPK"]),
-				MetroCode:  asString(hopMap["metroCode"]),
-			}
-
-			path.Hops = append(path.Hops, hop)
+		for _, nodePK := range p.Nodes {
+			info := g.Nodes[nodePK]
+			path.Hops = append(path.Hops, MetroPathsHop{
+				DevicePK:   info.PK,
+				DeviceCode: info.Code,
+				MetroPK:    info.MetroPK,
+				MetroCode:  info.MetroCode,
+			})
 		}
 
 		response.Paths = append(response.Paths, path)

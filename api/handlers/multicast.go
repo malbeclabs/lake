@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -1230,7 +1230,15 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find paths from each publisher to each subscriber using Neo4j
+	// Load in-memory topology graph with committed latency for path finding
+	g, err := loadTopologyGraph(ctx)
+	if err != nil {
+		response.Error = fmt.Sprintf("failed to load topology graph: %v", err)
+		writeJSON(w, response)
+		return
+	}
+
+	// Find paths from each publisher to each subscriber using in-memory Dijkstra
 	type pathResult struct {
 		path MulticastTreePath
 		err  error
@@ -1238,7 +1246,6 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 
 	var wg sync.WaitGroup
 	resultChan := make(chan pathResult, len(publishers)*len(subscribers))
-	sem := make(chan struct{}, 10) // Limit concurrent queries
 
 	for _, pub := range publishers {
 		for _, sub := range subscribers {
@@ -1248,90 +1255,36 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func(pubPK, pubCode, subPK, subCode string) {
 				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
 
-				queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
-				defer queryCancel()
-
-				session := config.Neo4jSession(queryCtx)
-				defer session.Close(queryCtx)
-
-				// Use Dijkstra to find lowest latency path from publisher to subscriber
-				cypher := `
-					MATCH (a:Device {pk: $from_pk}), (b:Device {pk: $to_pk})
-					CALL apoc.algo.dijkstra(a, b, 'ISIS_ADJACENT>', 'metric') YIELD path, weight
-					WITH path, toInteger(weight) AS totalMetric
-					RETURN [n IN nodes(path) | {
-						pk: n.pk,
-						code: n.code,
-						device_type: n.device_type
-					}] AS devices,
-					[r IN relationships(path) | r.metric] AS edgeMetrics,
-					totalMetric
-					LIMIT 1
-				`
-
-				result, err := session.Run(queryCtx, cypher, map[string]any{
-					"from_pk": pubPK,
-					"to_pk":   subPK,
-				})
-				if err != nil {
-					resultChan <- pathResult{err: err}
+				p := dijkstra(g, pubPK, subPK, nil, nil)
+				if p == nil {
 					return
 				}
-
-				record, err := result.Single(queryCtx)
-				if err != nil {
-					// No path found - not an error, just skip
-					return
-				}
-
-				// Parse the path
-				devicesVal, _ := record.Get("devices")
-				edgeMetricsVal, _ := record.Get("edgeMetrics")
-				totalMetric, _ := record.Get("totalMetric")
 
 				var hops []MulticastTreeHop
-				if deviceList, ok := devicesVal.([]any); ok {
-					var metrics []int
-					if metricList, ok := edgeMetricsVal.([]any); ok {
-						for _, m := range metricList {
-							if v, ok := m.(int64); ok {
-								metrics = append(metrics, int(v))
-							}
-						}
+				for i, nodePK := range p.Nodes {
+					info := g.Nodes[nodePK]
+					hop := MulticastTreeHop{
+						DevicePK:   info.PK,
+						DeviceCode: info.Code,
+						DeviceType: info.DeviceType,
 					}
-
-					for i, d := range deviceList {
-						if dm, ok := d.(map[string]any); ok {
-							hop := MulticastTreeHop{
-								DevicePK:   asString(dm["pk"]),
-								DeviceCode: asString(dm["code"]),
-								DeviceType: asString(dm["device_type"]),
-							}
-							// Edge metric is from previous hop to this hop
-							if i > 0 && i-1 < len(metrics) {
-								hop.EdgeMetric = metrics[i-1]
-							}
-							hops = append(hops, hop)
-						}
+					if i > 0 {
+						hop.EdgeMetric = int(edgeMetric(g, p.Nodes[i-1], nodePK))
 					}
+					hops = append(hops, hop)
 				}
 
 				if len(hops) > 0 {
-					treePath := MulticastTreePath{
+					resultChan <- pathResult{path: MulticastTreePath{
 						PublisherDevicePK:    pubPK,
 						PublisherDeviceCode:  pubCode,
 						SubscriberDevicePK:   subPK,
 						SubscriberDeviceCode: subCode,
 						Path:                 hops,
 						HopCount:             len(hops) - 1,
-					}
-					if tm, ok := totalMetric.(int64); ok {
-						treePath.TotalMetric = int(tm)
-					}
-					resultChan <- pathResult{path: treePath}
+						TotalMetric:          int(p.TotalMetric),
+					}}
 				}
 			}(pub.PK, pub.Code, sub.PK, sub.Code)
 		}
@@ -1489,8 +1442,15 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For each publisher, run one batched Dijkstra query that UNWINDs all subscriber PKs.
-	// This is P queries instead of P×S.
+	// Load in-memory topology graph with committed latency for path finding
+	g, err := loadTopologyGraph(ctx)
+	if err != nil {
+		response.Error = fmt.Sprintf("failed to load topology graph: %v", err)
+		writeJSON(w, response)
+		return
+	}
+
+	// For each publisher, find paths to all subscribers using in-memory Dijkstra
 	type publisherResult struct {
 		publisherPK string
 		// directed key (fromPK|toPK) -> true
@@ -1500,60 +1460,22 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 
 	var wg sync.WaitGroup
 	resultChan := make(chan publisherResult, len(publisherPKs))
-	sem := make(chan struct{}, 10)
 
 	for _, pubPK := range publisherPKs {
 		wg.Add(1)
 		go func(pubPK string) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			queryCtx, queryCancel := context.WithTimeout(ctx, 10*time.Second)
-			defer queryCancel()
-
-			session := config.Neo4jSession(queryCtx)
-			defer session.Close(queryCtx)
-
-			cypher := `
-				MATCH (src:Device {pk: $from_pk})
-				UNWIND $to_pks AS to_pk
-				MATCH (dst:Device {pk: to_pk})
-				CALL apoc.algo.dijkstra(src, dst, 'ISIS_ADJACENT>', 'metric') YIELD path
-				RETURN to_pk, [n IN nodes(path) | n.pk] AS devicePKs
-			`
-
-			result, err := session.Run(queryCtx, cypher, map[string]any{
-				"from_pk": pubPK,
-				"to_pks":  subscriberPKs,
-			})
-			if err != nil {
-				resultChan <- publisherResult{publisherPK: pubPK, err: err}
-				return
-			}
 
 			segments := make(map[string]bool)
-			records, err := result.Collect(queryCtx)
-			if err != nil {
-				resultChan <- publisherResult{publisherPK: pubPK, err: err}
-				return
-			}
-
-			for _, record := range records {
-				devicePKsVal, _ := record.Get("devicePKs")
-				devicePKsList, ok := devicePKsVal.([]any)
-				if !ok || len(devicePKsList) < 2 {
+			for _, subPK := range subscriberPKs {
+				p := dijkstra(g, pubPK, subPK, nil, nil)
+				if p == nil {
 					continue
 				}
-				for i := 0; i < len(devicePKsList)-1; i++ {
-					fromPK := asString(devicePKsList[i])
-					toPK := asString(devicePKsList[i+1])
-					if fromPK == "" || toPK == "" {
-						continue
-					}
+				for i := 0; i < len(p.Nodes)-1; i++ {
 					// Directed key: preserves path direction (publisher→subscriber).
 					// A link traversed in both directions gets two separate segments.
-					key := fromPK + "|" + toPK
+					key := p.Nodes[i] + "|" + p.Nodes[i+1]
 					segments[key] = true
 				}
 			}
