@@ -128,7 +128,8 @@ func setupLinksTables(t *testing.T) {
 			status String DEFAULT '',
 			provisioning Bool DEFAULT false,
 			isis_down Bool DEFAULT false
-		) ENGINE = Memory
+		) ENGINE = ReplacingMergeTree(ingested_at)
+		ORDER BY (bucket_ts, link_pk)
 	`)
 	require.NoError(t, err)
 }
@@ -162,10 +163,10 @@ func insertLinksTestData(t *testing.T) {
 
 	// Insert links
 	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_links_current (pk, code, status, link_type, bandwidth_bps, side_a_pk, side_z_pk, contributor_pk) VALUES
-		('link-1', 'NYC-LAX-001', 'up', 'backbone', 10000000000, 'dev-nyc-1', 'dev-lax-1', 'contrib-1'),
-		('link-2', 'NYC-EDGE-001', 'up', 'access', 1000000000, 'dev-nyc-1', 'dev-nyc-2', NULL),
-		('link-3', 'LAX-INTERNAL', 'down', 'internal', 100000000, 'dev-lax-1', NULL, NULL)
+		INSERT INTO dz_links_current (pk, code, status, link_type, bandwidth_bps, side_a_pk, side_z_pk, contributor_pk, committed_rtt_ns) VALUES
+		('link-1', 'NYC-LAX-001', 'up', 'backbone', 10000000000, 'dev-nyc-1', 'dev-lax-1', 'contrib-1', 3000000),
+		('link-2', 'NYC-EDGE-001', 'up', 'access', 1000000000, 'dev-nyc-1', 'dev-nyc-2', NULL, 1000000),
+		('link-3', 'LAX-INTERNAL', 'down', 'internal', 100000000, 'dev-lax-1', NULL, NULL, NULL)
 	`)
 	require.NoError(t, err)
 }
@@ -358,6 +359,7 @@ func setupLinkHealthData(t *testing.T) {
 		(now() - INTERVAL 5 MINUTE, 'link-2', now(), 500.0, 800.0, 0.05, 100, 500.0, 800.0, 0.05, 100)
 	`)
 	require.NoError(t, err)
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
 }
 
 func TestGetLinkHealth_Empty(t *testing.T) {
@@ -465,6 +467,7 @@ func TestGetLinkHealth_IsDownForcesCritical(t *testing.T) {
 		(now() - INTERVAL 5 MINUTE, 'link-2', now(), 500.0, 800.0, 100.0, 100, 500.0, 800.0, 100.0, 100)
 	`)
 	require.NoError(t, err)
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
