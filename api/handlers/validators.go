@@ -77,11 +77,11 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 
 	pagination := ParsePagination(r, 100)
 	sort := ParseSort(r, "stake", validatorSortFields)
-	filter := ParseFilter(r)
+	filters := ParseFilters(r)
 	start := time.Now()
 
 	// Build filter clause
-	filterClause, filterArgs := filter.BuildFilterClause(validatorFilterFields)
+	filterClause, filterArgs := filters.BuildFilterClause(validatorFilterFields)
 	whereFilter := ""
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause

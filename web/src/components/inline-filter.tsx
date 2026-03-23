@@ -267,7 +267,7 @@ export function InlineFilter({
           onKeyDown={handleKeyDown}
           onFocus={() => setIsFocused(true)}
           placeholder={placeholder}
-          className="w-32 bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-sm"
+          className="min-w-32 w-auto bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground text-sm focus:min-w-56 transition-all"
         />
         {fieldValuesLoading && (
           <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />

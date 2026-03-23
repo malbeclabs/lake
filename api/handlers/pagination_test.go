@@ -89,6 +89,109 @@ func TestParsePagination_JustOverMaxLimit(t *testing.T) {
 	assert.Equal(t, handlers.MaxLimit, params.Limit)
 }
 
+func TestParseFilters_RepeatedParams(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/test?filters=vote:abc&filters=city:NYC", nil)
+	mf := handlers.ParseFilters(req)
+	assert.Len(t, mf.Filters, 2)
+	assert.Equal(t, "vote", mf.Filters[0].Field)
+	assert.Equal(t, "abc", mf.Filters[0].Value)
+	assert.Equal(t, "city", mf.Filters[1].Field)
+	assert.Equal(t, "NYC", mf.Filters[1].Value)
+}
+
+func TestParseFilters_PlainValue(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/test?filters=hello", nil)
+	mf := handlers.ParseFilters(req)
+	assert.Len(t, mf.Filters, 1)
+	assert.Equal(t, "all", mf.Filters[0].Field)
+	assert.Equal(t, "hello", mf.Filters[0].Value)
+}
+
+func TestParseFilters_LegacyFallback(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/test?filter_field=vote&filter_value=abc", nil)
+	mf := handlers.ParseFilters(req)
+	assert.Len(t, mf.Filters, 1)
+	assert.Equal(t, "vote", mf.Filters[0].Field)
+	assert.Equal(t, "abc", mf.Filters[0].Value)
+}
+
+func TestParseFilters_Empty(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/test", nil)
+	mf := handlers.ParseFilters(req)
+	assert.True(t, mf.IsEmpty())
+}
+
+func TestMultiFilterBuildClause_SingleFilter(t *testing.T) {
+	fields := map[string]handlers.FilterFieldConfig{
+		"vote": {Column: "vote_pubkey", Type: handlers.FieldTypeText},
+		"city": {Column: "city", Type: handlers.FieldTypeText},
+	}
+	mf := handlers.MultiFilterParams{
+		Filters: []handlers.FilterParams{{Field: "vote", Value: "abc"}},
+	}
+	clause, args := mf.BuildFilterClause(fields)
+	assert.Equal(t, "positionCaseInsensitive(vote_pubkey, ?) > 0", clause)
+	assert.Equal(t, []any{"abc"}, args)
+}
+
+func TestMultiFilterBuildClause_CrossFieldAND(t *testing.T) {
+	fields := map[string]handlers.FilterFieldConfig{
+		"vote": {Column: "vote_pubkey", Type: handlers.FieldTypeText},
+		"city": {Column: "city", Type: handlers.FieldTypeText},
+	}
+	mf := handlers.MultiFilterParams{
+		Filters: []handlers.FilterParams{
+			{Field: "vote", Value: "abc"},
+			{Field: "city", Value: "NYC"},
+		},
+	}
+	clause, args := mf.BuildFilterClause(fields)
+	assert.Equal(t, "(positionCaseInsensitive(vote_pubkey, ?) > 0 AND positionCaseInsensitive(city, ?) > 0)", clause)
+	assert.Equal(t, []any{"abc", "NYC"}, args)
+}
+
+func TestMultiFilterBuildClause_SameFieldOR(t *testing.T) {
+	fields := map[string]handlers.FilterFieldConfig{
+		"city": {Column: "city", Type: handlers.FieldTypeText},
+	}
+	mf := handlers.MultiFilterParams{
+		Filters: []handlers.FilterParams{
+			{Field: "city", Value: "NYC"},
+			{Field: "city", Value: "LAX"},
+		},
+	}
+	clause, args := mf.BuildFilterClause(fields)
+	assert.Equal(t, "(positionCaseInsensitive(city, ?) > 0 OR positionCaseInsensitive(city, ?) > 0)", clause)
+	assert.Equal(t, []any{"NYC", "LAX"}, args)
+}
+
+func TestMultiFilterBuildClause_MixedANDOR(t *testing.T) {
+	fields := map[string]handlers.FilterFieldConfig{
+		"city": {Column: "city", Type: handlers.FieldTypeText},
+		"dz":   {Column: "on_dz", Type: handlers.FieldTypeBoolean},
+	}
+	mf := handlers.MultiFilterParams{
+		Filters: []handlers.FilterParams{
+			{Field: "city", Value: "NYC"},
+			{Field: "city", Value: "LAX"},
+			{Field: "dz", Value: "yes"},
+		},
+	}
+	clause, args := mf.BuildFilterClause(fields)
+	assert.Equal(t, "((positionCaseInsensitive(city, ?) > 0 OR positionCaseInsensitive(city, ?) > 0) AND on_dz = true)", clause)
+	assert.Equal(t, []any{"NYC", "LAX"}, args)
+}
+
+func TestMultiFilterBuildClause_Empty(t *testing.T) {
+	fields := map[string]handlers.FilterFieldConfig{
+		"vote": {Column: "vote_pubkey", Type: handlers.FieldTypeText},
+	}
+	mf := handlers.MultiFilterParams{}
+	clause, args := mf.BuildFilterClause(fields)
+	assert.Equal(t, "", clause)
+	assert.Nil(t, args)
+}
+
 func TestPaginatedResponse_JSONStructure(t *testing.T) {
 	// Test that the generic type works correctly
 	type Item struct {

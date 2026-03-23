@@ -64,11 +64,11 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 
 	pagination := ParsePagination(r, 100)
 	sort := ParseSort(r, "stake", gossipNodeSortFields)
-	filter := ParseFilter(r)
+	filters := ParseFilters(r)
 	start := time.Now()
 
 	// Build filter clause
-	filterClause, filterArgs := filter.BuildFilterClause(gossipNodeFilterFields)
+	filterClause, filterArgs := filters.BuildFilterClause(gossipNodeFilterFields)
 	whereFilter := ""
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause

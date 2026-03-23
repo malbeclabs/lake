@@ -60,19 +60,25 @@ const gossipNodeFieldPrefixes = [
 // Fields that support autocomplete
 const gossipNodeAutocompleteFields: (string | { field: string; minChars: number })[] = ['dz', 'validator', { field: 'version', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'device', minChars: 2 }]
 
-// Parse a filter string into field and value
-// Supports "field:value" syntax or plain "value" for keyword search
-function parseFilter(filter: string): { field: string; value: string } {
+// Base58 character class (no 0, O, I, l)
+const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{8,}$/
+
+// Parse a filter string into "field:value" format for the API
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
+  // Auto-detect pubkeys
+  if (BASE58_RE.test(filter)) {
+    return `pubkey:${filter}`
+  }
   // Plain keyword search
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function GossipNodesPage() {
@@ -101,91 +107,31 @@ export function GossipNodesPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  // Live filter is combined with committed filters (all must match)
   const allFilters = liveFilter
     ? [...searchFilters, liveFilter]
     : searchFilters
 
-  // Use first filter for server-side filtering, apply rest client-side
-  const serverFilterRaw = allFilters[0] || ''
-  const serverFilter = serverFilterRaw ? parseFilter(serverFilterRaw) : null
-  const clientFilters = allFilters.slice(1)
+  // Convert all filters to "field:value" params for the API
+  const filterParams = useMemo(
+    () => allFilters.map(toFilterParam),
+    [allFilters]
+  )
+  const filterKey = filterParams.join(',')
 
   const { data: response, isLoading, isFetching, error } = useQuery({
-    queryKey: ['gossip-nodes', offset, sortField, sortDirection, serverFilterRaw],
+    queryKey: ['gossip-nodes', offset, sortField, sortDirection, filterKey],
     queryFn: () => fetchGossipNodes(
       PAGE_SIZE,
       offset,
       sortField,
       sortDirection,
-      serverFilter?.field,
-      serverFilter?.value
+      filterParams.length > 0 ? filterParams : undefined
     ),
     refetchInterval: 60000,
     placeholderData: keepPreviousData,
   })
 
-  // Apply client-side filters: OR within same field, AND across different fields
-  const nodes = useMemo(() => {
-    const items = response?.items ?? []
-    if (clientFilters.length === 0) return items
-
-    const matchesSingleFilter = (node: typeof items[number], filterRaw: string): boolean => {
-      const filter = parseFilter(filterRaw)
-      const field = filter.field
-      const needle = filter.value.trim().toLowerCase()
-      if (!needle) return true
-
-      switch (field) {
-        case 'pubkey':
-          return node.pubkey.toLowerCase().includes(needle)
-        case 'ip':
-          return (node.gossip_ip || '').toLowerCase().includes(needle)
-        case 'city':
-          return (node.city || '').toLowerCase().includes(needle)
-        case 'country':
-          return (node.country || '').toLowerCase().includes(needle)
-        case 'device':
-          return (node.device_code || '').toLowerCase().includes(needle)
-        case 'version':
-          return (node.version || '').toLowerCase().includes(needle)
-        case 'dz': {
-          const isDZ = node.on_dz
-          return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
-        }
-        case 'validator': {
-          const isValidator = node.is_validator
-          return needle === 'yes' ? isValidator : needle === 'no' ? !isValidator : true
-        }
-        case 'all': {
-          const textFields = [
-            node.pubkey,
-            node.gossip_ip || '',
-            node.city || '',
-            node.country || '',
-            node.device_code || '',
-            node.version || '',
-          ]
-          return textFields.some(v => v.toLowerCase().includes(needle))
-        }
-        default:
-          return true
-      }
-    }
-
-    const grouped = new Map<string, string[]>()
-    for (const f of clientFilters) {
-      const { field } = parseFilter(f)
-      const existing = grouped.get(field) ?? []
-      existing.push(f)
-      grouped.set(field, existing)
-    }
-    return items.filter(n =>
-      Array.from(grouped.values()).every(group =>
-        group.some(f => matchesSingleFilter(n, f))
-      )
-    )
-  }, [response?.items, clientFilters])
+  const nodes = response?.items ?? []
   const onDZCount = response?.on_dz_count ?? 0
   const validatorCount = response?.validator_count ?? 0
 
@@ -237,17 +183,16 @@ export function GossipNodesPage() {
   }
 
   // Reset to first page when filter changes
-  const prevFilterRef = useRef(JSON.stringify(allFilters))
+  const prevFilterRef = useRef(filterKey)
   useEffect(() => {
-    const key = JSON.stringify(allFilters)
-    if (prevFilterRef.current === key) return
-    prevFilterRef.current = key
+    if (prevFilterRef.current === filterKey) return
+    prevFilterRef.current = filterKey
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [allFilters, setSearchParams])
+  }, [filterKey, setSearchParams])
 
   if (isLoading) {
     return (

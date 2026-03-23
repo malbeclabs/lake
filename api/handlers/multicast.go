@@ -268,7 +268,7 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 
 	pagination := ParsePagination(r, 100)
 	sort := ParseSort(r, "stake_sol", multicastMemberSortFields)
-	filter := ParseFilter(r)
+	filters := ParseFilters(r)
 	tab := r.URL.Query().Get("tab")
 	if tab != "publishers" && tab != "subscribers" {
 		tab = "publishers"
@@ -295,7 +295,7 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build filter clause
-	filterClause, filterArgs := filter.BuildFilterClause(multicastMemberFilterFields)
+	filterClause, filterArgs := filters.BuildFilterClause(multicastMemberFilterFields)
 	whereFilter := ""
 	if filterClause != "" {
 		whereFilter = " AND " + filterClause

@@ -1903,16 +1903,14 @@ export async function fetchMulticastGroupMembers(
   sortBy?: string,
   sortDir?: 'asc' | 'desc',
   tab?: string,
-  filterField?: string,
-  filterValue?: string
+  filters?: string[]
 ): Promise<MulticastMembersResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (sortBy) params.set('sort_by', sortBy)
   if (sortDir) params.set('sort_dir', sortDir)
   if (tab) params.set('tab', tab)
-  if (filterValue) {
-    params.set('filter_field', filterField || 'all')
-    params.set('filter_value', filterValue)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
   }
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/members?${params}`)
   if (!res.ok) {
@@ -2979,16 +2977,13 @@ export async function fetchValidators(
   offset = 0,
   sortBy?: string,
   sortDir?: 'asc' | 'desc',
-  filterField?: string,
-  filterValue?: string
+  filters?: string[]
 ): Promise<ValidatorsResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (sortBy) params.set('sort_by', sortBy)
   if (sortDir) params.set('sort_dir', sortDir)
-  if (filterValue) {
-    // If field is specified, use it; otherwise use 'all' to search across all text fields
-    params.set('filter_field', filterField || 'all')
-    params.set('filter_value', filterValue)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
   }
   const res = await fetchWithRetry(`/api/solana/validators?${params}`)
   if (!res.ok) {
@@ -3059,16 +3054,13 @@ export async function fetchGossipNodes(
   offset = 0,
   sortBy?: string,
   sortDir?: 'asc' | 'desc',
-  filterField?: string,
-  filterValue?: string
+  filters?: string[]
 ): Promise<GossipNodesResponse> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (sortBy) params.set('sort_by', sortBy)
   if (sortDir) params.set('sort_dir', sortDir)
-  if (filterValue) {
-    // If field is specified, use it; otherwise use 'all' to search across all text fields
-    params.set('filter_field', filterField || 'all')
-    params.set('filter_value', filterValue)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
   }
   const res = await fetchWithRetry(`/api/solana/gossip-nodes?${params}`)
   if (!res.ok) {

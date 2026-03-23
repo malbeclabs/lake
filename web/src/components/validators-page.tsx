@@ -82,19 +82,25 @@ const validatorFieldPrefixes = [
 // Fields that support autocomplete
 const validatorAutocompleteFields: (string | { field: string; minChars: number })[] = ['dz', { field: 'version', minChars: 2 }, { field: 'device', minChars: 2 }, { field: 'city', minChars: 2 }, { field: 'country', minChars: 2 }, { field: 'client', minChars: 2 }]
 
-// Parse a filter string into field and value
-// Supports "field:value" syntax or plain "value" for keyword search
-function parseFilter(filter: string): { field: string; value: string } {
+// Base58 character class (no 0, O, I, l)
+const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{8,}$/
+
+// Parse a filter string into "field:value" format for the API
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
+  // Auto-detect pubkeys — search vote and node columns specifically
+  if (BASE58_RE.test(filter)) {
+    return `vote:${filter}`
+  }
   // Plain keyword search
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function ValidatorsPage() {
@@ -123,90 +129,31 @@ export function ValidatorsPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  // Live filter is combined with committed filters (all must match)
   const allFilters = liveFilter
     ? [...searchFilters, liveFilter]
     : searchFilters
 
-  // Use first filter for server-side filtering, apply rest client-side
-  const serverFilterRaw = allFilters[0] || ''
-  const serverFilter = serverFilterRaw ? parseFilter(serverFilterRaw) : null
-  const clientFilters = allFilters.slice(1)
+  // Convert all filters to "field:value" params for the API
+  const filterParams = useMemo(
+    () => allFilters.map(toFilterParam),
+    [allFilters]
+  )
+  const filterKey = filterParams.join(',')
 
   const { data: response, isLoading, isFetching, error } = useQuery({
-    queryKey: ['validators', offset, sortField, sortDirection, serverFilterRaw],
+    queryKey: ['validators', offset, sortField, sortDirection, filterKey],
     queryFn: () => fetchValidators(
       PAGE_SIZE,
       offset,
       sortField,
       sortDirection,
-      serverFilter?.field,
-      serverFilter?.value
+      filterParams.length > 0 ? filterParams : undefined
     ),
     refetchInterval: 60000,
     placeholderData: keepPreviousData,
   })
 
-  // Apply client-side filters: OR within same field, AND across different fields
-  const validators = useMemo(() => {
-    const items = response?.items ?? []
-    if (clientFilters.length === 0) return items
-
-    const matchesSingleFilter = (validator: typeof items[number], filterRaw: string): boolean => {
-      const filter = parseFilter(filterRaw)
-      const field = filter.field
-      const needle = filter.value.trim().toLowerCase()
-      if (!needle) return true
-
-      switch (field) {
-        case 'vote':
-          return validator.vote_pubkey.toLowerCase().includes(needle)
-        case 'node':
-          return validator.node_pubkey.toLowerCase().includes(needle)
-        case 'city':
-          return (validator.city || '').toLowerCase().includes(needle)
-        case 'country':
-          return (validator.country || '').toLowerCase().includes(needle)
-        case 'device':
-          return (validator.device_code || '').toLowerCase().includes(needle)
-        case 'version':
-          return (validator.version || '').toLowerCase().includes(needle)
-        case 'client':
-          return (validator.software_client || '').toLowerCase().includes(needle)
-        case 'dz': {
-          const isDZ = validator.on_dz
-          return needle === 'yes' ? isDZ : needle === 'no' ? !isDZ : true
-        }
-        case 'all': {
-          const textFields = [
-            validator.vote_pubkey,
-            validator.node_pubkey,
-            validator.city || '',
-            validator.country || '',
-            validator.device_code || '',
-            validator.version || '',
-            validator.software_client || '',
-          ]
-          return textFields.some(v => v.toLowerCase().includes(needle))
-        }
-        default:
-          return true
-      }
-    }
-
-    const grouped = new Map<string, string[]>()
-    for (const f of clientFilters) {
-      const { field } = parseFilter(f)
-      const existing = grouped.get(field) ?? []
-      existing.push(f)
-      grouped.set(field, existing)
-    }
-    return items.filter(v =>
-      Array.from(grouped.values()).every(group =>
-        group.some(f => matchesSingleFilter(v, f))
-      )
-    )
-  }, [response?.items, clientFilters])
+  const validators = response?.items ?? []
   const onDZCount = response?.on_dz_count ?? 0
 
   const removeFilter = useCallback((filterToRemove: string) => {
@@ -257,17 +204,16 @@ export function ValidatorsPage() {
   }
 
   // Reset to first page when filter changes
-  const prevFilterRef = useRef(JSON.stringify(allFilters))
+  const prevFilterRef = useRef(filterKey)
   useEffect(() => {
-    const key = JSON.stringify(allFilters)
-    if (prevFilterRef.current === key) return
-    prevFilterRef.current = key
+    if (prevFilterRef.current === filterKey) return
+    prevFilterRef.current = filterKey
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [allFilters, setSearchParams])
+  }, [filterKey, setSearchParams])
 
   if (isLoading) {
     return (

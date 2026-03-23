@@ -736,29 +736,23 @@ function parseMemberSearchFilters(searchParam: string): string[] {
   return searchParam.split(',').map(f => f.trim()).filter(Boolean)
 }
 
-function parseMemberFilter(filter: string): { field: string; value: string } {
+// Base58 character class (no 0, O, I, l)
+const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{8,}$/
+
+function toMemberFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validMemberFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
-}
-
-function getMemberSearchValue(member: MulticastMember, field: string): string {
-  switch (field) {
-    case 'device':
-      return `${member.device_code} ${member.device_pk}`
-    case 'metro':
-      return `${member.metro_name} ${member.metro_code}`
-    case 'owner':
-      return member.owner_pubkey
-    default:
-      return ''
+  // Auto-detect pubkeys
+  if (BASE58_RE.test(filter)) {
+    return `owner:${filter}`
   }
+  return `all:${filter}`
 }
 
 export function MulticastGroupDetailPage() {
@@ -856,10 +850,12 @@ export function MulticastGroupDetailPage() {
   const searchFilters = parseMemberSearchFilters(searchParam)
   const allFilters = liveFilter ? [...searchFilters, liveFilter] : searchFilters
 
-  // First filter is sent server-side, rest applied client-side
-  const serverFilterRaw = allFilters[0] || ''
-  const serverFilter = serverFilterRaw ? parseMemberFilter(serverFilterRaw) : null
-  const clientFilters = allFilters.slice(1)
+  // Convert all filters to "field:value" params for the API
+  const filterParams = useMemo(
+    () => allFilters.map(toMemberFilterParam),
+    [allFilters]
+  )
+  const filterKey = filterParams.join(',')
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -885,17 +881,16 @@ export function MulticastGroupDetailPage() {
   }, [setSearchParams])
 
   // Reset page when filters change
-  const prevFilterRef = useRef(JSON.stringify(allFilters))
+  const prevFilterRef = useRef(filterKey)
   useEffect(() => {
-    const key = JSON.stringify(allFilters)
-    if (prevFilterRef.current === key) return
-    prevFilterRef.current = key
+    if (prevFilterRef.current === filterKey) return
+    prevFilterRef.current = filterKey
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [allFilters, setSearchParams])
+  }, [filterKey, setSearchParams])
 
   // Group metadata query
   const { data: group, isLoading: groupLoading, error: groupError } = useQuery({
@@ -907,7 +902,7 @@ export function MulticastGroupDetailPage() {
 
   // Members query (server-side pagination)
   const { data: membersResponse, isLoading: membersLoading, isFetching: membersFetching } = useQuery({
-    queryKey: ['multicast-group-members', pk, activeTab, offset, pageSize, sortField, sortDirection, serverFilterRaw],
+    queryKey: ['multicast-group-members', pk, activeTab, offset, pageSize, sortField, sortDirection, filterKey],
     queryFn: () => fetchMulticastGroupMembers(
       pk!,
       pageSize,
@@ -915,8 +910,7 @@ export function MulticastGroupDetailPage() {
       sortField,
       sortDirection,
       activeTab,
-      serverFilter?.field,
-      serverFilter?.value
+      filterParams.length > 0 ? filterParams : undefined
     ),
     enabled: !!pk,
     refetchInterval: 30000,
@@ -928,38 +922,7 @@ export function MulticastGroupDetailPage() {
   const publisherCount = membersResponse?.publisher_count ?? 0
   const subscriberCount = membersResponse?.subscriber_count ?? 0
 
-  // Apply client-side filters (filters beyond the first)
-  const activeMembers = useMemo(() => {
-    const members = membersResponse?.items ?? []
-    if (clientFilters.length === 0) return members
-
-    const matchesSingleFilter = (member: MulticastMember, filterRaw: string): boolean => {
-      const filter = parseMemberFilter(filterRaw)
-      const needle = filter.value.trim().toLowerCase()
-      if (!needle) return true
-
-      if (filter.field === 'all') {
-        const textFields = ['device', 'metro', 'owner']
-        return textFields.some(f => getMemberSearchValue(member, f).toLowerCase().includes(needle))
-      }
-
-      return getMemberSearchValue(member, filter.field).toLowerCase().includes(needle)
-    }
-
-    // Group filters by field: OR within same field, AND across different fields
-    const grouped = new Map<string, string[]>()
-    for (const f of clientFilters) {
-      const { field } = parseMemberFilter(f)
-      const existing = grouped.get(field) ?? []
-      existing.push(f)
-      grouped.set(field, existing)
-    }
-    return members.filter(member =>
-      Array.from(grouped.values()).every(group =>
-        group.some(f => matchesSingleFilter(member, f))
-      )
-    )
-  }, [membersResponse, clientFilters])
+  const activeMembers = membersResponse?.items ?? []
 
   // Selected members not on current page — surfaced at top of table
   const surfacedMembers = useMemo(() => {

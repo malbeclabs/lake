@@ -92,7 +92,7 @@ type FilterParams struct {
 	Value string
 }
 
-// ParseFilter extracts filter parameters from the request
+// ParseFilter extracts filter parameters from the request (legacy single-filter)
 func ParseFilter(r *http.Request) FilterParams {
 	return FilterParams{
 		Field: r.URL.Query().Get("filter_field"),
@@ -103,6 +103,95 @@ func ParseFilter(r *http.Request) FilterParams {
 // IsEmpty returns true if no filter is set
 func (f FilterParams) IsEmpty() bool {
 	return f.Value == ""
+}
+
+// MultiFilterParams holds multiple parsed filters
+type MultiFilterParams struct {
+	Filters []FilterParams
+}
+
+// ParseFilters extracts multiple filters from repeated "filters" query params.
+// Each value is in "field:value" format; plain values default to field="all".
+// Falls back to legacy filter_field/filter_value if "filters" is absent.
+func ParseFilters(r *http.Request) MultiFilterParams {
+	raw := r.URL.Query()["filters"]
+	if len(raw) > 0 {
+		var filters []FilterParams
+		for _, s := range raw {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			colonIdx := strings.Index(s, ":")
+			if colonIdx > 0 {
+				filters = append(filters, FilterParams{
+					Field: s[:colonIdx],
+					Value: s[colonIdx+1:],
+				})
+			} else {
+				filters = append(filters, FilterParams{Field: "all", Value: s})
+			}
+		}
+		return MultiFilterParams{Filters: filters}
+	}
+
+	// Fall back to legacy single filter
+	legacy := ParseFilter(r)
+	if !legacy.IsEmpty() {
+		return MultiFilterParams{Filters: []FilterParams{legacy}}
+	}
+	return MultiFilterParams{}
+}
+
+// IsEmpty returns true if no filters are set
+func (mf MultiFilterParams) IsEmpty() bool {
+	return len(mf.Filters) == 0
+}
+
+// BuildFilterClause builds a WHERE clause for multiple filters.
+// Filters with the same field are ORed; different fields are ANDed.
+func (mf MultiFilterParams) BuildFilterClause(fields map[string]FilterFieldConfig) (string, []any) {
+	if mf.IsEmpty() {
+		return "", nil
+	}
+
+	// Group filters by field
+	grouped := make(map[string][]FilterParams)
+	var fieldOrder []string
+	for _, f := range mf.Filters {
+		if _, seen := grouped[f.Field]; !seen {
+			fieldOrder = append(fieldOrder, f.Field)
+		}
+		grouped[f.Field] = append(grouped[f.Field], f)
+	}
+
+	var andClauses []string
+	var allArgs []any
+
+	for _, field := range fieldOrder {
+		group := grouped[field]
+		var orClauses []string
+		for _, f := range group {
+			clause, args := f.BuildFilterClause(fields)
+			if clause != "" {
+				orClauses = append(orClauses, clause)
+				allArgs = append(allArgs, args...)
+			}
+		}
+		if len(orClauses) == 1 {
+			andClauses = append(andClauses, orClauses[0])
+		} else if len(orClauses) > 1 {
+			andClauses = append(andClauses, "("+strings.Join(orClauses, " OR ")+")")
+		}
+	}
+
+	if len(andClauses) == 0 {
+		return "", nil
+	}
+	if len(andClauses) == 1 {
+		return andClauses[0], allArgs
+	}
+	return "(" + strings.Join(andClauses, " AND ") + ")", allArgs
 }
 
 // FieldType indicates how to filter the field
