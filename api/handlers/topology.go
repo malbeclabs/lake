@@ -816,9 +816,10 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		bucketSeconds = calculateBucketSize(time.Duration(intervalMinutes) * time.Minute)
 		timeFormat = timeFormatForBucket(bucketSeconds)
-		// Exclude the current incomplete bucket so the chart line doesn't drop to zero.
 		timeFilter = fmt.Sprintf("f.ingested_at > now() - INTERVAL %d MINUTE", intervalMinutes)
 	}
+
+	isPresetRange := fromParam == "" || toParam == ""
 
 	start := time.Now()
 
@@ -838,6 +839,11 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 				AND f.epoch = h.epoch`
 	displayBucketExpr := fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d SECOND)", topoDisplayTs, bucketSeconds)
 	lossBucketExpr := fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d SECOND)", topoDisplayTs, min(bucketSeconds, 300))
+
+	// Exclude the current incomplete bucket so the chart line doesn't drop to zero.
+	if isPresetRange {
+		timeFilter += fmt.Sprintf(" AND %s < toStartOfInterval(now(), INTERVAL %d SECOND)", displayBucketExpr, bucketSeconds)
+	}
 	query := `
 		WITH loss_sub AS (
 			SELECT

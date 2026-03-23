@@ -86,10 +86,12 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
       return { packetLossUPlotData: [[]] as uPlot.AlignedData, packetLossSeries: [] as uPlot.Series[] }
     }
 
-    const timestamps = historyData.hours.map((h) => new Date(h.hour).getTime() / 1000)
-    const total = historyData.hours.map((h) => h.avg_loss_pct)
-    const sideA = historyData.hours.map((h) => h.side_a_loss_pct ?? 0)
-    const sideZ = historyData.hours.map((h) => h.side_z_loss_pct ?? 0)
+    // Exclude the current incomplete bucket so the chart line doesn't drop to zero
+    const completedHours = historyData.hours.filter((h) => !h.collecting)
+    const timestamps = completedHours.map((h) => new Date(h.hour).getTime() / 1000)
+    const total = completedHours.map((h) => h.avg_loss_pct)
+    const sideA = completedHours.map((h) => h.side_a_loss_pct ?? 0)
+    const sideZ = completedHours.map((h) => h.side_z_loss_pct ?? 0)
 
     const series: uPlot.Series[] = [
       {},
@@ -110,22 +112,23 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
       return { issuesUPlotData: [[]] as uPlot.AlignedData, issuesSeries: [] as uPlot.Series[] }
     }
 
-    const timestamps = historyData.hours.map((h) => new Date(h.hour).getTime() / 1000)
-    const errors = historyData.hours.map((h) => {
+    const completedHours2 = historyData.hours.filter((h) => !h.collecting)
+    const timestamps = completedHours2.map((h) => new Date(h.hour).getTime() / 1000)
+    const errors = completedHours2.map((h) => {
       const v = (h.side_a_in_errors ?? 0) + (h.side_a_out_errors ?? 0) +
         (h.side_z_in_errors ?? 0) + (h.side_z_out_errors ?? 0)
       return v > 0 ? v : null
     })
-    const fcs = historyData.hours.map((h) => {
+    const fcs = completedHours2.map((h) => {
       const v = (h.side_a_in_fcs_errors ?? 0) + (h.side_z_in_fcs_errors ?? 0)
       return v > 0 ? v : null
     })
-    const discards = historyData.hours.map((h) => {
+    const discards = completedHours2.map((h) => {
       const v = (h.side_a_in_discards ?? 0) + (h.side_a_out_discards ?? 0) +
         (h.side_z_in_discards ?? 0) + (h.side_z_out_discards ?? 0)
       return v > 0 ? v : null
     })
-    const carrier = historyData.hours.map((h) => {
+    const carrier = completedHours2.map((h) => {
       const v = (h.side_a_carrier_transitions ?? 0) + (h.side_z_carrier_transitions ?? 0)
       return v > 0 ? v : null
     })

@@ -146,8 +146,8 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     const series: uPlot.Series[] = [{}]
 
     if (hasDirectionalData) {
-      const jitterAtoZ = latencyData.map((d) => d.jitterAtoZMs ?? null)
-      const jitterZtoA = latencyData.map((d) => d.jitterZtoAMs ?? null)
+      const jitterAtoZ = latencyData.map((d) => d.jitterAtoZMs || null)
+      const jitterZtoA = latencyData.map((d) => d.jitterZtoAMs || null)
 
       series.push(
         { label: 'jitterAtoZMs', stroke: jitterAColor, width: 1.5, points: { show: false } },
@@ -160,7 +160,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
       }
     }
 
-    const avgJitter = latencyData.map((d) => d.avgJitter ?? null)
+    const avgJitter = latencyData.map((d) => d.avgJitter || null)
 
     series.push(
       { label: 'avgJitter', stroke: jitterAColor, width: 1.5, points: { show: false } },
