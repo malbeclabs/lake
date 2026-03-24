@@ -205,18 +205,26 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   }, [filteredSeries, sortBy, sortDir])
 
   // Build series metadata map (device_pk for each series)
+  // Keyed by multiple formats: "device-intf (in)", "device-intf (out)", and "device-intf" (base key)
   const seriesMetadata = useMemo(() => {
     const map = new Map<string, { devicePk: string; device: string; intf: string; direction: string }>()
     for (const s of series) {
       // Find a data point for this series to get device_pk
       const point = data.find(p => p.device === s.device && p.intf === s.intf)
       if (point) {
-        map.set(s.key, {
+        const entry = {
           devicePk: point.device_pk,
           device: s.device,
           intf: s.intf,
           direction: s.direction,
-        })
+        }
+        // Key by series key format: "device-intf (in)" / "device-intf (out)"
+        map.set(s.key, entry)
+        // Also key by base intfKey: "device-intf" (used by bidirectional label lookup)
+        const intfKey = `${s.device}-${s.intf}`
+        if (!map.has(intfKey)) {
+          map.set(intfKey, entry)
+        }
       }
     }
     return map
