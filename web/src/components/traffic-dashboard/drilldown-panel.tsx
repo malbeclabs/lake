@@ -144,6 +144,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
 
     plotRef.current?.destroy()
 
+    const splinePaths = uPlot.paths.spline?.()
     const series: uPlot.Series[] = [{}]
     uplotData.intfs.forEach((intf, i) => {
       const color = seriesColors[i % seriesColors.length]
@@ -152,6 +153,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
         stroke: color,
         width: 1.5,
         fill: color.replace('65%', '65%') + '/10',
+        paths: splinePaths,
+        points: { show: false },
       })
       series.push({
         label: `${intf} Tx`,
@@ -159,6 +162,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
         width: 1.5,
         dash: [4, 2],
         fill: color.replace('65%', '65%') + '/10',
+        paths: splinePaths,
+        points: { show: false },
       })
     })
 

@@ -79,17 +79,18 @@ export function StressPanel() {
 
     plotRef.current?.destroy()
 
+    const splinePaths = uPlot.paths.spline?.()
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 280,
       series: [
         {},
-        { label: 'P50 Rx', stroke: P50_COLOR, width: 2 },
-        { label: 'P95 Rx', stroke: P95_COLOR, width: 2 },
-        { label: 'Max Rx', stroke: MAX_COLOR, width: 2, dash: [4, 4] },
-        { label: 'P50 Tx', stroke: P50_COLOR, width: 2 },
-        { label: 'P95 Tx', stroke: P95_COLOR, width: 2 },
-        { label: 'Max Tx', stroke: MAX_COLOR, width: 2, dash: [4, 4] },
+        { label: 'P50 Rx', stroke: P50_COLOR, width: 2, paths: splinePaths, points: { show: false } },
+        { label: 'P95 Rx', stroke: P95_COLOR, width: 2, paths: splinePaths, points: { show: false } },
+        { label: 'Max Rx', stroke: MAX_COLOR, width: 2, dash: [4, 4], paths: splinePaths, points: { show: false } },
+        { label: 'P50 Tx', stroke: P50_COLOR, width: 2, paths: splinePaths, points: { show: false } },
+        { label: 'P95 Tx', stroke: P95_COLOR, width: 2, paths: splinePaths, points: { show: false } },
+        { label: 'Max Tx', stroke: MAX_COLOR, width: 2, dash: [4, 4], paths: splinePaths, points: { show: false } },
       ],
       scales: {
         x: { time: true },
