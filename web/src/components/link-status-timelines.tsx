@@ -224,7 +224,7 @@ interface LinkInterfaceChartProps {
   controlsWidth?: string
 }
 
-function LinkInterfaceChart({ hours, bucketMinutes: _bucketMinutes, controlsWidth = 'w-32' }: LinkInterfaceChartProps) {
+function LinkInterfaceChart({ hours, controlsWidth = 'w-32' }: LinkInterfaceChartProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [enabledSides, setEnabledSides] = useState<Set<'A' | 'Z'>>(new Set(['A', 'Z']))
@@ -475,7 +475,7 @@ interface LinkPacketLossChartProps {
   controlsWidth?: string
 }
 
-function LinkPacketLossChart({ hours, bucketMinutes: _bucketMinutes, controlsWidth = 'w-32' }: LinkPacketLossChartProps) {
+function LinkPacketLossChart({ hours, controlsWidth = 'w-32' }: LinkPacketLossChartProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const [enabledSeries, setEnabledSeries] = useState<Set<'total' | 'A' | 'Z'>>(new Set(['total', 'A', 'Z']))
   const [hoveredSeries, setHoveredSeries] = useState<'total' | 'A' | 'Z' | null>(null)
