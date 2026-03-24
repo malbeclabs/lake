@@ -61,6 +61,8 @@ func parseBucket(b string) string {
 		return "30 MINUTE"
 	case "1h", "1 HOUR":
 		return "1 HOUR"
+	case "4h", "4 HOUR":
+		return "4 HOUR"
 	default:
 		return ""
 	}
@@ -147,14 +149,18 @@ func rollupEffectiveBucket(timeRange, bucket string) string {
 		return bucket
 	}
 	switch timeRange {
-	case "1h", "3h", "6h", "12h", "24h":
+	case "1h", "3h", "6h":
 		return "5 MINUTE"
-	case "3d":
+	case "12h":
 		return "10 MINUTE"
-	case "7d":
+	case "24h":
+		return "15 MINUTE"
+	case "3d":
 		return "30 MINUTE"
-	case "14d", "30d":
+	case "7d":
 		return "1 HOUR"
+	case "14d", "30d":
+		return "4 HOUR"
 	default:
 		return "5 MINUTE"
 	}

@@ -15,7 +15,7 @@ export interface SelectedEntity {
   intf?: string
 }
 
-export type BucketSize = 'auto' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR'
+export type BucketSize = 'auto' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | '4 HOUR'
 
 export const bucketLabels: Record<BucketSize, string> = {
   'auto': 'Auto',
@@ -24,9 +24,10 @@ export const bucketLabels: Record<BucketSize, string> = {
   '15 MINUTE': '15m',
   '30 MINUTE': '30m',
   '1 HOUR': '1h',
+  '4 HOUR': '4h',
 }
 
-const validBuckets: Set<string> = new Set(['auto', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR'])
+const validBuckets: Set<string> = new Set(['auto', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR'])
 
 // Resolve auto bucket to an effective bucket size based on time range.
 // This mirrors the backend's rollupEffectiveBucket() function.
@@ -36,16 +37,18 @@ export function resolveAutoBucket(timeRange: TimeRange): BucketSize {
     case '1h':
     case '3h':
     case '6h':
-    case '12h':
-    case '24h':
       return '5 MINUTE'
-    case '3d':
+    case '12h':
       return '10 MINUTE'
-    case '7d':
+    case '24h':
+      return '15 MINUTE'
+    case '3d':
       return '30 MINUTE'
+    case '7d':
+      return '1 HOUR'
     case '14d':
     case '30d':
-      return '1 HOUR'
+      return '4 HOUR'
     default:
       return '5 MINUTE'
   }
