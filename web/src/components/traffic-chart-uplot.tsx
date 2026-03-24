@@ -265,6 +265,9 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     seriesMetadataRef.current = seriesMetadata
   }, [seriesMetadata])
 
+  // Spline paths for smoother lines
+  const splinePaths = useMemo(() => uPlot.paths.spline?.(), [])
+
   // Transform data for uPlot
   const { uplotData, uplotSeries } = useMemo(() => {
     if (!data.length || visibleSeriesList.length === 0) {
@@ -340,6 +343,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
             fill: color + '80',
             band: [prevIdx, currentIdx],
             scale: 'y',
+            paths: splinePaths,
           } as uPlot.Series)
         }
 
@@ -373,6 +377,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
             stroke: 'transparent',
             width: 0,
             fill: color + '40',
+            paths: splinePaths,
             band: [prevIdx, currentIdx],
             scale: 'y',
           } as uPlot.Series)
@@ -395,6 +400,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
             stroke: color,
             width: 1.5,
             scale: 'y',
+            paths: splinePaths,
           })
           dataArrays.push(txVals)
           seriesConfigs.push({
@@ -404,6 +410,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
             width: 1.5,
             dash: [4, 2],
             scale: 'y',
+            paths: splinePaths,
           })
         }
       }
@@ -485,6 +492,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           fill: color + '80',
           band: [previousIndex, currentIndex],
           scale: 'y',
+          paths: splinePaths,
         } as uPlot.Series)
       } else {
         dataArrays.push(rawSeriesData[i])
@@ -494,6 +502,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           stroke: color,
           width: 1.5,
           scale: 'y',
+          paths: splinePaths,
         })
       }
     }
@@ -502,7 +511,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       uplotData: dataArrays as uPlot.AlignedData,
       uplotSeries: seriesConfigs,
     }
-  }, [data, visibleSeriesList, series, stacked, bidirectional, interfaceGroups])
+  }, [data, visibleSeriesList, series, stacked, bidirectional, interfaceGroups, splinePaths])
 
   // Create/update chart
   useEffect(() => {
