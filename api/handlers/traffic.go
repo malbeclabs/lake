@@ -33,7 +33,8 @@ type SeriesInfo struct {
 }
 
 // maxTrafficRows is a safety limit on the number of rows returned.
-const maxTrafficRows = 500_000
+// Set high since rollup data is lightweight (~8 cols per row).
+const maxTrafficRows = 2_000_000
 
 // trafficDimensionJoins builds the SQL JOIN clauses needed for dimension filtering
 // in the traffic/discards endpoints. The rollup table must be aliased as "f" and
