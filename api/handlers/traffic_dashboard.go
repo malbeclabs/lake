@@ -42,23 +42,24 @@ func dashboardTimeRange(tr string) string {
 }
 
 // parseBucket converts a user-facing bucket string to a ClickHouse interval.
+// Accepts both short forms ("5m") and full interval strings ("5 MINUTE").
 func parseBucket(b string) string {
 	switch b {
-	case "10s":
+	case "10s", "10 SECOND":
 		return "10 SECOND"
-	case "30s":
+	case "30s", "30 SECOND":
 		return "30 SECOND"
-	case "1m":
+	case "1m", "1 MINUTE":
 		return "1 MINUTE"
-	case "5m":
+	case "5m", "5 MINUTE":
 		return "5 MINUTE"
-	case "10m":
+	case "10m", "10 MINUTE":
 		return "10 MINUTE"
-	case "15m":
+	case "15m", "15 MINUTE":
 		return "15 MINUTE"
-	case "30m":
+	case "30m", "30 MINUTE":
 		return "30 MINUTE"
-	case "1h":
+	case "1h", "1 HOUR":
 		return "1 HOUR"
 	default:
 		return ""
