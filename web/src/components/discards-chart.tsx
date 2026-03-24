@@ -1,5 +1,6 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, Cell } from 'recharts'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
 import { X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import type { DiscardsPoint, DiscardSeriesInfo } from '@/lib/api'
@@ -44,20 +45,12 @@ function formatCount(value: number): string {
   return value.toString()
 }
 
-function formatTime(timeStr: string): string {
-  const date = new Date(timeStr)
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-interface ChartDataPoint {
-  time: string
-  timeLabel: string
-  [key: string]: number | string // Allow dynamic series keys
-}
-
 export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
+  const chartRef = useRef<HTMLDivElement>(null)
+  const plotRef = useRef<uPlot | null>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
   const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set())
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
   const [searchText, setSearchText] = useState('')
@@ -68,13 +61,6 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
   const [listHeight, setListHeight] = useState(() => calculateListHeight(series.length))
   const listContainerRef = useRef<HTMLDivElement>(null)
   const userHasResizedRef = useRef(false)
-  // Capture mount time once for stable time calculations (initialized in useEffect)
-  const mountTimeRef = useRef(0)
-
-  // Initialize mount time on first render
-  useEffect(() => {
-    mountTimeRef.current = Date.now()
-  }, [])
 
   // Auto-size list height based on series count (only if user hasn't manually resized)
   useEffect(() => {
@@ -146,123 +132,227 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
     })
   }, [filteredSeries, sortBy, sortDir])
 
-  // Transform data for Recharts - aggregate by time bucket with series as keys
-  // Always show at least 24 time columns for consistent display
-  const chartData = useMemo(() => {
-    if (visibleSeriesList.length === 0) return []
+  // Stable ref for visible series list (used in tooltip callback)
+  const visibleSeriesRef = useRef(visibleSeriesList)
+  useEffect(() => { visibleSeriesRef.current = visibleSeriesList }, [visibleSeriesList])
+
+  // Transform data for uPlot
+  const { uplotData, uplotSeries, seriesKeys } = useMemo(() => {
+    if (!data.length || visibleSeriesList.length === 0) {
+      return { uplotData: [[]] as unknown as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[], seriesKeys: [] as string[] }
+    }
 
     // Group by timestamp
-    const timeMap = new Map<string, ChartDataPoint>()
+    const timeMap = new Map<number, Map<string, number>>()
+    const timestamps = new Set<number>()
 
     for (const point of data) {
+      const ts = new Date(point.time).getTime() / 1000
+      timestamps.add(ts)
       const baseKey = `${point.device}-${point.intf}`
       const inKey = `${baseKey} (In)`
       const outKey = `${baseKey} (Out)`
 
-      // Check if either in or out series is visible
-      const inVisible = visibleSeries.has(inKey)
-      const outVisible = visibleSeries.has(outKey)
-      if (!inVisible && !outVisible) continue
+      if (!timeMap.has(ts)) timeMap.set(ts, new Map())
+      const entry = timeMap.get(ts)!
 
-      if (!timeMap.has(point.time)) {
-        timeMap.set(point.time, {
-          time: point.time,
-          timeLabel: formatTime(point.time),
-        })
+      if (visibleSeries.has(inKey) && point.in_discards > 0) {
+        entry.set(inKey, (entry.get(inKey) || 0) + point.in_discards)
       }
-      const entry = timeMap.get(point.time)!
-
-      // Add in discards if visible
-      if (inVisible && point.in_discards > 0) {
-        entry[inKey] = (entry[inKey] as number || 0) + point.in_discards
-      }
-
-      // Add out discards if visible
-      if (outVisible && point.out_discards > 0) {
-        entry[outKey] = (entry[outKey] as number || 0) + point.out_discards
+      if (visibleSeries.has(outKey) && point.out_discards > 0) {
+        entry.set(outKey, (entry.get(outKey) || 0) + point.out_discards)
       }
     }
 
-    // Sort existing data by time
-    const sortedData = Array.from(timeMap.values()).sort((a, b) => a.time.localeCompare(b.time))
+    const sortedTimestamps = Array.from(timestamps).sort((a, b) => a - b)
+    const keys = visibleSeriesList.map(s => s.key)
 
-    // Ensure at least 24 columns by filling in empty time slots
-    const minColumns = 24
-    if (sortedData.length >= minColumns) {
-      return sortedData
+    // Build cumulative stacked data
+    const dataArrays: (number | null)[][] = [sortedTimestamps]
+
+    // Baseline (all zeros)
+    dataArrays.push(new Array(sortedTimestamps.length).fill(0))
+
+    const seriesConfigs: uPlot.Series[] = [
+      {}, // x-axis
+      { label: '__baseline__', show: false, stroke: 'transparent', width: 0 }, // baseline
+    ]
+
+    // Compute cumulative values per timestamp
+    const rawData: number[][] = keys.map(key =>
+      sortedTimestamps.map(ts => {
+        const entry = timeMap.get(ts)
+        return entry?.get(key) || 0
+      })
+    )
+
+    const cumulativeData: number[][] = []
+    for (let t = 0; t < sortedTimestamps.length; t++) {
+      let cum = 0
+      for (let i = 0; i < rawData.length; i++) {
+        if (!cumulativeData[i]) cumulativeData[i] = []
+        cum += rawData[i][t]
+        cumulativeData[i][t] = cum
+      }
     }
 
-    // Default bucket interval: 15 minutes
-    let bucketMs = 15 * 60 * 1000
+    // Build bar paths
+    const barPaths = uPlot.paths.bars?.({ size: [0.6, 40], gap: 1 })
 
-    // If we have 2+ data points, infer bucket interval
-    if (sortedData.length >= 2) {
-      const firstTime = new Date(sortedData[0].time).getTime()
-      const secondTime = new Date(sortedData[1].time).getTime()
-      bucketMs = secondTime - firstTime
+    // Add series in reverse order for correct band stacking
+    for (let i = keys.length - 1; i >= 0; i--) {
+      const originalIndex = sortedSeries.indexOf(visibleSeriesList[i])
+      const color = COLORS[(originalIndex >= 0 ? originalIndex : i) % COLORS.length]
+      dataArrays.push(cumulativeData[i])
+      const currentIndex = dataArrays.length - 1
+      const previousIndex = i === keys.length - 1 ? 1 : currentIndex - 1
+
+      seriesConfigs.push({
+        label: keys[i],
+        points: { show: false },
+        stroke: color,
+        width: 0,
+        fill: color + 'cc',
+        band: [previousIndex, currentIndex],
+        paths: barPaths,
+      } as uPlot.Series)
     }
 
-    // Determine the time range to fill
-    // If we have data, center/extend around it; otherwise use mount time
-    let endTime: number
-    if (sortedData.length > 0) {
-      endTime = new Date(sortedData[sortedData.length - 1].time).getTime()
+    return {
+      uplotData: dataArrays as uPlot.AlignedData,
+      uplotSeries: seriesConfigs,
+      seriesKeys: keys,
+    }
+  }, [data, visibleSeries, visibleSeriesList, sortedSeries])
+
+  // Tooltip update callback
+  const handleCursor = useCallback((u: uPlot) => {
+    const tooltip = tooltipRef.current
+    if (!tooltip) return
+
+    const idx = u.cursor.idx
+    if (idx == null || idx < 0 || idx >= u.data[0].length) {
+      tooltip.style.display = 'none'
+      return
+    }
+
+    const ts = u.data[0][idx]
+    const date = new Date(ts * 1000)
+    const timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+    // Collect non-zero values
+    const items: { key: string; value: number; color: string }[] = []
+    const currentVisible = visibleSeriesRef.current
+    for (let i = 0; i < currentVisible.length; i++) {
+      // Series index in uplotData: i + 2 (skip x-axis and baseline), but reversed
+      const dataIdx = 2 + (currentVisible.length - 1 - i)
+      const cumVal = (u.data[dataIdx]?.[idx] as number) || 0
+      const prevDataIdx = dataIdx + 1
+      const prevVal = prevDataIdx < u.data.length ? ((u.data[prevDataIdx]?.[idx] as number) || 0) : 0
+      const value = dataIdx === u.data.length - 1 ? cumVal : cumVal - prevVal
+
+      if (value > 0) {
+        const originalIndex = sortedSeries.indexOf(currentVisible[i])
+        const color = COLORS[(originalIndex >= 0 ? originalIndex : i) % COLORS.length]
+        items.push({ key: currentVisible[i].key, value, color })
+      }
+    }
+
+    if (items.length === 0) {
+      tooltip.style.display = 'none'
+      return
+    }
+
+    // Use the snapped data point position for tooltip placement
+    const left = Math.round(u.valToPos(u.data[0][idx], 'x'))
+    const chartWidth = u.over.offsetWidth
+
+    tooltip.innerHTML = `
+      <div style="font-weight:600;margin-bottom:4px">Time: ${timeLabel}</div>
+      ${items.map(item => `<div style="color:${item.color}">${item.key} : ${formatCount(item.value)}</div>`).join('')}
+    `
+    tooltip.style.display = 'block'
+
+    // Position tooltip
+    if (left > chartWidth / 2) {
+      tooltip.style.left = ''
+      tooltip.style.right = `${chartWidth - left + 12}px`
     } else {
-      endTime = mountTimeRef.current
+      tooltip.style.right = ''
+      tooltip.style.left = `${left + 12}px`
+    }
+    tooltip.style.top = '8px'
+  }, [sortedSeries])
+
+  // Create/update chart
+  useEffect(() => {
+    if (!chartRef.current || uplotData[0].length === 0) {
+      plotRef.current?.destroy()
+      plotRef.current = null
+      return
     }
 
-    // Generate empty columns, placing actual data at correct positions
-    const columnsNeeded = minColumns
-    const startTime = endTime - (columnsNeeded - 1) * bucketMs
-    const result: ChartDataPoint[] = []
+    plotRef.current?.destroy()
 
-    // Create a map of actual data by rounded time for quick lookup
-    const dataByTime = new Map<number, ChartDataPoint>()
-    for (const d of sortedData) {
-      const t = new Date(d.time).getTime()
-      dataByTime.set(t, d)
+    const axisStroke = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+
+    const opts: uPlot.Options = {
+      width: chartRef.current.offsetWidth,
+      height: 400,
+      series: uplotSeries,
+      scales: {
+        x: { time: true },
+        y: { auto: true, range: (_u, min, max) => [Math.min(0, min), max] },
+      },
+      axes: [
+        { stroke: axisStroke, grid: { stroke: 'rgba(128,128,128,0.06)' } },
+        {
+          stroke: axisStroke,
+          grid: { stroke: 'rgba(128,128,128,0.06)' },
+          values: (_: uPlot, vals: number[]) => vals.map(v => formatCount(v)),
+          size: 60,
+        },
+      ],
+      cursor: {
+        points: { show: false },
+        move: (u, left, top) => {
+          // Snap cursor x to nearest data point
+          const idx = u.posToIdx(left)
+          if (idx >= 0 && idx < u.data[0].length) {
+            const snappedLeft = Math.round(u.valToPos(u.data[0][idx], 'x'))
+            return [snappedLeft, top]
+          }
+          return [left, top]
+        },
+      },
+      hooks: {
+        setCursor: [handleCursor],
+      },
+      legend: { show: false },
     }
 
-    for (let i = 0; i < columnsNeeded; i++) {
-      const time = startTime + i * bucketMs
-      // Check if we have data for this bucket (with some tolerance for rounding)
-      let found: ChartDataPoint | undefined
-      for (const [t, d] of dataByTime) {
-        if (Math.abs(t - time) < bucketMs / 2) {
-          found = d
-          dataByTime.delete(t) // Remove so we don't match again
-          break
+    plotRef.current = new uPlot(opts, uplotData, chartRef.current)
+
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        if (plotRef.current) {
+          plotRef.current.setSize({ width: entry.contentRect.width, height: 400 })
         }
       }
+    })
+    ro.observe(chartRef.current)
 
-      if (found) {
-        result.push(found)
-      } else {
-        const timeStr = new Date(time).toISOString()
-        result.push({
-          time: timeStr,
-          timeLabel: formatTime(timeStr),
-        })
-      }
+    return () => {
+      ro.disconnect()
+      plotRef.current?.destroy()
+      plotRef.current = null
     }
-
-    // If there's remaining data that didn't fit in the grid, append it
-    for (const d of dataByTime.values()) {
-      result.push(d)
-    }
-
-    return result.sort((a, b) => a.time.localeCompare(b.time))
-  }, [data, visibleSeries, visibleSeriesList])
+  }, [uplotData, uplotSeries, isDark, handleCursor])
 
   // Check if there's any data to show
   const hasAnyDiscards = useMemo(() => {
-    return chartData.some(d => {
-      for (const s of visibleSeriesList) {
-        if ((d[s.key] as number) > 0) return true
-      }
-      return false
-    })
-  }, [chartData, visibleSeriesList])
+    return seriesKeys.length > 0 && uplotData[0].length > 0
+  }, [seriesKeys, uplotData])
 
   // Handle resize
   const handleResizeStart = (e: React.MouseEvent) => {
@@ -330,9 +420,6 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
     }
     setLastClickedIndex(filteredIndex)
   }
-
-  const axisColor = isDark ? '#94a3b8' : '#64748b'
-  const gridColor = isDark ? '#334155' : '#e2e8f0'
 
   // Render the series list (shared between multiple render paths)
   const renderSeriesList = () => (
@@ -497,57 +584,13 @@ export function DiscardsChart({ title, data, series, isLoading }: DiscardsChartP
       <h3 className="text-lg font-semibold">{title}</h3>
 
       {/* Chart */}
-      <div className="h-[400px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} barCategoryGap="40%">
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} opacity={0.5} />
-            <XAxis
-              dataKey="timeLabel"
-              tick={{ fontSize: 9, fill: axisColor }}
-              tickLine={false}
-              axisLine={false}
-              interval={Math.max(0, Math.floor(chartData.length / 12) - 1)}
-            />
-            <YAxis
-              tick={{ fontSize: 10, fill: axisColor }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={formatCount}
-              width={50}
-            />
-            <RechartsTooltip
-              contentStyle={{
-                backgroundColor: 'var(--card)',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                fontSize: '11px',
-              }}
-              formatter={(value, name) => {
-                if (value === 0 || value === undefined) return null
-                return [formatCount(value as number), name]
-              }}
-              labelFormatter={(label: string) => `Time: ${label}`}
-            />
-            {visibleSeriesList.map((s) => {
-              const originalIndex = sortedSeries.indexOf(s)
-              const color = COLORS[originalIndex % COLORS.length]
-              return (
-                <Bar
-                  key={s.key}
-                  dataKey={s.key}
-                  fill={color}
-                  radius={[2, 2, 0, 0]}
-                  name={s.key}
-                  maxBarSize={20}
-                >
-                  {chartData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={color} />
-                  ))}
-                </Bar>
-              )
-            })}
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="relative h-[400px]">
+        <div ref={chartRef} className="w-full h-full" />
+        <div
+          ref={tooltipRef}
+          className="absolute pointer-events-none z-10 bg-card border border-border rounded-md px-3 py-2 text-xs shadow-lg"
+          style={{ display: 'none' }}
+        />
       </div>
 
       {/* Series selection list */}
