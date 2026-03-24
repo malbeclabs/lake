@@ -37,7 +37,7 @@ type SeriesInfo struct {
 const maxTrafficRows = 2_000_000
 
 // trafficDimensionJoins builds the SQL JOIN clauses needed for dimension filtering
-// in the traffic/discards endpoints. The rollup table must be aliased as "f" and
+// in the traffic/discards endpoints. The source table must be aliased as "f" and
 // the devices CTE (with pk, code, metro_pk, contributor_pk) as "d".
 func trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin bool) string {
 	var joins []string
@@ -83,36 +83,15 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	if agg == "" {
 		agg = "max"
 	}
-
-	metric := r.URL.Query().Get("metric")
-	// Determine rollup column expressions based on metric and aggregation.
-	// The rollup table has pre-computed max/avg/p50/p95/p99 for both bps and pps.
-	var inCol, outCol, meanInCol, meanOutCol string
-	switch metric {
-	case "packets":
-		if agg == "avg" {
-			inCol = "f.avg_in_pps"
-			outCol = "f.avg_out_pps"
-		} else {
-			inCol = "f.max_in_pps"
-			outCol = "f.max_out_pps"
-		}
-		meanInCol = "f.avg_in_pps"
-		meanOutCol = "f.avg_out_pps"
-	default: // throughput
-		if agg == "avg" {
-			inCol = "f.avg_in_bps"
-			outCol = "f.avg_out_bps"
-		} else {
-			inCol = "f.max_in_bps"
-			outCol = "f.max_out_bps"
-		}
-		meanInCol = "f.avg_in_bps"
-		meanOutCol = "f.avg_out_bps"
+	aggFunc := "MAX"
+	if agg == "avg" {
+		aggFunc = "AVG"
 	}
 
-	// Use rollup time filter (bucket_ts, minimum 5m bucket)
-	timeFilter, bucketInterval := rollupTimeFilter(r)
+	metric := r.URL.Query().Get("metric")
+
+	// Resolve time filter and data source (raw fact table for sub-5m, rollup for >= 5m)
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	// Build dimension filters
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
@@ -128,14 +107,124 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Query rollup table, re-aggregating into the requested bucket interval.
-	// For agg=max we take MAX of the per-5m max; for agg=avg we take AVG of the per-5m avg.
-	aggFunc := "MAX"
-	if agg == "avg" {
-		aggFunc = "AVG"
-	}
+	var query, meanQuery string
 
-	query := fmt.Sprintf(`
+	if useRaw {
+		// Sub-5m bucket: query raw fact table
+		var inExpr, outExpr, fInExpr, fOutExpr, srcColumns, srcFilters string
+		switch metric {
+		case "packets":
+			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta"
+			inExpr = "in_pkts_delta / delta_duration"
+			outExpr = "out_pkts_delta / delta_duration"
+			fInExpr = "f.in_pkts_delta / f.delta_duration"
+			fOutExpr = "f.out_pkts_delta / f.delta_duration"
+			srcFilters = `AND f.delta_duration > 0
+				AND f.in_pkts_delta >= 0
+				AND f.out_pkts_delta >= 0`
+		default: // throughput
+			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta"
+			inExpr = "in_octets_delta * 8 / delta_duration"
+			outExpr = "out_octets_delta * 8 / delta_duration"
+			fInExpr = "f.in_octets_delta * 8 / f.delta_duration"
+			fOutExpr = "f.out_octets_delta * 8 / f.delta_duration"
+			srcFilters = `AND f.delta_duration > 0
+				AND f.in_octets_delta >= 0
+				AND f.out_octets_delta >= 0`
+		}
+
+		query = fmt.Sprintf(`
+		WITH devices AS (
+			SELECT pk, code, metro_pk, contributor_pk
+			FROM dz_devices_current
+		),
+		src AS (
+			SELECT %s
+			FROM fact_dz_device_interface_counters f
+			INNER JOIN devices d ON d.pk = f.device_pk%s%s
+			WHERE f.%s
+				%s%s
+				%s
+				%s
+				%s
+		),
+		rates AS (
+			SELECT
+				device_pk,
+				intf,
+				toStartOfInterval(event_ts, INTERVAL %s) AS time_bucket,
+				%s(%s) AS in_bps,
+				%s(%s) AS out_bps,
+				SUM(COALESCE(in_discards_delta, 0)) AS in_discards,
+				SUM(COALESCE(out_discards_delta, 0)) AS out_discards
+			FROM src
+			GROUP BY device_pk, intf, time_bucket
+		)
+		SELECT
+			formatDateTime(r.time_bucket, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+			r.device_pk,
+			d.code AS device,
+			r.intf,
+			r.in_bps,
+			r.out_bps,
+			r.in_discards,
+			r.out_discards
+		FROM rates r
+		INNER JOIN devices d ON d.pk = r.device_pk
+		WHERE r.time_bucket IS NOT NULL
+		ORDER BY r.time_bucket, d.code, r.intf
+		LIMIT %d
+	`, srcColumns, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, userKindFilter, bucketInterval, aggFunc, inExpr, aggFunc, outExpr, maxTrafficRows)
+
+		meanQuery = fmt.Sprintf(`
+		WITH devices AS (
+			SELECT pk, code, metro_pk, contributor_pk
+			FROM dz_devices_current
+		)
+		SELECT
+			d.code AS device,
+			f.intf,
+			AVG(%s) AS mean_in_bps,
+			AVG(%s) AS mean_out_bps,
+			SUM(COALESCE(f.in_discards_delta, 0)) AS total_in_discards,
+			SUM(COALESCE(f.out_discards_delta, 0)) AS total_out_discards
+		FROM fact_dz_device_interface_counters f
+		INNER JOIN devices d ON d.pk = f.device_pk%s%s
+		WHERE f.%s
+			%s%s
+			%s
+			%s
+			%s
+		GROUP BY d.code, f.intf
+		ORDER BY d.code, f.intf
+	`, fInExpr, fOutExpr, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, userKindFilter)
+	} else {
+		// >= 5m bucket: query rollup table
+		var inCol, outCol, meanInCol, meanOutCol string
+		switch metric {
+		case "packets":
+			if agg == "avg" {
+				inCol = "f.avg_in_pps"
+				outCol = "f.avg_out_pps"
+			} else {
+				inCol = "f.max_in_pps"
+				outCol = "f.max_out_pps"
+			}
+			meanInCol = "f.avg_in_pps"
+			meanOutCol = "f.avg_out_pps"
+		default: // throughput
+			if agg == "avg" {
+				inCol = "f.avg_in_bps"
+				outCol = "f.avg_out_bps"
+			} else {
+				inCol = "f.max_in_bps"
+				outCol = "f.max_out_bps"
+			}
+			meanInCol = "f.avg_in_bps"
+			meanOutCol = "f.avg_out_bps"
+		}
+
+		query = fmt.Sprintf(`
 		WITH devices AS (
 			SELECT pk, code, metro_pk, contributor_pk
 			FROM dz_devices_current
@@ -172,25 +261,10 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		ORDER BY r.time_bucket, d.code, r.intf
 		LIMIT %d
 	`, bucketInterval, aggFunc, inCol, aggFunc, outCol,
-		dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter,
-		filterSQL, userKindFilter, maxTrafficRows)
+			dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter,
+			filterSQL, userKindFilter, maxTrafficRows)
 
-	rows, err := envDB(ctx).Query(ctx, query)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
-
-	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		slog.Error("traffic query error", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	// Compute series means via a second lightweight query on the rollup table.
-	meanQuery := fmt.Sprintf(`
+		meanQuery = fmt.Sprintf(`
 		WITH devices AS (
 			SELECT pk, code, metro_pk, contributor_pk
 			FROM dz_devices_current
@@ -211,7 +285,22 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		GROUP BY d.code, f.intf
 		ORDER BY d.code, f.intf
 	`, meanInCol, meanOutCol, dimJoins, userJoinSQL, timeFilter,
-		intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
+			intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
+	}
+
+	rows, err := envDB(ctx).Query(ctx, query)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		slog.Error("traffic query error", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
 	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
@@ -226,7 +315,9 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	}
 	defer meanRows.Close()
 
-	// Build series info from mean query (small result set — one row per device/intf)
+	// Build series info from mean query (small result set — one row per device/intf).
+	// Discard totals are int64 from raw queries and uint64 from rollup queries,
+	// but both are scanned identically since the rollup mean query uses SUM on UInt64.
 	series := []SeriesInfo{}
 	discardsSeries := []DiscardSeriesInfo{}
 	for meanRows.Next() {
@@ -271,9 +362,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stream JSON response directly from ClickHouse rows to avoid holding
-	// all points in memory. The response is written as:
-	//   {"points":[...rows streamed...],"series":[...],"effective_bucket":"...","truncated":bool}
+	// Stream JSON response
 	w.Header().Set("Content-Type", "application/json")
 	bw := bufio.NewWriterSize(w, 32*1024)
 
@@ -285,7 +374,6 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		var point TrafficPoint
 		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps, &point.InDiscards, &point.OutDiscards); err != nil {
 			slog.Error("traffic row scan error", "error", err)
-			// Already started writing — can't send HTTP error. Log and break.
 			scanErr = err
 			break
 		}
@@ -308,7 +396,6 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Write series, discards_series, metadata, and close
 	_, _ = bw.WriteString(`],"series":`)
 	seriesJSON, _ := json.Marshal(series)
 	_, _ = bw.Write(seriesJSON)
@@ -349,8 +436,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	// Use rollup time filter (bucket_ts, minimum 5m bucket)
-	timeFilter, bucketInterval := rollupTimeFilter(r)
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	// Build dimension filters
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
@@ -371,8 +457,43 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	// Query rollup table for discards, re-aggregating into the requested bucket.
-	query := fmt.Sprintf(`
+	var query string
+	if useRaw {
+		query = fmt.Sprintf(`
+		WITH devices AS (
+			SELECT pk, code, metro_pk, contributor_pk
+			FROM dz_devices_current
+		),
+		agg AS (
+			SELECT
+				f.device_pk,
+				f.intf,
+				toStartOfInterval(f.event_ts, INTERVAL %s) AS time_bucket,
+				SUM(COALESCE(f.in_discards_delta, 0)) AS in_discards,
+				SUM(COALESCE(f.out_discards_delta, 0)) AS out_discards
+			FROM fact_dz_device_interface_counters f
+			INNER JOIN devices d ON d.pk = f.device_pk%s%s
+			WHERE f.%s
+				%s%s
+				AND (COALESCE(f.in_discards_delta, 0) > 0 OR COALESCE(f.out_discards_delta, 0) > 0)
+				%s
+				%s
+			GROUP BY f.device_pk, f.intf, time_bucket
+		)
+		SELECT
+			formatDateTime(a.time_bucket, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+			a.device_pk,
+			d.code AS device,
+			a.intf,
+			a.in_discards,
+			a.out_discards
+		FROM agg a
+		INNER JOIN devices d ON d.pk = a.device_pk
+		WHERE a.time_bucket IS NOT NULL
+		ORDER BY a.time_bucket, d.code, a.intf
+	`, bucketInterval, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
+	} else {
+		query = fmt.Sprintf(`
 		WITH devices AS (
 			SELECT pk, code, metro_pk, contributor_pk
 			FROM dz_devices_current
@@ -405,6 +526,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		WHERE a.time_bucket IS NOT NULL
 		ORDER BY a.time_bucket, d.code, a.intf
 	`, bucketInterval, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
+	}
 
 	rows, err := envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
@@ -434,10 +556,8 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 
 		points = append(points, point)
 
-		// Track totals for each device+interface+direction (separate in/out)
 		baseKey := fmt.Sprintf("%s-%s", point.Device, point.Intf)
 
-		// In discards series
 		inKey := fmt.Sprintf("%s (In)", baseKey)
 		if _, exists := seriesMap[inKey]; !exists {
 			seriesMap[inKey] = &DiscardSeriesMean{
@@ -447,7 +567,6 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		}
 		seriesMap[inKey].Total += point.InDiscards
 
-		// Out discards series
 		outKey := fmt.Sprintf("%s (Out)", baseKey)
 		if _, exists := seriesMap[outKey]; !exists {
 			seriesMap[outKey] = &DiscardSeriesMean{
@@ -464,7 +583,6 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build series info
 	series := []DiscardSeriesInfo{}
 	for key, mean := range seriesMap {
 		series = append(series, DiscardSeriesInfo{

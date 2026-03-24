@@ -96,6 +96,17 @@ func seedDashboardData(t *testing.T) {
 		 1000000000, 1000000000, 1000000000, 1000000000, 1000000000, 1000000000, 1000000000,
 		 0, 0, 0, 0, 0, 0, 0,
 		 0, 0, 0, 0, 0, 0, 0)`))
+
+	// Also seed raw fact table for sub-5m bucket queries (same data as rollup)
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta)
+		VALUES
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 300000000000, 200000000000, 30.0, 0, 0),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 350000000000, 250000000000, 30.0, 5, 2),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 100000000000, 50000000000, 30.0, 0, 0),
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-2', 'Ethernet1/1', 'link-2', 18750000000, 12500000000, 30.0, 0, 0),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-2', 'Ethernet1/1', 'link-2', 22500000000, 15000000000, 30.0, 0, 1),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-2', 'Ethernet1/1', 'link-2', 7500000000, 3750000000, 30.0, 0, 0)`))
 }
 
 // --- Stress endpoint tests ---
@@ -474,6 +485,23 @@ func seedTrafficTypeData(t *testing.T) {
 		 1333333333.3, 1333333333.3, 1333333333.3, 1333333333.3, 1333333333.3, 1333333333.3, 1333333333.3,
 		 666666666.7, 666666666.7, 666666666.7, 666666666.7, 666666666.7, 666666666.7, 666666666.7,
 		 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`))
+
+	// Also seed raw fact table for sub-5m bucket queries
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
+		VALUES
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 200000000000, 100000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 50000000000, 25000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Tunnel100', '', 50000000000, 25000000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Tunnel100', '', 100000000000, 50000000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Tunnel100', '', 25000000000, 12500000000, 30.0, 0, 0, 42),
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Tunnel200', '', 20000000000, 10000000000, 30.0, 0, 0, 99),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Tunnel200', '', 40000000000, 20000000000, 30.0, 0, 0, 99),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Tunnel200', '', 10000000000, 5000000000, 30.0, 0, 0, 99),
+		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Loopback0', '', 10000000000, 5000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 20 MINUTE, now(), 'dev-1', 'Loopback0', '', 30000000000, 15000000000, 30.0, 0, 0, NULL),
+		(now() - INTERVAL 10 MINUTE, now(), 'dev-1', 'Loopback0', '', 5000000000, 2500000000, 30.0, 0, 0, NULL)`))
 }
 
 func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {

@@ -69,6 +69,7 @@ func parseBucket(b string) string {
 }
 
 // effectiveBucket returns a sensible bucket for the given time range if none specified.
+// Sub-5m buckets use raw fact table data; >= 5m uses rollup.
 func effectiveBucket(timeRange, bucket string) string {
 	if bucket != "" {
 		return bucket
@@ -78,16 +79,18 @@ func effectiveBucket(timeRange, bucket string) string {
 		return "10 SECOND"
 	case "3h":
 		return "30 SECOND"
-	case "6h", "12h":
+	case "6h":
 		return "1 MINUTE"
-	case "24h":
-		return "5 MINUTE"
-	case "3d":
+	case "12h":
 		return "10 MINUTE"
-	case "7d":
+	case "24h":
+		return "15 MINUTE"
+	case "3d":
 		return "30 MINUTE"
-	case "14d", "30d":
+	case "7d":
 		return "1 HOUR"
+	case "14d", "30d":
+		return "4 HOUR"
 	default:
 		return "1 MINUTE"
 	}
@@ -96,16 +99,22 @@ func effectiveBucket(timeRange, bucket string) string {
 // bucketForDuration returns a sensible bucket interval for the given duration.
 func bucketForDuration(d time.Duration) string {
 	switch {
-	case d < 3*time.Hour:
+	case d <= time.Hour:
 		return "10 SECOND"
-	case d < 12*time.Hour:
+	case d <= 3*time.Hour:
+		return "30 SECOND"
+	case d <= 6*time.Hour:
 		return "1 MINUTE"
-	case d < 3*24*time.Hour:
-		return "5 MINUTE"
-	case d < 7*24*time.Hour:
+	case d <= 12*time.Hour:
+		return "10 MINUTE"
+	case d <= 24*time.Hour:
+		return "15 MINUTE"
+	case d <= 3*24*time.Hour:
 		return "30 MINUTE"
-	default:
+	case d <= 7*24*time.Hour:
 		return "1 HOUR"
+	default:
+		return "4 HOUR"
 	}
 }
 
@@ -210,6 +219,30 @@ func rollupTimeFilter(r *http.Request) (timeFilter string, bucketInterval string
 	bucketParam := parseBucket(r.URL.Query().Get("bucket"))
 	bucketInterval = rollupEffectiveBucket(timeRange, clampBucket(bucketParam))
 	return
+}
+
+// isRawBucket returns true if the bucket interval requires raw fact table queries
+// (i.e. sub-5-minute granularity that the rollup table cannot provide).
+func isRawBucket(b string) bool {
+	switch b {
+	case "10 SECOND", "30 SECOND", "1 MINUTE":
+		return true
+	default:
+		return false
+	}
+}
+
+// trafficTimeFilter resolves the time filter, bucket interval, and data source
+// for traffic queries. Uses raw fact table for sub-5m buckets, rollup for >= 5m.
+func trafficTimeFilter(r *http.Request) (timeFilter string, bucketInterval string, useRaw bool) {
+	// First resolve using the raw/fact-table logic to get the natural bucket
+	timeFilter, bucketInterval = dashboardTimeFilter(r)
+	if isRawBucket(bucketInterval) {
+		return timeFilter, bucketInterval, true
+	}
+	// Bucket is >= 5m, use rollup
+	timeFilter, bucketInterval = rollupTimeFilter(r)
+	return timeFilter, bucketInterval, false
 }
 
 // clampBucket enforces a minimum of 5 MINUTE for rollup queries.
@@ -454,6 +487,175 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		selectCols, metricFilter, groupByCols)
 
 	return
+}
+
+// BuildStressQueryRaw builds the stress query using raw fact_dz_device_interface_counters
+// for sub-5m bucket granularity. Same interface as BuildStressQuery.
+func BuildStressQueryRaw(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, threshold float64,
+	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin bool) (query string, grouped bool) {
+
+	var groupBySelect string
+	switch groupBy {
+	case "metro":
+		needsDeviceJoin = true
+		needsMetroJoin = true
+		grouped = true
+		groupBySelect = ", m.code AS group_key, m.name AS group_label"
+	case "device":
+		needsDeviceJoin = true
+		grouped = true
+		groupBySelect = ", d.code AS group_key, d.code AS group_label"
+	case "link_type":
+		grouped = true
+		groupBySelect = ", l.link_type AS group_key, l.link_type AS group_label"
+	case "contributor":
+		needsDeviceJoin = true
+		needsContributorJoin = true
+		grouped = true
+		groupBySelect = ", co.code AS group_key, co.name AS group_label"
+	case "user_kind":
+		needsUserJoin = true
+		grouped = true
+		groupBySelect = ", u.kind AS group_key, u.kind AS group_label"
+	}
+
+	var userTunnelSelect, userTunnelGroupBy, userTunnelPassthrough string
+	if needsUserJoin {
+		userTunnelSelect = ", f.user_tunnel_id"
+		userTunnelGroupBy = ", f.user_tunnel_id"
+		userTunnelPassthrough = ", ir.user_tunnel_id"
+	}
+
+	var dimJoins string
+	if needsDeviceJoin {
+		dimJoins += " INNER JOIN dz_devices_current d ON ir.device_pk = d.pk"
+	}
+	// Always need link join for utilization metric
+	dimJoins += " LEFT JOIN dz_links_current l ON ir.link_pk = l.pk"
+	if needsMetroJoin {
+		dimJoins += " LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk"
+	}
+	if needsContributorJoin {
+		dimJoins += " LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk"
+	}
+	if needsUserJoin {
+		dimJoins += " LEFT JOIN dz_users_current u ON ir.user_tunnel_id = u.tunnel_id"
+	}
+
+	var metricExprIn, metricExprOut, metricFilter string
+	switch metric {
+	case "throughput":
+		metricExprIn = "ir.in_bps"
+		metricExprOut = "ir.out_bps"
+	case "packets":
+		metricExprIn = "ir.in_pps"
+		metricExprOut = "ir.out_pps"
+	default:
+		metricExprIn = `CASE WHEN l.bandwidth_bps > 0
+			THEN ir.in_bps / l.bandwidth_bps
+			ELSE NULL END`
+		metricExprOut = `CASE WHEN l.bandwidth_bps > 0
+			THEN ir.out_bps / l.bandwidth_bps
+			ELSE NULL END`
+		metricFilter = " AND metric_val_in IS NOT NULL"
+	}
+
+	var selectCols, groupByCols string
+	if grouped {
+		selectCols = fmt.Sprintf(`
+			formatDateTime(bucket_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
+			group_key, group_label,
+			quantile(0.5)(metric_val_in) AS p50_in,
+			quantile(0.95)(metric_val_in) AS p95_in,
+			max(metric_val_in) AS max_in,
+			quantile(0.5)(metric_val_out) AS p50_out,
+			quantile(0.95)(metric_val_out) AS p95_out,
+			max(metric_val_out) AS max_out,
+			countIf(greatest(metric_val_in, metric_val_out) >= %f) AS stressed_count,
+			count() AS total_count`, threshold)
+		groupByCols = "bucket_ts, group_key, group_label"
+	} else {
+		selectCols = fmt.Sprintf(`
+			formatDateTime(bucket_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
+			quantile(0.5)(metric_val_in) AS p50_in,
+			quantile(0.95)(metric_val_in) AS p95_in,
+			max(metric_val_in) AS max_in,
+			quantile(0.5)(metric_val_out) AS p50_out,
+			quantile(0.95)(metric_val_out) AS p95_out,
+			max(metric_val_out) AS max_out,
+			countIf(greatest(metric_val_in, metric_val_out) >= %f) AS stressed_count,
+			count() AS total_count`, threshold)
+		groupByCols = "bucket_ts"
+	}
+
+	query = fmt.Sprintf(`
+		WITH interface_rates AS (
+			SELECT
+				toStartOfInterval(event_ts, INTERVAL %s) AS bucket_ts,
+				f.device_pk, f.intf, f.link_pk%s,
+				max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
+				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
+				max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
+				max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
+			FROM fact_dz_device_interface_counters f
+			WHERE %s
+				AND delta_duration > 0
+				AND in_octets_delta >= 0
+				AND out_octets_delta >= 0
+				%s
+				%s
+			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk%s
+		),
+		with_metric AS (
+			SELECT
+				ir.bucket_ts, ir.device_pk, ir.intf, ir.link_pk, ir.in_bps, ir.out_bps,
+				%s AS metric_val_in,
+				%s AS metric_val_out
+				%s
+				%s
+			FROM interface_rates ir
+			%s
+			WHERE 1=1 %s%s
+		)
+		SELECT %s
+		FROM with_metric
+		WHERE 1=1 %s
+		GROUP BY %s
+		ORDER BY bucket_ts`,
+		bucketInterval, userTunnelSelect, timeFilter,
+		intfTypeSQL, intfFilterSQL,
+		userTunnelGroupBy,
+		metricExprIn, metricExprOut, groupBySelect,
+		userTunnelPassthrough,
+		dimJoins, filterSQL, userKindSQL,
+		selectCols, metricFilter, groupByCols)
+
+	return
+}
+
+// BuildDrilldownQueryRaw builds the drilldown query using raw fact_dz_device_interface_counters
+// for sub-5m bucket granularity. Same interface as BuildDrilldownQuery.
+func BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter string) string {
+	return fmt.Sprintf(`
+		SELECT
+			formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+			f.intf,
+			max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
+			max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
+			sum(COALESCE(f.in_discards_delta, 0)) AS in_discards,
+			sum(COALESCE(f.out_discards_delta, 0)) AS out_discards,
+			max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
+			max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
+		FROM fact_dz_device_interface_counters f
+		WHERE %s
+			AND f.device_pk = '%s'
+			%s
+			AND f.delta_duration > 0
+			AND f.in_octets_delta >= 0
+			AND f.out_octets_delta >= 0
+		GROUP BY time, f.intf
+		ORDER BY time, f.intf`,
+		bucketInterval, timeFilter, escapeSingleQuote(devicePk), intfFilter)
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
@@ -884,7 +1086,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, bucketInterval := rollupTimeFilter(r)
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	threshold := 0.8
 	if t := r.URL.Query().Get("threshold"); t != "" {
@@ -901,8 +1103,15 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
 
-	query, grouped := BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, threshold,
-		needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin)
+	var query string
+	var grouped bool
+	if useRaw {
+		query, grouped = BuildStressQueryRaw(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, threshold,
+			needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin)
+	} else {
+		query, grouped = BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, threshold,
+			needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin)
+	}
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -1163,7 +1372,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, bucketInterval := rollupTimeFilter(r)
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	devicePk := r.URL.Query().Get("device_pk")
 	if devicePk == "" {
@@ -1181,7 +1390,12 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 		intfFilter = buildIntfTypeFilter(intfType)
 	}
 
-	query := BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter)
+	var query string
+	if useRaw {
+		query = BuildDrilldownQueryRaw(timeFilter, bucketInterval, devicePk, intfFilter)
+	} else {
+		query = BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter)
+	}
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -1227,6 +1441,10 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
 		}
 
+		metaTable := "device_interface_rollup_5m"
+		if useRaw {
+			metaTable = "fact_dz_device_interface_counters"
+		}
 		metaQuery := fmt.Sprintf(`
 			SELECT
 				f.intf,
@@ -1234,12 +1452,13 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 				COALESCE(l.link_type, '') AS link_type
 			FROM (
 				SELECT DISTINCT intf, link_pk
-				FROM device_interface_rollup_5m
+				FROM %s
 				WHERE device_pk = '%s'
 					AND intf IN (%s)
 					AND %s
 			) f
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk`,
+			metaTable,
 			escapeSingleQuote(devicePk),
 			strings.Join(quoted, ","),
 			timeFilter)
