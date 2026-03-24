@@ -237,6 +237,18 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
     return m
   }, [hoveredIdx, uplotData])
 
+  // Format hovered timestamp for legend display
+  const hoveredTime = useMemo(() => {
+    if (!uplotData) return undefined
+    const timestamps = uplotData.aligned[0] as ArrayLike<number>
+    if (!timestamps || timestamps.length === 0) return undefined
+    const idx = hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
+    const ts = timestamps[idx]
+    if (ts == null) return undefined
+    const d = new Date(ts * 1000)
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+  }, [uplotData, hoveredIdx])
+
   // Latest values: last non-null Rx/Tx per interface
   const latestValues = useMemo(() => {
     if (!uplotData) return new Map<string, { rx: number; tx: number }>()
@@ -418,6 +430,9 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
                     <div className="text-xs font-medium whitespace-nowrap">
                       Interfaces ({visibleIntfs.size === 0 ? 0 : [...visibleIntfs].filter(i => uplotData.intfs.includes(i)).length}/{sortedFilteredIntfs.length})
                     </div>
+                    {hoveredTime && (
+                      <span className="text-[10px] text-muted-foreground ml-auto">{hoveredTime}</span>
+                    )}
                     {searchExpanded ? (
                       <div className="relative flex-1">
                         <input

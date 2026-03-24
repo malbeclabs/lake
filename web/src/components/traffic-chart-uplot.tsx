@@ -855,6 +855,17 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     return m
   }, [hoveredIdx, uplotData, uplotSeries, bidirectional, interfaceGroups])
 
+  // Format hovered timestamp for legend display
+  const hoveredTime = useMemo(() => {
+    const timestamps = uplotData[0] as ArrayLike<number>
+    if (!timestamps || timestamps.length === 0) return undefined
+    const idx = hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
+    const ts = timestamps[idx]
+    if (ts == null) return undefined
+    const d = new Date(ts * 1000)
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+  }, [uplotData, hoveredIdx])
+
   // In bidirectional mode, filter/sort interface groups for legend
   const filteredInterfaceGroups = useMemo(() => {
     if (!bidirectional) return []
@@ -1098,6 +1109,9 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                   : `Series (${visibleSeriesList.length}/${sortedFilteredSeries.length})`
                 }
               </div>
+              {hoveredTime && (
+                <span className="text-[10px] text-muted-foreground ml-auto">{hoveredTime}</span>
+              )}
               {/* Collapsible search */}
               {searchExpanded ? (
                 <div className="relative flex-1">

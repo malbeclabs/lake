@@ -159,6 +159,14 @@ export function StressPanel() {
     }
   }, [hoveredIdx, data])
 
+  // Format hovered timestamp for legend display
+  const hoveredTime = useMemo(() => {
+    if (!data?.timestamps?.length) return undefined
+    const idx = hoveredIdx != null && hoveredIdx < data.timestamps.length ? hoveredIdx : data.timestamps.length - 1
+    const d = new Date(data.timestamps[idx])
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+  }, [hoveredIdx, data])
+
   return (
     <div>
       {isLoading ? (
@@ -194,6 +202,7 @@ export function StressPanel() {
         </div>
         {displayValues && (
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {hoveredTime && <span className="text-muted-foreground/60">{hoveredTime}</span>}
             <span className="text-muted-foreground/60">Rx:</span>
             <span>P50 <span className="font-medium text-foreground">{fmt(displayValues.p50In)}</span></span>
             <span>P95 <span className="font-medium text-foreground">{fmt(displayValues.p95In)}</span></span>
