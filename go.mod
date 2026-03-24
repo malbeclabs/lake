@@ -26,7 +26,7 @@ require (
 	github.com/oschwald/geoip2-golang v1.13.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/prometheus/client_golang v1.23.2
-	github.com/slack-go/slack v0.19.0
+	github.com/slack-go/slack v0.20.0
 	github.com/snormore/slackmd v0.2.1-0.20260131222029-402e0a9c9295
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
