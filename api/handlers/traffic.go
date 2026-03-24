@@ -32,6 +32,15 @@ type SeriesInfo struct {
 	Mean      float64 `json:"mean"`
 }
 
+// TrafficDataResponse is the JSON response for the traffic data endpoint.
+type TrafficDataResponse struct {
+	Points         []TrafficPoint    `json:"points"`
+	Series         []SeriesInfo      `json:"series"`
+	DiscardsSeries []DiscardSeriesInfo `json:"discards_series"`
+	EffBucket      string            `json:"effective_bucket"`
+	Truncated      bool              `json:"truncated"`
+}
+
 // maxTrafficRows is a safety limit on the number of rows returned.
 // Set high since rollup data is lightweight (~8 cols per row).
 const maxTrafficRows = 2_000_000
@@ -186,8 +195,8 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			f.intf,
 			AVG(%s) AS mean_in_bps,
 			AVG(%s) AS mean_out_bps,
-			SUM(COALESCE(f.in_discards_delta, 0)) AS total_in_discards,
-			SUM(COALESCE(f.out_discards_delta, 0)) AS total_out_discards
+			toInt64(SUM(COALESCE(f.in_discards_delta, 0))) AS total_in_discards,
+			toInt64(SUM(COALESCE(f.out_discards_delta, 0))) AS total_out_discards
 		FROM fact_dz_device_interface_counters f
 		INNER JOIN devices d ON d.pk = f.device_pk%s%s
 		WHERE f.%s
@@ -274,8 +283,8 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			f.intf,
 			AVG(%s) AS mean_in_bps,
 			AVG(%s) AS mean_out_bps,
-			SUM(f.in_discards) AS total_in_discards,
-			SUM(f.out_discards) AS total_out_discards
+			toInt64(SUM(f.in_discards)) AS total_in_discards,
+			toInt64(SUM(f.out_discards)) AS total_out_discards
 		FROM device_interface_rollup_5m f
 		INNER JOIN devices d ON d.pk = f.device_pk%s%s
 		WHERE f.%s
@@ -323,7 +332,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	for meanRows.Next() {
 		var device, intf string
 		var meanIn, meanOut float64
-		var totalInDiscards, totalOutDiscards uint64
+		var totalInDiscards, totalOutDiscards int64
 		if err := meanRows.Scan(&device, &intf, &meanIn, &meanOut, &totalInDiscards, &totalOutDiscards); err != nil {
 			slog.Error("traffic mean row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -349,7 +358,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				Key:    fmt.Sprintf("%s (In)", key),
 				Device: device,
 				Intf:   intf,
-				Total:  int64(totalInDiscards),
+				Total:  totalInDiscards,
 			})
 		}
 		if totalOutDiscards > 0 {
@@ -357,7 +366,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				Key:    fmt.Sprintf("%s (Out)", key),
 				Device: device,
 				Intf:   intf,
-				Total:  int64(totalOutDiscards),
+				Total:  totalOutDiscards,
 			})
 		}
 	}

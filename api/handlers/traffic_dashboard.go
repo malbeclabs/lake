@@ -63,6 +63,10 @@ func parseBucket(b string) string {
 		return "1 HOUR"
 	case "4h", "4 HOUR":
 		return "4 HOUR"
+	case "12h", "12 HOUR":
+		return "12 HOUR"
+	case "1d", "1 DAY":
+		return "1 DAY"
 	default:
 		return ""
 	}
@@ -88,9 +92,11 @@ func effectiveBucket(timeRange, bucket string) string {
 	case "3d":
 		return "30 MINUTE"
 	case "7d":
-		return "1 HOUR"
-	case "14d", "30d":
 		return "4 HOUR"
+	case "14d":
+		return "12 HOUR"
+	case "30d":
+		return "1 DAY"
 	default:
 		return "1 MINUTE"
 	}
@@ -112,9 +118,11 @@ func bucketForDuration(d time.Duration) string {
 	case d <= 3*24*time.Hour:
 		return "30 MINUTE"
 	case d <= 7*24*time.Hour:
-		return "1 HOUR"
-	default:
 		return "4 HOUR"
+	case d <= 14*24*time.Hour:
+		return "12 HOUR"
+	default:
+		return "1 DAY"
 	}
 }
 
@@ -167,9 +175,11 @@ func rollupEffectiveBucket(timeRange, bucket string) string {
 	case "3d":
 		return "30 MINUTE"
 	case "7d":
-		return "1 HOUR"
-	case "14d", "30d":
 		return "4 HOUR"
+	case "14d":
+		return "12 HOUR"
+	case "30d":
+		return "1 DAY"
 	default:
 		return "5 MINUTE"
 	}

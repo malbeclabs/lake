@@ -1214,3 +1214,234 @@ func TestTrafficDashboardHealth_Empty(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Empty(t, resp.Entities)
 }
+
+// --- Traffic data endpoint tests (raw + rollup paths) ---
+
+func TestGetTrafficData_RawPath(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	// time_range=1h → 10s bucket → raw fact table
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=1h&agg=max", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficData(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.TrafficDataResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.NotEmpty(t, resp.Points, "should return data from raw fact table")
+	assert.NotEmpty(t, resp.Series, "should return series info")
+	assert.Equal(t, "10 SECOND", resp.EffBucket)
+}
+
+func TestGetTrafficData_RollupPath(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	// time_range=12h → 10m bucket → rollup table
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=12h&agg=max", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficData(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.TrafficDataResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.NotEmpty(t, resp.Points, "should return data from rollup table")
+	assert.NotEmpty(t, resp.Series, "should return series info")
+	assert.Equal(t, "10 MINUTE", resp.EffBucket)
+}
+
+func TestGetTrafficData_ExplicitBucket_Raw(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	// Explicit 30s bucket → raw fact table
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=3h&bucket=30+SECOND", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficData(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.TrafficDataResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, "30 SECOND", resp.EffBucket)
+}
+
+func TestGetTrafficData_ExplicitBucket_Rollup(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	// Explicit 30m bucket → rollup table
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=3h&bucket=30+MINUTE", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetTrafficData(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.TrafficDataResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, "30 MINUTE", resp.EffBucket)
+}
+
+func TestGetTrafficData_Packets(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"raw", "?time_range=1h&metric=packets"},
+		{"rollup", "?time_range=12h&metric=packets"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficData(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.TrafficDataResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
+}
+
+func TestGetTrafficData_AvgAgg(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"raw", "?time_range=1h&agg=avg"},
+		{"rollup", "?time_range=12h&agg=avg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficData(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.TrafficDataResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+		})
+	}
+}
+
+// --- Discards endpoint tests (raw + rollup paths) ---
+
+func TestGetDiscardsData_RawPath(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	// time_range=1h → raw fact table
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/discards?time_range=1h", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetDiscardsData(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.DiscardsDataResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+}
+
+func TestGetDiscardsData_RollupPath(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	// time_range=12h → rollup table
+	req := httptest.NewRequest(http.MethodGet, "/api/traffic/discards?time_range=12h", nil)
+	rr := httptest.NewRecorder()
+
+	handlers.GetDiscardsData(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+	var resp handlers.DiscardsDataResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+}
+
+// --- Stress endpoint raw vs rollup path tests ---
+
+func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"raw_throughput", "?time_range=1h&metric=throughput"},
+		{"rollup_throughput", "?time_range=12h&metric=throughput"},
+		{"raw_utilization", "?time_range=1h&metric=utilization"},
+		{"rollup_utilization", "?time_range=12h&metric=utilization"},
+		{"raw_packets", "?time_range=1h&metric=packets"},
+		{"rollup_packets", "?time_range=12h&metric=packets"},
+		{"raw_grouped", "?time_range=1h&metric=throughput&group_by=device"},
+		{"rollup_grouped", "?time_range=12h&metric=throughput&group_by=device"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardStress(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.StressResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+			assert.NotEmpty(t, resp.EffBucket)
+		})
+	}
+}
+
+// --- Drilldown endpoint raw vs rollup path tests ---
+
+func TestTrafficDashboardDrilldown_RawVsRollup(t *testing.T) {
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	seedDashboardData(t)
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"raw", "?time_range=1h&device_pk=dev-1"},
+		{"rollup", "?time_range=12h&device_pk=dev-1"},
+		{"raw_with_intf", "?time_range=1h&device_pk=dev-1&intf=Port-Channel1000"},
+		{"rollup_with_intf", "?time_range=12h&device_pk=dev-1&intf=Port-Channel1000"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			handlers.GetTrafficDashboardDrilldown(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.DrilldownResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+			assert.NotEmpty(t, resp.Points, "should return data points")
+			assert.NotEmpty(t, resp.EffBucket)
+		})
+	}
+}
