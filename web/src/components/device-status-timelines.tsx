@@ -1,11 +1,11 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import uPlot from 'uplot'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { fetchDeviceHistory, fetchDeviceInterfaceHistory } from '@/lib/api'
 import type { DeviceHistory, DeviceHourStatus } from '@/lib/api'
-import { useTheme } from '@/hooks/use-theme'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
 function Skeleton({ className }: { className?: string }) {
@@ -424,8 +424,7 @@ interface InterfaceIssueChartProps {
 }
 
 function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-44' }: InterfaceIssueChartProps) {
-  const { resolvedTheme } = useTheme()
-  const isDarkMode = resolvedTheme === 'dark'
+  const chartRef = useRef<HTMLDivElement>(null)
   const [enabledInterfaces, setEnabledInterfaces] = useState<Set<string>>(new Set())
   const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [initialized, setInitialized] = useState(false)
@@ -501,6 +500,111 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
     })
   }
 
+  // Transform data for uPlot — must be before early returns (rules of hooks)
+  type LineInfo = { key: string; metric: MetricType; intfName: string; color: string; dash?: number[] }
+
+  const { uplotData, uplotSeries, seriesMap } = useMemo(() => {
+    if (interfacesWithIssues.length === 0 || !data?.interfaces?.[0]?.hours) {
+      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[], seriesMap: new Map<number, LineInfo>() }
+    }
+
+    const timestamps = data.interfaces[0].hours.map(h => new Date(h.hour).getTime() / 1000)
+
+    const lineInfos: LineInfo[] = []
+    const columns: (number | null)[][] = []
+
+    for (const intf of interfacesWithIssues) {
+      const color = interfaceColorMap[intf.interface_name]
+      // errors in/out
+      lineInfos.push({ key: `${intf.interface_name}_errors_in`, metric: 'errors', intfName: intf.interface_name, color })
+      columns.push(intf.hours.map(h => h.in_errors || 0))
+      lineInfos.push({ key: `${intf.interface_name}_errors_out`, metric: 'errors', intfName: intf.interface_name, color })
+      columns.push(intf.hours.map(h => h.out_errors ? -h.out_errors : 0))
+      // fcs_errors
+      lineInfos.push({ key: `${intf.interface_name}_fcs_errors`, metric: 'fcs_errors', intfName: intf.interface_name, color, dash: [8, 3] })
+      columns.push(intf.hours.map(h => h.in_fcs_errors || 0))
+      // discards in/out
+      lineInfos.push({ key: `${intf.interface_name}_discards_in`, metric: 'discards', intfName: intf.interface_name, color, dash: [5, 5] })
+      columns.push(intf.hours.map(h => h.in_discards || 0))
+      lineInfos.push({ key: `${intf.interface_name}_discards_out`, metric: 'discards', intfName: intf.interface_name, color, dash: [5, 5] })
+      columns.push(intf.hours.map(h => h.out_discards ? -h.out_discards : 0))
+      // carrier
+      lineInfos.push({ key: `${intf.interface_name}_carrier`, metric: 'carrier', intfName: intf.interface_name, color, dash: [2, 2] })
+      columns.push(intf.hours.map(h => h.carrier_transitions || 0))
+    }
+
+    const series: uPlot.Series[] = [
+      {}, // x-axis
+      ...lineInfos.map(info => ({
+        label: info.key,
+        stroke: info.color,
+        width: 1.5,
+        dash: info.dash,
+        points: { show: false },
+      })),
+    ]
+
+    const map = new Map<number, LineInfo>()
+    lineInfos.forEach((info, i) => map.set(i + 1, info))
+
+    return {
+      uplotData: [timestamps, ...columns] as uPlot.AlignedData,
+      uplotSeries: series,
+      seriesMap: map,
+    }
+  }, [interfacesWithIssues, interfaceColorMap, data?.interfaces])
+
+  const axes = useMemo((): uPlot.Axis[] => [
+    {},
+    {
+      values: (_u: uPlot, vals: number[]) => vals.map(v => {
+        const abs = Math.abs(v)
+        if (abs === 0) return '0'
+        return abs >= 1000 ? `${(abs/1000).toFixed(0)}k` : abs.toString()
+      }),
+    },
+  ], [])
+
+  const { plotRef } = useUPlotChart({
+    containerRef: chartRef,
+    data: uplotData,
+    series: uplotSeries,
+    height: 128,
+    axes,
+  })
+
+  // Sync toggle state to series visibility
+  useLayoutEffect(() => {
+    const u = plotRef.current
+    if (!u) return
+    for (const [idx, info] of seriesMap) {
+      const shouldShow = enabledMetrics.has(info.metric) && enabledInterfaces.has(info.intfName) && availableMetrics.has(info.metric)
+      if (u.series[idx]?.show !== shouldShow) {
+        u.setSeries(idx, { show: shouldShow })
+      }
+    }
+  })
+
+  // Sync hover opacity
+  useLayoutEffect(() => {
+    const u = plotRef.current
+    if (!u) return
+    let changed = false
+    for (const [idx, info] of seriesMap) {
+      let alpha = 1
+      if (hoveredMetric || hoveredInterface) {
+        const metricMatch = !hoveredMetric || hoveredMetric === info.metric
+        const intfMatch = !hoveredInterface || hoveredInterface === info.intfName
+        alpha = (metricMatch && intfMatch) ? 1 : 0.15
+      }
+      if (u.series[idx]?.alpha !== alpha) {
+        u.series[idx].alpha = alpha
+        changed = true
+      }
+    }
+    if (changed) u.redraw()
+  })
+
   if (isLoading) {
     return (
       <>
@@ -544,137 +648,6 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
         </div>
       </>
     )
-  }
-
-  // Transform data for the chart - each data point has values for all interfaces
-  // In values are positive (above x-axis), out values are negative (below x-axis)
-  const chartData = data.interfaces[0].hours.map((hour, idx) => {
-    const date = new Date(hour.hour)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const point: Record<string, any> = {
-      time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      fullTime: hour.hour,
-    }
-
-    // Add data for each interface - in is positive, out is negative
-    for (const intf of interfacesWithIssues) {
-      const h = intf.hours[idx]
-      if (h) {
-        point[`${intf.interface_name}_errors_in`] = h.in_errors || 0
-        point[`${intf.interface_name}_errors_out`] = h.out_errors ? -h.out_errors : 0
-        point[`${intf.interface_name}_fcs_errors`] = h.in_fcs_errors || 0
-        point[`${intf.interface_name}_discards_in`] = h.in_discards || 0
-        point[`${intf.interface_name}_discards_out`] = h.out_discards ? -h.out_discards : 0
-        point[`${intf.interface_name}_carrier`] = h.carrier_transitions || 0
-      }
-    }
-
-    return point
-  })
-
-  // Custom tooltip
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (!active || !payload || payload.length === 0) return null
-    const data = payload[0]?.payload
-    if (!data) return null
-
-    // Group by interface
-    const interfaceData: Record<string, { errorsIn: number; errorsOut: number; fcsErrors: number; discardsIn: number; discardsOut: number; carrier: number; color: string }> = {}
-    for (const intf of interfacesWithIssues) {
-      if (!enabledInterfaces.has(intf.interface_name)) continue
-      const errorsIn = data[`${intf.interface_name}_errors_in`] || 0
-      const errorsOut = Math.abs(data[`${intf.interface_name}_errors_out`] || 0)
-      const fcsErrors = data[`${intf.interface_name}_fcs_errors`] || 0
-      const discardsIn = data[`${intf.interface_name}_discards_in`] || 0
-      const discardsOut = Math.abs(data[`${intf.interface_name}_discards_out`] || 0)
-      const carrier = data[`${intf.interface_name}_carrier`] || 0
-      if (errorsIn > 0 || errorsOut > 0 || fcsErrors > 0 || discardsIn > 0 || discardsOut > 0 || carrier > 0) {
-        interfaceData[intf.interface_name] = {
-          errorsIn,
-          errorsOut,
-          fcsErrors,
-          discardsIn,
-          discardsOut,
-          carrier,
-          color: interfaceColorMap[intf.interface_name],
-        }
-      }
-    }
-
-    const hasData = Object.keys(interfaceData).length > 0
-
-    return (
-      <div className="bg-popover border border-border rounded-lg shadow-lg p-3 text-sm max-w-xs">
-        <div className="font-medium mb-2">
-          {new Date(data.fullTime).toLocaleString([], {
-            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-          })}
-        </div>
-        {hasData ? (
-          <div className="space-y-2">
-            {Object.entries(interfaceData).map(([name, values]) => (
-              <div key={name} className="space-y-0.5">
-                <div className="flex items-center gap-1.5 font-medium">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: values.color }} />
-                  <span className="truncate">{name}</span>
-                </div>
-                <div className="pl-3.5 text-xs text-muted-foreground space-y-0.5">
-                  {enabledMetrics.has('errors') && (values.errorsIn > 0 || values.errorsOut > 0) && (
-                    <div>Errors: {values.errorsIn.toLocaleString()} in / {values.errorsOut.toLocaleString()} out</div>
-                  )}
-                  {enabledMetrics.has('fcs_errors') && values.fcsErrors > 0 && (
-                    <div>FCS Errors: {values.fcsErrors.toLocaleString()}</div>
-                  )}
-                  {enabledMetrics.has('discards') && (values.discardsIn > 0 || values.discardsOut > 0) && (
-                    <div>Discards: {values.discardsIn.toLocaleString()} in / {values.discardsOut.toLocaleString()} out</div>
-                  )}
-                  {enabledMetrics.has('carrier') && values.carrier > 0 && (
-                    <div>Carrier: {values.carrier.toLocaleString()}</div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-muted-foreground">No issues</div>
-        )}
-      </div>
-    )
-  }
-
-  const gridColor = isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
-  const textColor = isDarkMode ? '#a1a1aa' : '#71717a'
-
-  // Compute line opacity based on hover state
-  const getLineOpacity = (metric: MetricType, intfName: string): number => {
-    if (!hoveredMetric && !hoveredInterface) return 1
-    const metricMatch = !hoveredMetric || hoveredMetric === metric
-    const intfMatch = !hoveredInterface || hoveredInterface === intfName
-    return (metricMatch && intfMatch) ? 1 : 0.15
-  }
-
-  // Generate lines for each enabled interface + metric combination
-  // In values are positive (above axis), out values are negative (below axis)
-  const lines: { dataKey: string; color: string; strokeDasharray?: string; metric: MetricType; intfName: string }[] = []
-  for (const intf of interfacesWithIssues) {
-    if (!enabledInterfaces.has(intf.interface_name)) continue
-    const color = interfaceColorMap[intf.interface_name]
-
-    if (enabledMetrics.has('errors') && availableMetrics.has('errors')) {
-      lines.push({ dataKey: `${intf.interface_name}_errors_in`, color, strokeDasharray: undefined, metric: 'errors', intfName: intf.interface_name })
-      lines.push({ dataKey: `${intf.interface_name}_errors_out`, color, strokeDasharray: undefined, metric: 'errors', intfName: intf.interface_name })
-    }
-    if (enabledMetrics.has('fcs_errors') && availableMetrics.has('fcs_errors')) {
-      lines.push({ dataKey: `${intf.interface_name}_fcs_errors`, color, strokeDasharray: '8 3', metric: 'fcs_errors', intfName: intf.interface_name })
-    }
-    if (enabledMetrics.has('discards') && availableMetrics.has('discards')) {
-      lines.push({ dataKey: `${intf.interface_name}_discards_in`, color, strokeDasharray: '5 5', metric: 'discards', intfName: intf.interface_name })
-      lines.push({ dataKey: `${intf.interface_name}_discards_out`, color, strokeDasharray: '5 5', metric: 'discards', intfName: intf.interface_name })
-    }
-    if (enabledMetrics.has('carrier') && availableMetrics.has('carrier')) {
-      lines.push({ dataKey: `${intf.interface_name}_carrier`, color, strokeDasharray: '2 2', metric: 'carrier', intfName: intf.interface_name })
-    }
   }
 
   return (
@@ -742,50 +715,9 @@ function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-
         </div>
       </div>
 
-      {/* Chart on right - aligned with timeline */}
+      {/* Chart on right */}
       <div className="flex-1 min-w-0">
-        <div className="h-32 outline-none [&_.recharts-wrapper]:outline-none [&_svg]:outline-none">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10, fill: textColor }}
-                tickLine={false}
-                axisLine={{ stroke: gridColor }}
-                interval="preserveStartEnd"
-                minTickGap={50}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fill: textColor }}
-                tickLine={false}
-                axisLine={false}
-                width={40}
-                domain={[(dataMin: number) => Math.min(dataMin, 0), (dataMax: number) => Math.max(dataMax, 0)]}
-                tickFormatter={(v) => {
-                  const abs = Math.abs(v)
-                  if (abs === 0) return '0'
-                  return abs >= 1000 ? `${(abs/1000).toFixed(0)}k` : abs.toString()
-                }}
-              />
-              <ReferenceLine y={0} stroke={isDarkMode ? '#666' : '#999'} strokeWidth={1.5} label={{ value: 'in ↑ / out ↓', position: 'right', fontSize: 9, fill: textColor }} />
-              <RechartsTooltip content={<CustomTooltip />} />
-              {lines.map(line => (
-                <Line
-                  key={line.dataKey}
-                  type="monotone"
-                  dataKey={line.dataKey}
-                  stroke={line.color}
-                  strokeWidth={1.5}
-                  strokeDasharray={line.strokeDasharray}
-                  strokeOpacity={getLineOpacity(line.metric, line.intfName)}
-                  dot={false}
-                  connectNulls
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+        <div ref={chartRef} className="h-32" />
       </div>
     </>
   )

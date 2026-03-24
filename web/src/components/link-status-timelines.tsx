@@ -1,14 +1,14 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import uPlot from 'uplot'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { fetchLinkHistory } from '@/lib/api'
 import type { LinkHistory, LinkHourStatus } from '@/lib/api'
 import { StatusTimeline } from './status-timeline'
 import { getEffectiveStatus } from '@/lib/link-status'
 import { CriticalityBadge } from './criticality-badge'
-import { useTheme } from '@/hooks/use-theme'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
 function Skeleton({ className }: { className?: string }) {
@@ -224,9 +224,8 @@ interface LinkInterfaceChartProps {
   controlsWidth?: string
 }
 
-function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: LinkInterfaceChartProps) {
-  const { resolvedTheme } = useTheme()
-  const isDarkMode = resolvedTheme === 'dark'
+function LinkInterfaceChart({ hours, bucketMinutes: _bucketMinutes, controlsWidth = 'w-32' }: LinkInterfaceChartProps) {
+  const chartRef = useRef<HTMLDivElement>(null)
   const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
   const [enabledSides, setEnabledSides] = useState<Set<'A' | 'Z'>>(new Set(['A', 'Z']))
   const [hoveredMetric, setHoveredMetric] = useState<MetricType | null>(null)
@@ -292,117 +291,115 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
     })
   }
 
-  // Transform data for chart - in values positive, out values negative
-  const chartData = hours.map(h => {
-    const date = new Date(h.hour)
+  type LineInfo = { metric: MetricType; side: 'A' | 'Z' }
+
+  // Build columnar data for ALL possible lines (all sides x metrics x directions)
+  const { uplotData, uplotSeries, seriesMap } = useMemo(() => {
+    const timestamps = hours.map(h => new Date(h.hour).getTime() / 1000)
+    const lineInfos: LineInfo[] = []
+    const columns: (number | null)[][] = []
+
+    for (const side of ['A', 'Z'] as const) {
+      // errors in/out
+      lineInfos.push({ metric: 'errors', side })
+      columns.push(hours.map(h => side === 'A' ? (h.side_a_in_errors ?? 0) : (h.side_z_in_errors ?? 0)))
+      lineInfos.push({ metric: 'errors', side })
+      columns.push(hours.map(h => -(side === 'A' ? (h.side_a_out_errors ?? 0) : (h.side_z_out_errors ?? 0))))
+      // fcs_errors (in only)
+      lineInfos.push({ metric: 'fcs_errors', side })
+      columns.push(hours.map(h => side === 'A' ? (h.side_a_in_fcs_errors ?? 0) : (h.side_z_in_fcs_errors ?? 0)))
+      // discards in/out
+      lineInfos.push({ metric: 'discards', side })
+      columns.push(hours.map(h => side === 'A' ? (h.side_a_in_discards ?? 0) : (h.side_z_in_discards ?? 0)))
+      lineInfos.push({ metric: 'discards', side })
+      columns.push(hours.map(h => -(side === 'A' ? (h.side_a_out_discards ?? 0) : (h.side_z_out_discards ?? 0))))
+      // carrier
+      lineInfos.push({ metric: 'carrier', side })
+      columns.push(hours.map(h => side === 'A' ? (h.side_a_carrier_transitions ?? 0) : (h.side_z_carrier_transitions ?? 0)))
+    }
+
+    const series: uPlot.Series[] = [
+      {}, // x-axis
+      ...lineInfos.map((info, i) => {
+        // Determine which side block we're in to get color
+        const color = SIDE_COLORS[info.side]
+        // Determine dash pattern from metric
+        let dash: number[] | undefined
+        if (info.metric === 'fcs_errors') dash = [8, 3]
+        else if (info.metric === 'discards') dash = [5, 5]
+        else if (info.metric === 'carrier') dash = [2, 2]
+        return {
+          label: `line_${i}`,
+          stroke: color,
+          width: 1.5,
+          dash,
+          points: { show: false },
+          show: true,
+        } as uPlot.Series
+      }),
+    ]
+
+    const map = new Map<number, LineInfo>()
+    lineInfos.forEach((info, i) => map.set(i + 1, info))
+
     return {
-      time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      fullTime: h.hour,
-      // Side A
-      A_errors_in: h.side_a_in_errors ?? 0,
-      A_errors_out: -(h.side_a_out_errors ?? 0),
-      A_fcs_errors: h.side_a_in_fcs_errors ?? 0,
-      A_discards_in: h.side_a_in_discards ?? 0,
-      A_discards_out: -(h.side_a_out_discards ?? 0),
-      A_carrier: h.side_a_carrier_transitions ?? 0,
-      // Side Z
-      Z_errors_in: h.side_z_in_errors ?? 0,
-      Z_errors_out: -(h.side_z_out_errors ?? 0),
-      Z_fcs_errors: h.side_z_in_fcs_errors ?? 0,
-      Z_discards_in: h.side_z_in_discards ?? 0,
-      Z_discards_out: -(h.side_z_out_discards ?? 0),
-      Z_carrier: h.side_z_carrier_transitions ?? 0,
+      uplotData: [timestamps, ...columns] as uPlot.AlignedData,
+      uplotSeries: series,
+      seriesMap: map,
+    }
+  }, [hours])
+
+  const axes = useMemo((): uPlot.Axis[] => [
+    {},
+    {
+      values: (_u: uPlot, vals: number[]) => vals.map(v => {
+        const abs = Math.abs(v)
+        if (abs === 0) return '0'
+        return abs >= 1000 ? `${(abs / 1000).toFixed(0)}k` : abs.toString()
+      }),
+    },
+  ], [])
+
+  const { plotRef } = useUPlotChart({
+    containerRef: chartRef,
+    data: uplotData,
+    series: uplotSeries,
+    height: 128,
+    axes,
+  })
+
+  // Sync toggle state to series visibility
+  useEffect(() => {
+    const u = plotRef.current
+    if (!u) return
+    for (const [idx, info] of seriesMap) {
+      const shouldShow = enabledMetrics.has(info.metric) && enabledSides.has(info.side) && availableMetrics.has(info.metric)
+      if (u.series[idx]?.show !== shouldShow) {
+        u.setSeries(idx, { show: shouldShow })
+      }
     }
   })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (!active || !payload || payload.length === 0) return null
-    const data = payload[0]?.payload
-    if (!data) return null
-
-    const formatTime = (isoString: string) => {
-      const start = new Date(isoString)
-      const end = new Date(start.getTime() + bucketMinutes * 60 * 1000)
-      return `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  // Sync hover opacity
+  useLayoutEffect(() => {
+    const u = plotRef.current
+    if (!u) return
+    let changed = false
+    for (const [idx, info] of seriesMap) {
+      let alpha = 1
+      if (hoveredMetric || hoveredSide) {
+        const metricMatch = !hoveredMetric || hoveredMetric === info.metric
+        const sideMatch = !hoveredSide || hoveredSide === info.side
+        alpha = (metricMatch && sideMatch) ? 1 : 0.15
+      }
+      const s = u.series[idx]
+      if (s && (s as uPlot.Series & { alpha?: number }).alpha !== alpha) {
+        ;(s as uPlot.Series & { alpha?: number }).alpha = alpha
+        changed = true
+      }
     }
-
-    return (
-      <div className="bg-popover border border-border rounded-lg shadow-lg p-3 text-sm">
-        <div className="font-medium mb-2">{formatTime(data.fullTime)}</div>
-        <div className="space-y-1.5">
-          {(['A', 'Z'] as const).map(side => {
-            if (!enabledSides.has(side)) return null
-            const errorsIn = data[`${side}_errors_in`] || 0
-            const errorsOut = Math.abs(data[`${side}_errors_out`] || 0)
-            const fcsErrors = data[`${side}_fcs_errors`] || 0
-            const discardsIn = data[`${side}_discards_in`] || 0
-            const discardsOut = Math.abs(data[`${side}_discards_out`] || 0)
-            const carrier = data[`${side}_carrier`] || 0
-            const hasData = (enabledMetrics.has('errors') && (errorsIn > 0 || errorsOut > 0)) ||
-                           (enabledMetrics.has('fcs_errors') && fcsErrors > 0) ||
-                           (enabledMetrics.has('discards') && (discardsIn > 0 || discardsOut > 0)) ||
-                           (enabledMetrics.has('carrier') && carrier > 0)
-            if (!hasData) return null
-            return (
-              <div key={side}>
-                <div className="flex items-center gap-1.5 font-medium">
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: SIDE_COLORS[side] }} />
-                  <span>Side {side}</span>
-                </div>
-                <div className="pl-3.5 text-xs text-muted-foreground space-y-0.5">
-                  {enabledMetrics.has('errors') && (errorsIn > 0 || errorsOut > 0) && (
-                    <div>Errors: {errorsIn.toLocaleString()} in / {errorsOut.toLocaleString()} out</div>
-                  )}
-                  {enabledMetrics.has('fcs_errors') && fcsErrors > 0 && (
-                    <div>FCS Errors: {fcsErrors.toLocaleString()}</div>
-                  )}
-                  {enabledMetrics.has('discards') && (discardsIn > 0 || discardsOut > 0) && (
-                    <div>Discards: {discardsIn.toLocaleString()} in / {discardsOut.toLocaleString()} out</div>
-                  )}
-                  {enabledMetrics.has('carrier') && carrier > 0 && (
-                    <div>Carrier: {carrier.toLocaleString()}</div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    )
-  }
-
-  const gridColor = isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
-  const textColor = isDarkMode ? '#a1a1aa' : '#71717a'
-
-  // Compute line opacity based on hover state
-  const getLineOpacity = (metric: MetricType, side: 'A' | 'Z'): number => {
-    if (!hoveredMetric && !hoveredSide) return 1
-    const metricMatch = !hoveredMetric || hoveredMetric === metric
-    const sideMatch = !hoveredSide || hoveredSide === side
-    return (metricMatch && sideMatch) ? 1 : 0.15
-  }
-
-  // Generate lines for each enabled side + metric
-  const lines: { dataKey: string; color: string; strokeDasharray?: string; metric: MetricType; side: 'A' | 'Z' }[] = []
-  for (const side of ['A', 'Z'] as const) {
-    if (!enabledSides.has(side)) continue
-    const color = SIDE_COLORS[side]
-    if (enabledMetrics.has('errors') && availableMetrics.has('errors')) {
-      lines.push({ dataKey: `${side}_errors_in`, color, metric: 'errors', side })
-      lines.push({ dataKey: `${side}_errors_out`, color, metric: 'errors', side })
-    }
-    if (enabledMetrics.has('fcs_errors') && availableMetrics.has('fcs_errors')) {
-      lines.push({ dataKey: `${side}_fcs_errors`, color, strokeDasharray: '8 3', metric: 'fcs_errors', side })
-    }
-    if (enabledMetrics.has('discards') && availableMetrics.has('discards')) {
-      lines.push({ dataKey: `${side}_discards_in`, color, strokeDasharray: '5 5', metric: 'discards', side })
-      lines.push({ dataKey: `${side}_discards_out`, color, strokeDasharray: '5 5', metric: 'discards', side })
-    }
-    if (enabledMetrics.has('carrier') && availableMetrics.has('carrier')) {
-      lines.push({ dataKey: `${side}_carrier`, color, strokeDasharray: '2 2', metric: 'carrier', side })
-    }
-  }
+    if (changed) u.redraw()
+  })
 
   return (
     <>
@@ -466,18 +463,7 @@ function LinkInterfaceChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: Li
 
       {/* Chart */}
       <div className="flex-1 min-w-0 h-32">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-            <XAxis dataKey="time" tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={{ stroke: gridColor }} interval="preserveStartEnd" minTickGap={50} />
-            <YAxis tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={false} width={40} domain={[(dataMin: number) => Math.min(dataMin, 0), (dataMax: number) => Math.max(dataMax, 0)]} tickFormatter={(v) => Math.abs(v) >= 1000 ? `${(Math.abs(v)/1000).toFixed(0)}k` : Math.abs(v).toString()} />
-            <ReferenceLine y={0} stroke={isDarkMode ? '#666' : '#999'} strokeWidth={1.5} label={{ value: 'in ↑ / out ↓', position: 'right', fontSize: 9, fill: textColor }} />
-            <RechartsTooltip content={<CustomTooltip />} />
-            {lines.map(line => (
-              <Line key={line.dataKey} type="monotone" dataKey={line.dataKey} stroke={line.color} strokeWidth={1.5} strokeDasharray={line.strokeDasharray} strokeOpacity={getLineOpacity(line.metric, line.side)} dot={false} connectNulls />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+        <div ref={chartRef} className="w-full h-full" />
       </div>
     </>
   )
@@ -489,9 +475,8 @@ interface LinkPacketLossChartProps {
   controlsWidth?: string
 }
 
-function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: LinkPacketLossChartProps) {
-  const { resolvedTheme } = useTheme()
-  const isDarkMode = resolvedTheme === 'dark'
+function LinkPacketLossChart({ hours, bucketMinutes: _bucketMinutes, controlsWidth = 'w-32' }: LinkPacketLossChartProps) {
+  const chartRef = useRef<HTMLDivElement>(null)
   const [enabledSeries, setEnabledSeries] = useState<Set<'total' | 'A' | 'Z'>>(new Set(['total', 'A', 'Z']))
   const [hoveredSeries, setHoveredSeries] = useState<'total' | 'A' | 'Z' | null>(null)
 
@@ -515,46 +500,88 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
     })
   }
 
-  const chartData = hours.map(h => ({
-    time: new Date(h.hour).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    fullTime: h.hour,
-    total: h.status === 'no_data' ? undefined : h.avg_loss_pct,
-    A: h.status === 'no_data' ? undefined : (h.side_a_loss_pct ?? 0),
-    Z: h.status === 'no_data' ? undefined : (h.side_z_loss_pct ?? 0),
-  }))
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (!active || !payload || payload.length === 0) return null
-    const data = payload[0]?.payload
-    if (!data) return null
-
-    const formatTime = (isoString: string) => {
-      const start = new Date(isoString)
-      const end = new Date(start.getTime() + bucketMinutes * 60 * 1000)
-      return `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-    }
-
-    return (
-      <div className="bg-popover border border-border rounded-lg shadow-lg p-3 text-sm">
-        <div className="font-medium mb-2">{formatTime(data.fullTime)}</div>
-        <div className="space-y-1 text-xs">
-          {enabledSeries.has('total') && <div>Average: {data.total.toFixed(2)}%</div>}
-          {enabledSeries.has('A') && availableSeries.has('A') && <div style={{ color: SIDE_COLORS.A }}>Side A: {data.A.toFixed(2)}%</div>}
-          {enabledSeries.has('Z') && availableSeries.has('Z') && <div style={{ color: SIDE_COLORS.Z }}>Side Z: {data.Z.toFixed(2)}%</div>}
-        </div>
-      </div>
-    )
-  }
-
-  const gridColor = isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
-  const textColor = isDarkMode ? '#a1a1aa' : '#71717a'
-
   const SERIES_CONFIG = {
     total: { color: '#a855f7', label: 'Average' }, // purple
     A: { color: SIDE_COLORS.A, label: 'Side A' },
     Z: { color: SIDE_COLORS.Z, label: 'Side Z' },
   }
+
+  type LossSeriesKey = 'total' | 'A' | 'Z'
+  const seriesKeys: LossSeriesKey[] = ['total', 'A', 'Z']
+
+  // Build columnar uPlot data
+  const { uplotData, uplotSeries } = useMemo(() => {
+    const timestamps = hours.map(h => new Date(h.hour).getTime() / 1000)
+    const total = hours.map(h => h.status === 'no_data' ? null : h.avg_loss_pct)
+    const sideA = hours.map(h => h.status === 'no_data' ? null : (h.side_a_loss_pct ?? 0))
+    const sideZ = hours.map(h => h.status === 'no_data' ? null : (h.side_z_loss_pct ?? 0))
+
+    const series: uPlot.Series[] = [
+      {}, // x-axis
+      { label: 'total', stroke: SERIES_CONFIG.total.color, width: 2, points: { show: false }, show: true },
+      { label: 'sideA', stroke: SERIES_CONFIG.A.color, width: 1.5, dash: [5, 5], points: { show: false }, show: true },
+      { label: 'sideZ', stroke: SERIES_CONFIG.Z.color, width: 1.5, dash: [5, 5], points: { show: false }, show: true },
+    ]
+
+    return {
+      uplotData: [timestamps, total, sideA, sideZ] as uPlot.AlignedData,
+      uplotSeries: series,
+    }
+  }, [hours, SERIES_CONFIG.total.color, SERIES_CONFIG.A.color, SERIES_CONFIG.Z.color])
+
+  const axes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map(v => `${v.toFixed(1)}%`) },
+  ], [])
+
+  const scales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: { auto: false, range: [0, 100] },
+  }), [])
+
+  const { plotRef } = useUPlotChart({
+    containerRef: chartRef,
+    data: uplotData,
+    series: uplotSeries,
+    height: 128,
+    axes,
+    scales,
+  })
+
+  // Sync toggle state to series visibility
+  useEffect(() => {
+    const u = plotRef.current
+    if (!u) return
+    for (let i = 0; i < seriesKeys.length; i++) {
+      const key = seriesKeys[i]
+      const seriesIdx = i + 1
+      const shouldShow = enabledSeries.has(key) && (key === 'total' || availableSeries.has(key))
+      if (u.series[seriesIdx]?.show !== shouldShow) {
+        u.setSeries(seriesIdx, { show: shouldShow })
+      }
+    }
+  })
+
+  // Sync hover opacity
+  useLayoutEffect(() => {
+    const u = plotRef.current
+    if (!u) return
+    let changed = false
+    for (let i = 0; i < seriesKeys.length; i++) {
+      const key = seriesKeys[i]
+      const seriesIdx = i + 1
+      let alpha = 1
+      if (hoveredSeries) {
+        alpha = hoveredSeries === key ? 1 : 0.15
+      }
+      const s = u.series[seriesIdx]
+      if (s && (s as uPlot.Series & { alpha?: number }).alpha !== alpha) {
+        ;(s as uPlot.Series & { alpha?: number }).alpha = alpha
+        changed = true
+      }
+    }
+    if (changed) u.redraw()
+  })
 
   return (
     <>
@@ -589,17 +616,7 @@ function LinkPacketLossChart({ hours, bucketMinutes, controlsWidth = 'w-32' }: L
 
       {/* Chart */}
       <div className="flex-1 min-w-0 h-32">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-            <XAxis dataKey="time" tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={{ stroke: gridColor }} interval="preserveStartEnd" minTickGap={50} />
-            <YAxis tick={{ fontSize: 10, fill: textColor }} tickLine={false} axisLine={false} width={40} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-            <RechartsTooltip content={<CustomTooltip />} />
-            {enabledSeries.has('total') && <Line type="monotone" dataKey="total" stroke={SERIES_CONFIG.total.color} strokeWidth={2} strokeOpacity={!hoveredSeries || hoveredSeries === 'total' ? 1 : 0.15} dot={false} />}
-            {enabledSeries.has('A') && availableSeries.has('A') && <Line type="monotone" dataKey="A" stroke={SERIES_CONFIG.A.color} strokeWidth={1.5} strokeDasharray="5 5" strokeOpacity={!hoveredSeries || hoveredSeries === 'A' ? 1 : 0.15} dot={false} />}
-            {enabledSeries.has('Z') && availableSeries.has('Z') && <Line type="monotone" dataKey="Z" stroke={SERIES_CONFIG.Z.color} strokeWidth={1.5} strokeDasharray="5 5" strokeOpacity={!hoveredSeries || hoveredSeries === 'Z' ? 1 : 0.15} dot={false} />}
-          </LineChart>
-        </ResponsiveContainer>
+        <div ref={chartRef} className="w-full h-full" />
       </div>
     </>
   )
