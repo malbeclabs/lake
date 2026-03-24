@@ -139,6 +139,84 @@ func dashboardTimeFilter(r *http.Request) (timeFilter string, bucketInterval str
 	return
 }
 
+// rollupEffectiveBucket returns a sensible bucket for the given time range,
+// enforcing a minimum of 5 MINUTE since rollup tables have 5m granularity.
+func rollupEffectiveBucket(timeRange, bucket string) string {
+	if bucket != "" {
+		return bucket
+	}
+	switch timeRange {
+	case "1h", "3h", "6h", "12h", "24h":
+		return "5 MINUTE"
+	case "3d":
+		return "10 MINUTE"
+	case "7d":
+		return "30 MINUTE"
+	case "14d", "30d":
+		return "1 HOUR"
+	default:
+		return "5 MINUTE"
+	}
+}
+
+// rollupBucketForDuration returns a sensible bucket interval for the given duration,
+// enforcing a minimum of 5 MINUTE since rollup tables have 5m granularity.
+func rollupBucketForDuration(d time.Duration) string {
+	switch {
+	case d < 3*24*time.Hour:
+		return "5 MINUTE"
+	case d < 7*24*time.Hour:
+		return "30 MINUTE"
+	default:
+		return "1 HOUR"
+	}
+}
+
+// rollupTimeFilter extracts time filter and bucket interval from the request
+// for use with rollup tables. Uses bucket_ts instead of event_ts and enforces
+// a minimum 5 MINUTE bucket interval.
+func rollupTimeFilter(r *http.Request) (timeFilter string, bucketInterval string) {
+	startStr := r.URL.Query().Get("start_time")
+	endStr := r.URL.Query().Get("end_time")
+
+	if startStr != "" && endStr != "" {
+		start, err1 := strconv.ParseInt(startStr, 10, 64)
+		end, err2 := strconv.ParseInt(endStr, 10, 64)
+		if err1 == nil && err2 == nil && end > start {
+			timeFilter = fmt.Sprintf("bucket_ts BETWEEN toDateTime(%d) AND toDateTime(%d)", start, end)
+			duration := time.Duration(end-start) * time.Second
+			bucketInterval = rollupBucketForDuration(duration)
+			if bp := parseBucket(r.URL.Query().Get("bucket")); bp != "" {
+				bucketInterval = clampBucket(bp)
+			}
+			return
+		}
+	}
+
+	timeRange := r.URL.Query().Get("time_range")
+	if timeRange == "" {
+		timeRange = "12h"
+	}
+	rangeInterval := dashboardTimeRange(timeRange)
+	timeFilter = fmt.Sprintf("bucket_ts >= now() - INTERVAL %s", rangeInterval)
+
+	bucketParam := parseBucket(r.URL.Query().Get("bucket"))
+	bucketInterval = rollupEffectiveBucket(timeRange, clampBucket(bucketParam))
+	return
+}
+
+// clampBucket enforces a minimum of 5 MINUTE for rollup queries.
+func clampBucket(b string) string {
+	switch b {
+	case "10 SECOND", "30 SECOND", "1 MINUTE":
+		return "5 MINUTE"
+	case "":
+		return ""
+	default:
+		return b
+	}
+}
+
 // buildDimensionFilters builds SQL WHERE clauses for dimension filters.
 // It returns:
 //   - filterSQL: clauses for dimension tables (m, d, l, co) with leading AND
@@ -242,6 +320,7 @@ func escapeSingleQuote(s string) string {
 // --- Query builders (exported for testing) ---
 
 // BuildStressQuery builds the ClickHouse query for the stress endpoint.
+// Reads from device_interface_rollup_5m and re-aggregates into the requested bucket.
 func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, threshold float64,
 	needsDeviceJoin, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin bool) (query string, grouped bool) {
 
@@ -271,21 +350,13 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		groupBySelect = ", u.kind AS group_key, u.kind AS group_label"
 	}
 
-	// When user join is needed, pass user_tunnel_id through the CTEs
-	var userTunnelSelect, userTunnelGroupBy, userTunnelPassthrough string
-	if needsUserJoin {
-		userTunnelSelect = ", f.user_tunnel_id"
-		userTunnelGroupBy = ", f.user_tunnel_id"
-		userTunnelPassthrough = ", ir.user_tunnel_id"
-	}
-
-	// Build dimension join clauses
+	// Build dimension join clauses on the rollup alias "f"
 	var dimJoins string
 	if needsDeviceJoin {
-		dimJoins += " INNER JOIN dz_devices_current d ON ir.device_pk = d.pk"
+		dimJoins += " INNER JOIN dz_devices_current d ON f.device_pk = d.pk"
 	}
 	// Always need link join for utilization metric
-	dimJoins += " LEFT JOIN dz_links_current l ON ir.link_pk = l.pk"
+	dimJoins += " LEFT JOIN dz_links_current l ON f.link_pk = l.pk"
 	if needsMetroJoin {
 		dimJoins += " LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk"
 	}
@@ -293,24 +364,27 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 		dimJoins += " LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk"
 	}
 	if needsUserJoin {
-		dimJoins += " LEFT JOIN dz_users_current u ON ir.user_tunnel_id = u.tunnel_id"
+		dimJoins += " LEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
 	}
 
-	// Build the metric expressions (separate in/out) and filter
+	// Build the metric expressions (separate in/out) and filter.
+	// Rollup has max_in_bps/max_out_bps per 5m bucket which represents the
+	// peak rate per interface per bucket — equivalent to what the old query
+	// computed via max(in_octets_delta * 8 / delta_duration).
 	var metricExprIn, metricExprOut, metricFilter string
 	switch metric {
 	case "throughput":
-		metricExprIn = "ir.in_bps"
-		metricExprOut = "ir.out_bps"
+		metricExprIn = "f.max_in_bps"
+		metricExprOut = "f.max_out_bps"
 	case "packets":
-		metricExprIn = "ir.in_pps"
-		metricExprOut = "ir.out_pps"
+		metricExprIn = "f.max_in_pps"
+		metricExprOut = "f.max_out_pps"
 	default: // utilization
 		metricExprIn = `CASE WHEN l.bandwidth_bps > 0
-			THEN ir.in_bps / l.bandwidth_bps
+			THEN f.max_in_bps / l.bandwidth_bps
 			ELSE NULL END`
 		metricExprOut = `CASE WHEN l.bandwidth_bps > 0
-			THEN ir.out_bps / l.bandwidth_bps
+			THEN f.max_out_bps / l.bandwidth_bps
 			ELSE NULL END`
 		metricFilter = " AND metric_val_in IS NOT NULL"
 	}
@@ -319,7 +393,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 	var selectCols, groupByCols string
 	if grouped {
 		selectCols = fmt.Sprintf(`
-			formatDateTime(bucket_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
+			formatDateTime(ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
 			group_key, group_label,
 			quantile(0.5)(metric_val_in) AS p50_in,
 			quantile(0.95)(metric_val_in) AS p95_in,
@@ -329,10 +403,10 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 			max(metric_val_out) AS max_out,
 			countIf(greatest(metric_val_in, metric_val_out) >= %f) AS stressed_count,
 			count() AS total_count`, threshold)
-		groupByCols = "bucket_ts, group_key, group_label"
+		groupByCols = "ts, group_key, group_label"
 	} else {
 		selectCols = fmt.Sprintf(`
-			formatDateTime(bucket_ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
+			formatDateTime(ts, '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS ts,
 			quantile(0.5)(metric_val_in) AS p50_in,
 			quantile(0.95)(metric_val_in) AS p95_in,
 			max(metric_val_in) AS max_in,
@@ -341,55 +415,42 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 			max(metric_val_out) AS max_out,
 			countIf(greatest(metric_val_in, metric_val_out) >= %f) AS stressed_count,
 			count() AS total_count`, threshold)
-		groupByCols = "bucket_ts"
+		groupByCols = "ts"
 	}
 
 	query = fmt.Sprintf(`
-		WITH interface_rates AS (
+		WITH with_metric AS (
 			SELECT
-				toStartOfInterval(event_ts, INTERVAL %s) AS bucket_ts,
-				f.device_pk, f.intf, f.link_pk%s,
-				max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
-				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
-				max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
-				max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
-			FROM fact_dz_device_interface_counters f
-			WHERE %s
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-				%s
-				%s
-			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk%s
-		),
-		with_metric AS (
-			SELECT
-				ir.bucket_ts, ir.device_pk, ir.intf, ir.link_pk, ir.in_bps, ir.out_bps,
+				toStartOfInterval(f.bucket_ts, INTERVAL %s) AS ts,
 				%s AS metric_val_in,
 				%s AS metric_val_out
 				%s
-				%s
-			FROM interface_rates ir
+			FROM device_interface_rollup_5m f
 			%s
-			WHERE 1=1 %s%s
+			WHERE f.%s
+				%s
+				%s
+				%s
+				%s
 		)
 		SELECT %s
 		FROM with_metric
 		WHERE 1=1 %s
 		GROUP BY %s
-		ORDER BY bucket_ts`,
-		bucketInterval, userTunnelSelect, timeFilter,
-		intfTypeSQL, intfFilterSQL,
-		userTunnelGroupBy,
+		ORDER BY ts`,
+		bucketInterval,
 		metricExprIn, metricExprOut, groupBySelect,
-		userTunnelPassthrough,
-		dimJoins, filterSQL, userKindSQL,
+		dimJoins,
+		timeFilter,
+		intfTypeSQL, intfFilterSQL,
+		filterSQL, userKindSQL,
 		selectCols, metricFilter, groupByCols)
 
 	return
 }
 
 // BuildTopQuery builds the ClickHouse query for the top endpoint.
+// Reads from device_interface_rollup_5m and aggregates across all buckets.
 func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
@@ -415,13 +476,14 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 	case "bandwidth_bps":
 		orderCol = "bandwidth_bps"
 	case "headroom":
-		orderCol = "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(ir.p95_in_bps, ir.p95_out_bps)"
+		orderCol = "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(p95_in_bps, p95_out_bps)"
 	}
 
-	// When user join is needed, add user_tunnel_id to CTE and join users in outer query
-	var userJoinSQL string
+	// When user join is needed, join users for filtering
+	var userJoinSQL, userKindFilter string
 	if needsUserJoin {
 		userJoinSQL = " LEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userKindFilter = userKindSQL
 	}
 
 	if entity == "device" {
@@ -432,24 +494,21 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 			orderCol = "max_in_bps + max_out_bps"
 		case "bandwidth_bps":
 			orderCol = "max_in_bps + max_out_bps"
-		case "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(ir.p95_in_bps, ir.p95_out_bps)":
+		case "COALESCE(toFloat64(l.bandwidth_bps), 0) - greatest(p95_in_bps, p95_out_bps)":
 			orderCol = "max_in_bps + max_out_bps"
 		}
 		return fmt.Sprintf(`
 			WITH device_rates AS (
 				SELECT
 					f.device_pk AS device_pk,
-					max(f.in_octets_delta * 8 / f.delta_duration) AS max_in_bps,
-					max(f.out_octets_delta * 8 / f.delta_duration) AS max_out_bps,
-					avg(f.in_octets_delta * 8 / f.delta_duration) AS avg_in_bps,
-					avg(f.out_octets_delta * 8 / f.delta_duration) AS avg_out_bps,
-					quantile(0.95)(f.in_octets_delta * 8 / f.delta_duration) AS p95_in_bps,
-					quantile(0.95)(f.out_octets_delta * 8 / f.delta_duration) AS p95_out_bps
-				FROM fact_dz_device_interface_counters f%s
-				WHERE %s
-					AND f.delta_duration > 0
-					AND f.in_octets_delta >= 0
-					AND f.out_octets_delta >= 0
+					max(f.max_in_bps) AS max_in_bps,
+					max(f.max_out_bps) AS max_out_bps,
+					avg(f.avg_in_bps) AS avg_in_bps,
+					avg(f.avg_out_bps) AS avg_out_bps,
+					quantile(0.95)(f.max_in_bps) AS p95_in_bps,
+					quantile(0.95)(f.max_out_bps) AS p95_out_bps
+				FROM device_interface_rollup_5m f%s
+				WHERE f.%s
 					%s
 					%s
 					%s
@@ -475,35 +534,24 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 			WHERE 1=1 %s
 			ORDER BY %s %s
 			LIMIT %d`,
-			userJoinSQL, timeFilter, intfTypeSQL, intfFilterSQL, userKindSQL, filterSQL, orderCol, dir, limit)
+			userJoinSQL, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter, filterSQL, orderCol, dir, limit)
 	}
 
 	// Interface-level: GROUP BY includes intf and link_pk for utilization.
-	// When filtering by user_kind, join users inside the CTE for filtering
-	// but don't group by user_tunnel_id to avoid duplicating rows.
-	var userJoinCTE, userKindFilter string
-	if needsUserJoin {
-		userJoinCTE = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
-		userKindFilter = userKindSQL
-	}
-
 	return fmt.Sprintf(`
 		WITH interface_rates AS (
 			SELECT
 				f.device_pk,
 				f.intf,
 				f.link_pk,
-				max(f.in_octets_delta * 8 / f.delta_duration) AS max_in_bps,
-				max(f.out_octets_delta * 8 / f.delta_duration) AS max_out_bps,
-				avg(f.in_octets_delta * 8 / f.delta_duration) AS avg_in_bps,
-				avg(f.out_octets_delta * 8 / f.delta_duration) AS avg_out_bps,
-				quantile(0.95)(f.in_octets_delta * 8 / f.delta_duration) AS p95_in_bps,
-				quantile(0.95)(f.out_octets_delta * 8 / f.delta_duration) AS p95_out_bps
-			FROM fact_dz_device_interface_counters f%s
-			WHERE %s
-				AND f.delta_duration > 0
-				AND f.in_octets_delta >= 0
-				AND f.out_octets_delta >= 0
+				max(f.max_in_bps) AS max_in_bps,
+				max(f.max_out_bps) AS max_out_bps,
+				avg(f.avg_in_bps) AS avg_in_bps,
+				avg(f.avg_out_bps) AS avg_out_bps,
+				quantile(0.95)(f.max_in_bps) AS p95_in_bps,
+				quantile(0.95)(f.max_out_bps) AS p95_out_bps
+			FROM device_interface_rollup_5m f%s
+			WHERE f.%s
 				%s
 				%s
 				%s
@@ -536,38 +584,36 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 		WHERE 1=1 %s
 		ORDER BY %s %s
 		LIMIT %d`,
-		userJoinCTE, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter,
+		userJoinSQL, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter,
 		filterSQL, orderCol, dir, limit)
 }
 
 // BuildDrilldownQuery builds the main ClickHouse query for the drilldown endpoint.
+// Reads from device_interface_rollup_5m and re-aggregates into the requested bucket.
 func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string) string {
 	return fmt.Sprintf(`
 		SELECT
-			formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+			formatDateTime(toStartOfInterval(f.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
 			f.intf,
-			max(f.in_octets_delta * 8 / f.delta_duration) AS in_bps,
-			max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
-			sum(COALESCE(f.in_discards_delta, 0)) AS in_discards,
-			sum(COALESCE(f.out_discards_delta, 0)) AS out_discards,
-			max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
-			max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
-		FROM fact_dz_device_interface_counters f
-		WHERE %s
+			max(f.max_in_bps) AS in_bps,
+			max(f.max_out_bps) AS out_bps,
+			toInt64(sum(f.in_discards)) AS in_discards,
+			toInt64(sum(f.out_discards)) AS out_discards,
+			max(f.max_in_pps) AS in_pps,
+			max(f.max_out_pps) AS out_pps
+		FROM device_interface_rollup_5m f
+		WHERE f.%s
 			AND f.device_pk = '%s'
 			%s
-			AND f.delta_duration > 0
-			AND f.in_octets_delta >= 0
-			AND f.out_octets_delta >= 0
 		GROUP BY time, f.intf
 		ORDER BY time, f.intf`,
 		bucketInterval, timeFilter, escapeSingleQuote(devicePk), intfFilter)
 }
 
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
-// It pre-aggregates raw samples into time buckets (using max per bucket per interface)
-// before computing P50/P99, so the results align with what time-series charts display.
-func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps float64, limit int) string {
+// Reads from device_interface_rollup_5m. Each rollup row already represents one
+// 5-minute bucket with max throughput, so we compute P50/P99 across buckets directly.
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps float64, limit int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -591,85 +637,66 @@ func BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filte
 		orderCol = "p99_bps"
 	}
 
-	var userJoinCTE, userKindFilter string
+	var userJoinSQL, userKindFilter string
 	if needsUserJoin {
-		userJoinCTE = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userJoinSQL = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
 		userKindFilter = userKindSQL
 	}
 
 	return fmt.Sprintf(`
-		WITH bucketed AS (
-			SELECT
-				toStartOfInterval(f.event_ts, INTERVAL %s) AS bucket_ts,
-				f.device_pk AS device_pk,
-				f.intf AS intf,
-				f.link_pk AS link_pk,
-				max(greatest(
-					f.in_octets_delta * 8 / f.delta_duration,
-					f.out_octets_delta * 8 / f.delta_duration
-				)) AS throughput_bps,
-				CASE WHEN max(l.bandwidth_bps) > 0
-					THEN max(greatest(
-						f.in_octets_delta * 8 / f.delta_duration,
-						f.out_octets_delta * 8 / f.delta_duration
-					)) / max(l.bandwidth_bps)
-					ELSE NULL END AS utilization,
-				argMax(
-					CASE WHEN f.in_octets_delta >= f.out_octets_delta THEN 1 ELSE 0 END,
-					greatest(f.in_octets_delta * 8 / f.delta_duration, f.out_octets_delta * 8 / f.delta_duration)
-				) AS is_rx
-			FROM fact_dz_device_interface_counters f
-			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
-			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
-			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk%s
-			WHERE %s
-				AND f.delta_duration > 0
-				AND f.in_octets_delta >= 0
-				AND f.out_octets_delta >= 0
-				%s
-				%s
-				%s
-				%s
-			GROUP BY bucket_ts, f.device_pk, f.intf, f.link_pk
-		)
 		SELECT
-			b.device_pk,
+			f.device_pk,
 			d.code AS device_code,
-			b.intf,
+			f.intf,
 			COALESCE(m.code, '') AS metro_code,
 			COALESCE(toFloat64(l.bandwidth_bps), 0) AS bandwidth_bps,
-			quantile(0.5)(b.utilization) AS p50_util,
-			quantile(0.99)(b.utilization) AS p99_util,
+			quantile(0.5)(CASE WHEN COALESCE(l.bandwidth_bps, 0) > 0
+				THEN greatest(f.max_in_bps, f.max_out_bps) / l.bandwidth_bps
+				ELSE NULL END) AS p50_util,
+			quantile(0.99)(CASE WHEN COALESCE(l.bandwidth_bps, 0) > 0
+				THEN greatest(f.max_in_bps, f.max_out_bps) / l.bandwidth_bps
+				ELSE NULL END) AS p99_util,
 			CASE
 				WHEN COALESCE(toFloat64(l.bandwidth_bps), 0) > 0
-				THEN quantile(0.99)(b.utilization) - quantile(0.5)(b.utilization)
+				THEN quantile(0.99)(greatest(f.max_in_bps, f.max_out_bps) / l.bandwidth_bps)
+					- quantile(0.5)(greatest(f.max_in_bps, f.max_out_bps) / l.bandwidth_bps)
 				ELSE CASE
-					WHEN quantile(0.5)(b.throughput_bps) > 0
-					THEN (quantile(0.99)(b.throughput_bps) / quantile(0.5)(b.throughput_bps)) - 1
+					WHEN quantile(0.5)(greatest(f.max_in_bps, f.max_out_bps)) > 0
+					THEN (quantile(0.99)(greatest(f.max_in_bps, f.max_out_bps))
+						/ quantile(0.5)(greatest(f.max_in_bps, f.max_out_bps))) - 1
 					ELSE 0
 				END
 			END AS burstiness,
 			CASE
 				WHEN COALESCE(toFloat64(l.bandwidth_bps), 0) > 0
-				THEN countIf(b.utilization >= %f) / count()
+				THEN countIf(greatest(f.max_in_bps, f.max_out_bps) / l.bandwidth_bps >= %f) / count()
 				ELSE 0
 			END AS pct_time_stressed,
-			quantile(0.5)(b.throughput_bps) AS p50_bps,
-			quantile(0.99)(b.throughput_bps) AS p99_bps,
-			CASE WHEN argMax(b.is_rx, b.throughput_bps) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction,
+			quantile(0.5)(greatest(f.max_in_bps, f.max_out_bps)) AS p50_bps,
+			quantile(0.99)(greatest(f.max_in_bps, f.max_out_bps)) AS p99_bps,
+			CASE WHEN argMax(
+				CASE WHEN f.max_in_bps >= f.max_out_bps THEN 1 ELSE 0 END,
+				greatest(f.max_in_bps, f.max_out_bps)
+			) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction,
 			COALESCE(co.code, '') AS contributor_code
-		FROM bucketed b
-		INNER JOIN dz_devices_current d ON b.device_pk = d.pk
-		LEFT JOIN dz_links_current l ON b.link_pk = l.pk
+		FROM device_interface_rollup_5m f
+		INNER JOIN dz_devices_current d ON f.device_pk = d.pk
+		LEFT JOIN dz_links_current l ON f.link_pk = l.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
-		GROUP BY b.device_pk, b.intf, b.link_pk, d.code, m.code, l.bandwidth_bps, co.code
+		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk%s
+		WHERE f.%s
+			%s
+			%s
+			%s
+			%s
+		GROUP BY f.device_pk, f.intf, f.link_pk, d.code, m.code, l.bandwidth_bps, co.code
 		HAVING burstiness > 0
 			AND (COALESCE(toFloat64(l.bandwidth_bps), 0) > 0 OR p50_bps >= %f)
 		ORDER BY %s %s
 		LIMIT %d`,
-		bucketInterval, userJoinCTE, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter, threshold, minBps, orderCol, dir, limit)
+		threshold,
+		userJoinSQL, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter,
+		minBps, orderCol, dir, limit)
 }
 
 // BuildHealthQuery builds the ClickHouse query for the interface health endpoint.
@@ -695,9 +722,9 @@ func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL,
 		orderCol = "total_carrier_transitions"
 	}
 
-	var userJoinCTE, userKindFilter string
+	var userJoinSQL, userKindFilter string
 	if needsUserJoin {
-		userJoinCTE = "\n\t\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
+		userJoinSQL = "\n\t\tLEFT JOIN dz_users_current u ON f.user_tunnel_id = u.tunnel_id"
 		userKindFilter = userKindSQL
 	}
 
@@ -707,13 +734,12 @@ func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL,
 				f.device_pk AS device_pk,
 				f.intf AS intf,
 				f.link_pk AS link_pk,
-				sum(COALESCE(f.in_errors_delta, 0)) + sum(COALESCE(f.out_errors_delta, 0)) AS total_errors,
-				sum(COALESCE(f.in_discards_delta, 0)) + sum(COALESCE(f.out_discards_delta, 0)) AS total_discards,
-				sum(COALESCE(f.in_fcs_errors_delta, 0)) AS total_fcs_errors,
-				sum(COALESCE(f.carrier_transitions_delta, 0)) AS total_carrier_transitions,
-				count() AS sample_count
-			FROM fact_dz_device_interface_counters f%s
-			WHERE %s
+				toInt64(sum(f.in_errors) + sum(f.out_errors)) AS total_errors,
+				toInt64(sum(f.in_discards) + sum(f.out_discards)) AS total_discards,
+				toInt64(sum(f.in_fcs_errors)) AS total_fcs_errors,
+				toInt64(sum(f.carrier_transitions)) AS total_carrier_transitions
+			FROM device_interface_rollup_5m f%s
+			WHERE f.%s
 				%s
 				%s
 				%s
@@ -739,7 +765,7 @@ func BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL,
 		HAVING total_events > 0
 		ORDER BY %s %s
 		LIMIT %d`,
-		userJoinCTE, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter,
+		userJoinSQL, timeFilter, intfTypeSQL, intfFilterSQL, userKindFilter,
 		filterSQL,
 		orderCol, dir, limit)
 }
@@ -767,7 +793,7 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, _ := dashboardTimeFilter(r)
+	timeFilter, _ := rollupTimeFilter(r)
 
 	limit := 20
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -851,7 +877,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, bucketInterval := dashboardTimeFilter(r)
+	timeFilter, bucketInterval := rollupTimeFilter(r)
 
 	threshold := 0.8
 	if t := r.URL.Query().Get("threshold"); t != "" {
@@ -1042,7 +1068,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, _ := dashboardTimeFilter(r)
+	timeFilter, _ := rollupTimeFilter(r)
 
 	entity := r.URL.Query().Get("entity")
 	if entity == "" {
@@ -1130,7 +1156,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, bucketInterval := dashboardTimeFilter(r)
+	timeFilter, bucketInterval := rollupTimeFilter(r)
 
 	devicePk := r.URL.Query().Get("device_pk")
 	if devicePk == "" {
@@ -1201,7 +1227,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 				COALESCE(l.link_type, '') AS link_type
 			FROM (
 				SELECT DISTINCT intf, link_pk
-				FROM fact_dz_device_interface_counters
+				FROM device_interface_rollup_5m
 				WHERE device_pk = '%s'
 					AND intf IN (%s)
 					AND %s
@@ -1258,7 +1284,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	timeFilter, bucketInterval := dashboardTimeFilter(r)
+	timeFilter, _ := rollupTimeFilter(r)
 
 	threshold := 0.8
 	if t := r.URL.Query().Get("threshold"); t != "" {
@@ -1289,7 +1315,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, bucketInterval, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, limit)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, limit)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)

@@ -33,7 +33,7 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"contributor": {table: "dz_devices_current d JOIN dz_contributors_current c ON d.contributor_pk = c.pk", column: "c.code"},
 	},
 	"interfaces": {
-		"intf": {table: "fact_dz_device_interface_counters", column: "intf"},
+		"intf": {table: "device_interface_rollup_5m", column: "intf"},
 	},
 	"links": {
 		"status":      {table: "dz_links_current", column: "status"},
@@ -137,7 +137,7 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 
 	switch key {
 	case "interfaces/intf":
-		// Scope interface names by metro/device/contributor
+		// Scope interface names by metro/device/contributor using rollup table
 		var joins, wheres []string
 		joins = append(joins, "JOIN dz_devices_current d ON f.device_pk = d.pk")
 		if metro != "" {
@@ -156,11 +156,11 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 			wheres = append(wheres, fmt.Sprintf("l.link_type IN (%s)", quoteCSV(linkType)))
 		}
 		interval := factTableInterval(r)
-		whereClause := fmt.Sprintf("f.event_ts >= now() - INTERVAL %s AND f.intf IS NOT NULL AND f.intf != ''", interval)
+		whereClause := fmt.Sprintf("f.bucket_ts >= now() - INTERVAL %s AND f.intf IS NOT NULL AND f.intf != ''", interval)
 		if len(wheres) > 0 {
 			whereClause += " AND " + strings.Join(wheres, " AND ")
 		}
-		return fmt.Sprintf("SELECT DISTINCT f.intf AS val FROM fact_dz_device_interface_counters f %s WHERE %s ORDER BY val LIMIT 100",
+		return fmt.Sprintf("SELECT DISTINCT f.intf AS val FROM device_interface_rollup_5m f %s WHERE %s ORDER BY val LIMIT 100",
 			strings.Join(joins, " "), whereClause)
 
 	case "devices/metro":
@@ -265,6 +265,8 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 		timeFilter := ""
 		if strings.HasPrefix(fieldCfg.table, "fact_") {
 			timeFilter = fmt.Sprintf("event_ts >= now() - INTERVAL %s AND ", factTableInterval(r))
+		} else if strings.HasSuffix(fieldCfg.table, "_rollup_5m") {
+			timeFilter = fmt.Sprintf("bucket_ts >= now() - INTERVAL %s AND ", factTableInterval(r))
 		}
 		query = "SELECT DISTINCT " + fieldCfg.column + " AS val FROM " + fieldCfg.table + " WHERE " + timeFilter + fieldCfg.column + " IS NOT NULL AND " + fieldCfg.column + " != '' ORDER BY val LIMIT 100"
 	}
