@@ -48,11 +48,12 @@ const TUNNEL_COLORS = [
 
 const TIME_RANGES = ['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'] as const
 
-const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR'] as const
+const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR', '12 HOUR', '1 DAY'] as const
 const BUCKET_LABELS: Record<string, string> = {
   'auto': 'Auto',
   '10 SECOND': '10s', '30 SECOND': '30s', '1 MINUTE': '1m', '5 MINUTE': '5m',
-  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h', '4 HOUR': '4h',
+  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h',
+  '4 HOUR': '4h', '12 HOUR': '12h', '1 DAY': '1d',
 }
 
 type AggMethod = 'max' | 'avg' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
