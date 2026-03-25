@@ -1000,11 +1000,11 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     return (
       <div className="flex flex-col space-y-2">
         <div className="flex items-center gap-2">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-      </div>
-        <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
-          <p className="text-muted-foreground">No data available</p>
+          <h3 className="text-lg font-semibold">{title}</h3>
+          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        </div>
+        <div className="flex items-center justify-center h-[400px]">
+          {!loading && <p className="text-muted-foreground">No data available</p>}
         </div>
       </div>
     )

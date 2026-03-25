@@ -444,9 +444,9 @@ function TrafficPageContent() {
             actions={<DashboardFilters excludeMetrics={['utilization']} />}
           />
         </div>
-        <div className="flex items-center justify-between gap-3 mt-3">
+        <div className="flex items-center gap-3 mt-3">
           <DashboardFilterBadges />
-          <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-3 flex-shrink-0 ml-auto">
             <button
               onClick={() => setBidirectional(!bidirectional)}
               className={`px-3 py-1.5 text-sm border rounded-md transition-colors inline-flex items-center gap-1.5 ${
