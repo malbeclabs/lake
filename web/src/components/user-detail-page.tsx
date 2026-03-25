@@ -179,11 +179,6 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
 
     const axisStroke = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
 
-    // Compute x-axis bounds from selected time range
-    const rangeSeconds: Record<string, number> = {
-      '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
-      '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
-    }
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 224,

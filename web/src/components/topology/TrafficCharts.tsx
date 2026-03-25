@@ -6,7 +6,7 @@ import { useChartLegend } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
-import { fetchTrafficHistory, formatChartAxisRate, formatChartAxisPps, bucketLabels, resolveAutoBucket, presetToSeconds, type TimeRange, type TimeRangePreset, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
+import { fetchTrafficHistory, formatChartAxisRate, formatChartAxisPps, bucketLabels, resolveAutoBucket, type TimeRange, type TimeRangePreset, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
 import { TrafficFilters } from './TimeRangeSelector'
 
 const COLOR = '#3b82f6'

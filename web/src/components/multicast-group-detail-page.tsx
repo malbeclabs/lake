@@ -31,10 +31,7 @@ function formatPps(pps: number): string {
 
 type TrafficMetric = 'throughput' | 'packets'
 
-function formatTime(timeStr: string): string {
-  const d = new Date(timeStr)
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-}
+
 
 function formatStake(sol: number): string {
   if (sol === 0) return '—'
@@ -281,10 +278,6 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     },
   ], [metric])
 
-  const rangeSecondsMap: Record<string, number> = {
-    '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
-    '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
-  }
   const chartScales = useMemo((): uPlot.Scales => ({
     x: { time: true },
     y: { auto: true },
@@ -595,10 +588,6 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
     }
   }, [countData, steppedPaths])
 
-  const rangeSecondsMap: Record<string, number> = {
-    '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
-    '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
-  }
   const chartScales = useMemo((): uPlot.Scales => ({
     x: { time: true },
     y: { auto: true },

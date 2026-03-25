@@ -8,7 +8,7 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { type ChartLegendSeries } from './ChartLegend'
 import { ChartLegendTable } from './ChartLegendTable'
-import { fetchLatencyHistory, formatHoveredTime, presetToSeconds, type TimeRange, type BucketSize, type TrafficView } from './utils'
+import { fetchLatencyHistory, formatHoveredTime, type TimeRange, type BucketSize, type TrafficView } from './utils'
 
 const AGG_OPTIONS: { value: TrafficView; label: string }[] = [
   { value: 'peak', label: 'Max' },

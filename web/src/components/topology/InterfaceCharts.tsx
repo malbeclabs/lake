@@ -6,7 +6,7 @@ import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-leg
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { InterfaceLegendTable, type InterfaceValues } from './InterfaceLegendTable'
-import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, formatHoveredTime, resolveAutoBucket, presetToSeconds, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
+import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, formatHoveredTime, resolveAutoBucket, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
 import { fetchDeviceInterfaceHistory } from '@/lib/api'
 import { TrafficFilters } from './TimeRangeSelector'
 
