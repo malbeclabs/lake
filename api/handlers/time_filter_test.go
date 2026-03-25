@@ -108,8 +108,8 @@ func TestDashboardTimeFilter(t *testing.T) {
 		if timeFilter != "event_ts >= now() - INTERVAL 12 HOUR" {
 			t.Errorf("timeFilter = %q, want 12h default", timeFilter)
 		}
-		if bucketInterval != "1 MINUTE" {
-			t.Errorf("bucketInterval = %q, want %q", bucketInterval, "1 MINUTE")
+		if bucketInterval != "10 MINUTE" {
+			t.Errorf("bucketInterval = %q, want %q", bucketInterval, "10 MINUTE")
 		}
 	})
 
@@ -170,8 +170,8 @@ func TestDashboardTimeFilter(t *testing.T) {
 		// 30 day range
 		req := httptest.NewRequest(http.MethodGet, "/api/test?start_time=1700000000&end_time=1702592000", nil)
 		_, bucketInterval := dashboardTimeFilter(req)
-		if bucketInterval != "1 HOUR" {
-			t.Errorf("bucketInterval = %q, want %q for 30d range", bucketInterval, "1 HOUR")
+		if bucketInterval != "1 DAY" {
+			t.Errorf("bucketInterval = %q, want %q for 30d range", bucketInterval, "1 DAY")
 		}
 	})
 }
