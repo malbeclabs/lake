@@ -531,7 +531,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 		if breakdown != "interface" || (itemType != "device" && itemType != "link") {
 			query := fmt.Sprintf(`
 				SELECT
-					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%SZ') as time_bucket,
 					%s as avg_in, %s as avg_out,
 					%s as peak_in, %s as peak_out
 				FROM fact_dz_device_interface_counters
@@ -552,7 +552,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 			}
 			intfQuery := fmt.Sprintf(`
 				SELECT
-					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%SZ') as time_bucket,
 					%s as intf_key,
 					%s as avg_in, %s as avg_out,
 					%s as peak_in, %s as peak_out
@@ -610,7 +610,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 		if breakdown != "interface" || (itemType != "device" && itemType != "link") {
 			query := fmt.Sprintf(`
 				SELECT
-					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%SZ') as time_bucket,
 					AVG(%s) as avg_in, AVG(%s) as avg_out,
 					%s(%s) as peak_in, %s(%s) as peak_out
 				FROM device_interface_rollup_5m
@@ -630,7 +630,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 			}
 			intfQuery := fmt.Sprintf(`
 				SELECT
-					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%SZ') as time_bucket,
 					%s as intf_key,
 					AVG(%s) as avg_in, AVG(%s) as avg_out,
 					%s(%s) as peak_in, %s(%s) as peak_out
@@ -894,7 +894,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 				GROUP BY display_bucket
 			)
 			SELECT
-				formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+				formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%SZ') as time_bucket,
 				avg(f.rtt_us) / 1000.0 as avg_rtt_ms,
 				%s(f.rtt_us) / 1000.0 as p95_rtt_ms,
 				avg(abs(f.ipdv_us)) / 1000.0 as avg_jitter_ms,
@@ -951,7 +951,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 		query := fmt.Sprintf(`
 			SELECT
-				formatDateTime(toStartOfInterval(bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+				formatDateTime(toStartOfInterval(bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') as time_bucket,
 				AVG(a_avg_rtt_us + z_avg_rtt_us) / 2.0 / 1000.0 as avg_rtt_ms,
 				%s(greatest(a_%s_rtt_us, z_%s_rtt_us)) / 1000.0 as p95_rtt_ms,
 				AVG(a_avg_jitter_us + z_avg_jitter_us) / 2.0 / 1000.0 as avg_jitter_ms,

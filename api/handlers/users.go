@@ -339,7 +339,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 				WHERE pk = ?
 			)
 			SELECT
-				formatDateTime(toStartOfInterval(event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%s') as time,
+				formatDateTime(toStartOfInterval(event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') as time,
 				user_tunnel_id as tunnel_id,
 				%s(CASE WHEN delta_duration > 0 THEN out_octets_delta * 8 / delta_duration ELSE 0 END) as in_bps,
 				%s(CASE WHEN delta_duration > 0 THEN in_octets_delta * 8 / delta_duration ELSE 0 END) as out_bps,
@@ -388,7 +388,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 				WHERE pk = ?
 			)
 			SELECT
-				formatDateTime(toStartOfInterval(bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%s') as time,
+				formatDateTime(toStartOfInterval(bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') as time,
 				user_tunnel_id as tunnel_id,
 				%s(%s_out_bps) as in_bps,
 				%s(%s_in_bps) as out_bps,
