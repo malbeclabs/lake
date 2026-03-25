@@ -28,6 +28,8 @@ interface TrafficChartProps {
   onTimeRangeSelect?: (startSec: number, endSec: number) => void
   metric?: 'throughput' | 'packets' | 'utilization' | 'counters'
   loading?: boolean
+  /** Time range in seconds — sets x-axis min to show full range even with sparse data */
+  timeRangeSeconds?: number
 }
 
 // Represents one interface with paired in/out in bidirectional mode
@@ -88,7 +90,7 @@ function formatCountAxis(n: number): string {
   return Math.round(n).toString()
 }
 
-function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false }: TrafficChartProps) {
+function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false, timeRangeSeconds }: TrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
@@ -552,6 +554,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       scales: {
         x: {
           time: true,
+          ...(timeRangeSeconds ? { min: Date.now() / 1000 - timeRangeSeconds } : {}),
         },
         y: {
           auto: true,
