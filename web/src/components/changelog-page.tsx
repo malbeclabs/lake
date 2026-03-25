@@ -10,6 +10,67 @@ interface ChangelogEntry {
 
 const changelog: ChangelogEntry[] = [
   {
+    date: 'March 24, 2026',
+    changes: [
+      { type: 'improvement', description: 'Replace recharts with uPlot on status page charts' },
+      { type: 'improvement', description: 'Server-side listing filters with multi-filter support' },
+      { type: 'improvement', description: 'Rollup table migration for faster incidents, status, and timeline pages' },
+      { type: 'fix', description: 'Inflated traffic rates on validator and user listings' },
+    ],
+  },
+  {
+    date: 'March 19, 2026',
+    changes: [
+      { type: 'feature', description: 'ISIS topology indexed and surfaced across UI' },
+      { type: 'improvement', description: 'Committed latency used for path latency and k-shortest path finding' },
+      { type: 'improvement', description: 'Entity public key on detail pages with copy-to-clipboard' },
+      { type: 'improvement', description: 'Fade chart lines on hover over metric selectors' },
+      { type: 'improvement', description: 'Disable query polling in background tabs' },
+      { type: 'fix', description: 'Google sign-in for Brave browser' },
+      { type: 'fix', description: 'ClickHouse connection pool exhaustion under load' },
+    ],
+  },
+  {
+    date: 'March 17, 2026',
+    changes: [
+      { type: 'feature', description: 'Edge scoreboard page' },
+      { type: 'feature', description: 'Real-time slot view and condition filters on publisher check' },
+      { type: 'improvement', description: 'Page caching for edge scoreboard and publisher check' },
+      { type: 'improvement', description: 'Exclude loss probes from DZ latency comparison averages' },
+      { type: 'fix', description: 'Internal-only pages redirecting on refresh' },
+    ],
+  },
+  {
+    date: 'March 13, 2026',
+    changes: [
+      { type: 'feature', description: 'Tabular legends with values on latency and link status charts' },
+      { type: 'improvement', description: 'Provisioning links in disabled table and improved collecting cells' },
+      { type: 'improvement', description: 'Devices marked unhealthy when not sending latency probes' },
+      { type: 'fix', description: 'No-data classification for one-sided and collecting buckets' },
+      { type: 'fix', description: 'Inflated on-DZ validator count in performance view' },
+    ],
+  },
+  {
+    date: 'March 11, 2026',
+    changes: [
+      { type: 'feature', description: 'Ledger dashboard pages for Solana and DoubleZero' },
+      { type: 'improvement', description: 'Soft-drained and hard-drained links differentiated with stripe patterns' },
+      { type: 'improvement', description: 'Links with 1000ms committed RTT classified as provisioning' },
+      { type: 'fix', description: 'Stake share delta calculations and publisher shreds count' },
+    ],
+  },
+  {
+    date: 'March 9, 2026',
+    changes: [
+      { type: 'feature', description: 'Redesigned path latency page' },
+      { type: 'feature', description: 'FCS errors as a separate filter and metric' },
+      { type: 'improvement', description: 'Incident grouping by link with temporal deduplication' },
+      { type: 'improvement', description: 'Validator name, stake, and search on publisher check' },
+      { type: 'fix', description: 'Inflated issue duration on status banner' },
+      { type: 'fix', description: 'Ongoing incidents incorrectly showing as resolved' },
+    ],
+  },
+  {
     date: 'March 8, 2026',
     changes: [
       { type: 'feature', description: 'Incidents page with link and device scopes' },
