@@ -1,11 +1,13 @@
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  Tooltip,
-} from 'recharts'
+import { useMemo, useRef, useEffect, useCallback } from 'react'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
+import { useTheme } from '@/hooks/use-theme'
 import type { HistogramBucket } from '@/lib/api'
+
+function formatBucketDate(timestamp: string): string {
+  const date = new Date(timestamp)
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
 
 function formatBucketTime(timestamp: string): string {
   const date = new Date(timestamp)
@@ -15,14 +17,108 @@ function formatBucketTime(timestamp: string): string {
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
-function formatBucketDate(timestamp: string): string {
-  const date = new Date(timestamp)
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-}
-
 export function EventHistogram({ data, onBucketClick }: { data: HistogramBucket[], onBucketClick?: (bucket: HistogramBucket, nextBucket?: HistogramBucket) => void }) {
-  if (!data || data.length < 6) return null
+  const { resolvedTheme } = useTheme()
+  const chartRef = useRef<HTMLDivElement>(null)
+  const plotRef = useRef<uPlot | null>(null)
+  const dataRef = useRef(data)
+  dataRef.current = data
 
+  const uplotData = useMemo(() => {
+    if (!data || data.length === 0) return [[]] as uPlot.AlignedData
+    const timestamps = data.map(d => new Date(d.timestamp).getTime() / 1000)
+    const counts = data.map(d => d.count)
+    return [timestamps, counts] as uPlot.AlignedData
+  }, [data])
+
+  const barPaths = useMemo(() => uPlot.paths.bars?.({ size: [0.8, 20], gap: 1 }), [])
+
+  const series = useMemo((): uPlot.Series[] => [
+    {},
+    {
+      label: 'Events',
+      fill: 'rgba(59, 130, 246, 0.5)',
+      stroke: 'rgba(59, 130, 246, 0.8)',
+      width: 0,
+      paths: barPaths,
+      points: { show: false },
+    },
+  ], [barPaths])
+
+  const handleClick = useCallback((_u: uPlot, _seriesIdx: number | null, dataIdx: number | null) => {
+    if (!onBucketClick || dataIdx == null) return
+    const d = dataRef.current
+    if (dataIdx >= 0 && dataIdx < d.length) {
+      onBucketClick(d[dataIdx], d[dataIdx + 1])
+    }
+  }, [onBucketClick])
+
+  useEffect(() => {
+    if (!chartRef.current || uplotData[0].length === 0) {
+      plotRef.current?.destroy()
+      plotRef.current = null
+      return
+    }
+
+    plotRef.current?.destroy()
+
+    const opts: uPlot.Options = {
+      width: chartRef.current.offsetWidth,
+      height: 80,
+      series,
+      scales: { x: { time: true }, y: { auto: true, range: (_u, _min, max) => [0, max] } },
+      axes: [
+        { show: false },
+        { show: false },
+      ],
+      cursor: {
+        points: { show: false },
+        move: (u, left, top) => {
+          const idx = u.posToIdx(left)
+          if (idx >= 0 && idx < u.data[0].length) {
+            const snapped = Math.round(u.valToPos(u.data[0][idx], 'x'))
+            return [snapped, top]
+          }
+          return [left, top]
+        },
+      },
+      legend: { show: false },
+    }
+
+    plotRef.current = new uPlot(opts, uplotData, chartRef.current)
+
+    // Click handler
+    const overEl = plotRef.current.over
+    if (onBucketClick) {
+      overEl.style.cursor = 'pointer'
+    }
+    const clickHandler = () => {
+      const u = plotRef.current
+      if (!u || !onBucketClick) return
+      const idx = u.cursor.idx
+      if (idx != null && idx >= 0) {
+        handleClick(u, 1, idx)
+      }
+    }
+    overEl.addEventListener('click', clickHandler)
+
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        plotRef.current?.setSize({ width: entry.contentRect.width, height: 80 })
+      }
+    })
+    ro.observe(chartRef.current)
+
+    return () => {
+      overEl.removeEventListener('click', clickHandler)
+      ro.disconnect()
+      plotRef.current?.destroy()
+      plotRef.current = null
+    }
+  }, [uplotData, series, resolvedTheme, onBucketClick, handleClick])
+
+  // Early return after hooks
+  if (!data || data.length < 6) return null
   const maxCount = Math.max(...data.map(d => d.count))
   if (maxCount === 0) return null
 
@@ -30,57 +126,9 @@ export function EventHistogram({ data, onBucketClick }: { data: HistogramBucket[
   const lastDate = new Date(data[data.length - 1].timestamp)
   const spansDays = lastDate.getTime() - firstDate.getTime() > 24 * 60 * 60 * 1000
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleBarClick = (barData: any) => {
-    if (!onBucketClick || !barData?.payload) return
-    const clickedBucket = barData.payload as HistogramBucket
-    const idx = data.findIndex(b => b.timestamp === clickedBucket.timestamp)
-    const nextBucket = idx >= 0 ? data[idx + 1] : undefined
-    onBucketClick(clickedBucket, nextBucket)
-  }
-
   return (
     <div className="mb-4">
-      <div className="h-20">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-            <defs>
-              <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="hsl(220, 70%, 55%)" stopOpacity={0.8} />
-                <stop offset="100%" stopColor="hsl(220, 70%, 50%)" stopOpacity={0.3} />
-              </linearGradient>
-            </defs>
-            <XAxis
-              dataKey="timestamp"
-              axisLine={false}
-              tickLine={false}
-              tick={false}
-              hide
-            />
-            <Tooltip
-              cursor={{ fill: 'hsl(var(--foreground))', opacity: 0.1 }}
-              content={({ active, payload }) => {
-                if (!active || !payload?.[0]) return null
-                const bucket = payload[0].payload as HistogramBucket
-                return (
-                  <div className="bg-popover border border-border rounded px-2 py-1 text-xs shadow-lg">
-                    <div className="font-medium">{bucket.count} events</div>
-                    <div className="text-muted-foreground">{formatBucketDate(bucket.timestamp)}</div>
-                    {onBucketClick && <div className="text-muted-foreground/70 mt-0.5">Click to filter</div>}
-                  </div>
-                )
-              }}
-            />
-            <Bar
-              dataKey="count"
-              fill="url(#barGradient)"
-              radius={[2, 2, 0, 0]}
-              cursor={onBucketClick ? 'pointer' : undefined}
-              onClick={handleBarClick}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      <div ref={chartRef} className="h-20" />
       <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
         <span>{spansDays ? formatBucketDate(data[0].timestamp) : formatBucketTime(data[0].timestamp)}</span>
         <span>{spansDays ? formatBucketDate(data[data.length - 1].timestamp) : formatBucketTime(data[data.length - 1].timestamp)}</span>

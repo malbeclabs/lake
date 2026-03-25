@@ -58,7 +58,7 @@ import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
-import { StakePage } from '@/components/stake-page'
+
 import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
 import { SettingsPage } from '@/components/settings-page'
 import { ChangelogPage } from '@/components/changelog-page'
@@ -671,8 +671,6 @@ function AppContent() {
             <Route path="/incidents/links" element={<IncidentsPage />} />
             <Route path="/incidents/devices" element={<IncidentsPage />} />
 
-            {/* Stake analytics route */}
-            <Route path="/stake" element={<StakePage />} />
 
             {/* Settings */}
             <Route path="/settings" element={<SettingsPage />} />
