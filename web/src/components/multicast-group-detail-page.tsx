@@ -1,8 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info, Search } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info, Search, RefreshCw } from 'lucide-react'
 import uPlot from 'uplot'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
@@ -68,8 +67,27 @@ const TRAFFIC_COLORS = [
   '#7c5cbf', '#4a8fe7', '#3dad6f', '#d4854a', '#2ba3a8', '#c4a23d', '#c45fa0', '#6ba8f2',
 ]
 
-const TIME_RANGES = ['1h', '6h', '12h', '24h'] as const
-const BUCKET_OPTIONS = ['auto', '2s', '10s', '30s', '1m', '2m', '5m', '10m'] as const
+const TIME_RANGES = ['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'] as const
+const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR', '12 HOUR', '1 DAY'] as const
+const BUCKET_LABELS: Record<string, string> = {
+  'auto': 'Auto', '10 SECOND': '10s', '30 SECOND': '30s', '1 MINUTE': '1m', '5 MINUTE': '5m',
+  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h',
+  '4 HOUR': '4h', '12 HOUR': '12h', '1 DAY': '1d',
+}
+function resolveAutoBucket(timeRange: string): string {
+  switch (timeRange) {
+    case '1h': return '10 SECOND'
+    case '3h': return '30 SECOND'
+    case '6h': return '1 MINUTE'
+    case '12h': return '10 MINUTE'
+    case '24h': return '15 MINUTE'
+    case '3d': return '30 MINUTE'
+    case '7d': return '4 HOUR'
+    case '14d': return '12 HOUR'
+    case '30d': return '1 DAY'
+    default: return '5 MINUTE'
+  }
+}
 
 function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, onSelectMember }: {
   groupCode: string
@@ -78,20 +96,19 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   onHoverMember?: (seriesKey: string | null) => void
   onSelectMember?: (keys: Set<string>) => void
 }) {
-  const [timeRange, setTimeRange] = useState<string>('1h')
+  const queryClient = useQueryClient()
+  const [timeRange, setTimeRange] = useState<string>('24h')
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
   const [bucket, setBucket] = useState<string>('auto')
 
-  const autoBucketLabel: Record<string, string> = { '1h': '10s', '6h': '2m', '12h': '5m', '24h': '10m' }
+  const effectiveBucket = bucket === 'auto' ? resolveAutoBucket(timeRange) : bucket
+  const autoBucketLabel = BUCKET_LABELS[resolveAutoBucket(timeRange)] || '5m'
 
-  const bucketSeconds = bucket === 'auto' ? undefined : bucket.endsWith('m')
-    ? String(parseInt(bucket) * 60)
-    : String(parseInt(bucket))
-
-  const { data: trafficData, isLoading } = useQuery({
-    queryKey: ['multicast-traffic', groupCode, timeRange, bucket],
-    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange, bucketSeconds),
+  const { data: trafficData, isFetching } = useQuery({
+    queryKey: ['multicast-traffic', groupCode, timeRange, effectiveBucket],
+    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange, effectiveBucket),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
 
   // Build a lookup from device_pk+tunnel_id to display info
@@ -264,12 +281,23 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     },
   ], [metric])
 
+  const rangeSecondsMap: Record<string, number> = {
+    '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
+    '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
+  }
+  const chartScales = useMemo((): uPlot.Scales => {
+    const now = Date.now() / 1000
+    const rangeS = rangeSecondsMap[timeRange] || 86400
+    return { x: { time: true, min: now - rangeS, max: now }, y: { auto: true } }
+  }, [timeRange])
+
   const { plotRef } = useUPlotChart({
     containerRef: chartContainerRef,
     data: uplotData,
     series: uplotSeries,
     height: 224,
     axes: uplotAxes,
+    scales: chartScales,
     onCursorIdx: handleCursorIdx,
     onFocusSeries: handleFocusSeries,
   })
@@ -334,11 +362,24 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   }, [legendMaxHeight, legendFilteredKeys.length])
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-muted-foreground">
-          Traffic ({activeTab})
-        </h3>
+    <div className="border border-border rounded-lg p-4 bg-card group/chart">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-muted-foreground">
+            Traffic ({activeTab})
+          </h3>
+          {isFetching ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : (
+            <button
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['multicast-traffic', groupCode] })}
+              className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+              title="Refresh"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <select
             value={metric}
@@ -354,7 +395,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
             className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
           >
             {BUCKET_OPTIONS.map(b => (
-              <option key={b} value={b}>{b === 'auto' ? `auto (${autoBucketLabel[timeRange] || '30s'})` : b}</option>
+              <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
             ))}
           </select>
           <select
@@ -368,21 +409,19 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
           </select>
         </div>
       </div>
+      <div className="h-0.5 w-full overflow-hidden rounded-full mb-2">
+        {isFetching && (
+          <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+        )}
+      </div>
 
-      {isLoading && (
-        <div className="flex items-center justify-center h-56 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          Loading traffic data...
-        </div>
-      )}
-
-      {!isLoading && uplotData[0].length === 0 && (
+      {!trafficData && !isFetching && (
         <div className="flex items-center justify-center h-56 text-sm text-muted-foreground">
           No traffic data available
         </div>
       )}
 
-      {!isLoading && uplotData[0].length > 0 && (
+      {(trafficData || isFetching) && (
         <div>
           <div
             ref={chartContainerRef}
@@ -524,190 +563,114 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   )
 }
 
-const MEMBER_COUNT_TIME_RANGES = ['1h', '6h', '12h', '24h', '7d', '30d'] as const
-
 function MemberCountChart({ groupCode }: { groupCode: string }) {
+  const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<string>('7d')
-  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set())
+  const chartRef = useRef<HTMLDivElement>(null)
 
-  const toggleSeries = (key: string) => {
-    setHiddenSeries(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) {
-        next.delete(key)
-      } else {
-        next.add(key)
-      }
-      return next
-    })
-  }
-
-  const { data: countData, isLoading } = useQuery({
+  const { data: countData, isFetching } = useQuery({
     queryKey: ['multicast-member-counts', groupCode, timeRange],
     queryFn: () => fetchMulticastGroupMemberCounts(groupCode, timeRange),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
 
-  const chartData = useMemo(() => {
-    if (!countData || countData.length === 0) return []
-    const raw = countData.map(p => ({
-      time: new Date(p.time).getTime(),
-      publishers: p.publisher_count,
-      subscribers: p.subscriber_count,
-    }))
-    if (raw.length < 2) return raw.map(p => ({ ...p, time: new Date(p.time).toISOString() }))
-    // Densify: fill in points at regular intervals so tooltip hovers smoothly.
-    // With stepAfter, inserted points carry the last value forward and don't change the visual.
-    const first = raw[0].time
-    const last = raw[raw.length - 1].time
-    const span = last - first
-    const maxPoints = 200
-    const interval = Math.max(span / maxPoints, 60000) // at least 1 min apart
-    const dense: { time: string; publishers: number; subscribers: number }[] = []
-    let ri = 0
-    let curPub = raw[0].publishers
-    let curSub = raw[0].subscribers
-    for (let t = first; t <= last; t += interval) {
-      // Advance past any raw points at or before t
-      while (ri < raw.length && raw[ri].time <= t) {
-        curPub = raw[ri].publishers
-        curSub = raw[ri].subscribers
-        ri++
-      }
-      dense.push({ time: new Date(t).toISOString(), publishers: curPub, subscribers: curSub })
-    }
-    // Ensure the last raw point is included
-    if (dense.length === 0 || new Date(dense[dense.length - 1].time).getTime() < last) {
-      dense.push({ time: new Date(last).toISOString(), publishers: raw[raw.length - 1].publishers, subscribers: raw[raw.length - 1].subscribers })
-    }
-    return dense
-  }, [countData])
+  const steppedPaths = useMemo(() => uPlot.paths.stepped?.({ align: 1 }), [])
 
-  const yDomain = useMemo((): [number, number] => {
-    if (chartData.length === 0) return [0, 1]
-    const showPub = !hiddenSeries.has('publishers')
-    const showSub = !hiddenSeries.has('subscribers')
-    if (!showPub && !showSub) return [0, 1]
-    let min = Infinity
-    let max = 0
-    for (const row of chartData) {
-      if (showPub) {
-        if (row.publishers > max) max = row.publishers
-        if (row.publishers < min) min = row.publishers
-      }
-      if (showSub) {
-        if (row.subscribers > max) max = row.subscribers
-        if (row.subscribers < min) min = row.subscribers
-      }
+  const { uplotData, uplotSeries } = useMemo(() => {
+    if (!countData || countData.length === 0) {
+      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[] }
     }
-    if (!isFinite(min)) min = 0
-    // Add padding so flat lines aren't hugged to the edges
-    const range = max - min
-    const pad = range > 0 ? Math.ceil(range * 0.2) : Math.max(1, Math.ceil(max * 0.1))
-    return [Math.max(0, min - pad), max + pad]
-  }, [chartData, hiddenSeries])
+
+    const timestamps = countData.map(p => new Date(p.time).getTime() / 1000)
+    const pubs = countData.map(p => p.publisher_count)
+    const subs = countData.map(p => p.subscriber_count)
+
+    return {
+      uplotData: [timestamps, pubs, subs] as uPlot.AlignedData,
+      uplotSeries: [
+        {},
+        { label: 'Publishers', stroke: '#7c5cbf', width: 1.5, points: { show: false }, paths: steppedPaths },
+        { label: 'Subscribers', stroke: '#4a8fe7', width: 1.5, points: { show: false }, paths: steppedPaths },
+      ] as uPlot.Series[],
+    }
+  }, [countData, steppedPaths])
+
+  const rangeSecondsMap: Record<string, number> = {
+    '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
+    '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
+  }
+  const chartScales = useMemo((): uPlot.Scales => {
+    const now = Date.now() / 1000
+    const rangeS = rangeSecondsMap[timeRange] || 604800
+    return { x: { time: true, min: now - rangeS, max: now }, y: { auto: true } }
+  }, [timeRange])
+
+  const axes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map(v => String(Math.round(v))) },
+  ], [])
+
+  useUPlotChart({
+    containerRef: chartRef,
+    data: uplotData,
+    series: uplotSeries,
+    height: 160,
+    axes,
+    scales: chartScales,
+  })
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card mt-6">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-muted-foreground">Members Over Time</h3>
+    <div className="border border-border rounded-lg p-4 bg-card mt-6 group/chart">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-muted-foreground">Members Over Time</h3>
+          {isFetching ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : (
+            <button
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['multicast-member-counts', groupCode] })}
+              className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+              title="Refresh"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         <select
           value={timeRange}
           onChange={e => setTimeRange(e.target.value)}
           className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
         >
-          {MEMBER_COUNT_TIME_RANGES.map(r => (
+          {TIME_RANGES.map(r => (
             <option key={r} value={r}>{r}</option>
           ))}
         </select>
       </div>
+      <div className="h-0.5 w-full overflow-hidden rounded-full mb-2">
+        {isFetching && (
+          <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+        )}
+      </div>
 
-      {isLoading && (
-        <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          Loading member counts...
-        </div>
-      )}
-
-      {!isLoading && chartData.length === 0 && (
+      {!countData && !isFetching && (
         <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
           No member count data available
         </div>
       )}
 
-      {!isLoading && chartData.length > 0 && (
+      {(countData || isFetching) && (
         <div>
-          <ResponsiveContainer width="100%" height={160} className="outline-none [&_svg]:outline-none [&_*]:outline-none">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={formatTime}
-              />
-              <YAxis
-                tick={{ fontSize: 9 }}
-                tickLine={false}
-                axisLine={false}
-                width={35}
-                domain={yDomain}
-                allowDecimals={false}
-              />
-              <RechartsTooltip
-                contentStyle={{
-                  backgroundColor: 'var(--card)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                }}
-                labelFormatter={(label) => {
-                  const d = new Date(label)
-                  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                }}
-              />
-              <Line
-                type="stepAfter"
-                dataKey="publishers"
-                name="Publishers"
-                stroke="#7c5cbf"
-                strokeWidth={1.5}
-                strokeOpacity={hiddenSeries.has('publishers') ? 0 : 1}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Line
-                type="stepAfter"
-                dataKey="subscribers"
-                name="Subscribers"
-                stroke="#4a8fe7"
-                strokeWidth={1.5}
-                strokeOpacity={hiddenSeries.has('subscribers') ? 0 : 1}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <div ref={chartRef} className="h-40" />
           <div className="flex items-center justify-center gap-4 mt-2 text-xs text-muted-foreground">
-            <button
-              type="button"
-              className="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity"
-              style={{ opacity: hiddenSeries.has('publishers') ? 0.4 : 1 }}
-              onClick={() => toggleSeries('publishers')}
-            >
+            <span className="flex items-center gap-1.5">
               <div className="w-3 h-0.5 rounded-full" style={{ backgroundColor: '#7c5cbf' }} />
-              <span style={{ textDecoration: hiddenSeries.has('publishers') ? 'line-through' : 'none' }}>Publishers</span>
-            </button>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity"
-              style={{ opacity: hiddenSeries.has('subscribers') ? 0.4 : 1 }}
-              onClick={() => toggleSeries('subscribers')}
-            >
+              Publishers
+            </span>
+            <span className="flex items-center gap-1.5">
               <div className="w-3 h-0.5 rounded-full" style={{ backgroundColor: '#4a8fe7' }} />
-              <span style={{ textDecoration: hiddenSeries.has('subscribers') ? 'line-through' : 'none' }}>Subscribers</span>
-            </button>
+              Subscribers
+            </span>
           </div>
         </div>
       )}

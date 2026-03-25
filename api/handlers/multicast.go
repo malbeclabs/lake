@@ -702,33 +702,8 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "1h"
-	}
-
-	// Default bucket sizes per time range
-	var interval, lookback string
-	switch timeRange {
-	case "1h":
-		interval, lookback = "10", "1 HOUR"
-	case "6h":
-		interval, lookback = "120", "6 HOUR"
-	case "12h":
-		interval, lookback = "300", "12 HOUR"
-	case "24h":
-		interval, lookback = "600", "24 HOUR"
-	default:
-		interval, lookback = "30", "1 HOUR"
-	}
-
-	// Allow explicit bucket override (in seconds)
-	if bucket := r.URL.Query().Get("bucket"); bucket != "" && bucket != "auto" {
-		switch bucket {
-		case "2", "10", "30", "60", "120", "300", "600":
-			interval = bucket
-		}
-	}
+	// Use shared time filter with raw/rollup routing
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	start := time.Now()
 
@@ -742,9 +717,10 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get members with their device_pk, tunnel_id, and mode
+	// Get members with their pk, device_pk, tunnel_id, and mode
 	membersQuery := `
 		SELECT
+			u.pk,
 			COALESCE(u.device_pk, '') as device_pk,
 			COALESCE(u.tunnel_id, 0) as tunnel_id,
 			CASE
@@ -770,26 +746,29 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	defer memberRows.Close()
 
 	type memberInfo struct {
+		userPK   string
 		devicePK string
 		tunnelID int32
 		mode     string
 	}
 	var members []memberInfo
 	tunnelIDs := make([]int64, 0)
+	userPKs := make([]string, 0)
 
 	for memberRows.Next() {
 		var m memberInfo
-		if err := memberRows.Scan(&m.devicePK, &m.tunnelID, &m.mode); err != nil {
+		if err := memberRows.Scan(&m.userPK, &m.devicePK, &m.tunnelID, &m.mode); err != nil {
 			slog.Error("multicast group traffic members scan error", "error", err)
 			continue
 		}
 		if m.tunnelID > 0 {
 			members = append(members, m)
 			tunnelIDs = append(tunnelIDs, int64(m.tunnelID))
+			userPKs = append(userPKs, m.userPK)
 		}
 	}
 
-	if len(tunnelIDs) == 0 {
+	if len(members) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte("[]"))
 		return
@@ -809,38 +788,64 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 
 	// Query traffic time series — filter by device_pk and tunnel_id independently,
 	// then post-filter to exact (device_pk, tunnel_id) pairs to avoid cross-matches
-	trafficQuery := `
-		SELECT
-			formatDateTime(toStartOfInterval(event_ts, INTERVAL ` + interval + ` SECOND), '%Y-%m-%dT%H:%i:%s') as time,
-			device_pk,
-			user_tunnel_id as tunnel_id,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-				ELSE 0
-			END as in_bps,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-				ELSE 0
-			END as out_bps,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(in_pkts_delta) / SUM(delta_duration)
-				ELSE 0
-			END as in_pps,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(out_pkts_delta) / SUM(delta_duration)
-				ELSE 0
-			END as out_pps
-		FROM fact_dz_device_interface_counters
-		WHERE event_ts > now() - INTERVAL ` + lookback + `
-			AND user_tunnel_id IN (?)
-			AND device_pk IN (?)
-			AND delta_duration > 0
-			AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
-		GROUP BY time, device_pk, tunnel_id
-		ORDER BY time, device_pk, tunnel_id
-	`
+	var trafficQuery string
+	if useRaw {
+		trafficQuery = fmt.Sprintf(`
+			SELECT
+				formatDateTime(toStartOfInterval(event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') as time,
+				device_pk,
+				user_tunnel_id as tunnel_id,
+				CASE WHEN SUM(delta_duration) > 0
+					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
+					ELSE 0
+				END as in_bps,
+				CASE WHEN SUM(delta_duration) > 0
+					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
+					ELSE 0
+				END as out_bps,
+				CASE WHEN SUM(delta_duration) > 0
+					THEN SUM(in_pkts_delta) / SUM(delta_duration)
+					ELSE 0
+				END as in_pps,
+				CASE WHEN SUM(delta_duration) > 0
+					THEN SUM(out_pkts_delta) / SUM(delta_duration)
+					ELSE 0
+				END as out_pps
+			FROM fact_dz_device_interface_counters
+			WHERE %s
+				AND user_tunnel_id IN (?)
+				AND device_pk IN (?)
+				AND delta_duration > 0
+				AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
+			GROUP BY time, device_pk, tunnel_id
+			ORDER BY time, device_pk, tunnel_id
+		`, bucketInterval, timeFilter)
+	} else {
+		trafficQuery = fmt.Sprintf(`
+			SELECT
+				formatDateTime(toStartOfInterval(bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') as time,
+				device_pk,
+				user_tunnel_id as tunnel_id,
+				MAX(max_in_bps) as in_bps,
+				MAX(max_out_bps) as out_bps,
+				MAX(max_in_pps) as in_pps,
+				MAX(max_out_pps) as out_pps
+			FROM device_interface_rollup_5m
+			WHERE %s
+				AND user_pk IN (?)
+				AND device_pk IN (?)
+			GROUP BY time, device_pk, tunnel_id
+			ORDER BY time, device_pk, tunnel_id
+		`, bucketInterval, timeFilter)
+	}
 
-	trafficRows, err := envDB(ctx).Query(ctx, trafficQuery, tunnelIDs, devicePKs)
+	var filterIDs any
+	if useRaw {
+		filterIDs = tunnelIDs
+	} else {
+		filterIDs = userPKs
+	}
+	trafficRows, err := envDB(ctx).Query(ctx, trafficQuery, filterIDs, devicePKs)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -993,10 +998,10 @@ func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 				WHERE ts <= cutoff.t
 			)
 		SELECT time, publisher_count, subscriber_count FROM (
-			SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
+			SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%sZ') as time, publisher_count, subscriber_count
 			FROM filtered WHERE rn_before = 1
 			UNION ALL
-			SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%s') as time, publisher_count, subscriber_count
+			SELECT formatDateTime(ts, '%Y-%m-%dT%H:%i:%sZ') as time, publisher_count, subscriber_count
 			FROM running
 			WHERE ts > now() - INTERVAL ` + lookback + `
 		) ORDER BY time
