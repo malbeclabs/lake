@@ -1021,6 +1021,11 @@ function MulticastTrafficChartSection({
     const u = plotRef.current
     if (!u || serisTidMap.length === 0) return
 
+    // Only apply hover dimming if the hovered tunnel exists in the chart data
+    const hoveredTid = effectiveHoveredSeries !== null && serisTidMap.includes(effectiveHoveredSeries)
+      ? effectiveHoveredSeries
+      : null
+
     let changed = false
     for (let i = 0; i < serisTidMap.length; i++) {
       const tid = serisTidMap[i]
@@ -1028,13 +1033,13 @@ function MulticastTrafficChartSection({
       if (seriesIdx >= u.series.length) continue
 
       const isVisible = visibleSeries.has(tid)
-      const isHoveredPreview = !isVisible && effectiveHoveredSeries === tid
+      const isHoveredPreview = !isVisible && hoveredTid === tid
       let alpha: number
       if (isHoveredPreview) {
         alpha = 0.35
       } else if (!isVisible) {
         alpha = 0
-      } else if (effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid) {
+      } else if (hoveredTid !== null && hoveredTid !== tid) {
         alpha = 0.15
       } else {
         alpha = 1
