@@ -264,17 +264,13 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       plotRef.current = new uPlot(opts, uplotData.aligned, container)
     }
 
-    // Create chart immediately if container has width, otherwise wait for layout
-    const initialWidth = container.offsetWidth
-    if (initialWidth > 0) {
-      createChart(initialWidth)
-    }
-
+    // Defer chart creation to ResizeObserver to avoid React Strict Mode
+    // double-invocation creating and destroying the chart twice.
+    // The observer fires once after the DOM settles with the correct width.
     const resizeObserver = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width
       if (!width) return
       if (!plotRef.current) {
-        // Chart hasn't been created yet (container had 0 width on mount)
         createChart(width)
       } else {
         plotRef.current.setSize({ width, height: 240 })
