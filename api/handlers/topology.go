@@ -1288,95 +1288,46 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		metro1, metro2 = metro2, metro1
 	}
 
-	// Parse time range (default 24h)
-	timeRange := r.URL.Query().Get("range")
-	if timeRange == "" {
-		timeRange = "24h"
-	}
-
-	var intervalHours int
-	switch timeRange {
-	case "1h":
-		intervalHours = 1
-	case "6h":
-		intervalHours = 6
-	case "12h":
-		intervalHours = 12
-	case "3d":
-		intervalHours = 72
-	case "7d":
-		intervalHours = 168
-	default:
-		intervalHours = 24
-	}
-
-	// Calculate bucket size (aim for ~48 points)
-	bucketMinutes := (intervalHours * 60) / 48
-	if bucketMinutes < 5 {
-		bucketMinutes = 5
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	start := time.Now()
 
-	// Query to get time-bucketed latency data for both DZ and Internet
-	query := fmt.Sprintf(`
+	// Fixed 24h window with 30-minute buckets (48 points).
+	// DZ side uses link_rollup_5m (re-aggregated to 30m); internet side uses raw fact table.
+	query := `
 		WITH
-		lookback AS (
-			SELECT now() - INTERVAL %d HOUR AS min_ts
-		),
 		time_buckets AS (
-			SELECT
-				toStartOfInterval(event_ts, INTERVAL %d MINUTE) AS bucket
-			FROM (
-				SELECT arrayJoin(
-					arrayMap(
-						x -> now() - INTERVAL x * %d MINUTE,
-						range(0, %d)
-					)
-				) AS event_ts
-			)
+			SELECT toStartOfInterval(
+				now() - INTERVAL number * 30 MINUTE, INTERVAL 30 MINUTE
+			) AS bucket
+			FROM numbers(48)
 		),
 		dz_data AS (
 			SELECT
-				toStartOfInterval(if(h.sampling_interval_us > 0 AND f.sample_index >= h.latest_sample_index - 1000, f.ingested_at, f.event_ts), INTERVAL %d MINUTE) AS bucket,
-				round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
-				round(avg(f.ipdv_us) / 1000.0, 2) AS avg_jitter_ms,
-				count() AS sample_count
-			FROM fact_dz_device_link_latency f
-			CROSS JOIN lookback
-			JOIN dz_links_current l ON f.link_pk = l.pk
+				toStartOfInterval(r.bucket_ts, INTERVAL 30 MINUTE) AS bucket,
+				round(AVG((r.a_avg_rtt_us + r.z_avg_rtt_us) / 2.0) / 1000.0, 2) AS avg_rtt_ms,
+				round(AVG((r.a_avg_jitter_us + r.z_avg_jitter_us) / 2.0) / 1000.0, 2) AS avg_jitter_ms,
+				SUM(r.a_samples + r.z_samples) AS sample_count
+			FROM link_rollup_5m r
+			JOIN dz_links_current l ON r.link_pk = l.pk
 			JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 			JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
-			LEFT JOIN (
-				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
-					   max(latest_sample_index) AS latest_sample_index,
-					   any(sampling_interval_us) AS sampling_interval_us
-				FROM fact_dz_device_link_latency_sample_header
-				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
-			) h ON f.origin_device_pk = h.origin_device_pk
-				AND f.target_device_pk = h.target_device_pk
-				AND f.link_pk = h._hdr_link_pk
-				AND f.epoch = h.epoch
-			WHERE f.ingested_at >= lookback.min_ts
-				AND f.link_pk != ''
-				AND f.loss = false
+			WHERE r.bucket_ts >= now() - INTERVAL 24 HOUR
+				AND r.link_pk != ''
 				AND least(ma.code, mz.code) = $1
 				AND greatest(ma.code, mz.code) = $2
 			GROUP BY bucket
 		),
 		inet_data AS (
 			SELECT
-				toStartOfInterval(if(ih.sampling_interval_us > 0 AND f.sample_index >= ih.latest_sample_index - 1000, f.ingested_at, f.event_ts), INTERVAL %d MINUTE) AS bucket,
+				toStartOfInterval(if(ih.sampling_interval_us > 0 AND f.sample_index >= ih.latest_sample_index - 1000, f.ingested_at, f.event_ts), INTERVAL 30 MINUTE) AS bucket,
 				round(avg(f.rtt_us) / 1000.0, 2) AS avg_rtt_ms,
 				round(avg(f.ipdv_us) / 1000.0, 2) AS avg_jitter_ms,
 				count() AS sample_count
 			FROM fact_dz_internet_metro_latency f
-			CROSS JOIN lookback
 			LEFT JOIN (
 				SELECT origin_metro_pk, target_metro_pk, data_provider AS _hdr_data_provider, epoch,
 					   latest_sample_index, sampling_interval_us
@@ -1387,7 +1338,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 				AND f.epoch = ih.epoch
 			JOIN dz_metros_current ma ON f.origin_metro_pk = ma.pk
 			JOIN dz_metros_current mz ON f.target_metro_pk = mz.pk
-			WHERE f.ingested_at >= lookback.min_ts
+			WHERE f.ingested_at >= now() - INTERVAL 24 HOUR
 				AND least(ma.code, mz.code) = $1
 				AND greatest(ma.code, mz.code) = $2
 			GROUP BY bucket
@@ -1403,10 +1354,10 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		FROM time_buckets tb
 		LEFT JOIN dz_data dz ON tb.bucket = dz.bucket
 		LEFT JOIN inet_data inet ON tb.bucket = inet.bucket
-		WHERE tb.bucket >= now() - INTERVAL %d HOUR
-		  AND tb.bucket < toStartOfInterval(now(), INTERVAL %d MINUTE)
+		WHERE tb.bucket >= now() - INTERVAL 24 HOUR
+		  AND tb.bucket < toStartOfInterval(now(), INTERVAL 30 MINUTE)
 		ORDER BY tb.bucket ASC
-	`, intervalHours, bucketMinutes, bucketMinutes, 48, bucketMinutes, bucketMinutes, intervalHours, bucketMinutes)
+	`
 
 	rows, err := envDB(ctx).Query(ctx, query, metro1, metro2)
 	duration := time.Since(start)
