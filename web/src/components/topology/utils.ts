@@ -72,7 +72,7 @@ export function formatStake(stakeSol: number): string {
 }
 
 // Bucket size type matching the traffic dashboard
-export type BucketSize = 'auto' | '10 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '30 MINUTE' | '1 HOUR'
+export type BucketSize = 'auto' | '10 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | '4 HOUR' | '12 HOUR' | '1 DAY'
 
 // Metric type for traffic charts
 export type TrafficMetric = 'throughput' | 'packets'
@@ -81,15 +81,15 @@ export type TrafficMetric = 'throughput' | 'packets'
 // This mirrors the backend's calculateBucketSize() function and matches the traffic dashboard.
 export function resolveAutoBucket(preset: TimeRangePreset): BucketSize {
   switch (preset) {
-    case '15m': return '10 SECOND'
-    case '30m': return '10 SECOND'
     case '1h': return '10 SECOND'
     case '3h': return '30 SECOND'
     case '6h': return '1 MINUTE'
-    case '12h': return '1 MINUTE'
-    case '24h': return '5 MINUTE'
-    case '2d': return '10 MINUTE'
-    case '7d': return '30 MINUTE'
+    case '12h': return '10 MINUTE'
+    case '24h': return '15 MINUTE'
+    case '3d': return '30 MINUTE'
+    case '7d': return '4 HOUR'
+    case '14d': return '12 HOUR'
+    case '30d': return '1 DAY'
     default: return '5 MINUTE'
   }
 }
@@ -101,8 +101,12 @@ export const bucketLabels: Record<BucketSize, string> = {
   '1 MINUTE': '1m',
   '5 MINUTE': '5m',
   '10 MINUTE': '10m',
+  '15 MINUTE': '15m',
   '30 MINUTE': '30m',
   '1 HOUR': '1h',
+  '4 HOUR': '4h',
+  '12 HOUR': '12h',
+  '1 DAY': '1d',
 }
 
 /** Convert a BucketSize to seconds */
@@ -113,8 +117,12 @@ export function bucketSizeToSeconds(b: BucketSize): number {
     case '1 MINUTE': return 60
     case '5 MINUTE': return 300
     case '10 MINUTE': return 600
+    case '15 MINUTE': return 900
     case '30 MINUTE': return 1800
     case '1 HOUR': return 3600
+    case '4 HOUR': return 14400
+    case '12 HOUR': return 43200
+    case '1 DAY': return 86400
     default: return 300
   }
 }
@@ -122,15 +130,15 @@ export function bucketSizeToSeconds(b: BucketSize): number {
 /** Convert a TimeRangePreset to seconds */
 export function presetToSeconds(preset: TimeRangePreset): number {
   switch (preset) {
-    case '15m': return 900
-    case '30m': return 1800
     case '1h': return 3600
     case '3h': return 10800
     case '6h': return 21600
     case '12h': return 43200
     case '24h': return 86400
-    case '2d': return 172800
+    case '3d': return 259200
     case '7d': return 604800
+    case '14d': return 1209600
+    case '30d': return 2592000
     default: return 86400
   }
 }
@@ -225,7 +233,7 @@ export interface LatencyDataPoint {
 }
 
 // Time range options for latency charts
-export type TimeRangePreset = '15m' | '30m' | '1h' | '3h' | '6h' | '12h' | '24h' | '2d' | '7d' | 'custom'
+export type TimeRangePreset = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
 
 export interface TimeRange {
   preset: TimeRangePreset
@@ -236,15 +244,15 @@ export interface TimeRange {
 export type TrafficView = 'avg' | 'peak' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
 
 export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
-  { value: '15m', label: '15 min' },
-  { value: '30m', label: '30 min' },
   { value: '1h', label: '1 hour' },
   { value: '3h', label: '3 hours' },
   { value: '6h', label: '6 hours' },
   { value: '12h', label: '12 hours' },
   { value: '24h', label: '24 hours' },
-  { value: '2d', label: '2 days' },
+  { value: '3d', label: '3 days' },
   { value: '7d', label: '7 days' },
+  { value: '14d', label: '14 days' },
+  { value: '30d', label: '30 days' },
   { value: 'custom', label: 'Custom' },
 ]
 
