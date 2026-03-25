@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, Loader2, Network } from 'lucide-react'
+import { ChevronDown, Network } from 'lucide-react'
 import { fetchTrafficData, fetchTopology } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
 import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
@@ -246,10 +246,8 @@ function TrafficPageContent() {
     }
   }, [allTrafficData, intfType])
 
-  const tunnelLoading = trafficLoading
   const tunnelFetching = trafficFetching
   const tunnelError = trafficError
-  const nonTunnelLoading = trafficLoading
   const nonTunnelFetching = trafficFetching
   const nonTunnelError = trafficError
 
@@ -346,14 +344,7 @@ function TrafficPageContent() {
 
     // Handle counters chart (errors/discards/fcs/carrier) separately
     if (section === 'discards') {
-      if (countersLoading) {
-        return (
-          <div key={section} className="border border-border rounded-lg p-4 flex items-center justify-center h-[400px]">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        )
-      }
-      if (!countersData) {
+      if (!countersData && !countersLoading) {
         return (
           <div key={section} className="border border-border rounded-lg p-4 flex items-center justify-center h-[400px]">
             <p className="text-green-600 dark:text-green-400">No errors or discards in the selected time range</p>
@@ -361,20 +352,16 @@ function TrafficPageContent() {
         )
       }
       return (
-        <div key={section} className="border border-border rounded-lg p-4 relative">
-          {countersFetching && !countersLoading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          )}
+        <div key={section} className="border border-border rounded-lg p-4">
           <LazyChart key={`${section}-${layout}`}>
             <TrafficChart
               title="Interface Errors & Discards"
-              data={countersData.points}
-              series={countersData.series}
+              data={countersData?.points || []}
+              series={countersData?.series || []}
               bidirectional={bidirectional}
               onTimeRangeSelect={dashboardState.setCustomRange}
               metric="counters"
+              loading={countersFetching}
             />
           </LazyChart>
         </div>
@@ -411,50 +398,33 @@ function TrafficPageContent() {
     const title = `${typeLabel} ${metricLabel} Per Device & Interface${stacked ? ' (stacked)' : ''}`
 
     const data = isTunnel ? tunnelData : nonTunnelData
-    const loading = isTunnel ? tunnelLoading : nonTunnelLoading
     const fetching = isTunnel ? tunnelFetching : nonTunnelFetching
     const error = isTunnel ? tunnelError : nonTunnelError
 
     return (
-      <div key={section} className="border border-border rounded-lg p-4 relative">
-        {fetching && !loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        )}
+      <div key={section} className="border border-border rounded-lg p-4">
         <LazyChart key={section}>
-          {loading ? (
+          {error ? (
             <div className="flex flex-col space-y-2">
-              <h3 className="text-lg font-semibold">{title}</h3>
-              <div className="flex items-center justify-center h-[400px]">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold">{title}</h3>
               </div>
-            </div>
-          ) : error ? (
-            <div className="flex flex-col space-y-2">
-              <h3 className="text-lg font-semibold">{title}</h3>
               <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
                 <p className="text-muted-foreground">Error: {(error as Error).message || String(error)}</p>
               </div>
             </div>
-          ) : data ? (
+          ) : (
             <TrafficChart
               title={title}
-              data={data.points}
-              series={data.series}
+              data={data?.points || []}
+              series={data?.series || []}
               stacked={stacked}
               linkLookup={linkLookup}
               bidirectional={bidirectional}
               onTimeRangeSelect={dashboardState.setCustomRange}
               metric={metric}
+              loading={fetching}
             />
-          ) : (
-            <div className="flex flex-col space-y-2">
-              <h3 className="text-lg font-semibold">{title}</h3>
-              <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
-                <p className="text-muted-foreground">No data available</p>
-              </div>
-            </div>
           )}
         </LazyChart>
       </div>

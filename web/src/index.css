@@ -383,3 +383,8 @@ table {
 .scroll-highlight {
   animation: scrollHighlight 3.5s ease-out;
 }
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}

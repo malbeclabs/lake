@@ -1,7 +1,7 @@
 import { useState, useMemo, memo, useRef, useEffect, useCallback } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { X, Search, ChevronUp, ChevronDown } from 'lucide-react'
+import { X, Search, ChevronUp, ChevronDown, Loader2 } from 'lucide-react'
 import type { TrafficPoint, SeriesInfo } from '@/lib/api'
 import type { LinkLookupInfo } from '@/pages/traffic-page'
 import { useTheme } from '@/hooks/use-theme'
@@ -27,6 +27,7 @@ interface TrafficChartProps {
   bidirectional?: boolean
   onTimeRangeSelect?: (startSec: number, endSec: number) => void
   metric?: 'throughput' | 'packets' | 'utilization' | 'counters'
+  loading?: boolean
 }
 
 // Represents one interface with paired in/out in bidirectional mode
@@ -87,7 +88,7 @@ function formatCountAxis(n: number): string {
   return Math.round(n).toString()
 }
 
-function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput' }: TrafficChartProps) {
+function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false }: TrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
@@ -998,7 +999,10 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   if (!data.length || !series.length) {
     return (
       <div className="flex flex-col space-y-2">
+        <div className="flex items-center gap-2">
         <h3 className="text-lg font-semibold">{title}</h3>
+        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
         <div className="border border-border rounded-lg p-8 flex items-center justify-center h-[400px]">
           <p className="text-muted-foreground">No data available</p>
         </div>
@@ -1024,7 +1028,17 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
 
   return (
     <div className="flex flex-col space-y-2">
-      <h3 className="text-lg font-semibold">{title}</h3>
+      <div className="flex items-center gap-2">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
+
+      {/* Loading bar — always reserves space to avoid layout shift */}
+      <div className="h-0.5 w-full overflow-hidden rounded-full">
+        {loading && (
+          <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+        )}
+      </div>
 
       {/* Chart */}
       <div className="relative w-full">
