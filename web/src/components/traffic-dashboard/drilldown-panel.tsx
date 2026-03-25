@@ -147,125 +147,140 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   useEffect(() => {
     if (!chartRef.current || !uplotData) return
 
-    plotRef.current?.destroy()
+    const container = chartRef.current
 
-    const splinePaths = uPlot.paths.spline?.()
-    const series: uPlot.Series[] = [{}]
-    uplotData.intfs.forEach((intf, i) => {
-      const color = seriesColors[i % seriesColors.length]
-      series.push({
-        label: `${intf} Rx`,
-        stroke: color,
-        width: 1.5,
-        fill: color.replace('65%', '65%') + '/10',
-        paths: splinePaths,
-        points: { show: false },
+    const createChart = (width: number) => {
+      plotRef.current?.destroy()
+
+      const splinePaths = uPlot.paths.spline?.()
+      const series: uPlot.Series[] = [{}]
+      uplotData.intfs.forEach((intf, i) => {
+        const color = seriesColors[i % seriesColors.length]
+        series.push({
+          label: `${intf} Rx`,
+          stroke: color,
+          width: 1.5,
+          fill: color.replace('65%', '65%') + '/10',
+          paths: splinePaths,
+          points: { show: false },
+        })
+        series.push({
+          label: `${intf} Tx`,
+          stroke: color,
+          width: 1.5,
+          dash: [4, 2],
+          fill: color.replace('65%', '65%') + '/10',
+          paths: splinePaths,
+          points: { show: false },
+        })
       })
-      series.push({
-        label: `${intf} Tx`,
-        stroke: color,
-        width: 1.5,
-        dash: [4, 2],
-        fill: color.replace('65%', '65%') + '/10',
-        paths: splinePaths,
-        points: { show: false },
-      })
-    })
 
-    const axisStroke = resolvedTheme === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+      const axisStroke = resolvedTheme === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
 
-    const opts: uPlot.Options = {
-      width: chartRef.current.offsetWidth,
-      height: 240,
-      series,
-      scales: {
-        x: {
-          time: true,
-          range: (() => {
-            const map: Record<string, number> = {
-              '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
-              '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
-            }
-            const secs = state.customStart && state.customEnd
-              ? state.customEnd - state.customStart
-              : map[state.timeRange] || 86400
-            return (_u: uPlot, dataMin: number, dataMax: number): [number, number] => {
-              const rangeMin = dataMax - secs
-              return [Math.min(dataMin, rangeMin), dataMax]
-            }
-          })(),
+      const opts: uPlot.Options = {
+        width,
+        height: 240,
+        series,
+        scales: {
+          x: {
+            time: true,
+            range: (() => {
+              const map: Record<string, number> = {
+                '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
+                '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
+              }
+              const secs = state.customStart && state.customEnd
+                ? state.customEnd - state.customStart
+                : map[state.timeRange] || 86400
+              return (_u: uPlot, dataMin: number, dataMax: number): [number, number] => {
+                const rangeMin = dataMax - secs
+                return [Math.min(dataMin, rangeMin), dataMax]
+              }
+            })(),
+          },
+          y: { auto: true },
         },
-        y: { auto: true },
-      },
-      axes: [
-        { stroke: axisStroke, grid: { stroke: 'rgba(128,128,128,0.06)' } },
-        {
-          values: (_: uPlot, vals: number[]) => vals.map(v => fmt(Math.abs(v))),
-          size: 80,
-          stroke: axisStroke,
-          grid: { stroke: 'rgba(128,128,128,0.06)' },
+        axes: [
+          { stroke: axisStroke, grid: { stroke: 'rgba(128,128,128,0.06)' } },
+          {
+            values: (_: uPlot, vals: number[]) => vals.map(v => fmt(Math.abs(v))),
+            size: 80,
+            stroke: axisStroke,
+            grid: { stroke: 'rgba(128,128,128,0.06)' },
+          },
+        ],
+        cursor: {
+          drag: { x: true, y: false, setScale: false },
+          points: { size: 12, width: 2 },
         },
-      ],
-      cursor: {
-        drag: { x: true, y: false, setScale: false },
-        points: { size: 12, width: 2 },
-      },
-      hooks: {
-        setCursor: [(u: uPlot) => {
-          setHoveredIdx(u.cursor.idx ?? null)
-        }],
-        setSelect: [(u: uPlot) => {
-          const min = u.posToVal(u.select.left, 'x')
-          const max = u.posToVal(u.select.left + u.select.width, 'x')
-          if (max - min >= 1) {
-            setCustomRangeRef.current(Math.floor(min), Math.floor(max))
-          }
-          u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false)
-        }],
-        draw: [(u: uPlot) => {
-          const rl = refLinesRef.current
-          if (!rl) return
-          const ctx = u.ctx
-          const { left, top, width, height } = u.bbox
+        hooks: {
+          setCursor: [(u: uPlot) => {
+            setHoveredIdx(u.cursor.idx ?? null)
+          }],
+          setSelect: [(u: uPlot) => {
+            const min = u.posToVal(u.select.left, 'x')
+            const max = u.posToVal(u.select.left + u.select.width, 'x')
+            if (max - min >= 1) {
+              setCustomRangeRef.current(Math.floor(min), Math.floor(max))
+            }
+            u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false)
+          }],
+          draw: [(u: uPlot) => {
+            const rl = refLinesRef.current
+            if (!rl) return
+            const ctx = u.ctx
+            const { left, top, width: bw, height: bh } = u.bbox
 
-          const drawLine = (val: number, label: string, color: string) => {
-            const y = u.valToPos(val, 'y', true)
-            if (y < top || y > top + height) return
-            ctx.save()
-            ctx.strokeStyle = color
-            ctx.lineWidth = 1.5
-            ctx.setLineDash([6, 4])
-            ctx.beginPath()
-            ctx.moveTo(left, y)
-            ctx.lineTo(left + width, y)
-            ctx.stroke()
-            ctx.setLineDash([])
-            ctx.fillStyle = color
-            ctx.font = '10px system-ui, sans-serif'
-            ctx.textAlign = 'left'
-            ctx.fillText(label, left + 4, y - 4)
-            ctx.restore()
-          }
+            const drawLine = (val: number, label: string, color: string) => {
+              const y = u.valToPos(val, 'y', true)
+              if (y < top || y > top + bh) return
+              ctx.save()
+              ctx.strokeStyle = color
+              ctx.lineWidth = 1.5
+              ctx.setLineDash([6, 4])
+              ctx.beginPath()
+              ctx.moveTo(left, y)
+              ctx.lineTo(left + bw, y)
+              ctx.stroke()
+              ctx.setLineDash([])
+              ctx.fillStyle = color
+              ctx.font = '10px system-ui, sans-serif'
+              ctx.textAlign = 'left'
+              ctx.fillText(label, left + 4, y - 4)
+              ctx.restore()
+            }
 
-          const isRx = rl.direction === 'rx'
-          // Baseline (P50) and peak spike in bps; Rx is positive (top half), Tx is negative (bottom half)
-          const baseline = isRx ? rl.p50_bps : -rl.p50_bps
-          const peak = isRx ? rl.p99_bps : -rl.p99_bps
+            const isRx = rl.direction === 'rx'
+            const baseline = isRx ? rl.p50_bps : -rl.p50_bps
+            const peak = isRx ? rl.p99_bps : -rl.p99_bps
 
-          drawLine(baseline, `Baseline ${formatRate(rl.p50_bps)}`, 'oklch(65% 0.12 250 / 0.6)')
-          drawLine(peak, `Peak spike ${formatRate(rl.p99_bps)}`, 'oklch(65% 0.12 25 / 0.6)')
-        }],
-      },
-      legend: { show: false },
+            drawLine(baseline, `Baseline ${formatRate(rl.p50_bps)}`, 'oklch(65% 0.12 250 / 0.6)')
+            drawLine(peak, `Peak spike ${formatRate(rl.p99_bps)}`, 'oklch(65% 0.12 25 / 0.6)')
+          }],
+        },
+        legend: { show: false },
+      }
+
+      plotRef.current = new uPlot(opts, uplotData.aligned, container)
     }
 
-    plotRef.current = new uPlot(opts, uplotData.aligned, chartRef.current)
+    // Create chart immediately if container has width, otherwise wait for layout
+    const initialWidth = container.offsetWidth
+    if (initialWidth > 0) {
+      createChart(initialWidth)
+    }
 
     const resizeObserver = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width
-      if (width && plotRef.current) plotRef.current.setSize({ width, height: 240 })
+      if (!width) return
+      if (!plotRef.current) {
+        // Chart hasn't been created yet (container had 0 width on mount)
+        createChart(width)
+      } else {
+        plotRef.current.setSize({ width, height: 240 })
+      }
     })
-    resizeObserver.observe(chartRef.current)
+    resizeObserver.observe(container)
 
     return () => {
       resizeObserver.disconnect()
