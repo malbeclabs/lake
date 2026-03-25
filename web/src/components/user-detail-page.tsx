@@ -113,7 +113,7 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
 
     for (const p of trafficData) {
       tunnelSet.add(p.tunnel_id)
-      const ts = new Date(p.time + 'Z').getTime() / 1000
+      const ts = new Date(p.time).getTime() / 1000
       if (!timeMap.has(ts)) timeMap.set(ts, new Map())
       const entry = timeMap.get(ts)!
       entry.set(p.tunnel_id, {
