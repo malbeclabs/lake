@@ -168,7 +168,7 @@ export async function fetchTrafficHistory(
     params.set('bucket', bucket)
   }
 
-  const res = await apiFetch(`/api/topology/traffic?${params.toString()}`)
+  const res = await apiFetch(`/api/traffic/entity?${params.toString()}`)
   if (!res.ok) throw new Error(`Traffic fetch failed: ${res.status}`)
   const data = await res.json()
   return data.points || []
@@ -203,7 +203,7 @@ export async function fetchTrafficHistoryByInterface(
     params.set('agg', agg)
   }
 
-  const res = await apiFetch(`/api/topology/traffic?${params.toString()}`)
+  const res = await apiFetch(`/api/traffic/entity?${params.toString()}`)
   if (!res.ok) throw new Error(`Interface traffic fetch failed: ${res.status}`)
   const data = await res.json()
   return data.interfaces || []

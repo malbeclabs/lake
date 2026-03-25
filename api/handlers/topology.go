@@ -437,7 +437,7 @@ type TrafficResponse struct {
 	Error      string                      `json:"error,omitempty"`
 }
 
-func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
+func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
