@@ -177,12 +177,21 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
 
     const axisStroke = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
 
+    // Compute x-axis bounds from selected time range
+    const rangeSeconds: Record<string, number> = {
+      '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
+      '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
+    }
+    const now = Date.now() / 1000
+    const xMin = now - (rangeSeconds[timeRange] || 86400)
+    const xMax = now
+
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 224,
       series: uplotSeries,
       scales: {
-        x: { time: true },
+        x: { time: true, min: xMin, max: xMax },
         y: { auto: true },
       },
       axes: [
@@ -219,7 +228,7 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [uplotData, uplotSeries, isDark])
+  }, [uplotData, uplotSeries, isDark, timeRange])
 
   // Values to display in legend: hovered or latest
   const displayValues = useMemo(() => {

@@ -6,7 +6,7 @@ import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-leg
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { InterfaceLegendTable, type InterfaceValues } from './InterfaceLegendTable'
-import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, formatHoveredTime, resolveAutoBucket, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
+import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, formatHoveredTime, resolveAutoBucket, presetToSeconds, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
 import { fetchDeviceInterfaceHistory } from '@/lib/api'
 import { TrafficFilters } from './TimeRangeSelector'
 
@@ -400,6 +400,23 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
   const timeRangeStr = effectiveRange.preset === 'custom' ? 'custom' : effectiveRange.preset
 
+  // Compute x-axis bounds from the selected time range so the chart always
+  // shows the full range even when data is sparse.
+  const xScaleBounds = useMemo((): { min: number; max: number } | undefined => {
+    if (effectiveRange.preset === 'custom') return undefined
+    const now = Date.now() / 1000
+    const rangeSeconds = presetToSeconds(effectiveRange.preset)
+    return { min: now - rangeSeconds, max: now }
+  }, [effectiveRange])
+
+  const chartScales = useMemo((): uPlot.Scales => ({
+    x: {
+      time: true,
+      ...(xScaleBounds ? { min: xScaleBounds.min, max: xScaleBounds.max } : {}),
+    },
+    y: { auto: true },
+  }), [xScaleBounds])
+
   const [internalBucket, setInternalBucket] = useState<BucketSize>('auto')
   const [internalMetric, setInternalMetric] = useState<TrafficMetric>('throughput')
   const [internalTrafficView, setInternalTrafficView] = useState<TrafficView>('peak')
@@ -622,6 +639,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     series: trafficSeries,
     height: 144,
     axes: trafficAxes,
+    scales: chartScales,
     onCursorIdx: handleCursorIdx,
   })
 
@@ -631,6 +649,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     series: healthBidirectionalSeries,
     height: 144,
     axes: healthAxes,
+    scales: chartScales,
     onCursorIdx: handleErrorCursorIdx,
   })
 
@@ -640,6 +659,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     series: healthSeries,
     height: 144,
     axes: healthAxes,
+    scales: chartScales,
     onCursorIdx: handleFcsErrorCursorIdx,
   })
 
@@ -649,6 +669,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     series: healthBidirectionalSeries,
     height: 144,
     axes: healthAxes,
+    scales: chartScales,
     onCursorIdx: handleDiscardCursorIdx,
   })
 
@@ -658,6 +679,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     series: healthSeries,
     height: 144,
     axes: healthAxes,
+    scales: chartScales,
     onCursorIdx: handleTransitionCursorIdx,
   })
 
