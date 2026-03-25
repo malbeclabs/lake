@@ -14,14 +14,18 @@ import (
 )
 
 type TrafficPoint struct {
-	Time        string  `json:"time"`
-	DevicePk    string  `json:"device_pk"`
-	Device      string  `json:"device"`
-	Intf        string  `json:"intf"`
-	InBps       float64 `json:"in_bps"`
-	OutBps      float64 `json:"out_bps"`
-	InDiscards  int64   `json:"in_discards"`
-	OutDiscards int64   `json:"out_discards"`
+	Time               string  `json:"time"`
+	DevicePk           string  `json:"device_pk"`
+	Device             string  `json:"device"`
+	Intf               string  `json:"intf"`
+	InBps              float64 `json:"in_bps"`
+	OutBps             float64 `json:"out_bps"`
+	InDiscards         int64   `json:"in_discards"`
+	OutDiscards        int64   `json:"out_discards"`
+	InErrors           int64   `json:"in_errors"`
+	OutErrors          int64   `json:"out_errors"`
+	InFcsErrors        int64   `json:"in_fcs_errors"`
+	CarrierTransitions int64   `json:"carrier_transitions"`
 }
 
 type SeriesInfo struct {
@@ -34,11 +38,11 @@ type SeriesInfo struct {
 
 // TrafficDataResponse is the JSON response for the traffic data endpoint.
 type TrafficDataResponse struct {
-	Points         []TrafficPoint    `json:"points"`
-	Series         []SeriesInfo      `json:"series"`
+	Points         []TrafficPoint      `json:"points"`
+	Series         []SeriesInfo        `json:"series"`
 	DiscardsSeries []DiscardSeriesInfo `json:"discards_series"`
-	EffBucket      string            `json:"effective_bucket"`
-	Truncated      bool              `json:"truncated"`
+	EffBucket      string              `json:"effective_bucket"`
+	Truncated      bool                `json:"truncated"`
 }
 
 // maxTrafficRows is a safety limit on the number of rows returned.
@@ -123,7 +127,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		var inExpr, outExpr, fInExpr, fOutExpr, srcColumns, srcFilters string
 		switch metric {
 		case "packets":
-			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta"
+			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta, f.in_errors_delta, f.out_errors_delta, f.in_fcs_errors_delta, f.carrier_transitions_delta"
 			inExpr = "in_pkts_delta / delta_duration"
 			outExpr = "out_pkts_delta / delta_duration"
 			fInExpr = "f.in_pkts_delta / f.delta_duration"
@@ -132,7 +136,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				AND f.in_pkts_delta >= 0
 				AND f.out_pkts_delta >= 0`
 		default: // throughput
-			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta"
+			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta, f.in_errors_delta, f.out_errors_delta, f.in_fcs_errors_delta, f.carrier_transitions_delta"
 			inExpr = "in_octets_delta * 8 / delta_duration"
 			outExpr = "out_octets_delta * 8 / delta_duration"
 			fInExpr = "f.in_octets_delta * 8 / f.delta_duration"
@@ -165,7 +169,11 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				%s(%s) AS in_bps,
 				%s(%s) AS out_bps,
 				SUM(COALESCE(in_discards_delta, 0)) AS in_discards,
-				SUM(COALESCE(out_discards_delta, 0)) AS out_discards
+				SUM(COALESCE(out_discards_delta, 0)) AS out_discards,
+				SUM(COALESCE(in_errors_delta, 0)) AS in_errors,
+				SUM(COALESCE(out_errors_delta, 0)) AS out_errors,
+				SUM(COALESCE(in_fcs_errors_delta, 0)) AS in_fcs_errors,
+				SUM(COALESCE(carrier_transitions_delta, 0)) AS carrier_transitions
 			FROM src
 			GROUP BY device_pk, intf, time_bucket
 		)
@@ -177,7 +185,11 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			r.in_bps,
 			r.out_bps,
 			r.in_discards,
-			r.out_discards
+			r.out_discards,
+			r.in_errors,
+			r.out_errors,
+			r.in_fcs_errors,
+			r.carrier_transitions
 		FROM rates r
 		INNER JOIN devices d ON d.pk = r.device_pk
 		WHERE r.time_bucket IS NOT NULL
@@ -246,7 +258,11 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				%s(%s) AS in_bps,
 				%s(%s) AS out_bps,
 				toInt64(SUM(f.in_discards)) AS in_discards,
-				toInt64(SUM(f.out_discards)) AS out_discards
+				toInt64(SUM(f.out_discards)) AS out_discards,
+				toInt64(SUM(f.in_errors)) AS in_errors,
+				toInt64(SUM(f.out_errors)) AS out_errors,
+				toInt64(SUM(f.in_fcs_errors)) AS in_fcs_errors,
+				toInt64(SUM(f.carrier_transitions)) AS carrier_transitions
 			FROM device_interface_rollup_5m f
 			INNER JOIN devices d ON d.pk = f.device_pk%s%s
 			WHERE f.%s
@@ -263,7 +279,11 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			r.in_bps,
 			r.out_bps,
 			r.in_discards,
-			r.out_discards
+			r.out_discards,
+			r.in_errors,
+			r.out_errors,
+			r.in_fcs_errors,
+			r.carrier_transitions
 		FROM rates r
 		INNER JOIN devices d ON d.pk = r.device_pk
 		WHERE r.time_bucket IS NOT NULL
@@ -381,7 +401,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	var scanErr error
 	for rows.Next() {
 		var point TrafficPoint
-		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps, &point.InDiscards, &point.OutDiscards); err != nil {
+		if err := rows.Scan(&point.Time, &point.DevicePk, &point.Device, &point.Intf, &point.InBps, &point.OutBps, &point.InDiscards, &point.OutDiscards, &point.InErrors, &point.OutErrors, &point.InFcsErrors, &point.CarrierTransitions); err != nil {
 			slog.Error("traffic row scan error", "error", err)
 			scanErr = err
 			break

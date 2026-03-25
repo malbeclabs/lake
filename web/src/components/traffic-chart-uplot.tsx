@@ -26,7 +26,7 @@ interface TrafficChartProps {
   linkLookup?: Map<string, LinkLookupInfo>
   bidirectional?: boolean
   onTimeRangeSelect?: (startSec: number, endSec: number) => void
-  metric?: 'throughput' | 'packets' | 'utilization'
+  metric?: 'throughput' | 'packets' | 'utilization' | 'counters'
 }
 
 // Represents one interface with paired in/out in bidirectional mode
@@ -73,6 +73,20 @@ function formatPpsAxis(pps: number): string {
   return Math.round(pps) + ' pps'
 }
 
+function formatCount(n: number): string {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B'
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'
+  return n.toFixed(0)
+}
+
+function formatCountAxis(n: number): string {
+  if (n >= 1e9) return Math.round(n / 1e9) + 'B'
+  if (n >= 1e6) return Math.round(n / 1e6) + 'M'
+  if (n >= 1e3) return Math.round(n / 1e3) + 'K'
+  return Math.round(n).toString()
+}
+
 function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput' }: TrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
@@ -80,10 +94,10 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   const linkLookupRef = useRef(linkLookup)
   const onTimeRangeSelectRef = useRef(onTimeRangeSelect)
   onTimeRangeSelectRef.current = onTimeRangeSelect
-  const fmtValue = metric === 'packets' ? formatPps : formatBandwidth
+  const fmtValue = metric === 'counters' ? formatCount : metric === 'packets' ? formatPps : formatBandwidth
   const fmtValueRef = useRef(fmtValue)
   fmtValueRef.current = fmtValue
-  const fmtAxisValue = metric === 'packets' ? formatPpsAxis : formatBandwidthAxis
+  const fmtAxisValue = metric === 'counters' ? formatCountAxis : metric === 'packets' ? formatPpsAxis : formatBandwidthAxis
   const fmtAxisValueRef = useRef(fmtAxisValue)
   fmtAxisValueRef.current = fmtAxisValue
   const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())

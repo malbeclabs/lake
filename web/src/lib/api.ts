@@ -3749,6 +3749,10 @@ export interface TrafficPoint {
   out_bps: number
   in_discards: number
   out_discards: number
+  in_errors: number
+  out_errors: number
+  in_fcs_errors: number
+  carrier_transitions: number
 }
 
 export interface SeriesInfo {

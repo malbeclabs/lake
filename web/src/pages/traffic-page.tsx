@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, Loader2, Network } from 'lucide-react'
 import { fetchTrafficData, fetchTopology } from '@/lib/api'
 import { TrafficChart } from '@/components/traffic-chart-uplot'
-import { DiscardsChart } from '@/components/discards-chart'
 import { DashboardProvider, useDashboard, dashboardFilterParams, resolveAutoBucket } from '@/components/traffic-dashboard/dashboard-context'
 import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 import { PageHeader } from '@/components/page-header'
@@ -259,18 +258,50 @@ function TrafficPageContent() {
     refetchInterval: dashboardState.refetchInterval,
   })
 
-  // Derive discards data from the combined traffic response
-  const discardsData = useMemo(() => {
-    if (!nonTunnelData) return { points: [], series: [] }
-    return {
-      points: nonTunnelData.points
-        .filter(p => p.in_discards > 0 || p.out_discards > 0)
-        .map(p => ({ time: p.time, device_pk: p.device_pk, device: p.device, intf: p.intf, in_discards: p.in_discards, out_discards: p.out_discards })),
-      series: nonTunnelData.discards_series,
+  // Derive interface counters (errors/discards/fcs/carrier) from the traffic response.
+  // Transforms counter fields into TrafficPoint-compatible format for the TrafficChart.
+  const countersData = useMemo(() => {
+    if (!nonTunnelData) return null
+    // Sum all counter types per interface to find which interfaces have any events
+    const intfTotals = new Map<string, { device: string; devicePk: string; intf: string; total: number }>()
+    for (const p of nonTunnelData.points) {
+      const total = p.in_discards + p.out_discards + p.in_errors + p.out_errors + p.in_fcs_errors + p.carrier_transitions
+      if (total === 0) continue
+      const key = `${p.device}-${p.intf}`
+      const existing = intfTotals.get(key)
+      if (existing) {
+        existing.total += total
+      } else {
+        intfTotals.set(key, { device: p.device, devicePk: p.device_pk, intf: p.intf, total })
+      }
     }
+    if (intfTotals.size === 0) return null
+
+    // Build points using combined counters as in/out values:
+    // in = in_discards + in_errors + in_fcs_errors + carrier_transitions
+    // out = out_discards + out_errors (negated for bidirectional)
+    const points = nonTunnelData.points
+      .filter(p => {
+        const total = p.in_discards + p.out_discards + p.in_errors + p.out_errors + p.in_fcs_errors + p.carrier_transitions
+        return total > 0
+      })
+      .map(p => ({
+        ...p,
+        in_bps: p.in_discards + p.in_errors + p.in_fcs_errors + p.carrier_transitions,
+        out_bps: p.out_discards + p.out_errors,
+      }))
+
+    // Build series info sorted by total events
+    const sorted = [...intfTotals.entries()].sort((a, b) => b[1].total - a[1].total)
+    const series = sorted.flatMap(([, info]) => [
+      { key: `${info.device}-${info.intf} (in)`, device: info.device, intf: info.intf, direction: 'in' as const, mean: 0 },
+      { key: `${info.device}-${info.intf} (out)`, device: info.device, intf: info.intf, direction: 'out' as const, mean: 0 },
+    ])
+
+    return { points, series }
   }, [nonTunnelData])
-  const discardsLoading = trafficLoading
-  const discardsFetching = trafficFetching
+  const countersLoading = trafficLoading
+  const countersFetching = trafficFetching
 
   // Build link lookup: device_pk + interface -> link info
   const linkLookup = useMemo(() => {
@@ -308,21 +339,37 @@ function TrafficPageContent() {
   const renderChartSection = (section: ChartSection) => {
     if (!isSectionAllowed(section)) return null
 
-    // Handle discards chart separately
+    // Handle counters chart (errors/discards/fcs/carrier) separately
     if (section === 'discards') {
+      if (countersLoading) {
+        return (
+          <div key={section} className="border border-border rounded-lg p-4 flex items-center justify-center h-[400px]">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )
+      }
+      if (!countersData) {
+        return (
+          <div key={section} className="border border-border rounded-lg p-4 flex items-center justify-center h-[400px]">
+            <p className="text-green-600 dark:text-green-400">No errors or discards in the selected time range</p>
+          </div>
+        )
+      }
       return (
         <div key={section} className="border border-border rounded-lg p-4 relative">
-          {discardsFetching && !discardsLoading && (
+          {countersFetching && !countersLoading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 rounded-lg">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           )}
           <LazyChart key={`${section}-${layout}`}>
-            <DiscardsChart
-              title="Interface Discards"
-              data={discardsData?.points || []}
-              series={discardsData?.series || []}
-              isLoading={discardsLoading}
+            <TrafficChart
+              title="Interface Errors & Discards"
+              data={countersData.points}
+              series={countersData.series}
+              bidirectional={bidirectional}
+              onTimeRangeSelect={dashboardState.setCustomRange}
+              metric="counters"
             />
           </LazyChart>
         </div>
