@@ -96,9 +96,34 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	if agg == "" {
 		agg = "max"
 	}
-	aggFunc := "MAX"
-	if agg == "avg" {
+	// For raw fact table queries, map agg to a SQL aggregate function.
+	// Percentiles use quantile(); min/max/avg use standard aggregates.
+	var aggFunc string
+	// For rollup re-aggregation across 5m buckets: MAX preserves peaks for
+	// percentile columns, AVG for avg, MIN for min.
+	var rollupAggFunc string
+	switch agg {
+	case "avg":
 		aggFunc = "AVG"
+		rollupAggFunc = "AVG"
+	case "min":
+		aggFunc = "MIN"
+		rollupAggFunc = "MIN"
+	case "p50":
+		aggFunc = "quantile(0.5)"
+		rollupAggFunc = "MAX"
+	case "p90":
+		aggFunc = "quantile(0.9)"
+		rollupAggFunc = "MAX"
+	case "p95":
+		aggFunc = "quantile(0.95)"
+		rollupAggFunc = "MAX"
+	case "p99":
+		aggFunc = "quantile(0.99)"
+		rollupAggFunc = "MAX"
+	default:
+		aggFunc = "MAX"
+		rollupAggFunc = "MAX"
 	}
 
 	metric := r.URL.Query().Get("metric")
@@ -221,26 +246,33 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	`, fInExpr, fOutExpr, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, srcFilters, filterSQL, userKindFilter)
 	} else {
 		// >= 5m bucket: query rollup table
+		// Map agg to rollup column prefix
+		aggPrefix := "max"
+		switch agg {
+		case "avg":
+			aggPrefix = "avg"
+		case "min":
+			aggPrefix = "min"
+		case "p50":
+			aggPrefix = "p50"
+		case "p90":
+			aggPrefix = "p90"
+		case "p95":
+			aggPrefix = "p95"
+		case "p99":
+			aggPrefix = "p99"
+		}
+
 		var inCol, outCol, meanInCol, meanOutCol string
 		switch metric {
 		case "packets":
-			if agg == "avg" {
-				inCol = "f.avg_in_pps"
-				outCol = "f.avg_out_pps"
-			} else {
-				inCol = "f.max_in_pps"
-				outCol = "f.max_out_pps"
-			}
+			inCol = fmt.Sprintf("f.%s_in_pps", aggPrefix)
+			outCol = fmt.Sprintf("f.%s_out_pps", aggPrefix)
 			meanInCol = "f.avg_in_pps"
 			meanOutCol = "f.avg_out_pps"
 		default: // throughput
-			if agg == "avg" {
-				inCol = "f.avg_in_bps"
-				outCol = "f.avg_out_bps"
-			} else {
-				inCol = "f.max_in_bps"
-				outCol = "f.max_out_bps"
-			}
+			inCol = fmt.Sprintf("f.%s_in_bps", aggPrefix)
+			outCol = fmt.Sprintf("f.%s_out_bps", aggPrefix)
 			meanInCol = "f.avg_in_bps"
 			meanOutCol = "f.avg_out_bps"
 		}
@@ -289,7 +321,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		WHERE r.time_bucket IS NOT NULL
 		ORDER BY r.time_bucket, d.code, r.intf
 		LIMIT %d
-	`, bucketInterval, aggFunc, inCol, aggFunc, outCol,
+	`, bucketInterval, rollupAggFunc, inCol, rollupAggFunc, outCol,
 			dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter,
 			filterSQL, userKindFilter, maxTrafficRows)
 

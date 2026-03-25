@@ -49,11 +49,16 @@ function LazyChart({ children, height = 600 }: { children: React.ReactNode; heig
   )
 }
 
-type AggMethod = 'max' | 'avg'
+type AggMethod = 'max' | 'avg' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
 
 const aggLabels: Record<AggMethod, string> = {
   'max': 'Max',
+  'p99': 'P99',
+  'p95': 'P95',
+  'p90': 'P90',
+  'p50': 'P50',
   'avg': 'Average',
+  'min': 'Min',
 }
 
 type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel' | 'discards'
@@ -94,7 +99,7 @@ function AggSelector({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[140px]">
-            {(['max', 'avg'] as AggMethod[]).map((agg) => (
+            {(['max', 'p99', 'p95', 'p90', 'p50', 'avg', 'min'] as AggMethod[]).map((agg) => (
               <button
                 key={agg}
                 onClick={() => {
