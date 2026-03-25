@@ -5,7 +5,7 @@ import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-leg
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { InterfaceLegendTable, type InterfaceValues } from './InterfaceLegendTable'
-import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, formatHoveredTime, resolveAutoBucket, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric } from './utils'
+import { fetchTrafficHistoryByInterface, formatChartAxisRate, formatChartTooltipRate, formatHoveredTime, resolveAutoBucket, bucketLabels, type TimeRange, type TimeRangePreset, type InterfaceTrafficPoint, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
 import { fetchDeviceInterfaceHistory } from '@/lib/api'
 import { TrafficFilters } from './TimeRangeSelector'
 
@@ -231,8 +231,8 @@ interface InterfaceChartsProps {
   onBucketChange?: (bucket: BucketSize) => void
   metric?: TrafficMetric
   onMetricChange?: (metric: TrafficMetric) => void
-  trafficView?: 'avg' | 'peak'
-  onTrafficViewChange?: (view: 'avg' | 'peak') => void
+  trafficView?: TrafficView
+  onTrafficViewChange?: (view: TrafficView) => void
   /** Additional CSS classes for the outer wrapper */
   className?: string
 }
@@ -401,7 +401,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
   const [internalBucket, setInternalBucket] = useState<BucketSize>('auto')
   const [internalMetric, setInternalMetric] = useState<TrafficMetric>('throughput')
-  const [internalTrafficView, setInternalTrafficView] = useState<'avg' | 'peak'>('avg')
+  const [internalTrafficView, setInternalTrafficView] = useState<TrafficView>('peak')
 
   const bucket = controlledBucket ?? internalBucket
   const setBucket = onBucketChange ?? setInternalBucket
@@ -426,10 +426,13 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const discardChartRef = useRef<HTMLDivElement>(null)
   const transitionChartRef = useRef<HTMLDivElement>(null)
 
+  // Map trafficView to agg param: 'peak' → 'max', 'avg' → 'avg', else pass through
+  const aggParam = trafficView === 'peak' ? 'max' : trafficView
+
   // Traffic data
   const { data: rawPoints, isLoading: trafficLoading, error: trafficError } = useQuery({
-    queryKey: ['topology-traffic-interface', entityType, entityPk, effectiveRange, bucket, metric],
-    queryFn: () => fetchTrafficHistoryByInterface(entityType, entityPk, effectiveRange, bucket, metric),
+    queryKey: ['topology-traffic-interface', entityType, entityPk, effectiveRange, bucket, metric, aggParam],
+    queryFn: () => fetchTrafficHistoryByInterface(entityType, entityPk, effectiveRange, bucket, metric, aggParam),
     refetchInterval: 60000,
     retry: 2,
     placeholderData: keepPreviousData,
@@ -607,6 +610,8 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     setTransitionHoveredIdx(idx)
   }, [])
 
+  // 'avg' view uses avgData (always computed as average), everything else uses peakData
+  // (which contains whichever agg was requested via the agg param)
   const trafficData = trafficView === 'avg' ? avgData : peakData
 
   // Charts

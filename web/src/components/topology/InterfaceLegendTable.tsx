@@ -19,7 +19,7 @@ interface InterfaceLegendTableProps {
   /** Optional display labels for interfaces */
   interfaceLabels?: Map<string, string>
   /** Which view is active — controls which columns are shown */
-  trafficView?: 'avg' | 'peak'
+  trafficView?: string
   /** Formatted timestamp to show in the column header (hovered or latest) */
   hoveredTime?: string
   /** Max values across the time range per interface */

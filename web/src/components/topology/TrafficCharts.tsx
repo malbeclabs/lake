@@ -5,7 +5,7 @@ import { useChartLegend } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { ChartLegend, type ChartLegendSeries } from './ChartLegend'
-import { fetchTrafficHistory, formatChartAxisRate, formatChartAxisPps, bucketLabels, resolveAutoBucket, type TimeRange, type TimeRangePreset, type BucketSize, type TrafficMetric } from './utils'
+import { fetchTrafficHistory, formatChartAxisRate, formatChartAxisPps, bucketLabels, resolveAutoBucket, type TimeRange, type TimeRangePreset, type BucketSize, type TrafficMetric, type TrafficView } from './utils'
 import { TrafficFilters } from './TimeRangeSelector'
 
 const COLOR = '#3b82f6'
@@ -24,7 +24,7 @@ export function TrafficCharts({ entityType, entityPk, timeRange, className }: Tr
 
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
   const [bucket, setBucket] = useState<BucketSize>('auto')
-  const [trafficView, setTrafficView] = useState<'avg' | 'peak'>('avg')
+  const [trafficView, setTrafficView] = useState<TrafficView>('peak')
 
   const chartRef = useRef<HTMLDivElement>(null)
 

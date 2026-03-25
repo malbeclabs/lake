@@ -190,13 +190,17 @@ export async function fetchTrafficHistoryByInterface(
   pk: string,
   timeRange?: TimeRange,
   bucket?: BucketSize,
-  metric?: TrafficMetric
+  metric?: TrafficMetric,
+  agg?: string
 ): Promise<InterfaceTrafficPoint[]> {
   const params = new URLSearchParams({ type, pk, breakdown: 'interface' })
   appendTrafficParams(params, timeRange, bucket, metric)
 
   if (bucket && bucket !== 'auto') {
     params.set('bucket', bucket)
+  }
+  if (agg && agg !== 'max') {
+    params.set('agg', agg)
   }
 
   const res = await apiFetch(`/api/topology/traffic?${params.toString()}`)
@@ -229,7 +233,7 @@ export interface TimeRange {
   to?: string   // yyyy-mm-dd-hh:mm:ss
 }
 
-export type TrafficView = 'avg' | 'peak'
+export type TrafficView = 'avg' | 'peak' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
 
 export const TIME_RANGE_OPTIONS: { value: TimeRangePreset; label: string }[] = [
   { value: '15m', label: '15 min' },

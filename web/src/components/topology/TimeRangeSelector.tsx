@@ -14,8 +14,13 @@ const METRIC_OPTIONS: { value: TrafficMetric; label: string }[] = [
 ]
 
 const TRAFFIC_VIEW_OPTIONS: { value: TrafficView; label: string }[] = [
+  { value: 'peak', label: 'Max' },
+  { value: 'p99', label: 'P99' },
+  { value: 'p95', label: 'P95' },
+  { value: 'p90', label: 'P90' },
+  { value: 'p50', label: 'P50' },
   { value: 'avg', label: 'Avg' },
-  { value: 'peak', label: 'Peak' },
+  { value: 'min', label: 'Min' },
 ]
 
 function cn(...classes: (string | false | undefined)[]) {

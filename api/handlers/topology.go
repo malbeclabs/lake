@@ -541,18 +541,37 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		whereColumn = "device_pk"
 	}
 
-	// Select metric expressions based on metric param
+	// Select metric expressions based on metric and agg params
+	aggParam := r.URL.Query().Get("agg")
+	var peakAggFunc string
+	switch aggParam {
+	case "avg":
+		peakAggFunc = "avg"
+	case "min":
+		peakAggFunc = "min"
+	case "p50":
+		peakAggFunc = "quantile(0.5)"
+	case "p90":
+		peakAggFunc = "quantile(0.9)"
+	case "p95":
+		peakAggFunc = "quantile(0.95)"
+	case "p99":
+		peakAggFunc = "quantile(0.99)"
+	default:
+		peakAggFunc = "max"
+	}
+
 	var avgInExpr, avgOutExpr, peakInExpr, peakOutExpr string
 	if metricParam == "packets" {
 		avgInExpr = "avg(in_pkts_delta / nullIf(delta_duration, 0))"
 		avgOutExpr = "avg(out_pkts_delta / nullIf(delta_duration, 0))"
-		peakInExpr = "max(in_pkts_delta / nullIf(delta_duration, 0))"
-		peakOutExpr = "max(out_pkts_delta / nullIf(delta_duration, 0))"
+		peakInExpr = fmt.Sprintf("%s(in_pkts_delta / nullIf(delta_duration, 0))", peakAggFunc)
+		peakOutExpr = fmt.Sprintf("%s(out_pkts_delta / nullIf(delta_duration, 0))", peakAggFunc)
 	} else {
 		avgInExpr = "avg(in_octets_delta * 8 / nullIf(delta_duration, 0))"
 		avgOutExpr = "avg(out_octets_delta * 8 / nullIf(delta_duration, 0))"
-		peakInExpr = "max(in_octets_delta * 8 / nullIf(delta_duration, 0))"
-		peakOutExpr = "max(out_octets_delta * 8 / nullIf(delta_duration, 0))"
+		peakInExpr = fmt.Sprintf("%s(in_octets_delta * 8 / nullIf(delta_duration, 0))", peakAggFunc)
+		peakOutExpr = fmt.Sprintf("%s(out_octets_delta * 8 / nullIf(delta_duration, 0))", peakAggFunc)
 	}
 
 	// Skip aggregated query when only interface breakdown is needed — the caller
