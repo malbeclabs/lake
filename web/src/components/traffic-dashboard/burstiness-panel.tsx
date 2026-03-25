@@ -176,7 +176,7 @@ export function BurstinessPanel() {
   const [limit, setLimit] = useState(10)
   const [sortField, setSortField] = useState<SortField>('max_spike_ratio')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [minBps, setMinBps] = useState(1_000_000)
+  const [minBps, setMinBps] = useState(10_000_000)
   const [minPeakBps, setMinPeakBps] = useState(0)
   const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
   const [page, setPage] = useState(0)
