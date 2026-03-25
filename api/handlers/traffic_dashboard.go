@@ -471,7 +471,7 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 	query = fmt.Sprintf(`
 		WITH with_metric AS (
 			SELECT
-				toStartOfInterval(f.bucket_ts_ts, INTERVAL %s) AS ts,
+				toStartOfInterval(f.bucket_ts, INTERVAL %s) AS ts,
 				%s AS metric_val_in,
 				%s AS metric_val_out
 				%s
@@ -812,7 +812,7 @@ func BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilte
 func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string) string {
 	return fmt.Sprintf(`
 		SELECT
-			formatDateTime(toStartOfInterval(f.bucket_ts_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
+			formatDateTime(toStartOfInterval(f.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%sZ') AS time,
 			f.intf,
 			max(f.max_in_bps) AS in_bps,
 			max(f.max_out_bps) AS out_bps,
