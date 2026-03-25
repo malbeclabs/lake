@@ -169,16 +169,7 @@ function LayoutSelector({
 
 function TrafficPageContent() {
   const dashboardState = useDashboard()
-  const { timeRange, intfType, metric, customStart, customEnd } = dashboardState
-
-  const timeRangeSeconds = useMemo(() => {
-    if (customStart && customEnd) return customEnd - customStart
-    const map: Record<string, number> = {
-      '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
-      '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
-    }
-    return map[timeRange] || 86400
-  }, [timeRange, customStart, customEnd])
+  const { timeRange, intfType, metric } = dashboardState
 
   const [aggMethod, setAggMethod] = useState<AggMethod>('max')
   const [layout, setLayout] = useState<Layout>('1x4')
@@ -371,7 +362,6 @@ function TrafficPageContent() {
               onTimeRangeSelect={dashboardState.setCustomRange}
               metric="counters"
               loading={countersFetching}
-              timeRangeSeconds={timeRangeSeconds}
             />
           </LazyChart>
         </div>
@@ -434,7 +424,6 @@ function TrafficPageContent() {
               onTimeRangeSelect={dashboardState.setCustomRange}
               metric={metric}
               loading={fetching}
-              timeRangeSeconds={timeRangeSeconds}
             />
           )}
         </LazyChart>
