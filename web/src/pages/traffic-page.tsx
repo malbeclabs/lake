@@ -434,14 +434,17 @@ function TrafficPageContent() {
   const gridClass = layout === '2x2' ? 'grid grid-cols-1 lg:grid-cols-2 gap-6' : 'space-y-6'
 
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="px-4 sm:px-8 py-8">
-        <PageHeader
-          icon={Network}
-          title="Interfaces"
-          actions={<DashboardFilters excludeMetrics={['utilization']} />}
-        />
-        <div className="-mt-3 mb-6 flex flex-col gap-3">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Sticky header */}
+      <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
+        <div className="[&>div]:mb-0">
+          <PageHeader
+            icon={Network}
+            title="Interfaces"
+            actions={<DashboardFilters excludeMetrics={['utilization']} />}
+          />
+        </div>
+        <div className="flex flex-col gap-3 mt-3">
           <DashboardFilterBadges />
           <div className="flex items-center gap-3 flex-wrap justify-end">
             <button
@@ -459,7 +462,10 @@ function TrafficPageContent() {
             <AggSelector value={aggMethod} onChange={setAggMethod} />
           </div>
         </div>
+      </div>
 
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-auto px-4 sm:px-8 py-6">
         {/* Truncation warning */}
         {(tunnelData?.truncated || nonTunnelData?.truncated) && (
           <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-700 dark:text-yellow-200">

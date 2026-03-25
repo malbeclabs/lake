@@ -17,17 +17,23 @@ function DashboardContent() {
   const isUtil = metric === 'utilization'
 
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-        <PageHeader
-          icon={BarChart3}
-          title="Traffic Overview"
-          actions={<DashboardFilters />}
-        />
-        <div className="-mt-3 mb-6">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Sticky header */}
+      <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
+        <div className="[&>div]:mb-0">
+          <PageHeader
+            icon={BarChart3}
+            title="Traffic Overview"
+            actions={<DashboardFilters />}
+          />
+        </div>
+        <div className="mt-3">
           <DashboardFilterBadges />
         </div>
+      </div>
 
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-auto px-4 sm:px-8 py-6">
         <div className="space-y-4">
           <Section
             title={isUtil ? 'System Stress' : metric === 'packets' ? 'Aggregate Packet Rate' : 'Aggregate Throughput'}
