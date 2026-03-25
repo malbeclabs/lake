@@ -15,6 +15,16 @@ export interface SelectedEntity {
   intf?: string
 }
 
+export interface ReferenceLines {
+  p50_bps: number
+  p99_bps: number
+  direction: 'rx' | 'tx'
+}
+
+function refLineKey(devicePk: string, intf?: string): string {
+  return intf ? `${devicePk}~${intf}` : devicePk
+}
+
 export type BucketSize = 'auto' | '10 SECOND' | '30 SECOND' | '1 MINUTE' | '5 MINUTE' | '10 MINUTE' | '15 MINUTE' | '30 MINUTE' | '1 HOUR' | '4 HOUR' | '12 HOUR' | '1 DAY'
 
 export const bucketLabels: Record<BucketSize, string> = {
@@ -125,6 +135,8 @@ export interface DashboardState {
   pinEntity: (e: SelectedEntity) => void
   unpinEntity: (e: SelectedEntity) => void
   clearFilters: () => void
+  referenceLines: Map<string, ReferenceLines>
+  setReferenceLines: (devicePk: string, intf: string | undefined, lines: ReferenceLines | null) => void
 }
 
 const DashboardContext = createContext<DashboardState | null>(null)
@@ -411,6 +423,20 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
     })
   }, [setSearchParams])
 
+  const [referenceLines, setReferenceLinesState] = useState<Map<string, ReferenceLines>>(new Map())
+  const setReferenceLines = useCallback((devicePk: string, intf: string | undefined, lines: ReferenceLines | null) => {
+    setReferenceLinesState(prev => {
+      const next = new Map(prev)
+      const key = refLineKey(devicePk, intf)
+      if (lines) {
+        next.set(key, lines)
+      } else {
+        next.delete(key)
+      }
+      return next
+    })
+  }, [])
+
   return (
     <DashboardContext.Provider
       value={{
@@ -423,6 +449,7 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
         setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter, setUserKindFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
+        referenceLines, setReferenceLines,
       }}
     >
       {children}

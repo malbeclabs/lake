@@ -112,11 +112,23 @@ function BurstinessTable({
             return (
               <tr
                 key={`${e.device_pk}-${e.intf}-${i}`}
-                onClick={() => state.selectEntity(isSelected ? null : {
-                  devicePk: e.device_pk,
-                  deviceCode: e.device_code,
-                  intf: e.intf,
-                })}
+                onClick={() => {
+                  if (isSelected) {
+                    state.selectEntity(null)
+                    state.setReferenceLines(e.device_pk, e.intf, null)
+                  } else {
+                    state.selectEntity({
+                      devicePk: e.device_pk,
+                      deviceCode: e.device_code,
+                      intf: e.intf,
+                    })
+                    state.setReferenceLines(e.device_pk, e.intf, {
+                      p50_bps: e.p50_bps,
+                      p99_bps: e.p99_bps,
+                      direction: e.peak_direction,
+                    })
+                  }
+                }}
                 className={cn(
                   'border-b border-border/50 cursor-pointer transition-colors',
                   isSelected ? 'bg-blue-500/10 ring-1 ring-blue-500/30' : 'hover:bg-muted/50'

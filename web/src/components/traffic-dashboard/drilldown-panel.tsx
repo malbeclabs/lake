@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { fetchDashboardDrilldown, type DashboardDrilldownPoint } from '@/lib/api'
-import { useDashboard, type SelectedEntity, dashboardFilterParams } from './dashboard-context'
+import { useDashboard, type SelectedEntity, type ReferenceLines, dashboardFilterParams } from './dashboard-context'
 import { Loader2, Pin, PinOff, X, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 
@@ -81,6 +81,11 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
   )
   const isPps = state.metric === 'packets'
   const fmt = isPps ? formatPps : formatRate
+
+  const refLineKey = entity.intf ? `${entity.devicePk}~${entity.intf}` : entity.devicePk
+  const refLines: ReferenceLines | undefined = state.referenceLines.get(refLineKey)
+  const refLinesRef = useRef<ReferenceLines | undefined>(refLines)
+  refLinesRef.current = refLines
 
   const filterParams = dashboardFilterParams(state)
 
@@ -217,6 +222,39 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
           }
           u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false)
         }],
+        draw: [(u: uPlot) => {
+          const rl = refLinesRef.current
+          if (!rl) return
+          const ctx = u.ctx
+          const { left, top, width, height } = u.bbox
+
+          const drawLine = (val: number, label: string, color: string) => {
+            const y = u.valToPos(val, 'y', true)
+            if (y < top || y > top + height) return
+            ctx.save()
+            ctx.strokeStyle = color
+            ctx.lineWidth = 1.5
+            ctx.setLineDash([6, 4])
+            ctx.beginPath()
+            ctx.moveTo(left, y)
+            ctx.lineTo(left + width, y)
+            ctx.stroke()
+            ctx.setLineDash([])
+            ctx.fillStyle = color
+            ctx.font = '10px system-ui, sans-serif'
+            ctx.textAlign = 'left'
+            ctx.fillText(label, left + 4, y - 4)
+            ctx.restore()
+          }
+
+          const isRx = rl.direction === 'rx'
+          // P50 and P99 are in bps; Rx is positive (top half), Tx is negative (bottom half)
+          const p50 = isRx ? rl.p50_bps : -rl.p50_bps
+          const p99 = isRx ? rl.p99_bps : -rl.p99_bps
+
+          drawLine(p50, `P50 ${formatRate(rl.p50_bps)}`, 'oklch(65% 0.12 250 / 0.6)')
+          drawLine(p99, `P99 ${formatRate(rl.p99_bps)}`, 'oklch(65% 0.12 25 / 0.6)')
+        }],
       },
       legend: { show: false },
     }
@@ -235,6 +273,11 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       plotRef.current = null
     }
   }, [uplotData, fmt, resolvedTheme])
+
+  // Redraw when reference lines change (without recreating chart)
+  useEffect(() => {
+    if (plotRef.current) plotRef.current.redraw()
+  }, [refLines])
 
   // Find bandwidth for header (single-interface drilldown)
   const bandwidth = data?.series?.find(s => s.intf === entity.intf)?.bandwidth_bps
