@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -289,7 +290,7 @@ type UserTrafficPoint struct {
 }
 
 func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	pk := chi.URLParam(r, "pk")
@@ -298,69 +299,114 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	timeRange := r.URL.Query().Get("time_range")
-	if timeRange == "" {
-		timeRange = "1h"
-	}
+	// Use the shared time filter: raw fact table for sub-5m, rollup for >= 5m
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
-	// Default bucket sizes per time range
-	var interval, lookback string
-	switch timeRange {
-	case "1h":
-		interval, lookback = "30", "1 HOUR"
-	case "6h":
-		interval, lookback = "120", "6 HOUR"
-	case "12h":
-		interval, lookback = "300", "12 HOUR"
-	case "24h":
-		interval, lookback = "600", "24 HOUR"
-	default:
-		interval, lookback = "30", "1 HOUR"
-	}
-
-	// Allow explicit bucket override (in seconds)
-	if bucket := r.URL.Query().Get("bucket"); bucket != "" && bucket != "auto" {
-		switch bucket {
-		case "2", "10", "30", "60", "120", "300", "600":
-			interval = bucket
-		}
+	// Parse aggregation mode
+	agg := r.URL.Query().Get("agg")
+	if agg == "" {
+		agg = "max"
 	}
 
 	start := time.Now()
-	query := `
-		WITH user_info AS (
-			SELECT tunnel_id, device_pk
-			FROM dz_users_current
-			WHERE pk = ?
-		)
-		SELECT
-			formatDateTime(toStartOfInterval(event_ts, INTERVAL ` + interval + ` SECOND), '%Y-%m-%dT%H:%i:%s') as time,
-			user_tunnel_id as tunnel_id,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-				ELSE 0
-			END as in_bps,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-				ELSE 0
-			END as out_bps,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(out_pkts_delta) / SUM(delta_duration)
-				ELSE 0
-			END as in_pps,
-			CASE WHEN SUM(delta_duration) > 0
-				THEN SUM(in_pkts_delta) / SUM(delta_duration)
-				ELSE 0
-			END as out_pps
-		FROM fact_dz_device_interface_counters
-		WHERE event_ts > now() - INTERVAL ` + lookback + `
-			AND user_tunnel_id IN (SELECT tunnel_id FROM user_info)
-			AND device_pk IN (SELECT device_pk FROM user_info)
-			AND delta_duration > 0
-			AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
-		GROUP BY time, tunnel_id
-		ORDER BY time, tunnel_id
-	`
+	var query string
+
+	if useRaw {
+		// Raw fact table path: compute rates from deltas
+		// Note: device in_octets = user outbound (tx), device out_octets = user inbound (rx)
+		var aggFunc string
+		switch agg {
+		case "avg":
+			aggFunc = "AVG"
+		case "min":
+			aggFunc = "MIN"
+		case "p50":
+			aggFunc = "quantile(0.5)"
+		case "p90":
+			aggFunc = "quantile(0.9)"
+		case "p95":
+			aggFunc = "quantile(0.95)"
+		case "p99":
+			aggFunc = "quantile(0.99)"
+		default:
+			aggFunc = "MAX"
+		}
+
+		query = fmt.Sprintf(`
+			WITH user_info AS (
+				SELECT tunnel_id, device_pk
+				FROM dz_users_current
+				WHERE pk = ?
+			)
+			SELECT
+				formatDateTime(toStartOfInterval(event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%s') as time,
+				user_tunnel_id as tunnel_id,
+				%s(CASE WHEN delta_duration > 0 THEN out_octets_delta * 8 / delta_duration ELSE 0 END) as in_bps,
+				%s(CASE WHEN delta_duration > 0 THEN in_octets_delta * 8 / delta_duration ELSE 0 END) as out_bps,
+				%s(CASE WHEN delta_duration > 0 THEN out_pkts_delta / delta_duration ELSE 0 END) as in_pps,
+				%s(CASE WHEN delta_duration > 0 THEN in_pkts_delta / delta_duration ELSE 0 END) as out_pps
+			FROM fact_dz_device_interface_counters
+			WHERE %s
+				AND user_tunnel_id IN (SELECT tunnel_id FROM user_info)
+				AND device_pk IN (SELECT device_pk FROM user_info)
+				AND delta_duration > 0
+				AND (in_octets_delta >= 0 OR out_octets_delta >= 0)
+			GROUP BY time, tunnel_id
+			ORDER BY time, tunnel_id
+		`, bucketInterval, aggFunc, aggFunc, aggFunc, aggFunc, timeFilter)
+	} else {
+		// Rollup path: use pre-computed columns
+		// Note: device in = user outbound (tx), device out = user inbound (rx)
+		aggPrefix := "max"
+		switch agg {
+		case "avg":
+			aggPrefix = "avg"
+		case "min":
+			aggPrefix = "min"
+		case "p50":
+			aggPrefix = "p50"
+		case "p90":
+			aggPrefix = "p90"
+		case "p95":
+			aggPrefix = "p95"
+		case "p99":
+			aggPrefix = "p99"
+		}
+
+		rollupAggFunc := "MAX"
+		switch agg {
+		case "avg":
+			rollupAggFunc = "AVG"
+		case "min":
+			rollupAggFunc = "MIN"
+		}
+
+		query = fmt.Sprintf(`
+			WITH user_info AS (
+				SELECT tunnel_id, device_pk
+				FROM dz_users_current
+				WHERE pk = ?
+			)
+			SELECT
+				formatDateTime(toStartOfInterval(bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%s') as time,
+				user_tunnel_id as tunnel_id,
+				%s(%s_out_bps) as in_bps,
+				%s(%s_in_bps) as out_bps,
+				%s(%s_out_pps) as in_pps,
+				%s(%s_in_pps) as out_pps
+			FROM device_interface_rollup_5m
+			WHERE %s
+				AND user_tunnel_id IN (SELECT tunnel_id FROM user_info)
+				AND device_pk IN (SELECT device_pk FROM user_info)
+			GROUP BY time, tunnel_id
+			ORDER BY time, tunnel_id
+		`, bucketInterval,
+			rollupAggFunc, aggPrefix,
+			rollupAggFunc, aggPrefix,
+			rollupAggFunc, aggPrefix,
+			rollupAggFunc, aggPrefix,
+			timeFilter)
+	}
 
 	rows, err := envDB(ctx).Query(ctx, query, pk)
 	duration := time.Since(start)

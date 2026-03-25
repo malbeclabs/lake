@@ -3018,10 +3018,11 @@ export interface UserTrafficPoint {
   out_pps: number
 }
 
-export async function fetchUserTraffic(pk: string, timeRange?: string, bucket?: string): Promise<UserTrafficPoint[]> {
+export async function fetchUserTraffic(pk: string, timeRange?: string, bucket?: string, agg?: string): Promise<UserTrafficPoint[]> {
   const params = new URLSearchParams()
   if (timeRange) params.set('time_range', timeRange)
   if (bucket && bucket !== 'auto') params.set('bucket', bucket)
+  if (agg && agg !== 'max') params.set('agg', agg)
   const qs = params.toString()
   const res = await apiFetch(`/api/dz/users/${encodeURIComponent(pk)}/traffic${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
