@@ -419,8 +419,8 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
         <>
           <div className="relative w-full">
             <div ref={chartRef} className="w-full" />
-            <span className="absolute top-1 left-[72px] text-[10px] text-muted-foreground/60 pointer-events-none">▲ Rx (in)</span>
-            <span className="absolute bottom-8 left-[72px] text-[10px] text-muted-foreground/60 pointer-events-none">▼ Tx (out)</span>
+            <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▲ Rx (in)</span>
+            <span className="absolute bottom-8 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▼ Tx (out)</span>
           </div>
           {multiIntf ? (
             <div ref={listContainerRef} className="relative mt-2" style={{ height: `${listHeight}px` }}>

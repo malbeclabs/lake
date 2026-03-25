@@ -180,11 +180,11 @@ export function StressPanel() {
         </div>
       ) : (
         <div className="relative">
-          <div className="absolute left-1 top-1 z-10 flex flex-col gap-0.5 text-[10px] text-muted-foreground pointer-events-none">
-            <span>&#9650; Rx (in)</span>
+          <div className="absolute right-3 top-1 z-10 text-[10px] text-muted-foreground/50 pointer-events-none">
+            ▲ Rx (in)
           </div>
-          <div className="absolute left-1 bottom-1 z-10 flex flex-col gap-0.5 text-[10px] text-muted-foreground pointer-events-none">
-            <span>&#9660; Tx (out)</span>
+          <div className="absolute right-3 bottom-[42px] z-10 text-[10px] text-muted-foreground/50 pointer-events-none">
+            ▼ Tx (out)
           </div>
           <div ref={chartRef} className="w-full" />
         </div>

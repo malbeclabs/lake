@@ -1119,8 +1119,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         {/* Direction labels for bidirectional mode */}
         {bidirectional && (
           <>
-            <span className="absolute top-1 left-[72px] text-[10px] text-muted-foreground/60 pointer-events-none">▲ Rx (in)</span>
-            <span className="absolute bottom-8 left-[72px] text-[10px] text-muted-foreground/60 pointer-events-none">▼ Tx (out)</span>
+            <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▲ Rx (in)</span>
+            <span className="absolute bottom-12 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▼ Tx (out)</span>
           </>
         )}
       </div>
