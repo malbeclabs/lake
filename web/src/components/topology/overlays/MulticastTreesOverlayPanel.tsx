@@ -887,7 +887,10 @@ function MulticastTrafficChartSection({
 
   // Track hovered chart index for legend table values
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const [, setLocalHoveredSeries] = useState<number | null>(null)
+  const [localHoveredSeries, setLocalHoveredSeries] = useState<number | null>(null)
+
+  // Merge local legend hover with member list hover (hoveredTunnelId from parent)
+  const effectiveHoveredSeries = localHoveredSeries ?? hoveredTunnelId
 
   // Derive visible series from enabled members — member list is the source of truth
   const visibleSeries = useMemo(() => {
@@ -928,30 +931,30 @@ function MulticastTrafficChartSection({
   }, [chartData, tunnelIds, hoveredIdx])
 
   // Build uPlot columnar data from chartData
-  const { uplotData, uplotSeries } = useMemo(() => {
+  const { uplotData, uplotSeries, serisTidMap } = useMemo(() => {
     if (chartData.length === 0 || tunnelIds.length === 0) {
-      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[] }
+      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[], serisTidMap: [] as number[] }
     }
 
     const timestamps = chartData.map(row => new Date(row.time as string).getTime() / 1000)
     const splinePaths = uPlot.paths.spline?.()
     const dataArrays: (number | null)[][] = [timestamps]
     const series: uPlot.Series[] = [{}]
+    const tidMap: number[] = [] // maps uPlot series index (offset by 1) to tunnel ID
 
     for (const tid of tunnelIds) {
       if (!renderedSeries.has(tid)) continue
       const color = getTunnelColor(tid)
-      const isPreview = !visibleSeries.has(tid)
 
       dataArrays.push(chartData.map(row => (row[`t${tid}_in`] as number) ?? null))
       series.push({
         label: `t${tid}_in`,
         stroke: color,
         width: 1.5,
-        alpha: isPreview ? 0.35 : 1,
         points: { show: false },
         paths: splinePaths,
       } as uPlot.Series)
+      tidMap.push(tid)
 
       dataArrays.push(chartData.map(row => (row[`t${tid}_out`] as number) ?? null))
       series.push({
@@ -959,14 +962,14 @@ function MulticastTrafficChartSection({
         stroke: color,
         width: 1.5,
         dash: [4, 2],
-        alpha: isPreview ? 0.35 : 1,
         points: { show: false },
         paths: splinePaths,
       } as uPlot.Series)
+      tidMap.push(tid)
     }
 
-    return { uplotData: dataArrays as uPlot.AlignedData, uplotSeries: series }
-  }, [chartData, tunnelIds, renderedSeries, visibleSeries, getTunnelColor])
+    return { uplotData: dataArrays as uPlot.AlignedData, uplotSeries: series, serisTidMap: tidMap }
+  }, [chartData, tunnelIds, renderedSeries, getTunnelColor])
 
   // Create/update uPlot chart
   useEffect(() => {
@@ -1020,6 +1023,36 @@ function MulticastTrafficChartSection({
       plotRef.current = null
     }
   }, [uplotData, uplotSeries, open, metric])
+
+  // Sync series alpha from hover/visibility state
+  useEffect(() => {
+    const u = plotRef.current
+    if (!u || serisTidMap.length === 0) return
+
+    let changed = false
+    for (let i = 0; i < serisTidMap.length; i++) {
+      const tid = serisTidMap[i]
+      const seriesIdx = i + 1
+      if (seriesIdx >= u.series.length) continue
+
+      const isVisible = visibleSeries.has(tid)
+      const isPreview = renderedSeries.has(tid) && !isVisible
+      let alpha = 1
+      if (isPreview) {
+        alpha = 0.35
+      } else if (!isVisible) {
+        alpha = 0
+      } else if (effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid) {
+        alpha = 0.15
+      }
+
+      if (u.series[seriesIdx].alpha !== alpha) {
+        u.series[seriesIdx].alpha = alpha
+        changed = true
+      }
+    }
+    if (changed) u.redraw()
+  }, [serisTidMap, visibleSeries, renderedSeries, effectiveHoveredSeries])
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
