@@ -754,6 +754,7 @@ export function DzVsInternetPage() {
                     <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
                   )}
                 </div>
+                <div style={{ minHeight: 128 }}>
                 {rttUPlotData[0].length > 0 ? (
                   <>
                     <div ref={rttChartRef} className="h-32" />
@@ -773,6 +774,7 @@ export function DzVsInternetPage() {
                     No history data available
                   </div>
                 ) : null}
+                </div>
               </div>
 
               {/* Jitter Time Series Chart */}
@@ -796,6 +798,7 @@ export function DzVsInternetPage() {
                     <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
                   )}
                 </div>
+                <div style={{ minHeight: 128 }}>
                 {jitterUPlotData[0].length > 0 ? (
                   <>
                     <div ref={jitterChartRef} className="h-32" />
@@ -815,6 +818,7 @@ export function DzVsInternetPage() {
                     No history data available
                   </div>
                 ) : null}
+                </div>
               </div>
 
               <div className="text-xs text-muted-foreground">
