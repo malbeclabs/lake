@@ -151,8 +151,8 @@ func (p *ConnProxy) AsyncInsert(ctx context.Context, query string, wait bool, ar
 	return p.conn().AsyncInsert(ctx, query, wait, args...) //nolint:staticcheck
 }
 func (p *ConnProxy) Ping(ctx context.Context) error { return p.conn().Ping(ctx) }
-func (p *ConnProxy) Stats() driver.Stats             { return p.conn().Stats() }
-func (p *ConnProxy) Close() error                    { return p.conn().Close() }
+func (p *ConnProxy) Stats() driver.Stats            { return p.conn().Stats() }
+func (p *ConnProxy) Close() error                   { return p.conn().Close() }
 
 // goroutineID returns the current goroutine's ID by reading the test
 // stored in the goroutine-local currentTest map.
