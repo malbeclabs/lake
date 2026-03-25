@@ -3803,6 +3803,58 @@ export async function fetchTrafficData(
   return res.json()
 }
 
+// Link latency analytics types and functions
+export interface LinkLatencyPoint {
+  time: string
+  link_pk: string
+  link_code: string
+  side_a_code: string
+  side_z_code: string
+  rtt_a_to_z_ms: number
+  rtt_z_to_a_ms: number
+  jitter_a_to_z_ms: number
+  jitter_z_to_a_ms: number
+  loss_a_pct: number
+  loss_z_pct: number
+}
+
+export interface LinkLatencySeriesInfo {
+  link_pk: string
+  link_code: string
+  side_a_code: string
+  side_z_code: string
+  mean_rtt_ms: number
+}
+
+export interface LinkLatencyDataResponse {
+  points: LinkLatencyPoint[]
+  series: LinkLatencySeriesInfo[]
+  effective_bucket: string
+}
+
+export async function fetchLinkLatencyData(
+  timeRange: string = '24h',
+  bucket: string = 'auto',
+  agg: string = 'avg',
+  filters?: Record<string, string>,
+): Promise<LinkLatencyDataResponse> {
+  const hasCustomRange = filters?.start_time && filters?.end_time
+  const params = new URLSearchParams({ bucket, agg })
+  if (!hasCustomRange) {
+    params.set('time_range', timeRange)
+  }
+  if (filters) {
+    for (const [k, v] of Object.entries(filters)) {
+      if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
+    }
+  }
+  const res = await fetchWithRetry(`/api/performance/link-latency?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch link latency data')
+  }
+  return res.json()
+}
+
 // Discards analytics types and functions
 export interface DiscardsPoint {
   time: string

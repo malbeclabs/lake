@@ -26,10 +26,12 @@ interface TrafficChartProps {
   linkLookup?: Map<string, LinkLookupInfo>
   bidirectional?: boolean
   onTimeRangeSelect?: (startSec: number, endSec: number) => void
-  metric?: 'throughput' | 'packets' | 'utilization' | 'counters'
+  metric?: 'throughput' | 'packets' | 'utilization' | 'counters' | 'latency' | 'jitter' | 'loss'
   loading?: boolean
   /** Time range in seconds — extends x-axis to show full range even with sparse data */
   timeRangeSeconds?: number
+  /** Custom labels for bidirectional directions (default: { in: 'Rx', out: 'Tx' }) */
+  directionLabels?: { in: string; out: string }
 }
 
 // Represents one interface with paired in/out in bidirectional mode
@@ -90,17 +92,41 @@ function formatCountAxis(n: number): string {
   return Math.round(n).toString()
 }
 
-function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false, timeRangeSeconds }: TrafficChartProps) {
+function formatMs(ms: number): string {
+  if (ms >= 1000) return (ms / 1000).toFixed(2) + ' s'
+  if (ms >= 1) return ms.toFixed(2) + ' ms'
+  return (ms * 1000).toFixed(0) + ' µs'
+}
+
+function formatMsAxis(ms: number): string {
+  if (ms >= 1000) return Math.round(ms / 1000) + ' s'
+  if (ms >= 1) return ms.toFixed(1) + ' ms'
+  return Math.round(ms * 1000) + ' µs'
+}
+
+function formatPct(pct: number): string {
+  if (pct >= 10) return pct.toFixed(1) + '%'
+  if (pct >= 0.01) return pct.toFixed(2) + '%'
+  return pct.toFixed(3) + '%'
+}
+
+function formatPctAxis(pct: number): string {
+  return pct.toFixed(1) + '%'
+}
+
+function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bidirectional = false, onTimeRangeSelect, metric = 'throughput', loading = false, timeRangeSeconds, directionLabels: dirLabels }: TrafficChartProps) {
+  const inLabel = dirLabels?.in ?? 'Rx'
+  const outLabel = dirLabels?.out ?? 'Tx'
   const { resolvedTheme } = useTheme()
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const linkLookupRef = useRef(linkLookup)
   const onTimeRangeSelectRef = useRef(onTimeRangeSelect)
   onTimeRangeSelectRef.current = onTimeRangeSelect
-  const fmtValue = metric === 'counters' ? formatCount : metric === 'packets' ? formatPps : formatBandwidth
+  const fmtValue = metric === 'counters' ? formatCount : metric === 'packets' ? formatPps : metric === 'latency' || metric === 'jitter' ? formatMs : metric === 'loss' ? formatPct : formatBandwidth
   const fmtValueRef = useRef(fmtValue)
   fmtValueRef.current = fmtValue
-  const fmtAxisValue = metric === 'counters' ? formatCountAxis : metric === 'packets' ? formatPpsAxis : formatBandwidthAxis
+  const fmtAxisValue = metric === 'counters' ? formatCountAxis : metric === 'packets' ? formatPpsAxis : metric === 'latency' || metric === 'jitter' ? formatMsAxis : metric === 'loss' ? formatPctAxis : formatBandwidthAxis
   const fmtAxisValueRef = useRef(fmtAxisValue)
   fmtAxisValueRef.current = fmtAxisValue
   const seriesMetadataRef = useRef<Map<string, { devicePk: string; device: string; intf: string; direction: string }>>(new Map())
@@ -118,12 +144,12 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
     if (!u || stacked) return
     for (let i = 1; i < u.series.length; i++) {
       const label = typeof u.series[i].label === 'string' ? u.series[i].label as string : ''
-      const seriesKey = label.replace(/ (Rx|Tx)$/, '')
+      const seriesKey = label.replace(new RegExp(` (${inLabel}|${outLabel})$`), '')
       const isMatch = key === null || seriesKey === key
       u.series[i].alpha = isMatch ? 1 : 0
     }
     u.redraw()
-  }, [stacked])
+  }, [stacked, inLabel, outLabel])
   const highlightSeriesEnter = useCallback((key: string) => {
     if (highlightLeaveTimer.current) {
       clearTimeout(highlightLeaveTimer.current)
@@ -364,7 +390,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           const currentIdx = dataArrays.length - 1
           const prevIdx = i === interfaceGroups.length - 1 ? 1 : currentIdx - 1
           seriesConfigs.push({
-            label: `${g.intfKey} Rx`,
+            label: `${g.intfKey} ${inLabel}`,
             points: { show: false },
             stroke: 'transparent',
             width: 0,
@@ -400,7 +426,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           const currentIdx = dataArrays.length - 1
           const prevIdx = i === interfaceGroups.length - 1 ? txBaselineIdx : currentIdx - 1
           seriesConfigs.push({
-            label: `${g.intfKey} Tx`,
+            label: `${g.intfKey} ${outLabel}`,
             points: { show: false },
             stroke: 'transparent',
             width: 0,
@@ -423,7 +449,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           }
           dataArrays.push(rxVals)
           seriesConfigs.push({
-            label: `${g.intfKey} Rx`,
+            label: `${g.intfKey} ${inLabel}`,
             points: { show: showDataPoints, size: 6 },
             stroke: color,
             width: 1.5,
@@ -432,7 +458,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           })
           dataArrays.push(txVals)
           seriesConfigs.push({
-            label: `${g.intfKey} Tx`,
+            label: `${g.intfKey} ${outLabel}`,
             points: { show: showDataPoints, size: 6 },
             stroke: color,
             width: 1.5,
@@ -651,8 +677,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                   hour12: false,
                 })
 
-                // Get series metadata — strip " Rx"/" Tx" suffix for bidirectional labels
-                const metadataKey = seriesLabel.replace(/ (Rx|Tx)$/, '')
+                // Get series metadata — strip direction suffix for bidirectional labels
+                const metadataKey = seriesLabel.replace(new RegExp(` (${inLabel}|${outLabel})$`), '')
                 const metadata = seriesMetadataRef.current.get(metadataKey) || seriesMetadataRef.current.get(seriesLabel)
                 let linkInfo: LinkLookupInfo | undefined
                 if (metadata && linkLookupRef.current) {
@@ -673,7 +699,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                   devicePk: metadata?.devicePk || '',
                   device: metadata?.device || '',
                   intf: metadata?.intf || '',
-                  direction: seriesLabel.endsWith(' Rx') ? 'in' : seriesLabel.endsWith(' Tx') ? 'out' : (metadata?.direction || ''),
+                  direction: seriesLabel.endsWith(` ${inLabel}`) ? 'in' : seriesLabel.endsWith(` ${outLabel}`) ? 'out' : (metadata?.direction || ''),
                   linkInfo,
                 })
                 return
@@ -858,8 +884,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           const arr = uplotData[si] as (number | null)[]
           if (!arr) continue
           const v = arr[hoveredIdx]
-          if (label === `${g.intfKey} Rx` && v != null) rx = v as number
-          if (label === `${g.intfKey} Tx` && v != null) tx = Math.abs(v as number)
+          if (label === `${g.intfKey} ${inLabel}` && v != null) rx = v as number
+          if (label === `${g.intfKey} ${outLabel}` && v != null) tx = Math.abs(v as number)
         }
         m.set(g.intfKey, { rx, tx })
       }
@@ -1031,7 +1057,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
 
   // Value column header
   const valueColumnHeader = bidirectional
-    ? (hoveredIdx !== null ? 'Current (Rx / Tx)' : 'Latest (Rx / Tx)')
+    ? (hoveredIdx !== null ? `Current (${inLabel} / ${outLabel})` : `Latest (${inLabel} / ${outLabel})`)
     : (hoveredIdx !== null ? 'Current' : 'Latest')
 
   return (
@@ -1127,8 +1153,8 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         {/* Direction labels for bidirectional mode */}
         {bidirectional && (
           <>
-            <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▲ Rx (in)</span>
-            <span className="absolute bottom-12 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▼ Tx (out)</span>
+            <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▲ {inLabel} (in)</span>
+            <span className="absolute bottom-12 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▼ {outLabel} (out)</span>
           </>
         )}
       </div>

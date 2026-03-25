@@ -642,7 +642,7 @@ function BucketDropdown() {
   )
 }
 
-export function DashboardFilters({ excludeMetrics }: { excludeMetrics?: string[] } = {}) {
+export function DashboardFilters({ excludeMetrics, hideMetric, hideIntfType }: { excludeMetrics?: string[]; hideMetric?: boolean; hideIntfType?: boolean } = {}) {
   const { metric, setMetric, intfType, setIntfType } = useDashboard()
   const filteredMetricOptions = excludeMetrics
     ? metricOptions.filter(o => !excludeMetrics.includes(o.value))
@@ -657,8 +657,8 @@ export function DashboardFilters({ excludeMetrics }: { excludeMetrics?: string[]
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <TimeRangeDropdown />
-      <Dropdown label="Metric" value={metric} options={filteredMetricOptions} onChange={setMetric} />
-      <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />
+      {!hideMetric && <Dropdown label="Metric" value={metric} options={filteredMetricOptions} onChange={setMetric} />}
+      {!hideIntfType && <Dropdown label="Intf Type" value={intfType} options={intfTypeOptions} onChange={setIntfType} />}
       <BucketDropdown />
       <RefreshIntervalDropdown />
       <button
