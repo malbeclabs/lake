@@ -132,7 +132,7 @@ func newTemporalLogger(log *slog.Logger) *temporalLogger {
 	return &temporalLogger{log: log.With("component", "temporal")}
 }
 
-func (l *temporalLogger) Debug(msg string, keyvals ...any) { l.log.Debug(msg, keyvals...) }
+func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // no-op to avoid blocking workflow goroutine
 func (l *temporalLogger) Info(msg string, keyvals ...any)  { l.log.Info(msg, keyvals...) }
 func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
 func (l *temporalLogger) Error(msg string, keyvals ...any) { l.log.Error(msg, keyvals...) }

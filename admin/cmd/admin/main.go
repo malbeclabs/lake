@@ -136,6 +136,7 @@ func run() error {
 	// Remote tables command
 	var setupRemoteTables boolOrString
 	flag.Var(&setupRemoteTables, "setup-remote-tables", "Create remote proxy tables for local development")
+	flag.Lookup("setup-remote-tables").NoOptDefVal = "true"
 	remoteClickhouseAddrFlag := flag.String("remote-clickhouse-addr", "", "Remote ClickHouse host (or set REMOTE_CH_HOST env var)")
 	remoteClickhouseUserFlag := flag.String("remote-clickhouse-user", "", "Remote ClickHouse user (or set REMOTE_CH_USER env var)")
 	remoteClickhousePasswordFlag := flag.String("remote-clickhouse-password", "", "Remote ClickHouse password (or set REMOTE_CH_PASSWORD env var)")
