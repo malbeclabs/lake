@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useMemo, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useMemo, useCallback, useTransition, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
@@ -152,7 +152,18 @@ function parseList(param: string | null): string[] {
 }
 
 export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams, setSearchParamsRaw] = useSearchParams()
+  const [, startTransition] = useTransition()
+  // Wrap setSearchParams in a transition so URL changes render immediately
+  // while expensive chart re-renders are deferred.
+  const setSearchParams = useCallback(
+    (updater: (prev: URLSearchParams) => URLSearchParams) => {
+      startTransition(() => {
+        setSearchParamsRaw(updater)
+      })
+    },
+    [setSearchParamsRaw, startTransition]
+  )
   const [refreshIntervalKey, setRefreshIntervalKey] = useState<RefreshInterval>('off')
   const refetchInterval = refreshIntervalMs[refreshIntervalKey]
 
