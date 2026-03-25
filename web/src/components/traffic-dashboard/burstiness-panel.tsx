@@ -250,7 +250,7 @@ export function BurstinessPanel() {
       <div className="flex items-center justify-between mt-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {total > 0 ? (
-            <span>{start}\u2013{end} of {total}</span>
+            <span>{start}{'\u2013'}{end} of {total}</span>
           ) : (
             <span>No results</span>
           )}
@@ -261,14 +261,14 @@ export function BurstinessPanel() {
                 disabled={page === 0}
                 className={cn('px-1.5 py-0.5 rounded transition-colors', page === 0 ? 'opacity-30' : 'hover:bg-muted/50')}
               >
-                \u2039
+                {'\u2039'}
               </button>
               <button
                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1}
                 className={cn('px-1.5 py-0.5 rounded transition-colors', page >= totalPages - 1 ? 'opacity-30' : 'hover:bg-muted/50')}
               >
-                \u203A
+                {'\u203A'}
               </button>
             </div>
           )}
