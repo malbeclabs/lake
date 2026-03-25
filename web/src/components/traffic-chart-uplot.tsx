@@ -290,6 +290,9 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
   // Spline paths for smoother lines
   const splinePaths = useMemo(() => uPlot.paths.spline?.(), [])
 
+  // For sparse data (counters), show dots on every data point so spikes are visible
+  const showDataPoints = metric === 'counters'
+
   // Transform data for uPlot
   const { uplotData, uplotSeries } = useMemo(() => {
     if (!data.length || visibleSeriesList.length === 0) {
@@ -418,7 +421,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           dataArrays.push(rxVals)
           seriesConfigs.push({
             label: `${g.intfKey} Rx`,
-            points: { show: false },
+            points: { show: showDataPoints, size: 6 },
             stroke: color,
             width: 1.5,
             scale: 'y',
@@ -427,7 +430,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
           dataArrays.push(txVals)
           seriesConfigs.push({
             label: `${g.intfKey} Tx`,
-            points: { show: false },
+            points: { show: showDataPoints, size: 6 },
             stroke: color,
             width: 1.5,
             dash: [4, 2],
@@ -520,7 +523,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
         dataArrays.push(rawSeriesData[i])
         seriesConfigs.push({
           label: s.key,
-          points: { show: false },
+          points: { show: showDataPoints, size: 6 },
           stroke: color,
           width: 1.5,
           scale: 'y',
@@ -533,7 +536,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       uplotData: dataArrays as uPlot.AlignedData,
       uplotSeries: seriesConfigs,
     }
-  }, [data, visibleSeriesList, series, stacked, bidirectional, interfaceGroups, splinePaths])
+  }, [data, visibleSeriesList, series, stacked, bidirectional, interfaceGroups, splinePaths, showDataPoints])
 
   // Create/update chart
   useEffect(() => {
