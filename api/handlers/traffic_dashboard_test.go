@@ -1314,6 +1314,7 @@ func TestTrafficDashboardHealth_Empty(t *testing.T) {
 // --- Traffic data endpoint tests (raw + rollup paths) ---
 
 func TestGetTrafficData_RawPath(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1333,6 +1334,7 @@ func TestGetTrafficData_RawPath(t *testing.T) {
 }
 
 func TestGetTrafficData_RollupPath(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1352,6 +1354,7 @@ func TestGetTrafficData_RollupPath(t *testing.T) {
 }
 
 func TestGetTrafficData_ExplicitBucket_Raw(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1369,6 +1372,7 @@ func TestGetTrafficData_ExplicitBucket_Raw(t *testing.T) {
 }
 
 func TestGetTrafficData_ExplicitBucket_Rollup(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1386,6 +1390,7 @@ func TestGetTrafficData_ExplicitBucket_Rollup(t *testing.T) {
 }
 
 func TestGetTrafficData_Packets(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1399,6 +1404,7 @@ func TestGetTrafficData_Packets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -1413,6 +1419,7 @@ func TestGetTrafficData_Packets(t *testing.T) {
 }
 
 func TestGetTrafficData_AvgAgg(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1426,6 +1433,7 @@ func TestGetTrafficData_AvgAgg(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -1442,6 +1450,7 @@ func TestGetTrafficData_AvgAgg(t *testing.T) {
 // --- Discards endpoint tests (raw + rollup paths) ---
 
 func TestGetDiscardsData_RawPath(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1458,6 +1467,7 @@ func TestGetDiscardsData_RawPath(t *testing.T) {
 }
 
 func TestGetDiscardsData_RollupPath(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1476,6 +1486,7 @@ func TestGetDiscardsData_RollupPath(t *testing.T) {
 // --- Stress endpoint raw vs rollup path tests ---
 
 func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1495,6 +1506,7 @@ func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -1512,6 +1524,7 @@ func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
 // --- Drilldown endpoint raw vs rollup path tests ---
 
 func TestTrafficDashboardDrilldown_RawVsRollup(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1527,6 +1540,7 @@ func TestTrafficDashboardDrilldown_RawVsRollup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
 			rr := httptest.NewRecorder()
 

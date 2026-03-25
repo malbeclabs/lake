@@ -83,6 +83,9 @@ func (p *ConnProxy) conn() driver.Conn {
 	if ptr := p.seqFallback.Load(); ptr != nil {
 		return *ptr
 	}
+	if p.Default == nil {
+		panic("ConnProxy: no connection found for current goroutine (missing BindTest call?)")
+	}
 	return p.Default
 }
 
