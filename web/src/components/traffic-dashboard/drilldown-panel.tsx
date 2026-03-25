@@ -174,7 +174,22 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       height: 240,
       series,
       scales: {
-        x: { time: true },
+        x: {
+          time: true,
+          range: (() => {
+            const map: Record<string, number> = {
+              '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
+              '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
+            }
+            const secs = state.customStart && state.customEnd
+              ? state.customEnd - state.customStart
+              : map[state.timeRange] || 86400
+            return (_u: uPlot, dataMin: number, dataMax: number): [number, number] => {
+              const rangeMin = dataMax - secs
+              return [Math.min(dataMin, rangeMin), dataMax]
+            }
+          })(),
+        },
         y: { auto: true },
       },
       axes: [
