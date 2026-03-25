@@ -1016,12 +1016,11 @@ function MulticastTrafficChartSection({
     }
   }, [uplotData, uplotSeries, open, metric])
 
-  // Sync series alpha from hover/visibility state
+  // Sync series alpha on hover — dim non-hovered lines, preview hidden ones
   useEffect(() => {
     const u = plotRef.current
     if (!u || serisTidMap.length === 0) return
 
-    // Only apply hover dimming if the hovered tunnel exists in the chart data
     const hoveredTid = effectiveHoveredSeries !== null && serisTidMap.includes(effectiveHoveredSeries)
       ? effectiveHoveredSeries
       : null
@@ -1032,17 +1031,20 @@ function MulticastTrafficChartSection({
       const seriesIdx = i + 1
       if (seriesIdx >= u.series.length) continue
 
-      const isVisible = visibleSeries.has(tid)
-      const isHoveredPreview = !isVisible && hoveredTid === tid
       let alpha: number
-      if (isHoveredPreview) {
-        alpha = 0.35
-      } else if (!isVisible) {
-        alpha = 0
-      } else if (hoveredTid !== null && hoveredTid !== tid) {
+      if (hoveredTid === null) {
+        // No hover — restore to initial state (visible=1, hidden=0)
+        // Use the initial alpha from the series config
+        alpha = uplotSeries[seriesIdx]?.alpha ?? 1
+      } else if (hoveredTid === tid) {
+        // Hovered tunnel — always show bright (even if normally hidden = preview)
+        alpha = 1
+      } else if (visibleSeries.has(tid)) {
+        // Visible but not hovered — dim
         alpha = 0.15
       } else {
-        alpha = 1
+        // Not visible, not hovered — hide
+        alpha = 0
       }
 
       if (u.series[seriesIdx].alpha !== alpha) {
@@ -1051,7 +1053,7 @@ function MulticastTrafficChartSection({
       }
     }
     if (changed) u.redraw()
-  }, [serisTidMap, visibleSeries, effectiveHoveredSeries])
+  }, [serisTidMap, uplotSeries, visibleSeries, effectiveHoveredSeries])
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
