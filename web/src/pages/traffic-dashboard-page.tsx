@@ -100,7 +100,7 @@ function DashboardContent() {
 
           <Section
             title="Spike Detection"
-            description="Interfaces where traffic exceeded 2x the median (P50) baseline. Shows anomalous bursts, not normal variance."
+            description="Interfaces with traffic bursts exceeding both 2x the median and the P95 level. Shows genuine anomalies, not normal variance."
             loading={burstinessFetching}
           >
             <BurstinessPanel />
