@@ -14,6 +14,7 @@ import (
 )
 
 func TestGetCatalog(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 
@@ -55,6 +56,7 @@ func TestGetCatalog(t *testing.T) {
 }
 
 func TestGetCatalog_ExcludesStaging(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 
@@ -102,6 +104,7 @@ func TestGetCatalog_ExcludesStaging(t *testing.T) {
 }
 
 func TestGetCatalog_IdentifiesViews(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 
@@ -151,6 +154,7 @@ func TestGetCatalog_IdentifiesViews(t *testing.T) {
 }
 
 func TestGetCatalog_ColumnsOrdered(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 
@@ -191,6 +195,7 @@ func TestGetCatalog_ColumnsOrdered(t *testing.T) {
 }
 
 func TestGetCatalog_EmptyDatabase(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 
 	// Don't create any tables - test with empty database
@@ -213,6 +218,7 @@ func TestGetCatalog_EmptyDatabase(t *testing.T) {
 }
 
 func TestTableInfo_Structure(t *testing.T) {
+	t.Parallel()
 	info := handlers.TableInfo{
 		Name:     "test_table",
 		Database: "default",

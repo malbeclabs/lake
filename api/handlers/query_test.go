@@ -18,6 +18,7 @@ import (
 )
 
 func TestExecuteQuery_Select(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 
@@ -60,6 +61,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 }
 
 func TestExecuteQuery_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
@@ -77,6 +79,7 @@ func TestExecuteQuery_Empty(t *testing.T) {
 }
 
 func TestExecuteQuery_WhitespaceOnly(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
@@ -94,6 +97,7 @@ func TestExecuteQuery_WhitespaceOnly(t *testing.T) {
 }
 
 func TestExecuteQuery_InvalidSQL(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
@@ -117,6 +121,7 @@ func TestExecuteQuery_InvalidSQL(t *testing.T) {
 }
 
 func TestExecuteQuery_InvalidRequestBody(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", bytes.NewReader([]byte("not json")))
@@ -129,6 +134,7 @@ func TestExecuteQuery_InvalidRequestBody(t *testing.T) {
 }
 
 func TestExecuteQuery_TrimsTrailingSemicolon(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
@@ -152,6 +158,7 @@ func TestExecuteQuery_TrimsTrailingSemicolon(t *testing.T) {
 }
 
 func TestToJSONSafe_NetIP(t *testing.T) {
+	t.Parallel()
 	ip := net.ParseIP("192.168.1.1")
 	result := toJSONSafeWrapper(ip)
 	assert.Equal(t, "192.168.1.1", result)
@@ -167,6 +174,7 @@ func TestToJSONSafe_NetIP(t *testing.T) {
 }
 
 func TestToJSONSafe_FloatSpecialValues(t *testing.T) {
+	t.Parallel()
 	// NaN
 	result := toJSONSafeWrapper(math.NaN())
 	assert.Nil(t, result)
@@ -193,6 +201,7 @@ func TestToJSONSafe_FloatSpecialValues(t *testing.T) {
 }
 
 func TestToJSONSafe_FloatPointers(t *testing.T) {
+	t.Parallel()
 	// Nil float64 pointer
 	var nilFloat64 *float64
 	result := toJSONSafeWrapper(nilFloat64)
@@ -215,6 +224,7 @@ func TestToJSONSafe_FloatPointers(t *testing.T) {
 }
 
 func TestToJSONSafe_Time(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	result := toJSONSafeWrapper(now)
 	assert.Equal(t, now.Format(time.RFC3339), result)
@@ -230,11 +240,13 @@ func TestToJSONSafe_Time(t *testing.T) {
 }
 
 func TestToJSONSafe_NilInterface(t *testing.T) {
+	t.Parallel()
 	result := toJSONSafeWrapper(nil)
 	assert.Nil(t, result)
 }
 
 func TestToJSONSafe_RegularValues(t *testing.T) {
+	t.Parallel()
 	// String
 	result := toJSONSafeWrapper("hello")
 	assert.Equal(t, "hello", result)
@@ -304,6 +316,7 @@ func toJSONSafeWrapper(v any) any {
 }
 
 func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 
@@ -352,6 +365,7 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 }
 
 func TestExecuteQuery_EmptyResult(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	ctx := t.Context()
 

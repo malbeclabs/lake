@@ -54,6 +54,7 @@ func insertUserTestData(t *testing.T) {
 }
 
 func TestGetUser_ReturnsDetail(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertUserTestData(t)
 
@@ -87,6 +88,7 @@ func TestGetUser_ReturnsDetail(t *testing.T) {
 }
 
 func TestGetUser_IsValidatorFalseWhenNoGossipMatch(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertUserTestData(t)
 
@@ -112,6 +114,7 @@ func TestGetUser_IsValidatorFalseWhenNoGossipMatch(t *testing.T) {
 }
 
 func TestGetUser_IsValidatorTrueWhenMatched(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertUserTestData(t)
 
@@ -157,6 +160,7 @@ func TestGetUser_IsValidatorTrueWhenMatched(t *testing.T) {
 }
 
 func TestGetUser_NotFound(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/users/nonexistent", nil)
@@ -171,6 +175,7 @@ func TestGetUser_NotFound(t *testing.T) {
 }
 
 func TestGetUserTraffic_ReturnsData(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertUserTestData(t)
 
@@ -210,6 +215,7 @@ func TestGetUserTraffic_ReturnsData(t *testing.T) {
 }
 
 func TestGetUserTraffic_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertUserTestData(t)
 
@@ -232,6 +238,7 @@ func TestGetUserTraffic_Empty(t *testing.T) {
 }
 
 func TestGetUserTraffic_MissingPK(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/users//traffic", nil)

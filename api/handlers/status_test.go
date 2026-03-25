@@ -3,6 +3,7 @@ package handlers
 import "testing"
 
 func TestClassifyLinkStatus(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		avgLatency     float64

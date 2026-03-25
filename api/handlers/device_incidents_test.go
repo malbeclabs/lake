@@ -11,6 +11,7 @@ import (
 )
 
 func TestIsDeviceDrained(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status   string
 		expected bool
@@ -30,6 +31,7 @@ func TestIsDeviceDrained(t *testing.T) {
 }
 
 func TestIsDefaultDeviceIncidentsRequest(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		url      string
@@ -55,6 +57,7 @@ func TestIsDefaultDeviceIncidentsRequest(t *testing.T) {
 }
 
 func TestBuildDrainedDevicesInfo(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	ts := func(d time.Duration) string { return base.Add(d).Format(time.RFC3339) }
 	int64Ptr := func(i int64) *int64 { return &i }
@@ -177,6 +180,7 @@ func TestBuildDrainedDevicesInfo(t *testing.T) {
 }
 
 func TestIncidentSeverityDevice(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		incType   string

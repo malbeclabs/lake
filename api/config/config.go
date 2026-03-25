@@ -20,8 +20,8 @@ var DB driver.Conn
 // refresh storms from starving the readiness probe.
 var HealthDB driver.Conn
 
-// ShredderDB is the ClickHouse database name for shredder tables (default: "shredder").
-var ShredderDB = "shredder"
+// shredderDB is the ClickHouse database name for shredder tables (default: "shredder").
+var shredderDB = "shredder"
 
 // EnvDBs maps environment names to their ClickHouse connection pools.
 // The mainnet-beta entry always points to DB.
@@ -41,8 +41,44 @@ var EnvDatabases map[string]string
 // cfg holds the parsed configuration
 var cfg CHConfig
 
-// Database returns the configured database name
+// TestDatabaseProxy holds a per-goroutine database name proxy for parallel tests.
+// When non-nil, Database() checks it before returning the global default.
+// This is set by the test infrastructure; production code leaves it nil.
+var TestDatabaseProxy interface {
+	Get() string
+}
+
+// TestShredderDBProxy holds a per-goroutine shredder database name proxy for
+// parallel tests. When non-nil, GetShredderDB() checks it before returning the
+// global default.
+var TestShredderDBProxy interface {
+	Get() string
+}
+
+// GetShredderDB returns the shredder database name.
+// In parallel tests, returns the per-goroutine override if registered.
+func GetShredderDB() string {
+	if TestShredderDBProxy != nil {
+		if name := TestShredderDBProxy.Get(); name != "" {
+			return name
+		}
+	}
+	return shredderDB
+}
+
+// SetShredderDB sets the shredder database name.
+func SetShredderDB(db string) {
+	shredderDB = db
+}
+
+// Database returns the configured database name.
+// In parallel tests, returns the per-goroutine override if registered.
 func Database() string {
+	if TestDatabaseProxy != nil {
+		if name := TestDatabaseProxy.Get(); name != "" {
+			return name
+		}
+	}
 	return cfg.Database
 }
 
@@ -101,7 +137,7 @@ func Load() error {
 	}
 
 	if db := os.Getenv("CLICKHOUSE_SHREDDER_DB"); db != "" {
-		ShredderDB = db
+		shredderDB = db
 	}
 
 	// Build env -> database mapping
@@ -117,7 +153,7 @@ func Load() error {
 
 	secure := os.Getenv("CLICKHOUSE_SECURE") == "true"
 
-	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", ShredderDB)
+	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", shredderDB)
 
 	// Create connection pool
 	opts := &clickhouse.Options{

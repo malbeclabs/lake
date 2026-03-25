@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseBucket(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		expected string
@@ -35,6 +36,7 @@ func TestParseBucket(t *testing.T) {
 }
 
 func TestEffectiveBucket(t *testing.T) {
+	t.Parallel()
 	// When bucket is provided, it should be returned as-is
 	got := effectiveBucket("1h", "5 MINUTE")
 	if got != "5 MINUTE" {
@@ -68,6 +70,7 @@ func TestEffectiveBucket(t *testing.T) {
 }
 
 func TestBucketForDuration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		duration time.Duration
@@ -91,6 +94,7 @@ func TestBucketForDuration(t *testing.T) {
 }
 
 func TestDashboardTimeFilter(t *testing.T) {
+	t.Parallel()
 	t.Run("preset time range", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/test?time_range=6h", nil)
 		timeFilter, bucketInterval := dashboardTimeFilter(req)

@@ -63,6 +63,7 @@ func insertMulticastTestData(t *testing.T) {
 
 func TestGetMulticastGroups_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups", nil)
 	rr := httptest.NewRecorder()
@@ -78,6 +79,7 @@ func TestGetMulticastGroups_Empty(t *testing.T) {
 
 func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups", nil)
@@ -100,6 +102,7 @@ func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
 
 func TestGetMulticastGroup_NotFound(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/nonexistent", nil)
 	rctx := chi.NewRouteContext()
@@ -114,6 +117,7 @@ func TestGetMulticastGroup_NotFound(t *testing.T) {
 
 func TestGetMulticastGroup_ReturnsMetadataOnly(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group", nil)
@@ -136,6 +140,7 @@ func TestGetMulticastGroup_ReturnsMetadataOnly(t *testing.T) {
 
 func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	// Fetch publishers tab
@@ -189,6 +194,7 @@ func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
 
 func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	ctx := t.Context()
@@ -239,6 +245,7 @@ func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 
 func TestGetMulticastGroupMembers_TrafficBps_NoCounters(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	// Don't insert any traffic counters — traffic_bps should be 0
@@ -262,6 +269,7 @@ func TestGetMulticastGroupMembers_TrafficBps_NoCounters(t *testing.T) {
 
 func TestGetMulticastGroup_MissingCode(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/", nil)
 	rctx := chi.NewRouteContext()
@@ -275,6 +283,7 @@ func TestGetMulticastGroup_MissingCode(t *testing.T) {
 
 func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	ctx := t.Context()
@@ -351,6 +360,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 
 func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	ctx := t.Context()
@@ -394,6 +404,7 @@ func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
 
 func TestGetMulticastGroupTraffic_NotFound(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/nonexistent/traffic", nil)
 	rctx := chi.NewRouteContext()
@@ -408,6 +419,7 @@ func TestGetMulticastGroupTraffic_NotFound(t *testing.T) {
 
 func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/test-group/traffic?time_range=1h", nil)
@@ -428,6 +440,7 @@ func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
 
 func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	ctx := t.Context()
@@ -484,6 +497,7 @@ func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 
 func TestGetMulticastGroupMembers_ValidatorEnrichment(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	insertMulticastTestData(t)
 
 	ctx := t.Context()

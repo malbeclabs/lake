@@ -3,6 +3,7 @@ package handlers
 import "testing"
 
 func TestIsValidatorVersionOk(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		client  string
 		version string

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/malbeclabs/lake/api/config"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 )
 
@@ -56,6 +57,15 @@ func TestMain(m *testing.M) {
 		slog.Error("failed to start Neo4j container", "error", neo4jErr)
 		os.Exit(1)
 	}
+
+	// Install ConnProxy so parallel tests get per-goroutine ClickHouse connections.
+	// The proxy wraps config.DB and dispatches to per-test overrides registered by
+	// SetupTestClickHouse*. Tests without an override fall through to the default.
+	dbProxy := &apitesting.DatabaseProxy{}
+	shredderDBProxy := &apitesting.DatabaseProxy{}
+	config.DB = &apitesting.ConnProxy{}
+	config.TestDatabaseProxy = dbProxy
+	config.TestShredderDBProxy = shredderDBProxy
 
 	code := m.Run()
 

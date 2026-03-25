@@ -128,6 +128,7 @@ func queryIssueStart(t *testing.T, linkCode string) (time.Time, bool) {
 
 func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
@@ -177,6 +178,7 @@ func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
 
 func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
@@ -217,6 +219,7 @@ func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
 
 func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
@@ -259,6 +262,7 @@ func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
 
 func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
@@ -288,6 +292,7 @@ func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
 
 func TestIssueDuration_NoIssueReturnsNoResults(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 

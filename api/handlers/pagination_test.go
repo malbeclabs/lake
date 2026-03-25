@@ -9,6 +9,7 @@ import (
 )
 
 func TestParsePagination_Defaults(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test", nil)
 
 	params := handlers.ParsePagination(req, 0)
@@ -18,6 +19,7 @@ func TestParsePagination_Defaults(t *testing.T) {
 }
 
 func TestParsePagination_Custom(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=25&offset=50", nil)
 
 	params := handlers.ParsePagination(req, 0)
@@ -27,6 +29,7 @@ func TestParsePagination_Custom(t *testing.T) {
 }
 
 func TestParsePagination_CustomDefault(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test", nil)
 
 	params := handlers.ParsePagination(req, 50)
@@ -36,6 +39,7 @@ func TestParsePagination_CustomDefault(t *testing.T) {
 }
 
 func TestParsePagination_MaxLimit(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=5000", nil)
 
 	params := handlers.ParsePagination(req, 0)
@@ -44,6 +48,7 @@ func TestParsePagination_MaxLimit(t *testing.T) {
 }
 
 func TestParsePagination_NegativeValues(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=-10&offset=-5", nil)
 
 	params := handlers.ParsePagination(req, 100)
@@ -55,6 +60,7 @@ func TestParsePagination_NegativeValues(t *testing.T) {
 }
 
 func TestParsePagination_InvalidValues(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=abc&offset=xyz", nil)
 
 	params := handlers.ParsePagination(req, 100)
@@ -65,6 +71,7 @@ func TestParsePagination_InvalidValues(t *testing.T) {
 }
 
 func TestParsePagination_ZeroLimit(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=0", nil)
 
 	params := handlers.ParsePagination(req, 100)
@@ -74,6 +81,7 @@ func TestParsePagination_ZeroLimit(t *testing.T) {
 }
 
 func TestParsePagination_ExactMaxLimit(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=1000", nil)
 
 	params := handlers.ParsePagination(req, 0)
@@ -82,6 +90,7 @@ func TestParsePagination_ExactMaxLimit(t *testing.T) {
 }
 
 func TestParsePagination_JustOverMaxLimit(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?limit=1001", nil)
 
 	params := handlers.ParsePagination(req, 0)
@@ -90,6 +99,7 @@ func TestParsePagination_JustOverMaxLimit(t *testing.T) {
 }
 
 func TestParseFilters_RepeatedParams(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?filters=vote:abc&filters=city:NYC", nil)
 	mf := handlers.ParseFilters(req)
 	assert.Len(t, mf.Filters, 2)
@@ -100,6 +110,7 @@ func TestParseFilters_RepeatedParams(t *testing.T) {
 }
 
 func TestParseFilters_PlainValue(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?filters=hello", nil)
 	mf := handlers.ParseFilters(req)
 	assert.Len(t, mf.Filters, 1)
@@ -108,6 +119,7 @@ func TestParseFilters_PlainValue(t *testing.T) {
 }
 
 func TestParseFilters_LegacyFallback(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test?filter_field=vote&filter_value=abc", nil)
 	mf := handlers.ParseFilters(req)
 	assert.Len(t, mf.Filters, 1)
@@ -116,12 +128,14 @@ func TestParseFilters_LegacyFallback(t *testing.T) {
 }
 
 func TestParseFilters_Empty(t *testing.T) {
+	t.Parallel()
 	req := httptest.NewRequest("GET", "/api/test", nil)
 	mf := handlers.ParseFilters(req)
 	assert.True(t, mf.IsEmpty())
 }
 
 func TestMultiFilterBuildClause_SingleFilter(t *testing.T) {
+	t.Parallel()
 	fields := map[string]handlers.FilterFieldConfig{
 		"vote": {Column: "vote_pubkey", Type: handlers.FieldTypeText},
 		"city": {Column: "city", Type: handlers.FieldTypeText},
@@ -135,6 +149,7 @@ func TestMultiFilterBuildClause_SingleFilter(t *testing.T) {
 }
 
 func TestMultiFilterBuildClause_CrossFieldAND(t *testing.T) {
+	t.Parallel()
 	fields := map[string]handlers.FilterFieldConfig{
 		"vote": {Column: "vote_pubkey", Type: handlers.FieldTypeText},
 		"city": {Column: "city", Type: handlers.FieldTypeText},
@@ -151,6 +166,7 @@ func TestMultiFilterBuildClause_CrossFieldAND(t *testing.T) {
 }
 
 func TestMultiFilterBuildClause_SameFieldOR(t *testing.T) {
+	t.Parallel()
 	fields := map[string]handlers.FilterFieldConfig{
 		"city": {Column: "city", Type: handlers.FieldTypeText},
 	}
@@ -166,6 +182,7 @@ func TestMultiFilterBuildClause_SameFieldOR(t *testing.T) {
 }
 
 func TestMultiFilterBuildClause_MixedANDOR(t *testing.T) {
+	t.Parallel()
 	fields := map[string]handlers.FilterFieldConfig{
 		"city": {Column: "city", Type: handlers.FieldTypeText},
 		"dz":   {Column: "on_dz", Type: handlers.FieldTypeBoolean},
@@ -183,6 +200,7 @@ func TestMultiFilterBuildClause_MixedANDOR(t *testing.T) {
 }
 
 func TestMultiFilterBuildClause_Empty(t *testing.T) {
+	t.Parallel()
 	fields := map[string]handlers.FilterFieldConfig{
 		"vote": {Column: "vote_pubkey", Type: handlers.FieldTypeText},
 	}
@@ -193,6 +211,7 @@ func TestMultiFilterBuildClause_Empty(t *testing.T) {
 }
 
 func TestPaginatedResponse_JSONStructure(t *testing.T) {
+	t.Parallel()
 	// Test that the generic type works correctly
 	type Item struct {
 		Name string `json:"name"`

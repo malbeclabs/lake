@@ -137,6 +137,7 @@ func seedDashboardData(t *testing.T) {
 // --- Stress endpoint tests ---
 
 func TestTrafficDashboardStress(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -156,6 +157,7 @@ func TestTrafficDashboardStress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -186,6 +188,7 @@ func TestTrafficDashboardStress(t *testing.T) {
 }
 
 func TestTrafficDashboardStress_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress?time_range=1h", nil)
@@ -203,6 +206,7 @@ func TestTrafficDashboardStress_Empty(t *testing.T) {
 // --- Top endpoint tests ---
 
 func TestTrafficDashboardTop(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -228,6 +232,7 @@ func TestTrafficDashboardTop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -247,6 +252,7 @@ func TestTrafficDashboardTop(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top?time_range=1h", nil)
@@ -262,6 +268,7 @@ func TestTrafficDashboardTop_Empty(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -277,6 +284,7 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -291,6 +299,7 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -309,6 +318,7 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -324,6 +334,7 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 }
 
 func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -338,6 +349,7 @@ func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -352,6 +364,7 @@ func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -559,6 +572,7 @@ func seedTrafficTypeData(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -596,6 +610,7 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -616,6 +631,7 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 }
 
 func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -631,6 +647,7 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -645,6 +662,7 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -682,6 +700,7 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -710,6 +729,7 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 // and u.device_pk in CTEs).
 
 func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -725,6 +745,7 @@ func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -739,6 +760,7 @@ func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
 }
 
 func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -771,6 +793,7 @@ func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -795,6 +818,7 @@ func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -822,6 +846,7 @@ func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -842,6 +867,7 @@ func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
 }
 
 func TestTrafficDashboardHealth_WithUserKind(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedTrafficTypeData(t)
 
@@ -861,6 +887,7 @@ func TestTrafficDashboardHealth_WithUserKind(t *testing.T) {
 // --- Drilldown endpoint tests ---
 
 func TestTrafficDashboardDrilldown(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -882,6 +909,7 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -900,6 +928,7 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 }
 
 func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown?time_range=1h&device_pk=nonexistent", nil)
@@ -917,6 +946,7 @@ func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
 // --- Burstiness endpoint tests ---
 
 func TestTrafficDashboardBurstiness(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -935,6 +965,7 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -955,6 +986,7 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 // --- Scoped field values tests ---
 
 func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1013,6 +1045,7 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -1033,6 +1066,7 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 }
 
 func TestFieldValues_WithTimeRange(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedDashboardData(t)
 
@@ -1066,6 +1100,7 @@ func TestFieldValues_WithTimeRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+		apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
@@ -1086,6 +1121,7 @@ func TestFieldValues_WithTimeRange(t *testing.T) {
 }
 
 func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h", nil)
@@ -1187,10 +1223,12 @@ func seedHealthData(t *testing.T) {
 }
 
 func TestTrafficDashboardHealth(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedHealthData(t)
 
 	t.Run("default", func(t *testing.T) {
+		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
 		rr := httptest.NewRecorder()
 
@@ -1209,6 +1247,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 	})
 
 	t.Run("sort_total_errors", func(t *testing.T) {
+		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_errors&dir=desc", nil)
 		rr := httptest.NewRecorder()
 
@@ -1224,6 +1263,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 	})
 
 	t.Run("sort_total_carrier_transitions", func(t *testing.T) {
+		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_carrier_transitions&dir=desc", nil)
 		rr := httptest.NewRecorder()
 
@@ -1239,6 +1279,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 	})
 
 	t.Run("intf_type_link_only", func(t *testing.T) {
+		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=link", nil)
 		rr := httptest.NewRecorder()
 
@@ -1255,6 +1296,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 }
 
 func TestTrafficDashboardHealth_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)

@@ -8,6 +8,7 @@ import (
 )
 
 func TestParseThreshold(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		expected float64
@@ -29,6 +30,7 @@ func TestParseThreshold(t *testing.T) {
 }
 
 func TestParseTimeRange(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    string
 		expected time.Duration
@@ -55,6 +57,7 @@ func TestParseTimeRange(t *testing.T) {
 }
 
 func TestParseIncidentFilters(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string

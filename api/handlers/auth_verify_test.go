@@ -10,6 +10,7 @@ import (
 )
 
 func TestGoogleIDTokenClaimsParsing(t *testing.T) {
+	t.Parallel()
 	// Google's tokeninfo endpoint returns exp/iat as strings, not numbers
 	// This test ensures our struct can handle that format
 	tests := []struct {
@@ -79,6 +80,7 @@ func TestGoogleIDTokenClaimsParsing(t *testing.T) {
 }
 
 func TestBuildSIWSMessage(t *testing.T) {
+	t.Parallel()
 	nonce := "abc123"
 	message := buildSIWSMessage(nonce)
 
@@ -89,6 +91,7 @@ func TestBuildSIWSMessage(t *testing.T) {
 }
 
 func TestParseSIWSMessage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		message   string
@@ -144,6 +147,7 @@ func TestParseSIWSMessage(t *testing.T) {
 }
 
 func TestVerifyEd25519Signature(t *testing.T) {
+	t.Parallel()
 	// Generate a test keypair
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -222,6 +226,7 @@ func TestVerifyEd25519Signature(t *testing.T) {
 }
 
 func TestBuildAndParseSIWSMessageRoundTrip(t *testing.T) {
+	t.Parallel()
 	nonces := []string{
 		"simple",
 		"with-dashes-123",

@@ -51,6 +51,7 @@ func postWhatIfRemoval(t *testing.T, req handlers.WhatIfRemovalRequest) handlers
 // Alt path A-D-E-C: 50+50+50=150, so 20 <= 150 → affected, degraded.
 func TestPostWhatIfRemoval_DeviceRemoval_AffectedPath(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -116,6 +117,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_AffectedPath(t *testing.T) {
 // Alt path A-D-E-C: 5+5+5=15, so 20 > 15 → NOT affected (ISIS routes via D-E-C).
 func TestPostWhatIfRemoval_DeviceRemoval_NotAffected(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -157,6 +159,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_NotAffected(t *testing.T) {
 // Remove B: A is a leaf (only connected to B) → disconnected.
 func TestPostWhatIfRemoval_DeviceRemoval_DisconnectedLeaf(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -203,6 +206,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_DisconnectedLeaf(t *testing.T) {
 // Alt path A-B-D-E: 10+50+50=110. So 70 <= 110 → affected.
 func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	ctx := t.Context()
 	// Insert devices into ClickHouse so envDB can look them up
@@ -305,6 +309,7 @@ func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
 // Actually the alt for (A, D) avoiding B-C link: A-B-E-F-D = 10+5+5+5 = 25. 120 > 25 → NOT affected.
 func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	ctx := t.Context()
 	err := config.DB.Exec(ctx, `
@@ -371,6 +376,7 @@ func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
 // when the device PK doesn't exist in Neo4j.
 func TestPostWhatIfRemoval_DeviceNotFound(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		return nil // empty graph

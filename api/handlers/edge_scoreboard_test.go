@@ -18,7 +18,7 @@ import (
 func createShredderTables(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	db := "`" + config.ShredderDB + "`"
+	db := "`" + config.GetShredderDB() + "`"
 	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
 	require.NoError(t, err)
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
@@ -106,7 +106,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			 1000000000, 'dz-user-1', 'slc-qa-bm1', 'slc',
 			 %d, %d, 100, 80, 60, 20,
 			 79, false, 0, 1000000, true)
-	`, "`"+config.ShredderDB+"`", epoch, slot1))
+	`, "`"+config.GetShredderDB()+"`", epoch, slot1))
 	require.NoError(t, err)
 
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
@@ -126,7 +126,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',     '', 100, 10),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',  '', 100, 55),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',     '', 100, 45)
-	`, "`"+config.ShredderDB+"`", epoch, slot1, slot2))
+	`, "`"+config.GetShredderDB()+"`", epoch, slot1, slot2))
 	require.NoError(t, err)
 
 	// Insert lead-time rows (loser_feed != '') — pairwise: winner vs specific loser
@@ -139,11 +139,12 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'jito',    2.0, 4.0),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'turbine', 2.5, 5.0),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'jito',    3.0, 6.0)
-	`, "`"+config.ShredderDB+"`", epoch, slot1))
+	`, "`"+config.GetShredderDB()+"`", epoch, slot1))
 	require.NoError(t, err)
 }
 
 func TestGetEdgeScoreboard_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	createShredderTables(t)
 
@@ -161,6 +162,7 @@ func TestGetEdgeScoreboard_Empty(t *testing.T) {
 }
 
 func TestGetEdgeScoreboard_WithData(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertEdgeScoreboardTestData(t)
 
@@ -239,12 +241,14 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 }
 
 func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertEdgeScoreboardTestData(t)
 
 	windows := []string{"1h", "24h", "7d", "30d", "all"}
 	for _, w := range windows {
 		t.Run(w, func(t *testing.T) {
+			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard?window="+w, nil)
 			rr := httptest.NewRecorder()
 			handlers.GetEdgeScoreboard(rr, req)
@@ -260,6 +264,7 @@ func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
 }
 
 func TestGetEdgeScoreboard_InvalidWindow(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	createShredderTables(t)
 

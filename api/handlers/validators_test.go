@@ -52,6 +52,7 @@ func seedValidatorData(t *testing.T) {
 }
 
 func TestGetValidators(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedValidatorData(t)
 
@@ -77,6 +78,7 @@ func TestGetValidators(t *testing.T) {
 }
 
 func TestGetValidators_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators", nil)
@@ -93,6 +95,7 @@ func TestGetValidators_Empty(t *testing.T) {
 }
 
 func TestGetValidator(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	seedValidatorData(t)
 
@@ -118,6 +121,7 @@ func TestGetValidator(t *testing.T) {
 }
 
 func TestGetValidator_NotFound(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators/nonexistent", nil)

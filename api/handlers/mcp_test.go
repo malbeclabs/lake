@@ -349,6 +349,7 @@ func callTool(t *testing.T, handler http.Handler, sessionID string, toolName str
 
 func TestMCPHandler_ExecuteSQL_EmptyResults(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	// Create a simple test table
 	ctx := t.Context()
@@ -394,6 +395,7 @@ func TestMCPHandler_ExecuteSQL_EmptyResults(t *testing.T) {
 
 func TestMCPHandler_ExecuteSQL_WithData(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	ctx := t.Context()
 	err := config.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_mcp_data (id Int32, name String) ENGINE = Memory`)
@@ -429,6 +431,7 @@ func TestMCPHandler_ExecuteSQL_WithData(t *testing.T) {
 
 func TestMCPHandler_ExecuteSQL_InvalidQuery(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	handler, sessionID := mcpSession(t)
 
@@ -529,6 +532,7 @@ func TestMCPHandler_ExecuteCypher_WithData(t *testing.T) {
 
 func TestMCPHandler_GetSchema(t *testing.T) {
 	apitesting.SetupTestClickHouse(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	// Create a test table so schema has something to return
 	ctx := t.Context()

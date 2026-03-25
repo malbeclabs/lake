@@ -9,17 +9,20 @@ import (
 )
 
 func TestSanitizeError_NilError(t *testing.T) {
+	t.Parallel()
 	result := handlers.SanitizeError(nil)
 	assert.Equal(t, "", result)
 }
 
 func TestSanitizeError_PlainError(t *testing.T) {
+	t.Parallel()
 	err := errors.New("something went wrong")
 	result := handlers.SanitizeError(err)
 	assert.Equal(t, "something went wrong", result)
 }
 
 func TestSanitizeError_RemovesCredentialsFromURL(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -57,6 +60,7 @@ func TestSanitizeError_RemovesCredentialsFromURL(t *testing.T) {
 }
 
 func TestSanitizeError_RemovesQueryParameters(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		input    string
@@ -89,6 +93,7 @@ func TestSanitizeError_RemovesQueryParameters(t *testing.T) {
 }
 
 func TestSanitizeError_CombinedCredentialsAndQuery(t *testing.T) {
+	t.Parallel()
 	err := errors.New("connect to: postgres://user:pass@localhost:5432/db?sslmode=disable")
 	result := handlers.SanitizeError(err)
 
@@ -100,6 +105,7 @@ func TestSanitizeError_CombinedCredentialsAndQuery(t *testing.T) {
 }
 
 func TestSanitizeError_NoProtocol(t *testing.T) {
+	t.Parallel()
 	// Error without :// should not be modified for credentials
 	err := errors.New("failed: user@host denied")
 	result := handlers.SanitizeError(err)
@@ -108,6 +114,7 @@ func TestSanitizeError_NoProtocol(t *testing.T) {
 }
 
 func TestSanitizeError_MultipleURLs(t *testing.T) {
+	t.Parallel()
 	// Only the first URL is processed
 	err := errors.New("from https://user:pass@a.com to https://user2:pass2@b.com")
 	result := handlers.SanitizeError(err)

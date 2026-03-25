@@ -113,6 +113,7 @@ func seedContributor(t *testing.T, pk, code string) {
 // and correctly re-buckets 5-minute data into display buckets.
 func TestQueryLinkRollup(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	ctx := t.Context()
 
 	// Seed dimension data
@@ -154,6 +155,7 @@ func TestQueryLinkRollup(t *testing.T) {
 // TestQueryLinkRollup_Empty verifies the query works with no data.
 func TestQueryLinkRollup_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	params := handlers.ExportParseBucketParams("1h", 3)
 	result, err := handlers.ExportQueryLinkRollup(t.Context(), config.DB, params)
@@ -165,6 +167,7 @@ func TestQueryLinkRollup_Empty(t *testing.T) {
 // and supports different grouping modes.
 func TestQueryInterfaceRollup(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 	for i := 0; i < 12; i++ {
@@ -236,6 +239,7 @@ func TestQueryInterfaceRollup(t *testing.T) {
 // TestQueryInterfaceRollup_Empty verifies the query works with no data.
 func TestQueryInterfaceRollup_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	params := handlers.ExportParseBucketParams("1h", 3)
 	rows, err := handlers.ExportQueryInterfaceRollup(t.Context(), config.DB, params, handlers.ExportInterfaceRollupOpts{
@@ -248,6 +252,7 @@ func TestQueryInterfaceRollup_Empty(t *testing.T) {
 // TestQueryLinkRollup_FilterByLinkPK verifies filtering by specific link PKs.
 func TestQueryLinkRollup_FilterByLinkPK(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 	seedLinkRollup(t, now.Add(-5*time.Minute), "link-1", 100, 110, 0, 0, 90, 90, "activated", false, false)
@@ -267,6 +272,7 @@ func TestQueryLinkRollup_FilterByLinkPK(t *testing.T) {
 // TestQueryLinkRollup_StateColumns verifies entity state columns are returned.
 func TestQueryLinkRollup_StateColumns(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 	seedLinkRollup(t, now.Add(-5*time.Minute), "link-drained", 100, 110, 0, 0, 90, 90, "soft-drained", false, false)
@@ -300,6 +306,7 @@ func TestQueryLinkRollup_StateColumns(t *testing.T) {
 // to querying the rollup table.
 func TestLinkRollupVsRaw(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	apitesting.SetSequentialFallback(t)
 	ctx := t.Context()
 
 	// Seed dimension data

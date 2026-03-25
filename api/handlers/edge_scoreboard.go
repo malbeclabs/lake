@@ -152,7 +152,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		timeFilter += fmt.Sprintf(" AND node_id != '%s'", n)
 	}
 
-	shredderDB := fmt.Sprintf("`%s`", config.ShredderDB)
+	shredderDB := fmt.Sprintf("`%s`", config.GetShredderDB())
 
 	// Query 1: Per-node slot counts from win-count rows (loser_feed = '')
 	// Uses FINAL to handle ReplacingMergeTree pre-merge duplicates.

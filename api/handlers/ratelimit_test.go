@@ -13,6 +13,7 @@ import (
 )
 
 func TestRateLimiter_Allow(t *testing.T) {
+	t.Parallel()
 	// Create a limiter that allows 5 requests per second with burst of 5
 	limiter := handlers.NewRateLimiter(rate.Limit(5), 5)
 
@@ -32,6 +33,7 @@ func TestRateLimiter_Allow(t *testing.T) {
 }
 
 func TestRateLimiter_Refill(t *testing.T) {
+	t.Parallel()
 	// Create a limiter that allows 10 requests per second with burst of 2
 	limiter := handlers.NewRateLimiter(rate.Limit(10), 2)
 
@@ -50,6 +52,7 @@ func TestRateLimiter_Refill(t *testing.T) {
 }
 
 func TestQueryRateLimiter_Exists(t *testing.T) {
+	t.Parallel()
 	// Verify the global rate limiter is initialized
 	assert.NotNil(t, handlers.QueryRateLimiter)
 
@@ -58,6 +61,7 @@ func TestQueryRateLimiter_Exists(t *testing.T) {
 }
 
 func TestCheckRateLimit(t *testing.T) {
+	t.Parallel()
 	limiter := handlers.NewRateLimiter(rate.Limit(5), 2)
 	ip := "192.168.1.100"
 
@@ -73,6 +77,7 @@ func TestCheckRateLimit(t *testing.T) {
 }
 
 func TestRateLimitMiddleware_JSONResponse(t *testing.T) {
+	t.Parallel()
 	limiter := handlers.NewRateLimiter(rate.Limit(1), 1)
 
 	middleware := handlers.RateLimitMiddleware(limiter)

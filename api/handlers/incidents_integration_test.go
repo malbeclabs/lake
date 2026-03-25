@@ -173,6 +173,7 @@ func insertBaseMetadata(t *testing.T) {
 }
 
 func TestGetLinkIncidents_EmptyState(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -192,6 +193,7 @@ func TestGetLinkIncidents_EmptyState(t *testing.T) {
 }
 
 func TestGetLinkIncidents_PacketLoss(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -236,6 +238,7 @@ func TestGetLinkIncidents_PacketLoss(t *testing.T) {
 }
 
 func TestGetLinkIncidents_Errors(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -276,6 +279,7 @@ func TestGetLinkIncidents_Errors(t *testing.T) {
 }
 
 func TestGetLinkIncidents_ISISDown(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -311,6 +315,7 @@ func TestGetLinkIncidents_ISISDown(t *testing.T) {
 }
 
 func TestGetLinkIncidents_TypeFilter(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -343,6 +348,7 @@ func TestGetLinkIncidents_TypeFilter(t *testing.T) {
 }
 
 func TestGetLinkIncidents_DrainedLinksView(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -377,6 +383,7 @@ func TestGetLinkIncidents_DrainedLinksView(t *testing.T) {
 }
 
 func TestGetLinkIncidents_OngoingStartedBeforeWindow(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -417,6 +424,7 @@ func TestGetLinkIncidents_OngoingStartedBeforeWindow(t *testing.T) {
 }
 
 func TestGetLinkIncidentsCSV(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -438,6 +446,7 @@ func TestGetLinkIncidentsCSV(t *testing.T) {
 }
 
 func TestGetDeviceIncidents_EmptyState(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -456,6 +465,7 @@ func TestGetDeviceIncidents_EmptyState(t *testing.T) {
 }
 
 func TestGetDeviceIncidents_Errors(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -492,6 +502,7 @@ func TestGetDeviceIncidents_Errors(t *testing.T) {
 }
 
 func TestGetDeviceIncidents_ISISOverload(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouse(t, testChDB)
 	setupRollupTables(t)
 	setupIncidentViews(t)
@@ -526,6 +537,7 @@ func TestGetDeviceIncidents_ISISOverload(t *testing.T) {
 // TestLinkIncidentsRollupVsRaw seeds raw latency data and rollup data,
 // then verifies both source paths detect the same packet loss incident.
 func TestLinkIncidentsRollupVsRaw(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	ctx := t.Context()
 

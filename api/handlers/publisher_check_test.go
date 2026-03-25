@@ -19,7 +19,7 @@ import (
 func createPublisherShredStatsTable(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.ShredderDB))
+	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.GetShredderDB()))
 	require.NoError(t, err)
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
@@ -48,7 +48,7 @@ func createPublisherShredStatsTable(t *testing.T) {
 		) ENGINE = ReplacingMergeTree(ingested_at)
 		PARTITION BY toYYYYMM(event_ts)
 		ORDER BY (host, slot, publisher_ip)
-	`, "`"+config.ShredderDB+"`"))
+	`, "`"+config.GetShredderDB()+"`"))
 	require.NoError(t, err)
 }
 
@@ -165,7 +165,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 
 	// Shred stats: only dzuser1 and dzuser2 are publishing (dzuser3 is NOT)
 	err = config.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -191,7 +191,7 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 	slot := startSlot
 	for range leaderSlots {
 		err := config.DB.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+			INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -206,7 +206,7 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 	}
 	for range retransmitSlots {
 		err := config.DB.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+			INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -222,6 +222,7 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 }
 
 func TestGetPublisherCheck_Empty(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	createPublisherShredStatsTable(t)
 
@@ -250,6 +251,7 @@ func TestGetPublisherCheck_Empty(t *testing.T) {
 }
 
 func TestGetPublisherCheck_AllPublishers(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -307,6 +309,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 }
 
 func TestGetPublisherCheck_FilterByIP(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -324,6 +327,7 @@ func TestGetPublisherCheck_FilterByIP(t *testing.T) {
 }
 
 func TestGetPublisherCheck_FilterByClientIP(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -341,6 +345,7 @@ func TestGetPublisherCheck_FilterByClientIP(t *testing.T) {
 }
 
 func TestGetPublisherCheck_EpochsParam(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -382,13 +387,14 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 // The publisher_shred_stats table is keyed by (host, slot, publisher_ip), so each
 // shredder instance writes its own row per slot. The query must deduplicate by slot.
 func TestGetPublisherCheck_MultiHost(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
 	// Insert duplicate rows from a second shredder host for dzuser1's slots.
 	ctx := t.Context()
 	err := config.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -425,6 +431,7 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 }
 
 func TestGetPublisherCheck_MaxSlotInResponse(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -442,13 +449,14 @@ func TestGetPublisherCheck_MaxSlotInResponse(t *testing.T) {
 }
 
 func TestGetPublisherCheck_SlotsParam(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
 	// Insert an old slot (slot 1) that should be excluded when querying last 500 slots
 	ctx := t.Context()
 	err := config.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.publisher_shred_stats`, "`"+config.ShredderDB+"`")+`
+		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -478,6 +486,7 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 }
 
 func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -496,6 +505,7 @@ func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
 }
 
 func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -514,6 +524,7 @@ func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
 }
 
 func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	insertPublisherCheckTestData(t)
 
@@ -531,6 +542,7 @@ func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 }
 
 func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
+	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	createPublisherShredStatsTable(t)
 
@@ -589,6 +601,7 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q="+tt.dzUser, nil)
 			rr := httptest.NewRecorder()
 			handlers.GetPublisherCheck(rr, req)

@@ -164,8 +164,77 @@ func NewClickHouseDB(ctx context.Context, log *slog.Logger, cfg *ClickHouseDBCon
 	return db, nil
 }
 
+// SetSequentialFallback sets the sequential fallback on the ConnProxy and
+// DatabaseProxy so that sub-goroutines spawned by handlers (e.g. MCP, errgroup)
+// can resolve the test connection. Call this in non-parallel tests whose handlers
+// spawn background goroutines. The fallback is cleared on test cleanup.
+func SetSequentialFallback(t *testing.T) {
+	proxy, ok := config.DB.(*ConnProxy)
+	if !ok {
+		return
+	}
+	// Read the current test's override and promote it to the fallback.
+	if v, ok := proxy.overrides.Load(t.Name()); ok {
+		proxy.SetSequentialFallback(v.(driver.Conn))
+	}
+	if dbProxy, ok := config.TestDatabaseProxy.(*DatabaseProxy); ok {
+		if v, ok := dbProxy.overrides.Load(t.Name()); ok {
+			dbProxy.SetSequentialFallback(v.(string))
+		}
+	}
+	if shredderProxy, ok := config.TestShredderDBProxy.(*DatabaseProxy); ok {
+		if v, ok := shredderProxy.overrides.Load(t.Name()); ok {
+			shredderProxy.SetSequentialFallback(v.(string))
+		}
+	}
+	t.Cleanup(func() {
+		proxy.ClearSequentialFallback()
+		if dbProxy, ok := config.TestDatabaseProxy.(*DatabaseProxy); ok {
+			dbProxy.ClearSequentialFallback()
+		}
+		if shredderProxy, ok := config.TestShredderDBProxy.(*DatabaseProxy); ok {
+			shredderProxy.ClearSequentialFallback()
+		}
+	})
+}
+
+// registerTestConn registers the test connection and database name for the current
+// test, using the ConnProxy if available (parallel-safe) or falling back to
+// swapping the global config.DB (sequential tests).
+func registerTestConn(t *testing.T, databaseName string, testConn, adminConn driver.Conn) {
+	if proxy, ok := config.DB.(*ConnProxy); ok {
+		BindTest(t)
+		proxy.RegisterForTest(t, testConn)
+		if dbProxy, ok := config.TestDatabaseProxy.(*DatabaseProxy); ok {
+			dbProxy.RegisterForTest(t, databaseName)
+		}
+		if shredderProxy, ok := config.TestShredderDBProxy.(*DatabaseProxy); ok {
+			shredderProxy.RegisterForTest(t, databaseName)
+		}
+		t.Cleanup(func() {
+			testConn.Close()
+			_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+			adminConn.Close()
+		})
+	} else {
+		oldDB := config.DB
+		oldDatabase := config.Database()
+		oldShredderDB := config.GetShredderDB()
+		config.DB = testConn
+		config.SetDatabase(databaseName)
+		config.SetShredderDB(databaseName)
+		t.Cleanup(func() {
+			testConn.Close()
+			_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+			adminConn.Close()
+			config.DB = oldDB
+			config.SetDatabase(oldDatabase)
+			config.SetShredderDB(oldShredderDB)
+		})
+	}
+}
+
 // SetupTestClickHouse sets up a test database and configures config.DB.
-// Returns a cleanup function that should be called when done.
 func SetupTestClickHouse(t *testing.T, db *ClickHouseDB) {
 	ctx := t.Context()
 
@@ -185,20 +254,7 @@ func SetupTestClickHouse(t *testing.T, db *ClickHouseDB) {
 	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create ClickHouse test connection")
 
-	// Save old config and swap
-	oldDB := config.DB
-	oldDatabase := config.Database()
-	config.DB = testConn
-	config.SetDatabase(databaseName)
-
-	t.Cleanup(func() {
-		testConn.Close()
-		// Drop the test database
-		_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
-		adminConn.Close()
-		config.DB = oldDB
-		config.SetDatabase(oldDatabase)
-	})
+	registerTestConn(t, databaseName, testConn, adminConn)
 }
 
 // createClickHouseConn creates a ClickHouse connection.
@@ -309,20 +365,7 @@ func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
 	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create ClickHouse test connection")
 
-	// Save old config and swap
-	oldDB := config.DB
-	oldDatabase := config.Database()
-	config.DB = testConn
-	config.SetDatabase(databaseName)
-
-	t.Cleanup(func() {
-		testConn.Close()
-		// Drop the test database
-		_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
-		adminConn.Close()
-		config.DB = oldDB
-		config.SetDatabase(oldDatabase)
-	})
+	registerTestConn(t, databaseName, testConn, adminConn)
 }
 
 // SetupTestClickHouseWithSecure sets up a test database with TLS support.
@@ -345,20 +388,7 @@ func SetupTestClickHouseWithSecure(t *testing.T, db *ClickHouseDB, secure bool) 
 	testConn, err := createClickHouseConnWithTLS(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password, secure)
 	require.NoError(t, err, "failed to create ClickHouse test connection")
 
-	// Save old config and swap
-	oldDB := config.DB
-	oldDatabase := config.Database()
-	config.DB = testConn
-	config.SetDatabase(databaseName)
-
-	t.Cleanup(func() {
-		testConn.Close()
-		// Drop the test database
-		_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
-		adminConn.Close()
-		config.DB = oldDB
-		config.SetDatabase(oldDatabase)
-	})
+	registerTestConn(t, databaseName, testConn, adminConn)
 }
 
 // createClickHouseConnWithTLS creates a ClickHouse connection with optional TLS.
