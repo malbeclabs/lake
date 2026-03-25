@@ -120,7 +120,7 @@ func seedDashboardData(t *testing.T) {
 			UNION ALL
 			SELECT 'dev-2', 'Ethernet1/1', 'link-2', 2000000000
 		) AS intfs
-		CROSS JOIN numbers(7)`))
+		CROSS JOIN numbers(7) AS n`))
 
 	// Also seed raw fact table for sub-5m bucket queries (same data as rollup)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
@@ -538,7 +538,7 @@ func seedTrafficTypeData(t *testing.T) {
 			UNION ALL
 			SELECT 'dev-1', 'Loopback0', '', '', CAST(NULL AS Nullable(UInt64)), 1333333333.3
 		) AS intfs
-		CROSS JOIN numbers(7)`))
+		CROSS JOIN numbers(7) AS n`))
 
 	// Also seed raw fact table for sub-5m bucket queries
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
