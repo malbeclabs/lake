@@ -865,9 +865,9 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 	return fmt.Sprintf(`
 		WITH baselines AS (
 			SELECT
-				f.device_pk,
-				f.intf,
-				f.link_pk,
+				f.device_pk AS b_device_pk,
+				f.intf AS b_intf,
+				f.link_pk AS b_link_pk,
 				quantile(0.5)(greatest(f.max_in_bps, f.max_out_bps)) AS p50_bps,
 				quantile(0.95)(greatest(f.max_in_bps, f.max_out_bps)) AS p95_bps
 			FROM device_interface_rollup_5m f
@@ -903,7 +903,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 					greatest(f.max_in_bps, f.max_out_bps)
 				) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction
 			FROM device_interface_rollup_5m f
-			INNER JOIN baselines b ON f.device_pk = b.device_pk AND f.intf = b.intf AND f.link_pk = b.link_pk
+			INNER JOIN baselines b ON f.device_pk = b.b_device_pk AND f.intf = b.b_intf AND f.link_pk = b.b_link_pk
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
 			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
