@@ -330,7 +330,7 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
 
       {(uplotData || isFetching) && (
         <div>
-          <div className="relative">
+          <div className="relative" style={{ minHeight: 224 }}>
             <div ref={chartRef} className="w-full" />
             <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▲ Rx (in)</span>
             <span className="absolute bottom-8 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▼ Tx (out)</span>
