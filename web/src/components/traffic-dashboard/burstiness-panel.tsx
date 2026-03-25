@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { fetchDashboardBurstiness, type DashboardBurstinessEntity } from '@/lib/api'
@@ -240,6 +240,35 @@ export function BurstinessPanel() {
     placeholderData: keepPreviousData,
     enabled: isAllMode,
   })
+
+  // Sync reference lines from query results when the selected entity matches
+  // a spike detection row (e.g., after page refresh where URL has a selection
+  // but reference lines state was lost).
+  const selectedEntity = state.selectedEntity
+  const allEntities = useMemo(() => {
+    if (isAllMode) {
+      return [
+        ...(linkQuery.data?.entities ?? []),
+        ...(tunnelQuery.data?.entities ?? []),
+        ...(otherQuery.data?.entities ?? []),
+      ]
+    }
+    return singleQuery.data?.entities ?? []
+  }, [isAllMode, linkQuery.data, tunnelQuery.data, otherQuery.data, singleQuery.data])
+
+  useEffect(() => {
+    if (!selectedEntity || state.referenceLines.size > 0) return
+    const match = allEntities.find(
+      e => e.device_pk === selectedEntity.devicePk && e.intf === selectedEntity.intf
+    )
+    if (match) {
+      state.setReferenceLines(match.device_pk, match.intf, {
+        p50_bps: match.p50_bps,
+        p99_bps: match.max_spike_bps,
+        direction: match.peak_direction,
+      })
+    }
+  }, [selectedEntity, allEntities, state.referenceLines.size, state.setReferenceLines])
 
   const isLoading = isAllMode
     ? linkQuery.isLoading || tunnelQuery.isLoading || otherQuery.isLoading
