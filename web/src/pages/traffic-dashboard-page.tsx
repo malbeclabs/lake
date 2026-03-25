@@ -1,4 +1,5 @@
 import { BarChart3 } from 'lucide-react'
+import { useIsFetching } from '@tanstack/react-query'
 import { DashboardProvider, useDashboard } from '@/components/traffic-dashboard/dashboard-context'
 import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 import { PageHeader } from '@/components/page-header'
@@ -13,6 +14,13 @@ import { CapacityPanel } from '@/components/traffic-dashboard/capacity-panel'
 
 function DashboardContent() {
   const { selectedEntity, pinnedEntities, metric, intfType } = useDashboard()
+  const stressFetching = useIsFetching({ queryKey: ['dashboard-stress'] }) > 0
+  const groupFetching = useIsFetching({ queryKey: ['dashboard-stress-grouped'] }) > 0
+  const topFetching = useIsFetching({ queryKey: ['dashboard-top'] }) > 0
+  const drilldownFetching = useIsFetching({ queryKey: ['dashboard-drilldown'] }) > 0
+  const burstinessFetching = useIsFetching({ queryKey: ['dashboard-burstiness'] }) > 0
+  const healthFetching = useIsFetching({ queryKey: ['dashboard-health'] }) > 0
+  const capacityFetching = useIsFetching({ queryKey: ['dashboard-capacity'] }) > 0
   const showCapacity = intfType !== 'tunnel' && intfType !== 'other'
   const isUtil = metric === 'utilization'
 
@@ -42,6 +50,7 @@ function DashboardContent() {
               : metric === 'packets'
                 ? 'P50, P95, and max packet rate across all interfaces per time bucket.'
                 : 'P50, P95, and max throughput across all interfaces per time bucket.'}
+            loading={stressFetching}
           >
             <StressPanel />
           </Section>
@@ -53,6 +62,7 @@ function DashboardContent() {
               : metric === 'packets'
                 ? 'Average P95 packet rate per group. Click a group to filter the panels below.'
                 : 'Average P95 throughput per group. Click a group to filter the panels below.'}
+            loading={groupFetching}
           >
             <LocalizationPanel />
           </Section>
@@ -61,6 +71,7 @@ function DashboardContent() {
             <Section
               title="Top Devices"
               description="Devices ranked by peak aggregate throughput. Click a row to drill down."
+              loading={topFetching}
             >
               <TopDevicesPanel />
             </Section>
@@ -71,6 +82,7 @@ function DashboardContent() {
                 : metric === 'packets'
                   ? 'Interfaces ranked by peak packet rate. Click a row to drill down.'
                   : 'Interfaces ranked by peak throughput. Click a row to drill down.'}
+              loading={topFetching}
             >
               <TopInterfacesPanel />
             </Section>
@@ -80,6 +92,7 @@ function DashboardContent() {
             <Section
               title="Drilldown"
               description="Rx and Tx traffic for the selected entity. Pin multiple entities to compare side by side."
+              loading={drilldownFetching}
             >
               <DrilldownPanel />
             </Section>
@@ -88,6 +101,7 @@ function DashboardContent() {
           <Section
             title="Spike Detection"
             description="Interfaces with the largest gap between typical (P50) and peak (P99) traffic levels. Large gaps indicate bursty traffic."
+            loading={burstinessFetching}
           >
             <BurstinessPanel />
           </Section>
@@ -95,6 +109,7 @@ function DashboardContent() {
           <Section
             title="Interface Health"
             description="Interfaces with errors, discards, or carrier transitions in the selected time window."
+            loading={healthFetching}
           >
             <HealthPanel />
           </Section>
@@ -104,6 +119,7 @@ function DashboardContent() {
               title="Capacity Planning"
               description="Interfaces ranked by sustained P95 utilization over the selected window. Best with 24h+ for stable trends."
               defaultOpen={false}
+              loading={capacityFetching}
             >
               <CapacityPanel />
             </Section>
