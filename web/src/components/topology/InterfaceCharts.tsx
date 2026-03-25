@@ -1,6 +1,6 @@
 import { useMemo, useCallback, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { Loader2, RefreshCw } from 'lucide-react'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
@@ -395,7 +395,17 @@ function buildHealthColumnar(
   return { data: arrays as uPlot.AlignedData, hasData }
 }
 
+function RefreshButton({ fetching, onClick }: { fetching: boolean; onClick: () => void }) {
+  if (fetching) return <Loader2 className="h-3 w-3 animate-spin" />
+  return (
+    <button onClick={onClick} className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" title="Refresh">
+      <RefreshCw className="h-3 w-3" />
+    </button>
+  )
+}
+
 export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabels, bucket: controlledBucket, onBucketChange, metric: controlledMetric, onMetricChange, trafficView: controlledTrafficView, onTrafficViewChange, className }: InterfaceChartsProps) {
+  const queryClient = useQueryClient()
   const effectiveRange = timeRange ?? { preset: '24h' as const }
 
   const timeRangeStr = effectiveRange.preset === 'custom' ? 'custom' : effectiveRange.preset
@@ -772,10 +782,10 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   return (
     <div className="space-y-6">
       {errorHealth?.hasData && (
-        <div className={className}>
+        <div className={`${className} group/chart`}>
           <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
             <span>Errors</span>
-            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+            <RefreshButton fetching={healthFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['device-interface-history'] })} />
           </div>
           <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
             {healthFetching && (
@@ -798,10 +808,10 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       )}
 
       {fcsErrorHealth?.hasData && (
-        <div className={className}>
+        <div className={`${className} group/chart`}>
           <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
             <span>FCS Errors</span>
-            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+            <RefreshButton fetching={healthFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['device-interface-history'] })} />
           </div>
           <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
             {healthFetching && (
@@ -823,10 +833,10 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       )}
 
       {discardHealth?.hasData && (
-        <div className={className}>
+        <div className={`${className} group/chart`}>
           <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
             <span>Discards</span>
-            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+            <RefreshButton fetching={healthFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['device-interface-history'] })} />
           </div>
           <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
             {healthFetching && (
@@ -849,10 +859,10 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       )}
 
       {transitionHealth?.hasData && (
-        <div className={className}>
+        <div className={`${className} group/chart`}>
           <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
             <span>Carrier Transitions</span>
-            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+            <RefreshButton fetching={healthFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['device-interface-history'] })} />
           </div>
           <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
             {healthFetching && (
@@ -873,11 +883,11 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
         </div>
       )}
 
-      <div className={className}>
+      <div className={`${className} group/chart`}>
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
             <span>{trafficView === 'avg' ? 'Avg' : trafficView === 'peak' ? 'Max' : trafficView.toUpperCase()} Traffic</span>
-            {trafficFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+            <RefreshButton fetching={trafficFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['topology-traffic-interface'] })} />
           </div>
           <TrafficFilters
             bucket={!controlledBucket ? bucket : undefined}

@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, Users, AlertCircle, ArrowLeft } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Loader2, Users, AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups } from '@/lib/api'
@@ -78,6 +78,7 @@ function resolveAutoBucket(timeRange: string): string {
 }
 
 function UserTrafficChart({ userPk }: { userPk: string }) {
+  const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const chartRef = useRef<HTMLDivElement>(null)
@@ -259,11 +260,21 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
   }, [uplotData, hoveredIdx])
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card col-span-full">
+    <div className="border border-border rounded-lg p-4 bg-card col-span-full group/chart">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-muted-foreground">Traffic History</h3>
-          {isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          {isFetching ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : (
+            <button
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['user-traffic', userPk] })}
+              className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+              title="Refresh"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <select
