@@ -177,7 +177,7 @@ function SpikeTable({
 export function BurstinessPanel() {
   const state = useDashboard()
   const [limit, setLimit] = useState(10)
-  const [sortField, setSortField] = useState<SortField>('spike_count')
+  const [sortField, setSortField] = useState<SortField>('max_spike_ratio')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(1_000_000)
   const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
