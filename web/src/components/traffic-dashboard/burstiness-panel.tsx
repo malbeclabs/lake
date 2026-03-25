@@ -36,13 +36,15 @@ function spikeColor(ratio: number): string {
   return 'bg-blue-500/15 text-blue-400 border-blue-500/20'
 }
 
-const minBpsOptions = [
+const bpsFilterOptions = [
   { value: 0, label: 'None' },
   { value: 1_000_000, label: '1 Mbps' },
   { value: 10_000_000, label: '10 Mbps' },
   { value: 100_000_000, label: '100 Mbps' },
   { value: 1_000_000_000, label: '1 Gbps' },
 ]
+
+const pageSizeOptions = [10, 20, 50]
 
 type SortField = 'spike_count' | 'max_spike_ratio' | 'p50_bps' | 'max_spike_bps'
 
@@ -175,6 +177,7 @@ export function BurstinessPanel() {
   const [sortField, setSortField] = useState<SortField>('max_spike_ratio')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(1_000_000)
+  const [minPeakBps, setMinPeakBps] = useState(0)
   const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
   const [page, setPage] = useState(0)
 
@@ -197,7 +200,8 @@ export function BurstinessPanel() {
     limit,
     offset: page * limit,
     min_bps: minBps,
-  }), [state, sortField, sortDir, limit, page, minBps])
+    min_peak_bps: minPeakBps,
+  }), [state, sortField, sortDir, limit, page, minBps, minPeakBps])
 
   // Single query for when a specific type is selected
   const singleQuery = useQuery({
@@ -273,38 +277,43 @@ export function BurstinessPanel() {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <span className="font-medium text-foreground/60">Min</span>
-            {minBpsOptions.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => { setMinBps(opt.value); setPage(0) }}
-                className={cn(
-                  'px-1.5 py-0.5 rounded transition-colors',
-                  minBps === opt.value ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          <div className="h-3 w-px bg-border" />
-          <div className="flex items-center gap-1.5">
-            <span className="font-medium text-foreground/60">Show</span>
-            {[10, 20, 50].map(n => (
-              <button
-                key={n}
-                onClick={() => { setLimit(n); setPage(0) }}
-                className={cn(
-                  'px-1.5 py-0.5 rounded transition-colors',
-                  limit === n ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
-                )}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <label className="flex items-center gap-1">
+            <span className="text-foreground/60">Baseline</span>
+            <select
+              value={minBps}
+              onChange={e => { setMinBps(Number(e.target.value)); setPage(0) }}
+              className="bg-muted border-none rounded px-1.5 py-0.5 text-xs text-foreground cursor-pointer"
+            >
+              {bpsFilterOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            <span className="text-foreground/60">Peak</span>
+            <select
+              value={minPeakBps}
+              onChange={e => { setMinPeakBps(Number(e.target.value)); setPage(0) }}
+              className="bg-muted border-none rounded px-1.5 py-0.5 text-xs text-foreground cursor-pointer"
+            >
+              {bpsFilterOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            <span className="text-foreground/60">Show</span>
+            <select
+              value={limit}
+              onChange={e => { setLimit(Number(e.target.value)); setPage(0) }}
+              className="bg-muted border-none rounded px-1.5 py-0.5 text-xs text-foreground cursor-pointer"
+            >
+              {pageSizeOptions.map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
         </div>
       </div>
     )

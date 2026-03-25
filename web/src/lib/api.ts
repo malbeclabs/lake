@@ -4025,6 +4025,7 @@ export interface DashboardBurstinessParams {
   offset?: number
   threshold?: number
   min_bps?: number
+  min_peak_bps?: number
   intf_type?: string
   metro?: string
   device?: string

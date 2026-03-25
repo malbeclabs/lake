@@ -832,7 +832,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
 // Reads from device_interface_rollup_5m. Each rollup row already represents one
 // 5-minute bucket with max throughput, so we compute P50/P99 across buckets directly.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps float64, limit, offset int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps, minPeakBps float64, limit, offset int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -910,7 +910,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
 			WHERE f.%s
 			GROUP BY f.device_pk, f.intf, f.link_pk, d.code, m.code, l.bandwidth_bps, co.code, b.p50_bps, b.p95_bps
-			HAVING spike_count > 0
+			HAVING spike_count > 0 AND max_spike_bps >= %f
 		)
 		SELECT *, count() OVER () AS total_matching
 		FROM spike_results
@@ -919,7 +919,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		userJoinSQL, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter,
 		minBps,
 		timeFilter,
-		orderCol, dir, limit, offset)
+		minPeakBps, orderCol, dir, limit, offset)
 }
 
 // BuildHealthQuery builds the ClickHouse query for the interface health endpoint.
@@ -1549,6 +1549,13 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	minPeakBps := 0.0
+	if m := r.URL.Query().Get("min_peak_bps"); m != "" {
+		if v, err := strconv.ParseFloat(m, 64); err == nil && v >= 0 {
+			minPeakBps = v
+		}
+	}
+
 	offset := 0
 	if o := r.URL.Query().Get("offset"); o != "" {
 		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
@@ -1564,7 +1571,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, limit, offset)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, minPeakBps, limit, offset)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
