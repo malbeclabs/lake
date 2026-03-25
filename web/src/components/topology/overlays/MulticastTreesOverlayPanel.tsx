@@ -887,7 +887,7 @@ function MulticastTrafficChartSection({
 
   // Track hovered chart index for legend table values
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const [localHoveredSeries, setLocalHoveredSeries] = useState<number | null>(null)
+  const [, setLocalHoveredSeries] = useState<number | null>(null)
 
   // Derive visible series from enabled members — member list is the source of truth
   const visibleSeries = useMemo(() => {
