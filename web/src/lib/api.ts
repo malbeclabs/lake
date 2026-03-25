@@ -4014,6 +4014,7 @@ export interface DashboardBurstinessEntity {
 
 export interface DashboardBurstinessResponse {
   entities: DashboardBurstinessEntity[]
+  total: number
 }
 
 export interface DashboardBurstinessParams {
@@ -4021,6 +4022,7 @@ export interface DashboardBurstinessParams {
   sort?: 'spike_count' | 'max_spike_ratio' | 'p50_bps' | 'max_spike_bps'
   dir?: 'asc' | 'desc'
   limit?: number
+  offset?: number
   threshold?: number
   min_bps?: number
   intf_type?: string

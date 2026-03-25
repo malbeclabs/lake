@@ -832,7 +832,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
 // Reads from device_interface_rollup_5m. Each rollup row already represents one
 // 5-minute bucket with max throughput, so we compute P50/P99 across buckets directly.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps float64, limit int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin bool, threshold float64, minBps float64, limit, offset int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -861,6 +861,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 	// Two-pass query: first compute per-interface baselines, then count spikes.
 	// A spike is a 5-min bucket where max throughput exceeds 2x the median (P50).
 	// The spike threshold is the greater of 2*P50 and the absolute min_bps floor.
+	// Wraps the result in a subquery with count() OVER() for total count before LIMIT.
 	return fmt.Sprintf(`
 		WITH baselines AS (
 			SELECT
@@ -879,42 +880,46 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 				%s
 			GROUP BY f.device_pk, f.intf, f.link_pk
 			HAVING p50_bps >= %f
+		),
+		spike_results AS (
+			SELECT
+				f.device_pk,
+				d.code AS device_code,
+				f.intf,
+				COALESCE(m.code, '') AS metro_code,
+				COALESCE(co.code, '') AS contributor_code,
+				COALESCE(toFloat64(l.bandwidth_bps), 0) AS bandwidth_bps,
+				b.p50_bps,
+				b.p95_bps,
+				countIf(greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) AS spike_count,
+				count() AS total_buckets,
+				maxIf(greatest(f.max_in_bps, f.max_out_bps), greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) AS max_spike_bps,
+				if(b.p50_bps > 0,
+					maxIf(greatest(f.max_in_bps, f.max_out_bps), greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) / b.p50_bps,
+					0) AS max_spike_ratio,
+				argMaxIf(f.bucket_ts, greatest(f.max_in_bps, f.max_out_bps), greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) AS last_spike_time,
+				CASE WHEN argMax(
+					CASE WHEN f.max_in_bps >= f.max_out_bps THEN 1 ELSE 0 END,
+					greatest(f.max_in_bps, f.max_out_bps)
+				) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction
+			FROM device_interface_rollup_5m f
+			INNER JOIN baselines b ON f.device_pk = b.device_pk AND f.intf = b.intf AND f.link_pk = b.link_pk
+			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
+			LEFT JOIN dz_links_current l ON f.link_pk = l.pk
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
+			WHERE f.%s
+			GROUP BY f.device_pk, f.intf, f.link_pk, d.code, m.code, l.bandwidth_bps, co.code, b.p50_bps, b.p95_bps
+			HAVING spike_count > 0
 		)
-		SELECT
-			f.device_pk,
-			d.code AS device_code,
-			f.intf,
-			COALESCE(m.code, '') AS metro_code,
-			COALESCE(co.code, '') AS contributor_code,
-			COALESCE(toFloat64(l.bandwidth_bps), 0) AS bandwidth_bps,
-			b.p50_bps,
-			b.p95_bps,
-			countIf(greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) AS spike_count,
-			count() AS total_buckets,
-			maxIf(greatest(f.max_in_bps, f.max_out_bps), greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) AS max_spike_bps,
-			if(b.p50_bps > 0,
-				maxIf(greatest(f.max_in_bps, f.max_out_bps), greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) / b.p50_bps,
-				0) AS max_spike_ratio,
-			argMaxIf(f.bucket_ts, greatest(f.max_in_bps, f.max_out_bps), greatest(f.max_in_bps, f.max_out_bps) > greatest(2 * b.p50_bps, b.p95_bps)) AS last_spike_time,
-			CASE WHEN argMax(
-				CASE WHEN f.max_in_bps >= f.max_out_bps THEN 1 ELSE 0 END,
-				greatest(f.max_in_bps, f.max_out_bps)
-			) = 1 THEN 'rx' ELSE 'tx' END AS peak_direction
-		FROM device_interface_rollup_5m f
-		INNER JOIN baselines b ON f.device_pk = b.device_pk AND f.intf = b.intf AND f.link_pk = b.link_pk
-		INNER JOIN dz_devices_current d ON f.device_pk = d.pk
-		LEFT JOIN dz_links_current l ON f.link_pk = l.pk
-		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk
-		WHERE f.%s
-		GROUP BY f.device_pk, f.intf, f.link_pk, d.code, m.code, l.bandwidth_bps, co.code, b.p50_bps, b.p95_bps
-		HAVING spike_count > 0
+		SELECT *, count() OVER () AS total_matching
+		FROM spike_results
 		ORDER BY %s %s
-		LIMIT %d`,
+		LIMIT %d OFFSET %d`,
 		userJoinSQL, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter,
 		minBps,
 		timeFilter,
-		orderCol, dir, limit)
+		orderCol, dir, limit, offset)
 }
 
 // BuildHealthQuery builds the ClickHouse query for the interface health endpoint.
@@ -1514,6 +1519,7 @@ type BurstinessEntity struct {
 
 type BurstinessResponse struct {
 	Entities []BurstinessEntity `json:"entities"`
+	Total    uint64             `json:"total"`
 }
 
 func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
@@ -1543,6 +1549,13 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
 	sortMetric := r.URL.Query().Get("sort")
 	if sortMetric == "" {
 		sortMetric = "spike_count"
@@ -1551,7 +1564,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, limit)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, limit, offset)
 
 	start := time.Now()
 	rows, err := envDB(ctx).Query(ctx, query)
@@ -1569,13 +1582,14 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	entities := []BurstinessEntity{}
+	var total uint64
 	for rows.Next() {
 		var e BurstinessEntity
 		var lastSpikeTime time.Time
 		if err := rows.Scan(&e.DevicePk, &e.DeviceCode, &e.Intf, &e.MetroCode,
 			&e.ContributorCode, &e.BandwidthBps, &e.P50Bps, &e.P95Bps,
 			&e.SpikeCount, &e.TotalBuckets, &e.MaxSpikeBps, &e.MaxSpikeRatio,
-			&lastSpikeTime, &e.PeakDirection); err != nil {
+			&lastSpikeTime, &e.PeakDirection, &total); err != nil {
 			slog.Error("traffic dashboard burstiness row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1586,7 +1600,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 		entities = append(entities, e)
 	}
 
-	resp := BurstinessResponse{Entities: entities}
+	resp := BurstinessResponse{Entities: entities, Total: total}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

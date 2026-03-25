@@ -181,6 +181,7 @@ export function BurstinessPanel() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(1_000_000)
   const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
+  const [page, setPage] = useState(0)
 
   const isAllMode = state.intfType === 'all'
 
@@ -191,6 +192,7 @@ export function BurstinessPanel() {
       setSortField(field)
       setSortDir('desc')
     }
+    setPage(0)
   }
 
   const baseParams = useMemo(() => ({
@@ -198,8 +200,9 @@ export function BurstinessPanel() {
     sort: sortField,
     dir: sortDir,
     limit,
+    offset: page * limit,
     min_bps: minBps,
-  }), [state, sortField, sortDir, limit, minBps])
+  }), [state, sortField, sortDir, limit, page, minBps])
 
   // Single query for when a specific type is selected
   const singleQuery = useQuery({
@@ -243,48 +246,74 @@ export function BurstinessPanel() {
     ? linkQuery.isLoading || tunnelQuery.isLoading || otherQuery.isLoading
     : singleQuery.isLoading
 
-  const controls = (
-    <div className="flex items-center justify-between mt-2">
-      <span className="text-xs text-muted-foreground">
-        {isAllMode
-          ? `Showing top ${limit} per category`
-          : `Showing top ${(singleQuery.data?.entities ?? []).length}`}
-      </span>
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-foreground/60">Min</span>
-          {minBpsOptions.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setMinBps(opt.value)}
-              className={cn(
-                'px-1.5 py-0.5 rounded transition-colors',
-                minBps === opt.value ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
+  const renderControls = (total: number) => {
+    const totalPages = Math.max(1, Math.ceil(total / limit))
+    const start = page * limit + 1
+    const end = Math.min((page + 1) * limit, total)
+
+    return (
+      <div className="flex items-center justify-between mt-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {total > 0 ? (
+            <span>{start}\u2013{end} of {total}</span>
+          ) : (
+            <span>No results</span>
+          )}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className={cn('px-1.5 py-0.5 rounded transition-colors', page === 0 ? 'opacity-30' : 'hover:bg-muted/50')}
+              >
+                \u2039
+              </button>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className={cn('px-1.5 py-0.5 rounded transition-colors', page >= totalPages - 1 ? 'opacity-30' : 'hover:bg-muted/50')}
+              >
+                \u203A
+              </button>
+            </div>
+          )}
         </div>
-        <div className="h-3 w-px bg-border" />
-        <div className="flex items-center gap-1.5">
-          <span className="font-medium text-foreground/60">Show</span>
-          {[10, 20, 50].map(n => (
-            <button
-              key={n}
-              onClick={() => setLimit(n)}
-              className={cn(
-                'px-1.5 py-0.5 rounded transition-colors',
-                limit === n ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
-              )}
-            >
-              {n}
-            </button>
-          ))}
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium text-foreground/60">Min</span>
+            {minBpsOptions.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => { setMinBps(opt.value); setPage(0) }}
+                className={cn(
+                  'px-1.5 py-0.5 rounded transition-colors',
+                  minBps === opt.value ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="h-3 w-px bg-border" />
+          <div className="flex items-center gap-1.5">
+            <span className="font-medium text-foreground/60">Show</span>
+            {[10, 20, 50].map(n => (
+              <button
+                key={n}
+                onClick={() => { setLimit(n); setPage(0) }}
+                className={cn(
+                  'px-1.5 py-0.5 rounded transition-colors',
+                  limit === n ? 'bg-muted text-foreground font-medium' : 'hover:bg-muted/50'
+                )}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   if (isLoading) {
     return (
@@ -296,7 +325,8 @@ export function BurstinessPanel() {
 
   if (!isAllMode) {
     const entities = singleQuery.data?.entities ?? []
-    if (entities.length === 0) {
+    const total = singleQuery.data?.total ?? 0
+    if (entities.length === 0 && page === 0) {
       return (
         <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
           No spikes detected
@@ -313,7 +343,7 @@ export function BurstinessPanel() {
           handleSort={handleSort}
           isPlaceholderData={singleQuery.isPlaceholderData}
         />
-        {controls}
+        {renderControls(total)}
       </>
     )
   }
@@ -325,8 +355,8 @@ export function BurstinessPanel() {
     { key: 'other' as const, label: 'Other', query: otherQuery },
   ]
 
-  const allEmpty = tabs.every(t => (t.query.data?.entities ?? []).length === 0)
-  if (allEmpty) {
+  const allEmpty = tabs.every(t => (t.query.data?.total ?? 0) === 0 && (t.query.data?.entities ?? []).length === 0)
+  if (allEmpty && page === 0) {
     return (
       <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
         No spikes detected
@@ -334,18 +364,20 @@ export function BurstinessPanel() {
     )
   }
 
-  const activeEntities = tabs.find(t => t.key === activeTab)?.query.data?.entities ?? []
-  const activePlaceholder = tabs.find(t => t.key === activeTab)?.query.isPlaceholderData ?? false
+  const activeQuery = tabs.find(t => t.key === activeTab)?.query
+  const activeEntities = activeQuery?.data?.entities ?? []
+  const activeTotal = activeQuery?.data?.total ?? 0
+  const activePlaceholder = activeQuery?.isPlaceholderData ?? false
 
   return (
     <>
       <div className="flex items-center gap-1 mb-2 border-b border-border">
         {tabs.map(({ key, label, query }) => {
-          const count = (query.data?.entities ?? []).length
+          const total = query.data?.total ?? 0
           return (
             <button
               key={key}
-              onClick={() => setActiveTab(key)}
+              onClick={() => { setActiveTab(key); setPage(0) }}
               className={cn(
                 'px-3 py-1.5 text-xs font-medium transition-colors relative -mb-px',
                 activeTab === key
@@ -354,12 +386,12 @@ export function BurstinessPanel() {
               )}
             >
               {label}
-              {count > 0 && (
+              {total > 0 && (
                 <span className={cn(
                   'ml-1.5 text-[10px]',
                   activeTab === key ? 'text-muted-foreground' : 'text-muted-foreground/60'
                 )}>
-                  {count}
+                  {total}
                 </span>
               )}
             </button>
@@ -374,7 +406,7 @@ export function BurstinessPanel() {
         handleSort={handleSort}
         isPlaceholderData={activePlaceholder}
       />
-      {controls}
+      {renderControls(activeTotal)}
     </>
   )
 }
