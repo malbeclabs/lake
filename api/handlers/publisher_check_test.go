@@ -64,7 +64,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
 		VALUES
 			('bebop-group', now(), now(), generateUUIDv4(), 0, 1,
-			 'bebop-pk', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
+			 '31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
 	`)
 	require.NoError(t, err)
 
@@ -103,11 +103,11 @@ func insertPublisherCheckTestData(t *testing.T) {
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
 		VALUES
 			('dzuser1', now(), now(), generateUUIDv4(), 0, 1,
-			 'dzuser1', 'owner1', 'activated', 'multicast', '203.0.113.1', '10.0.0.1', 'dev-ams', '', 501, '["bebop-pk"]', '[]'),
+			 'dzuser1', 'owner1', 'activated', 'multicast', '203.0.113.1', '10.0.0.1', 'dev-ams', '', 501, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]'),
 			('dzuser2', now(), now(), generateUUIDv4(), 0, 2,
-			 'dzuser2', 'owner2', 'activated', 'multicast', '203.0.113.2', '10.0.0.2', 'dev-nyc', '', 502, '["bebop-pk"]', '[]'),
+			 'dzuser2', 'owner2', 'activated', 'multicast', '203.0.113.2', '10.0.0.2', 'dev-nyc', '', 502, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]'),
 			('dzuser3', now(), now(), generateUUIDv4(), 0, 3,
-			 'dzuser3', 'owner3', 'activated', 'multicast', '203.0.113.3', '10.0.0.3', 'dev-ams', '', 503, '["bebop-pk"]', '[]')
+			 'dzuser3', 'owner3', 'activated', 'multicast', '203.0.113.3', '10.0.0.3', 'dev-ams', '', 503, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]')
 	`)
 	require.NoError(t, err)
 
@@ -233,7 +233,7 @@ func TestGetPublisherCheck_Empty(t *testing.T) {
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
 		VALUES
 			('bebop-group', now(), now(), generateUUIDv4(), 0, 1,
-			 'bebop-pk', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
+			 '31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
 	`)
 	require.NoError(t, err)
 
@@ -543,7 +543,7 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
 		VALUES
 			('bebop-group', now(), now(), generateUUIDv4(), 0, 1,
-			 'bebop-pk', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
+			 '31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj', '', 'bebop', '233.84.178.1', 100000000, 'activated', 0, 0)
 	`)
 	require.NoError(t, err)
 
@@ -554,13 +554,13 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
 		VALUES
 			('below-abs', now(), now(), generateUUIDv4(), 0, 1,
-			 'below-abs', '', 'activated', 'multicast', '', '10.0.1.1', '', '', 0, '["bebop-pk"]', '[]'),
+			 'below-abs', '', 'activated', 'multicast', '', '10.0.1.1', '', '', 0, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]'),
 			('above-abs-below-ratio', now(), now(), generateUUIDv4(), 0, 2,
-			 'above-abs-below-ratio', '', 'activated', 'multicast', '', '10.0.1.2', '', '', 0, '["bebop-pk"]', '[]'),
+			 'above-abs-below-ratio', '', 'activated', 'multicast', '', '10.0.1.2', '', '', 0, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]'),
 			('above-both', now(), now(), generateUUIDv4(), 0, 3,
-			 'above-both', '', 'activated', 'multicast', '', '10.0.1.3', '', '', 0, '["bebop-pk"]', '[]'),
+			 'above-both', '', 'activated', 'multicast', '', '10.0.1.3', '', '', 0, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]'),
 			('boundary', now(), now(), generateUUIDv4(), 0, 4,
-			 'boundary', '', 'activated', 'multicast', '', '10.0.1.4', '', '', 0, '["bebop-pk"]', '[]')
+			 'boundary', '', 'activated', 'multicast', '', '10.0.1.4', '', '', 0, '["31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"]', '[]')
 	`)
 	require.NoError(t, err)
 

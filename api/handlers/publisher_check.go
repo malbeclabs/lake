@@ -161,13 +161,8 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 func fetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
 	start := time.Now()
 
-	// Look up the bebop multicast group PK.
-	var bebopPK string
-	err := envDB(ctx).QueryRow(ctx,
-		`SELECT pk FROM dz_multicast_groups_current WHERE code = 'bebop' LIMIT 1`).Scan(&bebopPK)
-	if err != nil {
-		return &PublisherCheckResponse{Publishers: []PublisherCheckItem{}}, fmt.Errorf("bebop group lookup: %w", err)
-	}
+	// Multicast group PK for edge-solana-shreds (formerly "bebop").
+	const shredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
 
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", config.ShredderDB)
 
@@ -176,10 +171,10 @@ func fetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsPa
 	if slotsParam > 0 {
 		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
 			AND slot >= (SELECT max(slot) FROM ` + shredStatsTable + ` WHERE epoch >= (SELECT epoch FROM current_epoch) - 1) - ?`
-		args = []any{slotsParam, bebopPK}
+		args = []any{slotsParam, shredGroupPK}
 	} else {
 		perSlotWhere = `WHERE epoch >= (SELECT epoch FROM current_epoch) - ? + 1`
-		args = []any{epochsParam, bebopPK}
+		args = []any{epochsParam, shredGroupPK}
 	}
 
 	query := fmt.Sprintf(`

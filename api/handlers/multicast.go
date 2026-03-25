@@ -724,7 +724,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 			COALESCE(u.device_pk, '') as device_pk,
 			COALESCE(u.tunnel_id, 0) as tunnel_id,
 			CASE
-				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) AND has(JSONExtract(u.subscribers, 'Array(String)'), ?) THEN 'P'
+				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) AND has(JSONExtract(u.subscribers, 'Array(String)'), ?) THEN 'P+S'
 				WHEN has(JSONExtract(u.publishers, 'Array(String)'), ?) THEN 'P'
 				ELSE 'S'
 			END as mode
@@ -870,8 +870,18 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		p.Mode = mode
-		points = append(points, p)
+		if mode == "P+S" {
+			// Emit two records so the user appears in both publisher and subscriber views
+			pubPoint := p
+			pubPoint.Mode = "P"
+			points = append(points, pubPoint)
+			subPoint := p
+			subPoint.Mode = "S"
+			points = append(points, subPoint)
+		} else {
+			p.Mode = mode
+			points = append(points, p)
+		}
 	}
 
 	if err := trafficRows.Err(); err != nil {
