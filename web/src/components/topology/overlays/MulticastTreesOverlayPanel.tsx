@@ -803,7 +803,7 @@ function MulticastTrafficChartSection({
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const [open, setOpen] = useState(true)
-  const [timeRange, setTimeRange] = useState<string>('24h')
+  const [timeRange, setTimeRange] = useState<string>('1h')
   const [metric, setMetric] = useState<'throughput' | 'packets'>('throughput')
   const [bucket, setBucket] = useState<string>('auto')
 

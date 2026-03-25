@@ -94,7 +94,7 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   onSelectMember?: (keys: Set<string>) => void
 }) {
   const queryClient = useQueryClient()
-  const [timeRange, setTimeRange] = useState<string>('24h')
+  const [timeRange, setTimeRange] = useState<string>('1h')
   const [metric, setMetric] = useState<TrafficMetric>('throughput')
   const [bucket, setBucket] = useState<string>('auto')
 
