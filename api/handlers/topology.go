@@ -450,88 +450,35 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse time range parameters
-	rangeParam := r.URL.Query().Get("range")
-	fromParam := r.URL.Query().Get("from")
-	toParam := r.URL.Query().Get("to")
-	bucketParam := r.URL.Query().Get("bucket")
-	metricParam := r.URL.Query().Get("metric") // "packets" for pps, default is bps
-
-	var timeFilter string
-	var bucketSeconds int
-	var timeFormat string
-	isPresetRange := false
-
-	if fromParam != "" && toParam != "" {
-		fromTime, err := time.Parse("2006-01-02-15:04:05", fromParam)
-		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: "invalid 'from' format, use yyyy-mm-dd-hh:mm:ss"})
-			return
-		}
-		toTime, err := time.Parse("2006-01-02-15:04:05", toParam)
-		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: "invalid 'to' format, use yyyy-mm-dd-hh:mm:ss"})
-			return
-		}
-		duration := toTime.Sub(fromTime)
-		bucketSeconds = calculateBucketSize(duration)
-		timeFormat = timeFormatForBucket(bucketSeconds)
-		timeFilter = fmt.Sprintf("event_ts >= '%s' AND event_ts <= '%s'",
-			fromTime.UTC().Format("2006-01-02 15:04:05"),
-			toTime.UTC().Format("2006-01-02 15:04:05"))
-	} else {
-		isPresetRange = true
-		var intervalMinutes int
-		switch rangeParam {
-		case "15m":
-			intervalMinutes = 15
-		case "30m":
-			intervalMinutes = 30
-		case "1h":
-			intervalMinutes = 60
-		case "3h":
-			intervalMinutes = 180
-		case "6h":
-			intervalMinutes = 360
-		case "12h":
-			intervalMinutes = 720
-		case "2d":
-			intervalMinutes = 2880
-		case "7d":
-			intervalMinutes = 10080
-		default: // 24h
-			intervalMinutes = 1440
-		}
-		bucketSeconds = calculateBucketSize(time.Duration(intervalMinutes) * time.Minute)
-		timeFormat = timeFormatForBucket(bucketSeconds)
-		timeFilter = fmt.Sprintf("event_ts > now() - INTERVAL %d MINUTE", intervalMinutes)
+	// Normalize topology params to the shared time filter system.
+	// The topology API uses "range" (not "time_range") and "from"/"to" (not "start_time"/"end_time").
+	q := r.URL.Query()
+	if q.Get("range") != "" && q.Get("time_range") == "" {
+		q.Set("time_range", q.Get("range"))
 	}
-
-	// Allow client to override auto bucket size
-	if bucketParam != "" && bucketParam != "auto" {
-		override := parseBucketParam(bucketParam)
-		if override > 0 {
-			bucketSeconds = override
-			timeFormat = timeFormatForBucket(bucketSeconds)
+	if q.Get("from") != "" && q.Get("to") != "" && q.Get("start_time") == "" {
+		fromTime, err1 := time.Parse("2006-01-02-15:04:05", q.Get("from"))
+		toTime, err2 := time.Parse("2006-01-02-15:04:05", q.Get("to"))
+		if err1 == nil && err2 == nil {
+			q.Set("start_time", fmt.Sprintf("%d", fromTime.Unix()))
+			q.Set("end_time", fmt.Sprintf("%d", toTime.Unix()))
 		}
 	}
+	r.URL.RawQuery = q.Encode()
 
-	// Exclude the current incomplete bucket for preset ranges so the chart
-	// line doesn't drop to zero at the trailing edge.
-	if isPresetRange {
-		timeFilter += fmt.Sprintf(" AND event_ts < toStartOfInterval(now(), INTERVAL %d SECOND)", bucketSeconds)
-	}
+	// Use shared time filter with raw/rollup routing
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
-	bucketExpr := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %d SECOND)", bucketSeconds)
-
-	start := time.Now()
-
+	metricParam := r.URL.Query().Get("metric")
 	breakdown := r.URL.Query().Get("breakdown")
-	var points []TrafficDataPoint
-	var whereColumn string
 
+	// Parse aggregation mode
+	aggParam := r.URL.Query().Get("agg")
+	if aggParam == "" {
+		aggParam = "max"
+	}
+
+	var whereColumn string
 	switch itemType {
 	case "link":
 		whereColumn = "link_pk"
@@ -541,162 +488,240 @@ func GetTopologyTraffic(w http.ResponseWriter, r *http.Request) {
 		whereColumn = "device_pk"
 	}
 
-	// Select metric expressions based on metric and agg params
-	aggParam := r.URL.Query().Get("agg")
-	var peakAggFunc string
-	switch aggParam {
-	case "avg":
-		peakAggFunc = "avg"
-	case "min":
-		peakAggFunc = "min"
-	case "p50":
-		peakAggFunc = "quantile(0.5)"
-	case "p90":
-		peakAggFunc = "quantile(0.9)"
-	case "p95":
-		peakAggFunc = "quantile(0.95)"
-	case "p99":
-		peakAggFunc = "quantile(0.99)"
-	default:
-		peakAggFunc = "max"
-	}
+	start := time.Now()
+	var points []TrafficDataPoint
+	response := TrafficResponse{Points: points}
 
-	var avgInExpr, avgOutExpr, peakInExpr, peakOutExpr string
-	if metricParam == "packets" {
-		avgInExpr = "avg(in_pkts_delta / nullIf(delta_duration, 0))"
-		avgOutExpr = "avg(out_pkts_delta / nullIf(delta_duration, 0))"
-		peakInExpr = fmt.Sprintf("%s(in_pkts_delta / nullIf(delta_duration, 0))", peakAggFunc)
-		peakOutExpr = fmt.Sprintf("%s(out_pkts_delta / nullIf(delta_duration, 0))", peakAggFunc)
+	if useRaw {
+		// Raw fact table path
+		var rawAggFunc string
+		switch aggParam {
+		case "avg":
+			rawAggFunc = "avg"
+		case "min":
+			rawAggFunc = "min"
+		case "p50":
+			rawAggFunc = "quantile(0.5)"
+		case "p90":
+			rawAggFunc = "quantile(0.9)"
+		case "p95":
+			rawAggFunc = "quantile(0.95)"
+		case "p99":
+			rawAggFunc = "quantile(0.99)"
+		default:
+			rawAggFunc = "max"
+		}
+
+		var avgInExpr, avgOutExpr, peakInExpr, peakOutExpr string
+		if metricParam == "packets" {
+			avgInExpr = "avg(in_pkts_delta / nullIf(delta_duration, 0))"
+			avgOutExpr = "avg(out_pkts_delta / nullIf(delta_duration, 0))"
+			peakInExpr = fmt.Sprintf("%s(in_pkts_delta / nullIf(delta_duration, 0))", rawAggFunc)
+			peakOutExpr = fmt.Sprintf("%s(out_pkts_delta / nullIf(delta_duration, 0))", rawAggFunc)
+		} else {
+			avgInExpr = "avg(in_octets_delta * 8 / nullIf(delta_duration, 0))"
+			avgOutExpr = "avg(out_octets_delta * 8 / nullIf(delta_duration, 0))"
+			peakInExpr = fmt.Sprintf("%s(in_octets_delta * 8 / nullIf(delta_duration, 0))", rawAggFunc)
+			peakOutExpr = fmt.Sprintf("%s(out_octets_delta * 8 / nullIf(delta_duration, 0))", rawAggFunc)
+		}
+
+		bucketExpr := fmt.Sprintf("toStartOfInterval(event_ts, INTERVAL %s)", bucketInterval)
+
+		// Aggregated query (skip when only interface breakdown needed)
+		if breakdown != "interface" || (itemType != "device" && itemType != "link") {
+			query := fmt.Sprintf(`
+				SELECT
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					%s as avg_in, %s as avg_out,
+					%s as peak_in, %s as peak_out
+				FROM fact_dz_device_interface_counters
+				WHERE %s AND %s = $1
+					AND delta_duration > 0 AND in_octets_delta >= 0 AND out_octets_delta >= 0
+				GROUP BY time_bucket
+				ORDER BY min(event_ts)
+			`, bucketExpr, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
+
+			points = scanTrafficPoints(ctx, query, pk)
+		}
+
+		// Per-interface breakdown
+		if breakdown == "interface" && (itemType == "device" || itemType == "link") {
+			intfExpr := "intf"
+			if itemType == "link" {
+				intfExpr = "concat(link_side, ':', intf)"
+			}
+			intfQuery := fmt.Sprintf(`
+				SELECT
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					%s as intf_key,
+					%s as avg_in, %s as avg_out,
+					%s as peak_in, %s as peak_out
+				FROM fact_dz_device_interface_counters
+				WHERE %s AND %s = $1
+					AND delta_duration > 0 AND in_octets_delta >= 0 AND out_octets_delta >= 0
+				GROUP BY time_bucket, intf_key
+				ORDER BY min(event_ts), intf_key
+			`, bucketExpr, intfExpr, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
+
+			response.Interfaces = scanInterfaceTrafficPoints(ctx, intfQuery, pk)
+		}
 	} else {
-		avgInExpr = "avg(in_octets_delta * 8 / nullIf(delta_duration, 0))"
-		avgOutExpr = "avg(out_octets_delta * 8 / nullIf(delta_duration, 0))"
-		peakInExpr = fmt.Sprintf("%s(in_octets_delta * 8 / nullIf(delta_duration, 0))", peakAggFunc)
-		peakOutExpr = fmt.Sprintf("%s(out_octets_delta * 8 / nullIf(delta_duration, 0))", peakAggFunc)
-	}
-
-	// Skip aggregated query when only interface breakdown is needed — the caller
-	// doesn't use the points array and running both queries sequentially under
-	// the same timeout budget causes unnecessary timeouts.
-	if breakdown != "interface" || (itemType != "device" && itemType != "link") {
-		query := fmt.Sprintf(`
-			SELECT
-				formatDateTime(%s, '%s') as time_bucket,
-				%s as avg_in,
-				%s as avg_out,
-				%s as peak_in,
-				%s as peak_out
-			FROM fact_dz_device_interface_counters
-			WHERE %s
-				AND %s = $1
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY time_bucket
-			ORDER BY min(event_ts)
-		`, bucketExpr, timeFormat, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
-
-		rows, err := envDB(ctx).Query(ctx, query, pk)
-		if err != nil {
-			slog.Error("traffic query error", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
-			return
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var p TrafficDataPoint
-			var avgIn, avgOut, peakIn, peakOut *float64
-			if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-				slog.Error("traffic scan error", "error", err)
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(TrafficResponse{Error: dberror.UserMessage(err)})
-				return
-			}
-			if avgIn != nil {
-				p.AvgIn = *avgIn
-			}
-			if avgOut != nil {
-				p.AvgOut = *avgOut
-			}
-			if peakIn != nil {
-				p.PeakIn = *peakIn
-			}
-			if peakOut != nil {
-				p.PeakOut = *peakOut
-			}
-			points = append(points, p)
+		// Rollup path
+		aggPrefix := "max"
+		switch aggParam {
+		case "avg":
+			aggPrefix = "avg"
+		case "min":
+			aggPrefix = "min"
+		case "p50":
+			aggPrefix = "p50"
+		case "p90":
+			aggPrefix = "p90"
+		case "p95":
+			aggPrefix = "p95"
+		case "p99":
+			aggPrefix = "p99"
 		}
 
-		duration := time.Since(start)
-		metrics.RecordClickHouseQuery(duration, rows.Err())
+		rollupAggFunc := "MAX"
+		switch aggParam {
+		case "avg":
+			rollupAggFunc = "AVG"
+		case "min":
+			rollupAggFunc = "MIN"
+		}
+
+		var avgInCol, avgOutCol, peakInCol, peakOutCol string
+		if metricParam == "packets" {
+			avgInCol = "avg_in_pps"
+			avgOutCol = "avg_out_pps"
+			peakInCol = fmt.Sprintf("%s_in_pps", aggPrefix)
+			peakOutCol = fmt.Sprintf("%s_out_pps", aggPrefix)
+		} else {
+			avgInCol = "avg_in_bps"
+			avgOutCol = "avg_out_bps"
+			peakInCol = fmt.Sprintf("%s_in_bps", aggPrefix)
+			peakOutCol = fmt.Sprintf("%s_out_bps", aggPrefix)
+		}
+
+		bucketExpr := fmt.Sprintf("toStartOfInterval(bucket_ts, INTERVAL %s)", bucketInterval)
+
+		// Aggregated query
+		if breakdown != "interface" || (itemType != "device" && itemType != "link") {
+			query := fmt.Sprintf(`
+				SELECT
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					AVG(%s) as avg_in, AVG(%s) as avg_out,
+					%s(%s) as peak_in, %s(%s) as peak_out
+				FROM device_interface_rollup_5m
+				WHERE %s AND %s = $1
+				GROUP BY time_bucket
+				ORDER BY time_bucket
+			`, bucketExpr, avgInCol, avgOutCol, rollupAggFunc, peakInCol, rollupAggFunc, peakOutCol, timeFilter, whereColumn)
+
+			points = scanTrafficPoints(ctx, query, pk)
+		}
+
+		// Per-interface breakdown
+		if breakdown == "interface" && (itemType == "device" || itemType == "link") {
+			intfExpr := "intf"
+			if itemType == "link" {
+				intfExpr = "concat(link_side, ':', intf)"
+			}
+			intfQuery := fmt.Sprintf(`
+				SELECT
+					formatDateTime(%s, '%%Y-%%m-%%dT%%H:%%i:%%S') as time_bucket,
+					%s as intf_key,
+					AVG(%s) as avg_in, AVG(%s) as avg_out,
+					%s(%s) as peak_in, %s(%s) as peak_out
+				FROM device_interface_rollup_5m
+				WHERE %s AND %s = $1
+				GROUP BY time_bucket, intf_key
+				ORDER BY time_bucket, intf_key
+			`, bucketExpr, intfExpr, avgInCol, avgOutCol, rollupAggFunc, peakInCol, rollupAggFunc, peakOutCol, timeFilter, whereColumn)
+
+			response.Interfaces = scanInterfaceTrafficPoints(ctx, intfQuery, pk)
+		}
 	}
+
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, nil)
 
 	if points == nil {
 		points = []TrafficDataPoint{}
 	}
-
-	response := TrafficResponse{Points: points}
-
-	// If breakdown=interface requested and type is device or link, run per-interface query
-	if breakdown == "interface" && (itemType == "device" || itemType == "link") {
-		// For links, prefix intf with link_side ('A:'/'Z:') to distinguish sides
-		// that may share the same interface name (e.g. both sides have Ethernet1/1)
-		intfExpr := "intf"
-		if itemType == "link" {
-			intfExpr = "concat(link_side, ':', intf)"
-		}
-		intfQuery := fmt.Sprintf(`
-			SELECT
-				formatDateTime(%s, '%s') as time_bucket,
-				%s as intf_key,
-				%s as avg_in,
-				%s as avg_out,
-				%s as peak_in,
-				%s as peak_out
-			FROM fact_dz_device_interface_counters
-			WHERE %s
-				AND %s = $1
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
-			GROUP BY time_bucket, intf_key
-			ORDER BY min(event_ts), intf_key
-		`, bucketExpr, timeFormat, intfExpr, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
-
-		intfRows, intfErr := envDB(ctx).Query(ctx, intfQuery, pk)
-		if intfErr != nil {
-			slog.Error("interface traffic query error", "error", intfErr)
-		} else {
-			defer intfRows.Close()
-			var intfPoints []InterfaceTrafficDataPoint
-			for intfRows.Next() {
-				var p InterfaceTrafficDataPoint
-				var avgIn, avgOut, peakIn, peakOut *float64
-				if err := intfRows.Scan(&p.Time, &p.Intf, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-					slog.Error("interface traffic scan error", "error", err)
-					break
-				}
-				if avgIn != nil {
-					p.AvgIn = *avgIn
-				}
-				if avgOut != nil {
-					p.AvgOut = *avgOut
-				}
-				if peakIn != nil {
-					p.PeakIn = *peakIn
-				}
-				if peakOut != nil {
-					p.PeakOut = *peakOut
-				}
-				intfPoints = append(intfPoints, p)
-			}
-			response.Interfaces = intfPoints
-		}
-	}
+	response.Points = points
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+// scanTrafficPoints executes a query and scans aggregated traffic data points.
+func scanTrafficPoints(ctx context.Context, query, pk string) []TrafficDataPoint {
+	rows, err := envDB(ctx).Query(ctx, query, pk)
+	if err != nil {
+		slog.Error("traffic query error", "error", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var points []TrafficDataPoint
+	for rows.Next() {
+		var p TrafficDataPoint
+		var avgIn, avgOut, peakIn, peakOut *float64
+		if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
+			slog.Error("traffic scan error", "error", err)
+			return points
+		}
+		if avgIn != nil {
+			p.AvgIn = *avgIn
+		}
+		if avgOut != nil {
+			p.AvgOut = *avgOut
+		}
+		if peakIn != nil {
+			p.PeakIn = *peakIn
+		}
+		if peakOut != nil {
+			p.PeakOut = *peakOut
+		}
+		points = append(points, p)
+	}
+	return points
+}
+
+// scanInterfaceTrafficPoints executes a query and scans per-interface traffic data points.
+func scanInterfaceTrafficPoints(ctx context.Context, query, pk string) []InterfaceTrafficDataPoint {
+	rows, err := envDB(ctx).Query(ctx, query, pk)
+	if err != nil {
+		slog.Error("interface traffic query error", "error", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var points []InterfaceTrafficDataPoint
+	for rows.Next() {
+		var p InterfaceTrafficDataPoint
+		var avgIn, avgOut, peakIn, peakOut *float64
+		if err := rows.Scan(&p.Time, &p.Intf, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
+			slog.Error("interface traffic scan error", "error", err)
+			return points
+		}
+		if avgIn != nil {
+			p.AvgIn = *avgIn
+		}
+		if avgOut != nil {
+			p.AvgOut = *avgOut
+		}
+		if peakIn != nil {
+			p.PeakIn = *peakIn
+		}
+		if peakOut != nil {
+			p.PeakOut = *peakOut
+		}
+		points = append(points, p)
+	}
+	return points
 }
 
 // Link latency data point for charts
@@ -717,28 +742,6 @@ type LinkLatencyDataPoint struct {
 type LinkLatencyResponse struct {
 	Points []LinkLatencyDataPoint `json:"points"`
 	Error  string                 `json:"error,omitempty"`
-}
-
-// parseBucketParam converts a bucket size string like "10 SECOND", "1 MINUTE", "1 HOUR" to seconds.
-func parseBucketParam(bucket string) int {
-	switch bucket {
-	case "10 SECOND":
-		return 10
-	case "30 SECOND":
-		return 30
-	case "1 MINUTE":
-		return 60
-	case "5 MINUTE":
-		return 300
-	case "10 MINUTE":
-		return 600
-	case "30 MINUTE":
-		return 1800
-	case "1 HOUR":
-		return 3600
-	default:
-		return 0
-	}
 }
 
 // calculateBucketSize returns an appropriate bucket size in seconds for the given duration,
