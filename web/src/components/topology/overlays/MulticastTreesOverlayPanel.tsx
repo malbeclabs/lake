@@ -1020,10 +1020,14 @@ function MulticastTrafficChartSection({
   useEffect(() => {
     const u = plotRef.current
     if (!u || serisTidMap.length === 0) return
+    // Skip if nothing is hovered — let initial alpha from useMemo stand
+    if (effectiveHoveredSeries === null) return
 
-    const hoveredTid = effectiveHoveredSeries !== null && serisTidMap.includes(effectiveHoveredSeries)
+    const hoveredTid = serisTidMap.includes(effectiveHoveredSeries)
       ? effectiveHoveredSeries
       : null
+    // If hovered tunnel isn't in the chart, don't change anything
+    if (hoveredTid === null) return
 
     let changed = false
     for (let i = 0; i < serisTidMap.length; i++) {
@@ -1031,29 +1035,30 @@ function MulticastTrafficChartSection({
       const seriesIdx = i + 1
       if (seriesIdx >= u.series.length) continue
 
-      let alpha: number
-      if (hoveredTid === null) {
-        // No hover — restore to initial state (visible=1, hidden=0)
-        // Use the initial alpha from the series config
-        alpha = uplotSeries[seriesIdx]?.alpha ?? 1
-      } else if (hoveredTid === tid) {
-        // Hovered tunnel — always show bright (even if normally hidden = preview)
-        alpha = 1
-      } else if (visibleSeries.has(tid)) {
-        // Visible but not hovered — dim
-        alpha = 0.15
-      } else {
-        // Not visible, not hovered — hide
-        alpha = 0
-      }
-
+      const alpha = tid === hoveredTid ? 1 : 0.15
       if (u.series[seriesIdx].alpha !== alpha) {
         u.series[seriesIdx].alpha = alpha
         changed = true
       }
     }
     if (changed) u.redraw()
-  }, [serisTidMap, uplotSeries, visibleSeries, effectiveHoveredSeries])
+  }, [serisTidMap, effectiveHoveredSeries])
+
+  // Restore alpha when hover ends
+  useEffect(() => {
+    const u = plotRef.current
+    if (!u || effectiveHoveredSeries !== null) return
+
+    let changed = false
+    for (let i = 1; i < u.series.length; i++) {
+      const initialAlpha = uplotSeries[i]?.alpha ?? 1
+      if (u.series[i].alpha !== initialAlpha) {
+        u.series[i].alpha = initialAlpha
+        changed = true
+      }
+    }
+    if (changed) u.redraw()
+  }, [effectiveHoveredSeries, uplotSeries])
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
