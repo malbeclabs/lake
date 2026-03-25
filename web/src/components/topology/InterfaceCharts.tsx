@@ -1,4 +1,5 @@
 import { useMemo, useCallback, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useChartLegend, type UseChartLegendReturn } from '@/hooks/use-chart-legend'
@@ -430,7 +431,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   const aggParam = trafficView === 'peak' ? 'max' : trafficView
 
   // Traffic data
-  const { data: rawPoints, isLoading: trafficLoading, error: trafficError } = useQuery({
+  const { data: rawPoints, isLoading: trafficLoading, isFetching: trafficFetching, error: trafficError } = useQuery({
     queryKey: ['topology-traffic-interface', entityType, entityPk, effectiveRange, bucket, metric, aggParam],
     queryFn: () => fetchTrafficHistoryByInterface(entityType, entityPk, effectiveRange, bucket, metric, aggParam),
     refetchInterval: 60000,
@@ -439,7 +440,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
   })
 
   // Health data (only for devices)
-  const { data: historyData, isLoading: healthLoading } = useQuery({
+  const { data: historyData, isLoading: healthLoading, isFetching: healthFetching } = useQuery({
     queryKey: ['device-interface-health', entityPk, timeRangeStr],
     queryFn: () => fetchDeviceInterfaceHistory(entityPk, timeRangeStr),
     refetchInterval: 60000,
@@ -750,8 +751,15 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     <div className="space-y-6">
       {errorHealth?.hasData && (
         <div className={className}>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Errors</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+            <span>Errors</span>
+            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {healthFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
+          </div>
           <div ref={errorChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -769,8 +777,15 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
       {fcsErrorHealth?.hasData && (
         <div className={className}>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            FCS Errors</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+            <span>FCS Errors</span>
+            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {healthFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
+          </div>
           <div ref={fcsErrorChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -787,8 +802,15 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
       {discardHealth?.hasData && (
         <div className={className}>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Discards</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+            <span>Discards</span>
+            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {healthFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
+          </div>
           <div ref={discardChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -806,8 +828,15 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
       {transitionHealth?.hasData && (
         <div className={className}>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Carrier Transitions</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+            <span>Carrier Transitions</span>
+            {healthFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {healthFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
+          </div>
           <div ref={transitionChartRef} className="h-36" />
           <HealthLegendTable
             interfaces={interfaces}
@@ -823,9 +852,11 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
       )}
 
       <div className={className}>
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">
-            {trafficView === 'avg' ? 'Avg' : 'Peak'} Traffic</div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
+            <span>{trafficView === 'avg' ? 'Avg' : trafficView === 'peak' ? 'Max' : trafficView.toUpperCase()} Traffic</span>
+            {trafficFetching && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
           <TrafficFilters
             bucket={!controlledBucket ? bucket : undefined}
             onBucketChange={!controlledBucket ? setBucket : undefined}
@@ -835,6 +866,11 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
             trafficView={trafficView}
             onTrafficViewChange={setTrafficView}
           />
+        </div>
+        <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+          {trafficFetching && (
+            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+          )}
         </div>
         <div ref={trafficChartRef} className="h-36" />
 
