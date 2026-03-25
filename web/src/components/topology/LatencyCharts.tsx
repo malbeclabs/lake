@@ -61,13 +61,10 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
   const handleRttCursorIdx = useCallback((idx: number | null) => setRttHoveredIdx(idx), [])
   const handleJitterCursorIdx = useCallback((idx: number | null) => setJitterHoveredIdx(idx), [])
 
-  // X-axis bounds from time range
-  const chartScales = useMemo((): uPlot.Scales => {
-    if (effectiveRange.preset === 'custom') return { x: { time: true }, y: { auto: true } }
-    const now = Date.now() / 1000
-    const rangeSeconds = presetToSeconds(effectiveRange.preset)
-    return { x: { time: true, min: now - rangeSeconds, max: now }, y: { auto: true } }
-  }, [effectiveRange])
+  const chartScales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: { auto: true },
+  }), [])
 
   // Colors
   const rttAAvgColor = isDark ? '#22c55e' : '#16a34a'

@@ -285,11 +285,10 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
     '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
   }
-  const chartScales = useMemo((): uPlot.Scales => {
-    const now = Date.now() / 1000
-    const rangeS = rangeSecondsMap[timeRange] || 86400
-    return { x: { time: true, min: now - rangeS, max: now }, y: { auto: true } }
-  }, [timeRange])
+  const chartScales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: { auto: true },
+  }), [])
 
   const { plotRef } = useUPlotChart({
     containerRef: chartContainerRef,
@@ -600,11 +599,10 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
     '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
     '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
   }
-  const chartScales = useMemo((): uPlot.Scales => {
-    const now = Date.now() / 1000
-    const rangeS = rangeSecondsMap[timeRange] || 604800
-    return { x: { time: true, min: now - rangeS, max: now }, y: { auto: true } }
-  }, [timeRange])
+  const chartScales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: { auto: true },
+  }), [])
 
   const axes = useMemo((): uPlot.Axis[] => [
     {},

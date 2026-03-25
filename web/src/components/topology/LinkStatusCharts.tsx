@@ -74,12 +74,10 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     return Math.ceil(rangeS / bucketS)
   }, [bucket, timeRange])
 
-  // X-axis bounds from time range
-  const chartScales = useMemo((): uPlot.Scales => {
-    const now = Date.now() / 1000
-    const rangeSeconds = presetToSeconds(timeRange as TimeRangePreset)
-    return { x: { time: true, min: now - rangeSeconds, max: now }, y: { auto: true } }
-  }, [timeRange])
+  const chartScales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: { auto: true },
+  }), [])
 
   const { data: historyData, isLoading, isFetching, error } = useQuery({
     queryKey: ['single-link-history', linkPk, timeRange, bucketCount],

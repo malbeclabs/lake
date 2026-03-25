@@ -410,22 +410,10 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
 
   const timeRangeStr = effectiveRange.preset === 'custom' ? 'custom' : effectiveRange.preset
 
-  // Compute x-axis bounds from the selected time range so the chart always
-  // shows the full range even when data is sparse.
-  const xScaleBounds = useMemo((): { min: number; max: number } | undefined => {
-    if (effectiveRange.preset === 'custom') return undefined
-    const now = Date.now() / 1000
-    const rangeSeconds = presetToSeconds(effectiveRange.preset)
-    return { min: now - rangeSeconds, max: now }
-  }, [effectiveRange])
-
   const chartScales = useMemo((): uPlot.Scales => ({
-    x: {
-      time: true,
-      ...(xScaleBounds ? { min: xScaleBounds.min, max: xScaleBounds.max } : {}),
-    },
+    x: { time: true },
     y: { auto: true },
-  }), [xScaleBounds])
+  }), [])
 
   const [internalBucket, setInternalBucket] = useState<BucketSize>('auto')
   const [internalMetric, setInternalMetric] = useState<TrafficMetric>('throughput')

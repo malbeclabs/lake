@@ -184,16 +184,12 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
       '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
       '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
     }
-    const now = Date.now() / 1000
-    const xMin = now - (rangeSeconds[timeRange] || 86400)
-    const xMax = now
-
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 224,
       series: uplotSeries,
       scales: {
-        x: { time: true, min: xMin, max: xMax },
+        x: { time: true },
         y: { auto: true },
       },
       axes: [
