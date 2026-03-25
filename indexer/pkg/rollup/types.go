@@ -20,6 +20,15 @@ type LinkLatencyStats struct {
 	MaxRttUs float64 `json:"max_rtt_us"`
 	LossPct  float64 `json:"loss_pct"`
 	Samples  uint32  `json:"samples"`
+
+	// Jitter (inter-packet delay variation) percentiles in microseconds
+	AvgJitterUs float64 `json:"avg_jitter_us"`
+	MinJitterUs float64 `json:"min_jitter_us"`
+	P50JitterUs float64 `json:"p50_jitter_us"`
+	P90JitterUs float64 `json:"p90_jitter_us"`
+	P95JitterUs float64 `json:"p95_jitter_us"`
+	P99JitterUs float64 `json:"p99_jitter_us"`
+	MaxJitterUs float64 `json:"max_jitter_us"`
 }
 
 // LinkBucket represents a single link latency/loss rollup for a 5-minute interval.

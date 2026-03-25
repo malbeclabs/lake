@@ -142,7 +142,14 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			quantile(0.99)(f.rtt_us) as p99_rtt,
 			toFloat64(max(f.rtt_us)) as max_rtt,
 			max(ls.loss_pct) as loss_pct,
-			toUInt32(count(*)) as samples
+			toUInt32(count(*)) as samples,
+			avg(abs(f.ipdv_us)) as avg_jitter,
+			toFloat64(min(abs(f.ipdv_us))) as min_jitter,
+			quantile(0.50)(abs(f.ipdv_us)) as p50_jitter,
+			quantile(0.90)(abs(f.ipdv_us)) as p90_jitter,
+			quantile(0.95)(abs(f.ipdv_us)) as p95_jitter,
+			quantile(0.99)(abs(f.ipdv_us)) as p99_jitter,
+			toFloat64(max(abs(f.ipdv_us))) as max_jitter
 		FROM ` + factLatency + ` f
 		JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 		LEFT JOIN loss_sub ls ON f.link_pk = ls.link_pk
@@ -171,7 +178,8 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 		var d LinkLatencyStats
 		if err := rows.Scan(&linkPK, &bucket, &direction,
 			&d.AvgRttUs, &d.MinRttUs, &d.P50RttUs, &d.P90RttUs, &d.P95RttUs, &d.P99RttUs, &d.MaxRttUs,
-			&d.LossPct, &d.Samples); err != nil {
+			&d.LossPct, &d.Samples,
+			&d.AvgJitterUs, &d.MinJitterUs, &d.P50JitterUs, &d.P90JitterUs, &d.P95JitterUs, &d.P99JitterUs, &d.MaxJitterUs); err != nil {
 			return nil, fmt.Errorf("link latency scan: %w", err)
 		}
 		bk := bucketKey{linkPK: linkPK, bucket: bucket.UTC()}
@@ -677,7 +685,9 @@ func (a *Activities) WriteLinkBuckets(ctx context.Context, buckets []LinkBucket)
 	batch, err := a.ClickHouse.PrepareBatch(ctx, `INSERT INTO link_rollup_5m (
 		bucket_ts, link_pk, ingested_at,
 		a_avg_rtt_us, a_min_rtt_us, a_p50_rtt_us, a_p90_rtt_us, a_p95_rtt_us, a_p99_rtt_us, a_max_rtt_us, a_loss_pct, a_samples,
+		a_avg_jitter_us, a_min_jitter_us, a_p50_jitter_us, a_p90_jitter_us, a_p95_jitter_us, a_p99_jitter_us, a_max_jitter_us,
 		z_avg_rtt_us, z_min_rtt_us, z_p50_rtt_us, z_p90_rtt_us, z_p95_rtt_us, z_p99_rtt_us, z_max_rtt_us, z_loss_pct, z_samples,
+		z_avg_jitter_us, z_min_jitter_us, z_p50_jitter_us, z_p90_jitter_us, z_p95_jitter_us, z_p99_jitter_us, z_max_jitter_us,
 		status, provisioning, isis_down
 	)`)
 	if err != nil {
@@ -688,7 +698,9 @@ func (a *Activities) WriteLinkBuckets(ctx context.Context, buckets []LinkBucket)
 		if err := batch.Append(
 			b.BucketTS, b.LinkPK, b.IngestedAt,
 			b.A.AvgRttUs, b.A.MinRttUs, b.A.P50RttUs, b.A.P90RttUs, b.A.P95RttUs, b.A.P99RttUs, b.A.MaxRttUs, b.A.LossPct, b.A.Samples,
+			b.A.AvgJitterUs, b.A.MinJitterUs, b.A.P50JitterUs, b.A.P90JitterUs, b.A.P95JitterUs, b.A.P99JitterUs, b.A.MaxJitterUs,
 			b.Z.AvgRttUs, b.Z.MinRttUs, b.Z.P50RttUs, b.Z.P90RttUs, b.Z.P95RttUs, b.Z.P99RttUs, b.Z.MaxRttUs, b.Z.LossPct, b.Z.Samples,
+			b.Z.AvgJitterUs, b.Z.MinJitterUs, b.Z.P50JitterUs, b.Z.P90JitterUs, b.Z.P95JitterUs, b.Z.P99JitterUs, b.Z.MaxJitterUs,
 			b.Status, b.Provisioning, b.ISISDown,
 		); err != nil {
 			return fmt.Errorf("append batch: %w", err)
