@@ -97,6 +97,31 @@ func seedDashboardData(t *testing.T) {
 		 0, 0, 0, 0, 0, 0, 0,
 		 0, 0, 0, 0, 0, 0, 0)`))
 
+	// Add more "normal" low-traffic buckets so spike detection works.
+	// With 10 total buckets, the P50 stays near the low value and the
+	// high bucket from the original seed becomes a spike (>2x P50).
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
+		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
+		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
+		 avg_out_bps, min_out_bps, p50_out_bps, p90_out_bps, p95_out_bps, p99_out_bps, max_out_bps,
+		 avg_in_pps, min_in_pps, p50_in_pps, p90_in_pps, p95_in_pps, p99_in_pps, max_in_pps,
+		 avg_out_pps, min_out_pps, p50_out_pps, p90_out_pps, p95_out_pps, p99_out_pps, max_out_pps)
+		SELECT
+			toStartOfFiveMinutes(now() - INTERVAL (40 + number * 5) MINUTE),
+			device_pk, intf, now(), link_pk, 'A', NULL, '',
+			0, 0, 0, 0, 0, 0,
+			low_bps, low_bps, low_bps, low_bps, low_bps, low_bps, low_bps,
+			low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2,
+			0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0
+		FROM (
+			SELECT 'dev-1' AS device_pk, 'Port-Channel1000' AS intf, 'link-1' AS link_pk, 26666666666.7 AS low_bps
+			UNION ALL
+			SELECT 'dev-2', 'Ethernet1/1', 'link-2', 2000000000
+		) AS intfs
+		CROSS JOIN numbers(7)`))
+
 	// Also seed raw fact table for sub-5m bucket queries (same data as rollup)
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta)
@@ -486,6 +511,35 @@ func seedTrafficTypeData(t *testing.T) {
 		 666666666.7, 666666666.7, 666666666.7, 666666666.7, 666666666.7, 666666666.7, 666666666.7,
 		 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`))
 
+	// Add more "normal" low-traffic buckets so spike detection works.
+	// With 10 total buckets, the P50 stays near the low value and the
+	// high bucket from above becomes a spike (>2x P50).
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
+		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
+		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
+		 avg_out_bps, min_out_bps, p50_out_bps, p90_out_bps, p95_out_bps, p99_out_bps, max_out_bps,
+		 avg_in_pps, min_in_pps, p50_in_pps, p90_in_pps, p95_in_pps, p99_in_pps, max_in_pps,
+		 avg_out_pps, min_out_pps, p50_out_pps, p90_out_pps, p95_out_pps, p99_out_pps, max_out_pps)
+		SELECT
+			toStartOfFiveMinutes(now() - INTERVAL (40 + number * 5) MINUTE),
+			device_pk, intf, now(), link_pk, link_side, user_tunnel_id, '',
+			0, 0, 0, 0, 0, 0,
+			low_bps, low_bps, low_bps, low_bps, low_bps, low_bps, low_bps,
+			low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2, low_bps / 2,
+			0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0
+		FROM (
+			SELECT 'dev-1' AS device_pk, 'Ethernet1' AS intf, 'link-1' AS link_pk, '' AS link_side, CAST(NULL AS Nullable(UInt64)) AS user_tunnel_id, 13333333333.3 AS low_bps
+			UNION ALL
+			SELECT 'dev-1', 'Tunnel100', '', '', CAST(42 AS Nullable(UInt64)), 6666666666.7
+			UNION ALL
+			SELECT 'dev-1', 'Tunnel200', '', '', CAST(99 AS Nullable(UInt64)), 2666666666.7
+			UNION ALL
+			SELECT 'dev-1', 'Loopback0', '', '', CAST(NULL AS Nullable(UInt64)), 1333333333.3
+		) AS intfs
+		CROSS JOIN numbers(7)`))
+
 	// Also seed raw fact table for sub-5m bucket queries
 	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
@@ -641,9 +695,8 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 			var gotIntfs []string
 			for _, e := range resp.Entities {
 				gotIntfs = append(gotIntfs, e.Intf)
-				// All entities should have p50_bps and p99_bps populated
 				assert.Greater(t, e.P50Bps, float64(0), "p50_bps should be > 0 for %s", e.Intf)
-				assert.Greater(t, e.P99Bps, float64(0), "p99_bps should be > 0 for %s", e.Intf)
+				assert.Greater(t, e.SpikeCount, uint64(0), "spike_count should be > 0 for %s", e.Intf)
 			}
 			assert.ElementsMatch(t, tt.wantIntfs, gotIntfs)
 		})
@@ -872,12 +925,12 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 		query string
 	}{
 		{"default", "?time_range=1h"},
-		{"sort_burstiness", "?time_range=1h&sort=burstiness"},
-		{"sort_p50_util", "?time_range=1h&sort=p50_util"},
-		{"sort_p99_util", "?time_range=1h&sort=p99_util"},
-		{"sort_pct_time_stressed", "?time_range=1h&sort=pct_time_stressed"},
-		{"dir_asc", "?time_range=1h&sort=burstiness&dir=asc"},
-		{"dir_desc", "?time_range=1h&sort=burstiness&dir=desc"},
+		{"sort_spike_count", "?time_range=1h&sort=spike_count"},
+		{"sort_max_spike_ratio", "?time_range=1h&sort=max_spike_ratio"},
+		{"sort_p50_bps", "?time_range=1h&sort=p50_bps"},
+		{"sort_max_spike_bps", "?time_range=1h&sort=max_spike_bps"},
+		{"dir_asc", "?time_range=1h&sort=spike_count&dir=asc"},
+		{"dir_desc", "?time_range=1h&sort=spike_count&dir=desc"},
 	}
 
 	for _, tt := range tests {
@@ -893,6 +946,7 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 			for _, e := range resp.Entities {
 				assert.NotEmpty(t, e.ContributorCode, "contributor_code should be populated for %s %s", e.DeviceCode, e.Intf)
+				assert.Greater(t, e.SpikeCount, uint64(0), "spike_count should be > 0")
 			}
 		})
 	}

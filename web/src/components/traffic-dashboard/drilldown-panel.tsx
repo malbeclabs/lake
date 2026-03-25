@@ -248,12 +248,12 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
           }
 
           const isRx = rl.direction === 'rx'
-          // P50 and P99 are in bps; Rx is positive (top half), Tx is negative (bottom half)
-          const p50 = isRx ? rl.p50_bps : -rl.p50_bps
-          const p99 = isRx ? rl.p99_bps : -rl.p99_bps
+          // Baseline (P50) and peak spike in bps; Rx is positive (top half), Tx is negative (bottom half)
+          const baseline = isRx ? rl.p50_bps : -rl.p50_bps
+          const peak = isRx ? rl.p99_bps : -rl.p99_bps
 
-          drawLine(p50, `P50 ${formatRate(rl.p50_bps)}`, 'oklch(65% 0.12 250 / 0.6)')
-          drawLine(p99, `P99 ${formatRate(rl.p99_bps)}`, 'oklch(65% 0.12 25 / 0.6)')
+          drawLine(baseline, `Baseline ${formatRate(rl.p50_bps)}`, 'oklch(65% 0.12 250 / 0.6)')
+          drawLine(peak, `Peak spike ${formatRate(rl.p99_bps)}`, 'oklch(65% 0.12 25 / 0.6)')
         }],
       },
       legend: { show: false },

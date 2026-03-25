@@ -100,7 +100,7 @@ function DashboardContent() {
 
           <Section
             title="Spike Detection"
-            description="Interfaces with the largest gap between typical (P50) and peak (P99) traffic levels. Large gaps indicate bursty traffic."
+            description="Interfaces where traffic exceeded 2x the median (P50) baseline. Shows anomalous bursts, not normal variance."
             loading={burstinessFetching}
           >
             <BurstinessPanel />

@@ -5,10 +5,6 @@ import { fetchDashboardBurstiness, type DashboardBurstinessEntity } from '@/lib/
 import { useDashboard, dashboardFilterParams } from './dashboard-context'
 import { cn } from '@/lib/utils'
 
-function formatPercent(val: number): string {
-  return (val * 100).toFixed(1) + '%'
-}
-
 function formatRate(val: number): string {
   if (val >= 1e12) return (val / 1e12).toFixed(1) + ' Tbps'
   if (val >= 1e9) return (val / 1e9).toFixed(1) + ' Gbps'
@@ -21,11 +17,22 @@ function formatRatio(val: number): string {
   return val.toFixed(1) + 'x'
 }
 
-function burstColor(val: number, isLink: boolean): string {
-  const high = isLink ? 0.5 : 3
-  const med = isLink ? 0.3 : 1.5
-  if (val >= high) return 'bg-red-500/15 text-red-400 border-red-500/20'
-  if (val >= med) return 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
+function formatTimeAgo(isoStr: string): string {
+  const d = new Date(isoStr)
+  const now = Date.now()
+  const diffMs = now - d.getTime()
+  if (diffMs < 0) return 'just now'
+  const mins = Math.floor(diffMs / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
+function spikeColor(ratio: number): string {
+  if (ratio >= 5) return 'bg-red-500/15 text-red-400 border-red-500/20'
+  if (ratio >= 3) return 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
   return 'bg-blue-500/15 text-blue-400 border-blue-500/20'
 }
 
@@ -37,9 +44,9 @@ const minBpsOptions = [
   { value: 1_000_000_000, label: '1 Gbps' },
 ]
 
-type SortField = 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 'p50_bps' | 'p99_bps'
+type SortField = 'spike_count' | 'max_spike_ratio' | 'p50_bps' | 'max_spike_bps'
 
-function BurstinessTable({
+function SpikeTable({
   entities,
   state,
   sortField,
@@ -69,7 +76,7 @@ function BurstinessTable({
   if (entities.length === 0) {
     return (
       <div className="py-4 text-center text-sm text-muted-foreground">
-        No bursty interfaces detected
+        No spikes detected
       </div>
     )
   }
@@ -82,33 +89,33 @@ function BurstinessTable({
             <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Interface</th>
             <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Metro</th>
             <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Contributor</th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p50_util')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p50_util')}>
-                Typical (P50) <SortIcon field="p50_util" />
+            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('spike_count')}>
+              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('spike_count')}>
+                Spikes <SortIcon field="spike_count" />
               </button>
             </th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p99_util')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p99_util')}>
-                Peak (P99) <SortIcon field="p99_util" />
+            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_spike_ratio')}>
+              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_spike_ratio')}>
+                Worst Spike <SortIcon field="max_spike_ratio" />
               </button>
             </th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('burstiness')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('burstiness')}>
-                Spike Gap <SortIcon field="burstiness" />
+            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('p50_bps')}>
+              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('p50_bps')}>
+                Baseline (P50) <SortIcon field="p50_bps" />
               </button>
             </th>
-            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('pct_time_stressed')}>
-              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('pct_time_stressed')}>
-                % Time &ge; 80% <SortIcon field="pct_time_stressed" />
+            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground" aria-sort={sortAria('max_spike_bps')}>
+              <button className="inline-flex items-center gap-0.5" onClick={() => handleSort('max_spike_bps')}>
+                Peak Spike <SortIcon field="max_spike_bps" />
               </button>
             </th>
+            <th className="text-right py-1.5 px-2 font-medium text-muted-foreground">Last Spike</th>
           </tr>
         </thead>
         <tbody>
           {entities.map((e, i) => {
             const isSelected = state.selectedEntity?.devicePk === e.device_pk &&
               state.selectedEntity?.intf === e.intf
-            const isLink = e.bandwidth_bps > 0
             return (
               <tr
                 key={`${e.device_pk}-${e.intf}-${i}`}
@@ -124,7 +131,7 @@ function BurstinessTable({
                     })
                     state.setReferenceLines(e.device_pk, e.intf, {
                       p50_bps: e.p50_bps,
-                      p99_bps: e.p99_bps,
+                      p99_bps: e.max_spike_bps,
                       direction: e.peak_direction,
                     })
                   }
@@ -141,25 +148,22 @@ function BurstinessTable({
                 <td className="py-1.5 px-2">{e.metro_code}</td>
                 <td className="py-1.5 px-2">{e.contributor_code}</td>
                 <td className="py-1.5 px-2 text-right font-mono">
-                  {isLink ? formatPercent(e.p50_util) : formatRate(e.p50_bps)}
-                </td>
-                <td className="py-1.5 px-2 text-right font-mono">
-                  {isLink ? formatPercent(e.p99_util) : formatRate(e.p99_bps)}
+                  {e.spike_count}
+                  <span className="text-[10px] text-muted-foreground ml-1">/ {e.total_buckets}</span>
                 </td>
                 <td className="py-1.5 px-2 text-right">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className={cn('px-1.5 py-0.5 rounded text-xs border', burstColor(e.burstiness, isLink))}>
-                      {isLink ? formatPercent(e.burstiness) : formatRatio(e.burstiness)}
-                    </span>
-                    {!isLink && (
-                      <span className="text-[10px] text-muted-foreground">
-                        {formatRate(e.p99_bps - e.p50_bps)}
-                      </span>
-                    )}
+                  <span className={cn('px-1.5 py-0.5 rounded text-xs border', spikeColor(e.max_spike_ratio))}>
+                    {formatRatio(e.max_spike_ratio)}
                   </span>
                 </td>
                 <td className="py-1.5 px-2 text-right font-mono">
-                  {isLink ? formatPercent(e.pct_time_stressed) : '\u2014'}
+                  {formatRate(e.p50_bps)}
+                </td>
+                <td className="py-1.5 px-2 text-right font-mono">
+                  {formatRate(e.max_spike_bps)}
+                </td>
+                <td className="py-1.5 px-2 text-right text-muted-foreground">
+                  {e.last_spike_time ? formatTimeAgo(e.last_spike_time) : '\u2014'}
                 </td>
               </tr>
             )
@@ -173,7 +177,7 @@ function BurstinessTable({
 export function BurstinessPanel() {
   const state = useDashboard()
   const [limit, setLimit] = useState(10)
-  const [sortField, setSortField] = useState<SortField>('burstiness')
+  const [sortField, setSortField] = useState<SortField>('spike_count')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(1_000_000)
   const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
@@ -295,13 +299,13 @@ export function BurstinessPanel() {
     if (entities.length === 0) {
       return (
         <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
-          No bursty interfaces detected
+          No spikes detected
         </div>
       )
     }
     return (
       <>
-        <BurstinessTable
+        <SpikeTable
           entities={entities}
           state={state}
           sortField={sortField}
@@ -325,7 +329,7 @@ export function BurstinessPanel() {
   if (allEmpty) {
     return (
       <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
-        No bursty interfaces detected
+        No spikes detected
       </div>
     )
   }
@@ -350,17 +354,19 @@ export function BurstinessPanel() {
               )}
             >
               {label}
-              <span className={cn(
-                'ml-1.5 text-[10px]',
-                activeTab === key ? 'text-muted-foreground' : 'text-muted-foreground/60'
-              )}>
-                {count}
-              </span>
+              {count > 0 && (
+                <span className={cn(
+                  'ml-1.5 text-[10px]',
+                  activeTab === key ? 'text-muted-foreground' : 'text-muted-foreground/60'
+                )}>
+                  {count}
+                </span>
+              )}
             </button>
           )
         })}
       </div>
-      <BurstinessTable
+      <SpikeTable
         entities={activeEntities}
         state={state}
         sortField={sortField}

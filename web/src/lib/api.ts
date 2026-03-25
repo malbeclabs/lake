@@ -4002,12 +4002,13 @@ export interface DashboardBurstinessEntity {
   metro_code: string
   contributor_code: string
   bandwidth_bps: number
-  p50_util: number
-  p99_util: number
-  burstiness: number
-  pct_time_stressed: number
   p50_bps: number
-  p99_bps: number
+  p95_bps: number
+  spike_count: number
+  total_buckets: number
+  max_spike_bps: number
+  max_spike_ratio: number
+  last_spike_time: string
   peak_direction: 'rx' | 'tx'
 }
 
@@ -4017,7 +4018,7 @@ export interface DashboardBurstinessResponse {
 
 export interface DashboardBurstinessParams {
   time_range?: string
-  sort?: 'burstiness' | 'p50_util' | 'p99_util' | 'pct_time_stressed' | 'p50_bps' | 'p99_bps'
+  sort?: 'spike_count' | 'max_spike_ratio' | 'p50_bps' | 'max_spike_bps'
   dir?: 'asc' | 'desc'
   limit?: number
   threshold?: number
