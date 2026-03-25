@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3, Info, Search } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid, ReferenceLine } from 'recharts'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { Radio, X, ChevronDown, ChevronRight, Settings2, User, Server, BarChart3, Info, Search, Loader2, RefreshCw } from 'lucide-react'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
 import { useTopology } from '../TopologyContext'
 import { EntityLink } from '../EntityLink'
 import { formatBandwidth } from '../utils'
@@ -726,9 +727,24 @@ export function MulticastTreesOverlayPanel({
   )
 }
 
-const TRAFFIC_TIME_RANGES = ['1h', '6h', '12h', '24h'] as const
-const BUCKET_OPTIONS = ['auto', '2s', '10s', '30s', '1m', '2m', '5m', '10m'] as const
-const AUTO_BUCKET_LABEL: Record<string, string> = { '1h': '30s', '6h': '2m', '12h': '5m', '24h': '10m' }
+const TRAFFIC_TIME_RANGES = ['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'] as const
+const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR'] as const
+const BUCKET_LABELS: Record<string, string> = {
+  'auto': 'Auto', '10 SECOND': '10s', '30 SECOND': '30s', '1 MINUTE': '1m', '5 MINUTE': '5m',
+  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h', '4 HOUR': '4h',
+}
+function resolveOverlayAutoBucket(timeRange: string): string {
+  switch (timeRange) {
+    case '1h': return '10 SECOND'
+    case '3h': return '30 SECOND'
+    case '6h': return '1 MINUTE'
+    case '12h': return '10 MINUTE'
+    case '24h': return '15 MINUTE'
+    case '3d': return '30 MINUTE'
+    case '7d': return '4 HOUR'
+    default: return '5 MINUTE'
+  }
+}
 
 function formatPps(pps: number): string {
   if (pps === 0) return '—'
@@ -743,11 +759,6 @@ function formatAxisPps(pps: number): string {
   if (pps >= 1e6) return `${(pps / 1e6).toFixed(1)}M`
   if (pps >= 1e3) return `${(pps / 1e3).toFixed(0)}K`
   return `${pps.toFixed(0)}`
-}
-
-function formatTime(timeStr: string): string {
-  const d = new Date(timeStr)
-  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
 function formatAxisBps(bps: number): string {
@@ -788,20 +799,23 @@ function MulticastTrafficChartSection({
   hoveredTunnelId: number | null
   onHoverUserPK: (userPK: string | null) => void
 }) {
+  const queryClient = useQueryClient()
+  const chartRef = useRef<HTMLDivElement>(null)
+  const plotRef = useRef<uPlot | null>(null)
   const [open, setOpen] = useState(true)
-  const [timeRange, setTimeRange] = useState<string>('1h')
+  const [timeRange, setTimeRange] = useState<string>('24h')
   const [metric, setMetric] = useState<'throughput' | 'packets'>('throughput')
   const [bucket, setBucket] = useState<string>('auto')
 
-  const bucketSeconds = bucket === 'auto' ? undefined : bucket.endsWith('m')
-    ? String(parseInt(bucket) * 60)
-    : String(parseInt(bucket))
+  const effectiveBucket = bucket === 'auto' ? resolveOverlayAutoBucket(timeRange) : bucket
+  const autoBucketLabel = BUCKET_LABELS[resolveOverlayAutoBucket(timeRange)] || '5m'
 
-  const { data: trafficData, isLoading } = useQuery({
-    queryKey: ['multicast-traffic', groupCode, timeRange, bucket],
-    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange, bucketSeconds),
+  const { data: trafficData, isFetching } = useQuery({
+    queryKey: ['multicast-traffic', groupCode, timeRange, effectiveBucket],
+    queryFn: () => fetchMulticastGroupTraffic(groupCode, timeRange, effectiveBucket),
     refetchInterval: 30000,
     enabled: open,
+    placeholderData: keepPreviousData,
   })
 
   // Build tunnel info lookup from members: tunnel_id -> { code, mode, userPk }
@@ -916,6 +930,100 @@ function MulticastTrafficChartSection({
     return map
   }, [chartData, tunnelIds, hoveredIdx])
 
+  // Build uPlot columnar data from chartData
+  const { uplotData, uplotSeries } = useMemo(() => {
+    if (chartData.length === 0 || tunnelIds.length === 0) {
+      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[] }
+    }
+
+    const timestamps = chartData.map(row => new Date(row.time as string).getTime() / 1000)
+    const splinePaths = uPlot.paths.spline?.()
+    const dataArrays: (number | null)[][] = [timestamps]
+    const series: uPlot.Series[] = [{}]
+
+    for (const tid of tunnelIds) {
+      if (!renderedSeries.has(tid)) continue
+      const color = getTunnelColor(tid)
+      const isPreview = !visibleSeries.has(tid)
+
+      dataArrays.push(chartData.map(row => (row[`t${tid}_in`] as number) ?? null))
+      series.push({
+        label: `t${tid}_in`,
+        stroke: color,
+        width: 1.5,
+        alpha: isPreview ? 0.35 : 1,
+        points: { show: false },
+        paths: splinePaths,
+      } as uPlot.Series)
+
+      dataArrays.push(chartData.map(row => (row[`t${tid}_out`] as number) ?? null))
+      series.push({
+        label: `t${tid}_out`,
+        stroke: color,
+        width: 1.5,
+        dash: [4, 2],
+        alpha: isPreview ? 0.35 : 1,
+        points: { show: false },
+        paths: splinePaths,
+      } as uPlot.Series)
+    }
+
+    return { uplotData: dataArrays as uPlot.AlignedData, uplotSeries: series }
+  }, [chartData, tunnelIds, renderedSeries, visibleSeries, getTunnelColor])
+
+  // Create/update uPlot chart
+  useEffect(() => {
+    if (!chartRef.current || !open || uplotData[0].length === 0) {
+      plotRef.current?.destroy()
+      plotRef.current = null
+      return
+    }
+
+    plotRef.current?.destroy()
+
+    const opts: uPlot.Options = {
+      width: chartRef.current.offsetWidth,
+      height: 176,
+      series: uplotSeries,
+      scales: { x: { time: true }, y: { auto: true } },
+      axes: [
+        { stroke: 'rgba(128,128,128,0.4)', grid: { stroke: 'rgba(128,128,128,0.06)' } },
+        {
+          stroke: 'rgba(128,128,128,0.4)',
+          grid: { stroke: 'rgba(128,128,128,0.06)' },
+          values: (_: uPlot, vals: number[]) => vals.map(v =>
+            metric === 'throughput' ? formatAxisBps(Math.abs(v)) : formatAxisPps(Math.abs(v))
+          ),
+          size: 45,
+        },
+      ],
+      cursor: {
+        points: { size: 10, width: 2 },
+      },
+      hooks: {
+        setCursor: [(u: uPlot) => {
+          setHoveredIdx(u.cursor.idx ?? null)
+        }],
+      },
+      legend: { show: false },
+    }
+
+    plotRef.current = new uPlot(opts, uplotData, chartRef.current)
+
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        plotRef.current?.setSize({ width: entry.contentRect.width, height: 176 })
+      }
+    })
+    ro.observe(chartRef.current)
+
+    return () => {
+      ro.disconnect()
+      plotRef.current?.destroy()
+      plotRef.current = null
+    }
+  }, [uplotData, uplotSeries, open, metric])
+
   return (
     <div className="border-t border-[var(--border)] pt-2">
       <div className="flex items-center gap-1.5">
@@ -943,7 +1051,7 @@ function MulticastTrafficChartSection({
               className="text-[10px] bg-transparent border border-border rounded px-1 py-0.5 text-foreground cursor-pointer"
             >
               {BUCKET_OPTIONS.map(b => (
-                <option key={b} value={b}>{b === 'auto' ? `auto (${AUTO_BUCKET_LABEL[timeRange] || '30s'})` : b}</option>
+                <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
               ))}
             </select>
             <select
@@ -959,91 +1067,24 @@ function MulticastTrafficChartSection({
         )}
       </div>
       {open && (
-        <div className="mt-2">
+        <div className="mt-2 group/chart">
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {isFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
+          </div>
 
-          {isLoading && (
-            <div className="text-[10px] text-muted-foreground py-4 text-center">Loading...</div>
-          )}
-
-          {!isLoading && chartData.length === 0 && (
+          {!trafficData && !isFetching && (
             <div className="text-[10px] text-muted-foreground py-4 text-center">No traffic data</div>
           )}
 
-          {!isLoading && chartData.length > 0 && (
+          {(trafficData || isFetching) && (
             <div>
               {/* Chart */}
-              <div className="relative">
-                <span className="absolute top-0.5 left-0 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▲ In</span>
-                <span className="absolute bottom-4 left-0 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▼ Out</span>
-                <div className="h-44">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={chartData}
-                      onMouseMove={(state) => {
-                        if (state?.activeTooltipIndex !== undefined) {
-                          setHoveredIdx(Number(state.activeTooltipIndex))
-                        }
-                      }}
-                      onMouseLeave={() => setHoveredIdx(null)}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
-                      <XAxis
-                        dataKey="time"
-                        tick={{ fontSize: 9 }}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={formatTime}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 9 }}
-                        tickLine={false}
-                        axisLine={false}
-                        tickFormatter={(v) => metric === 'throughput' ? formatAxisBps(Math.abs(v)) : formatAxisPps(Math.abs(v))}
-                        width={45}
-                      />
-                      <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
-                      <RechartsTooltip
-                        content={() => null}
-                        cursor={{ stroke: 'var(--border)', strokeWidth: 1 }}
-                      />
-                      {tunnelIds.filter(tid => renderedSeries.has(tid)).map(tid => {
-                        const isPreview = !visibleSeries.has(tid)
-                        const baseOpacity = isPreview ? 0.35 : 1
-                        const opacity = effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? baseOpacity * 0.2 : baseOpacity
-                        return (
-                          <Line
-                            key={`${tid}_in`}
-                            type="monotone"
-                            dataKey={`t${tid}_in`}
-                            stroke={getTunnelColor(tid)}
-                            strokeWidth={1.5}
-                            strokeOpacity={opacity}
-                            dot={false}
-                            isAnimationActive={false}
-                          />
-                        )
-                      })}
-                      {tunnelIds.filter(tid => renderedSeries.has(tid)).map(tid => {
-                        const isPreview = !visibleSeries.has(tid)
-                        const baseOpacity = isPreview ? 0.35 : 1
-                        const opacity = effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid ? baseOpacity * 0.2 : baseOpacity
-                        return (
-                          <Line
-                            key={`${tid}_out`}
-                            type="monotone"
-                            dataKey={`t${tid}_out`}
-                            stroke={getTunnelColor(tid)}
-                            strokeWidth={1.5}
-                            strokeOpacity={opacity}
-                            strokeDasharray="4 2"
-                            dot={false}
-                            isAnimationActive={false}
-                          />
-                        )
-                      })}
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+              <div className="relative" style={{ minHeight: 176 }}>
+                <span className="absolute top-0.5 right-1 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▲ In</span>
+                <span className="absolute bottom-4 right-1 text-[8px] text-muted-foreground/50 pointer-events-none z-10">▼ Out</span>
+                <div ref={chartRef} className="w-full" />
               </div>
 
               {/* Legend table */}
