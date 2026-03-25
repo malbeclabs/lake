@@ -425,15 +425,13 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
 
   const [referenceLines, setReferenceLinesState] = useState<Map<string, ReferenceLines>>(new Map())
   const setReferenceLines = useCallback((devicePk: string, intf: string | undefined, lines: ReferenceLines | null) => {
-    setReferenceLinesState(prev => {
-      const next = new Map(prev)
-      const key = refLineKey(devicePk, intf)
+    setReferenceLinesState(() => {
       if (lines) {
-        next.set(key, lines)
-      } else {
-        next.delete(key)
+        const next = new Map<string, ReferenceLines>()
+        next.set(refLineKey(devicePk, intf), lines)
+        return next
       }
-      return next
+      return new Map()
     })
   }, [])
 

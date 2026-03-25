@@ -120,21 +120,16 @@ function SpikeTable({
               <tr
                 key={`${e.device_pk}-${e.intf}-${i}`}
                 onClick={() => {
-                  if (isSelected) {
-                    state.selectEntity(null)
-                    state.setReferenceLines(e.device_pk, e.intf, null)
-                  } else {
-                    state.selectEntity({
-                      devicePk: e.device_pk,
-                      deviceCode: e.device_code,
-                      intf: e.intf,
-                    })
-                    state.setReferenceLines(e.device_pk, e.intf, {
-                      p50_bps: e.p50_bps,
-                      p99_bps: e.max_spike_bps,
-                      direction: e.peak_direction,
-                    })
-                  }
+                  state.selectEntity({
+                    devicePk: e.device_pk,
+                    deviceCode: e.device_code,
+                    intf: e.intf,
+                  })
+                  state.setReferenceLines(e.device_pk, e.intf, {
+                    p50_bps: e.p50_bps,
+                    p99_bps: e.max_spike_bps,
+                    direction: e.peak_direction,
+                  })
                 }}
                 className={cn(
                   'border-b border-border/50 cursor-pointer transition-colors',
