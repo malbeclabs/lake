@@ -478,7 +478,7 @@ function TrafficPageContent() {
 
 export function TrafficPage() {
   return (
-    <DashboardProvider defaultTimeRange="3h">
+    <DashboardProvider defaultTimeRange="24h">
       <TrafficPageContent />
     </DashboardProvider>
   )

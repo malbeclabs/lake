@@ -151,7 +151,7 @@ function parseList(param: string | null): string[] {
   return param.split(',').filter(Boolean)
 }
 
-export function DashboardProvider({ children, defaultTimeRange = '6h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
+export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRange }: { children: ReactNode; defaultTimeRange?: TimeRange }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [refreshIntervalKey, setRefreshIntervalKey] = useState<RefreshInterval>('off')
   const refetchInterval = refreshIntervalMs[refreshIntervalKey]
