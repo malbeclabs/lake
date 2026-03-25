@@ -183,7 +183,7 @@ export function LocalizationPanel() {
               </span>
               <div className="flex-1 h-5 bg-muted/30 rounded-sm overflow-hidden relative">
                 <div
-                  className={cn('h-full rounded-sm transition-all', isUtil ? utilColor(g.avgP95) : 'bg-blue-500/20 dark:bg-blue-500/40 text-blue-400')}
+                  className={cn('h-full rounded-sm transition-all', isUtil ? utilColor(g.avgP95) : 'bg-blue-500/40 dark:bg-blue-400/30 text-blue-400')}
                   style={{ width: `${(g.avgP95 / maxBar) * 100}%` }}
                 />
               </div>
