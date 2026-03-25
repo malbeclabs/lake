@@ -1,8 +1,10 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Zap, Download, ArrowRight, ChevronUp, ChevronDown, Search, X, MapPin, Filter } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip as RechartsTooltip, CartesianGrid } from 'recharts'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { Loader2, Zap, Download, ArrowRight, ChevronUp, ChevronDown, Search, X, MapPin, Filter, RefreshCw } from 'lucide-react'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
+import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { fetchLatencyComparison, fetchLatencyHistory, fetchFieldValues } from '@/lib/api'
 import type { LatencyComparison } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
@@ -231,7 +233,7 @@ export function DzVsInternetPage() {
   }, [setSearchParams])
 
   // Fetch latency history for selected comparison
-  const { data: historyData, isLoading: historyLoading } = useQuery({
+  const { data: historyData, isFetching: historyFetching } = useQuery({
     queryKey: ['latency-history', selectedComparison?.origin_metro_code, selectedComparison?.target_metro_code],
     queryFn: () => fetchLatencyHistory(
       selectedComparison!.origin_metro_code,
@@ -239,23 +241,58 @@ export function DzVsInternetPage() {
     ),
     enabled: !!selectedComparison,
     staleTime: 0,
+    placeholderData: keepPreviousData,
   })
 
-  // Prepare chart data from history
-  const chartData = useMemo(() => {
-    if (!historyData?.points) return []
-    return historyData.points.map(p => ({
-      time: new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      dzRtt: p.dz_avg_rtt_ms,
-      inetRtt: p.inet_avg_rtt_ms,
-      dzJitter: p.dz_avg_jitter_ms,
-      inetJitter: p.inet_avg_jitter_ms,
-    }))
-  }, [historyData])
+  // Build uPlot columnar data for RTT and jitter charts
+  const rttChartRef = useRef<HTMLDivElement>(null)
+  const jitterChartRef = useRef<HTMLDivElement>(null)
 
-  // Chart colors
   const dzColor = isDark ? '#22c55e' : '#16a34a'
   const inetColor = isDark ? '#94a3b8' : '#64748b'
+
+  const rttUPlotData = useMemo(() => {
+    if (!historyData?.points || historyData.points.length === 0) return [[]] as uPlot.AlignedData
+    const ts = historyData.points.map(p => new Date(p.timestamp).getTime() / 1000)
+    const dzRtt = historyData.points.map(p => p.dz_avg_rtt_ms)
+    const inetRtt = historyData.points.map(p => p.inet_avg_rtt_ms)
+    return [ts, dzRtt, inetRtt] as uPlot.AlignedData
+  }, [historyData])
+
+  const jitterUPlotData = useMemo(() => {
+    if (!historyData?.points || historyData.points.length === 0) return [[]] as uPlot.AlignedData
+    const ts = historyData.points.map(p => new Date(p.timestamp).getTime() / 1000)
+    const dzJitter = historyData.points.map(p => p.dz_avg_jitter_ms)
+    const inetJitter = historyData.points.map(p => p.inet_avg_jitter_ms)
+    return [ts, dzJitter, inetJitter] as uPlot.AlignedData
+  }, [historyData])
+
+  const latencySeries = useMemo((): uPlot.Series[] => [
+    {},
+    { label: 'DZ', stroke: dzColor, width: 1.5, points: { show: false } },
+    { label: 'Internet', stroke: inetColor, width: 1.5, points: { show: false } },
+  ], [dzColor, inetColor])
+
+  const msAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    { values: (_u: uPlot, vals: number[]) => vals.map(v => `${v.toFixed(1)}ms`), size: 50 },
+  ], [])
+
+  useUPlotChart({
+    containerRef: rttChartRef,
+    data: rttUPlotData,
+    series: latencySeries,
+    height: 128,
+    axes: msAxes,
+  })
+
+  useUPlotChart({
+    containerRef: jitterChartRef,
+    data: jitterUPlotData,
+    series: latencySeries,
+    height: 128,
+    axes: msAxes,
+  })
 
   // Filter to only comparisons with internet data, apply metro filters, and sort
   const comparisons = useMemo(() => {
@@ -697,64 +734,29 @@ export function DzVsInternetPage() {
               </div>
 
               {/* RTT Time Series Chart */}
-              <div className="mb-4">
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-                  RTT Over Time (24h)
+              <div className="mb-4 group/chart">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  <span>RTT Over Time (24h)</span>
+                  {historyFetching ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <button
+                      onClick={() => queryClient.invalidateQueries({ queryKey: ['latency-history'] })}
+                      className="opacity-0 group-hover/chart:opacity-100 transition-opacity hover:text-foreground"
+                      title="Refresh"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
-                {historyLoading ? (
-                  <div className="h-32 flex items-center justify-center">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  </div>
-                ) : chartData.length > 0 ? (
+                <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+                  {historyFetching && (
+                    <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+                  )}
+                </div>
+                {rttUPlotData[0].length > 0 ? (
                   <>
-                    <div className="h-32">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                          <XAxis
-                            dataKey="time"
-                            tick={{ fontSize: 9 }}
-                            tickLine={false}
-                            axisLine={false}
-                            interval="preserveStartEnd"
-                          />
-                          <YAxis
-                            tick={{ fontSize: 9 }}
-                            tickLine={false}
-                            axisLine={false}
-                            tickFormatter={(v) => `${v}ms`}
-                            width={45}
-                          />
-                          <RechartsTooltip
-                            contentStyle={{
-                              backgroundColor: 'var(--card)',
-                              border: '1px solid var(--border)',
-                              borderRadius: '6px',
-                              fontSize: '11px',
-                            }}
-                            formatter={(value) => (value as number | null) != null ? `${(value as number).toFixed(1)}ms` : '-'}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="dzRtt"
-                            stroke={dzColor}
-                            strokeWidth={1.5}
-                            dot={false}
-                            name="DZ"
-                            connectNulls
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="inetRtt"
-                            stroke={inetColor}
-                            strokeWidth={1.5}
-                            dot={false}
-                            name="Internet"
-                            connectNulls
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
+                    <div ref={rttChartRef} className="h-32" />
                     <div className="flex justify-center gap-4 text-xs mt-1">
                       <span className="flex items-center gap-1">
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dzColor }} />
@@ -766,72 +768,37 @@ export function DzVsInternetPage() {
                       </span>
                     </div>
                   </>
-                ) : (
+                ) : !historyFetching ? (
                   <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
                     No history data available
                   </div>
-                )}
+                ) : null}
               </div>
 
               {/* Jitter Time Series Chart */}
-              <div className="mb-4">
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-                  Jitter Over Time (24h)
+              <div className="mb-4 group/chart">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  <span>Jitter Over Time (24h)</span>
+                  {historyFetching ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <button
+                      onClick={() => queryClient.invalidateQueries({ queryKey: ['latency-history'] })}
+                      className="opacity-0 group-hover/chart:opacity-100 transition-opacity hover:text-foreground"
+                      title="Refresh"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
-                {historyLoading ? (
-                  <div className="h-32 flex items-center justify-center">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  </div>
-                ) : chartData.length > 0 ? (
+                <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+                  {historyFetching && (
+                    <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+                  )}
+                </div>
+                {jitterUPlotData[0].length > 0 ? (
                   <>
-                    <div className="h-32">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
-                          <XAxis
-                            dataKey="time"
-                            tick={{ fontSize: 9 }}
-                            tickLine={false}
-                            axisLine={false}
-                            interval="preserveStartEnd"
-                          />
-                          <YAxis
-                            tick={{ fontSize: 9 }}
-                            tickLine={false}
-                            axisLine={false}
-                            tickFormatter={(v) => `${v}ms`}
-                            width={45}
-                          />
-                          <RechartsTooltip
-                            contentStyle={{
-                              backgroundColor: 'var(--card)',
-                              border: '1px solid var(--border)',
-                              borderRadius: '6px',
-                              fontSize: '11px',
-                            }}
-                            formatter={(value) => (value as number | null) != null ? `${(value as number).toFixed(2)}ms` : '-'}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="dzJitter"
-                            stroke={dzColor}
-                            strokeWidth={1.5}
-                            dot={false}
-                            name="DZ"
-                            connectNulls
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="inetJitter"
-                            stroke={inetColor}
-                            strokeWidth={1.5}
-                            dot={false}
-                            name="Internet"
-                            connectNulls
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
+                    <div ref={jitterChartRef} className="h-32" />
                     <div className="flex justify-center gap-4 text-xs mt-1">
                       <span className="flex items-center gap-1">
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dzColor }} />
@@ -843,11 +810,11 @@ export function DzVsInternetPage() {
                       </span>
                     </div>
                   </>
-                ) : (
+                ) : !historyFetching ? (
                   <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
                     No history data available
                   </div>
-                )}
+                ) : null}
               </div>
 
               <div className="text-xs text-muted-foreground">
