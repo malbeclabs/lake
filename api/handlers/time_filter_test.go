@@ -49,12 +49,12 @@ func TestEffectiveBucket(t *testing.T) {
 		{"1h", "10 SECOND"},
 		{"3h", "30 SECOND"},
 		{"6h", "1 MINUTE"},
-		{"12h", "1 MINUTE"},
-		{"24h", "5 MINUTE"},
-		{"3d", "10 MINUTE"},
-		{"7d", "30 MINUTE"},
-		{"14d", "1 HOUR"},
-		{"30d", "1 HOUR"},
+		{"12h", "10 MINUTE"},
+		{"24h", "15 MINUTE"},
+		{"3d", "30 MINUTE"},
+		{"7d", "4 HOUR"},
+		{"14d", "12 HOUR"},
+		{"30d", "1 DAY"},
 		{"unknown", "1 MINUTE"},
 	}
 	for _, tt := range tests {
@@ -74,11 +74,11 @@ func TestBucketForDuration(t *testing.T) {
 		expected string
 	}{
 		{"30min", 30 * time.Minute, "10 SECOND"},
-		{"2h", 2 * time.Hour, "10 SECOND"},
+		{"2h", 2 * time.Hour, "30 SECOND"},
 		{"5h", 5 * time.Hour, "1 MINUTE"},
-		{"1d", 24 * time.Hour, "5 MINUTE"},
-		{"5d", 5 * 24 * time.Hour, "30 MINUTE"},
-		{"14d", 14 * 24 * time.Hour, "1 HOUR"},
+		{"1d", 24 * time.Hour, "15 MINUTE"},
+		{"5d", 5 * 24 * time.Hour, "4 HOUR"},
+		{"14d", 14 * 24 * time.Hour, "12 HOUR"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestDashboardTimeFilter(t *testing.T) {
 		if timeFilter != "event_ts >= now() - INTERVAL 12 HOUR" {
 			t.Errorf("timeFilter = %q, want 12h default", timeFilter)
 		}
-		if bucketInterval != "10 MINUTE" {
+		if bucketInterval != "10 MINUTE" { // 12h default -> 10 MINUTE
 			t.Errorf("bucketInterval = %q, want %q", bucketInterval, "10 MINUTE")
 		}
 	})
