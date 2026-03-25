@@ -904,15 +904,6 @@ function MulticastTrafficChartSection({
     return visible
   }, [tunnelIds, tunnelInfo, enabledMembers])
 
-  // Rendered series = visible + hovered preview (if hovered tunnel isn't already visible)
-  const renderedSeries = useMemo(() => {
-    if (hoveredTunnelId !== null && !visibleSeries.has(hoveredTunnelId) && tunnelIds.includes(hoveredTunnelId)) {
-      const set = new Set(visibleSeries)
-      set.add(hoveredTunnelId)
-      return set
-    }
-    return visibleSeries
-  }, [visibleSeries, hoveredTunnelId, tunnelIds])
 
   // Values to display in the legend: hovered point or latest
   const displayValues = useMemo(() => {
@@ -943,7 +934,6 @@ function MulticastTrafficChartSection({
     const tidMap: number[] = [] // maps uPlot series index (offset by 1) to tunnel ID
 
     for (const tid of tunnelIds) {
-      if (!renderedSeries.has(tid)) continue
       const color = getTunnelColor(tid)
 
       dataArrays.push(chartData.map(row => (row[`t${tid}_in`] as number) ?? null))
@@ -951,6 +941,7 @@ function MulticastTrafficChartSection({
         label: `t${tid}_in`,
         stroke: color,
         width: 1.5,
+        alpha: visibleSeries.has(tid) ? 1 : 0,
         points: { show: false },
         paths: splinePaths,
       } as uPlot.Series)
@@ -962,6 +953,7 @@ function MulticastTrafficChartSection({
         stroke: color,
         width: 1.5,
         dash: [4, 2],
+        alpha: visibleSeries.has(tid) ? 1 : 0,
         points: { show: false },
         paths: splinePaths,
       } as uPlot.Series)
@@ -969,7 +961,7 @@ function MulticastTrafficChartSection({
     }
 
     return { uplotData: dataArrays as uPlot.AlignedData, uplotSeries: series, serisTidMap: tidMap }
-  }, [chartData, tunnelIds, renderedSeries, getTunnelColor])
+  }, [chartData, tunnelIds, visibleSeries, getTunnelColor])
 
   // Create/update uPlot chart
   useEffect(() => {
@@ -1036,14 +1028,16 @@ function MulticastTrafficChartSection({
       if (seriesIdx >= u.series.length) continue
 
       const isVisible = visibleSeries.has(tid)
-      const isPreview = renderedSeries.has(tid) && !isVisible
-      let alpha = 1
-      if (isPreview) {
+      const isHoveredPreview = !isVisible && effectiveHoveredSeries === tid
+      let alpha: number
+      if (isHoveredPreview) {
         alpha = 0.35
       } else if (!isVisible) {
         alpha = 0
       } else if (effectiveHoveredSeries !== null && effectiveHoveredSeries !== tid) {
         alpha = 0.15
+      } else {
+        alpha = 1
       }
 
       if (u.series[seriesIdx].alpha !== alpha) {
@@ -1052,7 +1046,7 @@ function MulticastTrafficChartSection({
       }
     }
     if (changed) u.redraw()
-  }, [serisTidMap, visibleSeries, renderedSeries, effectiveHoveredSeries])
+  }, [serisTidMap, visibleSeries, effectiveHoveredSeries])
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
