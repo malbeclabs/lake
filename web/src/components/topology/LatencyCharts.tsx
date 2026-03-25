@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useCallback } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { Loader2, RefreshCw } from 'lucide-react'
 import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
@@ -7,25 +8,46 @@ import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { type ChartLegendSeries } from './ChartLegend'
 import { ChartLegendTable } from './ChartLegendTable'
-import { fetchLatencyHistory, formatHoveredTime, type TimeRange, type BucketSize } from './utils'
+import { fetchLatencyHistory, formatHoveredTime, presetToSeconds, type TimeRange, type BucketSize, type TrafficView } from './utils'
+
+const AGG_OPTIONS: { value: TrafficView; label: string }[] = [
+  { value: 'peak', label: 'Max' },
+  { value: 'p99', label: 'P99' },
+  { value: 'p95', label: 'P95' },
+  { value: 'p90', label: 'P90' },
+  { value: 'p50', label: 'P50' },
+  { value: 'avg', label: 'Avg' },
+  { value: 'min', label: 'Min' },
+]
+
+function RefreshButton({ fetching, onClick }: { fetching: boolean; onClick: () => void }) {
+  if (fetching) return <Loader2 className="h-3 w-3 animate-spin" />
+  return (
+    <button onClick={onClick} className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" title="Refresh">
+      <RefreshCw className="h-3 w-3" />
+    </button>
+  )
+}
 
 interface LatencyChartsProps {
   linkPk: string
   timeRange?: TimeRange
   bucket?: BucketSize
-  /** Additional CSS classes for the outer wrapper */
   className?: string
 }
 
 export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyChartsProps) {
+  const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const effectiveRange = timeRange ?? { preset: '24h' as const }
+  const [aggMode, setAggMode] = useState<TrafficView>('avg')
+  const aggParam = aggMode === 'peak' ? 'max' : aggMode
 
-  const { data: latencyData, isLoading, error } = useQuery({
-    queryKey: ['topology-latency', linkPk, effectiveRange, bucket],
-    queryFn: () => fetchLatencyHistory(linkPk, effectiveRange, bucket),
+  const { data: latencyData, isFetching, error } = useQuery({
+    queryKey: ['topology-latency', linkPk, effectiveRange, bucket, aggParam],
+    queryFn: () => fetchLatencyHistory(linkPk, effectiveRange, bucket, aggParam),
     refetchInterval: 60000,
     retry: 2,
     placeholderData: keepPreviousData,
@@ -39,6 +61,14 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
   const handleRttCursorIdx = useCallback((idx: number | null) => setRttHoveredIdx(idx), [])
   const handleJitterCursorIdx = useCallback((idx: number | null) => setJitterHoveredIdx(idx), [])
 
+  // X-axis bounds from time range
+  const chartScales = useMemo((): uPlot.Scales => {
+    if (effectiveRange.preset === 'custom') return { x: { time: true }, y: { auto: true } }
+    const now = Date.now() / 1000
+    const rangeSeconds = presetToSeconds(effectiveRange.preset)
+    return { x: { time: true, min: now - rangeSeconds, max: now }, y: { auto: true } }
+  }, [effectiveRange])
+
   // Colors
   const rttAAvgColor = isDark ? '#22c55e' : '#16a34a'
   const rttAP95Color = isDark ? '#86efac' : '#4ade80'
@@ -50,6 +80,8 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
   const hasDirectionalData = latencyData?.some(
     (d) => (d.avgRttAtoZMs && d.avgRttAtoZMs > 0) || (d.avgRttZtoAMs && d.avgRttZtoAMs > 0)
   ) ?? false
+
+  const aggLabel = AGG_OPTIONS.find(o => o.value === aggMode)?.label || 'Avg'
 
   // RTT legend
   const rttKeys = useMemo(() =>
@@ -63,15 +95,15 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     hasDirectionalData
       ? [
           { key: 'avgRttAtoZMs', color: rttAAvgColor, label: 'Avg A' },
-          { key: 'p95RttAtoZMs', color: rttAP95Color, label: 'P95 A', dashed: true },
+          { key: 'p95RttAtoZMs', color: rttAP95Color, label: `${aggLabel} A`, dashed: true },
           { key: 'avgRttZtoAMs', color: rttZAvgColor, label: 'Avg Z' },
-          { key: 'p95RttZtoAMs', color: rttZP95Color, label: 'P95 Z', dashed: true },
+          { key: 'p95RttZtoAMs', color: rttZP95Color, label: `${aggLabel} Z`, dashed: true },
         ]
       : [
           { key: 'avgRttMs', color: rttAAvgColor, label: 'Avg' },
-          { key: 'p95RttMs', color: rttAP95Color, label: 'P95', dashed: true },
+          { key: 'p95RttMs', color: rttAP95Color, label: aggLabel, dashed: true },
         ],
-    [hasDirectionalData, rttAAvgColor, rttAP95Color, rttZAvgColor, rttZP95Color]
+    [hasDirectionalData, rttAAvgColor, rttAP95Color, rttZAvgColor, rttZP95Color, aggLabel]
   )
 
   // Jitter legend
@@ -89,12 +121,12 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
           { key: 'jitterZtoAMs', color: jitterZColor, label: 'From Z' },
         ]
       : [
-          { key: 'avgJitter', color: jitterAColor, label: 'Avg Jitter' },
+          { key: 'avgJitter', color: jitterAColor, label: 'Jitter' },
         ],
     [hasDirectionalData, jitterAColor, jitterZColor]
   )
 
-  // RTT columnar data with Unix timestamp x-axis
+  // RTT columnar data
   const { rttUPlotData, rttUPlotSeries } = useMemo(() => {
     if (!latencyData || latencyData.length === 0) {
       return { rttUPlotData: [[]] as uPlot.AlignedData, rttUPlotSeries: [] as uPlot.Series[] }
@@ -104,39 +136,29 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     const series: uPlot.Series[] = [{}]
 
     if (hasDirectionalData) {
-      const avgAtoZ = latencyData.map((d) => d.avgRttAtoZMs || null)
-      const p95AtoZ = latencyData.map((d) => d.p95RttAtoZMs || null)
-      const avgZtoA = latencyData.map((d) => d.avgRttZtoAMs || null)
-      const p95ZtoA = latencyData.map((d) => d.p95RttZtoAMs || null)
-
       series.push(
         { label: 'avgRttAtoZMs', stroke: rttAAvgColor, width: 1.5, points: { show: false } },
         { label: 'p95RttAtoZMs', stroke: rttAP95Color, width: 1.5, dash: [4, 2], points: { show: false } },
         { label: 'avgRttZtoAMs', stroke: rttZAvgColor, width: 1.5, points: { show: false } },
         { label: 'p95RttZtoAMs', stroke: rttZP95Color, width: 1.5, dash: [4, 2], points: { show: false } },
       )
-
       return {
-        rttUPlotData: [timestamps, avgAtoZ, p95AtoZ, avgZtoA, p95ZtoA] as uPlot.AlignedData,
+        rttUPlotData: [timestamps, latencyData.map(d => d.avgRttAtoZMs || null), latencyData.map(d => d.p95RttAtoZMs || null), latencyData.map(d => d.avgRttZtoAMs || null), latencyData.map(d => d.p95RttZtoAMs || null)] as uPlot.AlignedData,
         rttUPlotSeries: series,
       }
     }
-
-    const avgRtt = latencyData.map((d) => d.avgRttMs || null)
-    const p95Rtt = latencyData.map((d) => d.p95RttMs || null)
 
     series.push(
       { label: 'avgRttMs', stroke: rttAAvgColor, width: 1.5, points: { show: false } },
       { label: 'p95RttMs', stroke: rttAP95Color, width: 1.5, dash: [4, 2], points: { show: false } },
     )
-
     return {
-      rttUPlotData: [timestamps, avgRtt, p95Rtt] as uPlot.AlignedData,
+      rttUPlotData: [timestamps, latencyData.map(d => d.avgRttMs || null), latencyData.map(d => d.p95RttMs || null)] as uPlot.AlignedData,
       rttUPlotSeries: series,
     }
   }, [latencyData, hasDirectionalData, rttAAvgColor, rttAP95Color, rttZAvgColor, rttZP95Color])
 
-  // Jitter columnar data with Unix timestamp x-axis
+  // Jitter columnar data
   const { jitterUPlotData, jitterUPlotSeries } = useMemo(() => {
     if (!latencyData || latencyData.length === 0) {
       return { jitterUPlotData: [[]] as uPlot.AlignedData, jitterUPlotSeries: [] as uPlot.Series[] }
@@ -146,28 +168,21 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     const series: uPlot.Series[] = [{}]
 
     if (hasDirectionalData) {
-      const jitterAtoZ = latencyData.map((d) => d.jitterAtoZMs || null)
-      const jitterZtoA = latencyData.map((d) => d.jitterZtoAMs || null)
-
       series.push(
         { label: 'jitterAtoZMs', stroke: jitterAColor, width: 1.5, points: { show: false } },
         { label: 'jitterZtoAMs', stroke: jitterZColor, width: 1.5, points: { show: false } },
       )
-
       return {
-        jitterUPlotData: [timestamps, jitterAtoZ, jitterZtoA] as uPlot.AlignedData,
+        jitterUPlotData: [timestamps, latencyData.map(d => d.jitterAtoZMs || null), latencyData.map(d => d.jitterZtoAMs || null)] as uPlot.AlignedData,
         jitterUPlotSeries: series,
       }
     }
 
-    const avgJitter = latencyData.map((d) => d.avgJitter || null)
-
     series.push(
       { label: 'avgJitter', stroke: jitterAColor, width: 1.5, points: { show: false } },
     )
-
     return {
-      jitterUPlotData: [timestamps, avgJitter] as uPlot.AlignedData,
+      jitterUPlotData: [timestamps, latencyData.map(d => d.avgJitter || null)] as uPlot.AlignedData,
       jitterUPlotSeries: series,
     }
   }, [latencyData, hasDirectionalData, jitterAColor, jitterZColor])
@@ -184,6 +199,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     series: rttUPlotSeries,
     height: 144,
     axes: msAxes,
+    scales: chartScales,
     onCursorIdx: handleRttCursorIdx,
   })
 
@@ -193,6 +209,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     series: jitterUPlotSeries,
     height: 144,
     axes: msAxes,
+    scales: chartScales,
     onCursorIdx: handleJitterCursorIdx,
   })
 
@@ -200,7 +217,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
   useUPlotLegendSync(rttPlotRef, rttLegend, rttKeys)
   useUPlotLegendSync(jitterPlotRef, jitterLegend, jitterKeys)
 
-  // Display values: hovered or latest
+  // Display values
   const rttDisplayValues = useMemo(() => {
     const map = new Map<string, string>()
     if (rttUPlotData[0].length === 0) return map
@@ -223,7 +240,6 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     return map
   }, [jitterUPlotData, jitterKeys, jitterHoveredIdx])
 
-  // Max values across the time range
   const rttMaxValues = useMemo(() => {
     const map = new Map<string, string>()
     if (rttUPlotData[0].length === 0) return map
@@ -255,11 +271,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     formatHoveredTime(jitterUPlotData[0] as ArrayLike<number>, jitterHoveredIdx),
     [jitterUPlotData, jitterHoveredIdx])
 
-  if (isLoading && !latencyData) {
-    return <div className="h-36 animate-pulse bg-muted/50 rounded" />
-  }
-
-  if (error) {
+  if (error && !latencyData) {
     return (
       <div className="text-sm text-muted-foreground text-center py-4">
         Unable to load latency data — the request may have timed out
@@ -267,20 +279,56 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     )
   }
 
-  if (!latencyData || latencyData.length === 0) return null
+  const refreshLatency = () => queryClient.invalidateQueries({ queryKey: ['topology-latency'] })
 
   return (
     <div className="space-y-6">
-      <div className={className}>
-        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Round-Trip Time</div>
+      <div className={`${className} group/chart`}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
+            <span>Round-Trip Time</span>
+            <RefreshButton fetching={isFetching} onClick={refreshLatency} />
+          </div>
+          <select
+            value={aggMode}
+            onChange={e => setAggMode(e.target.value as TrafficView)}
+            className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+          >
+            {AGG_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+          {isFetching && (
+            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+          )}
+        </div>
         <div ref={rttChartRef} className="h-36" />
         <ChartLegendTable series={rttLegendSeries} legend={rttLegend} values={rttDisplayValues} maxValues={rttMaxValues} hoveredTime={rttHoveredTime} />
       </div>
 
-      <div className={className}>
-        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Jitter</div>
+      <div className={`${className} group/chart`}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider">
+            <span>Jitter</span>
+            <RefreshButton fetching={isFetching} onClick={refreshLatency} />
+          </div>
+          <select
+            value={aggMode}
+            onChange={e => setAggMode(e.target.value as TrafficView)}
+            className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+          >
+            {AGG_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+          {isFetching && (
+            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+          )}
+        </div>
         <div ref={jitterChartRef} className="h-36" />
         <ChartLegendTable series={jitterLegendSeries} legend={jitterLegend} values={jitterDisplayValues} maxValues={jitterMaxValues} hoveredTime={jitterHoveredTime} />
       </div>

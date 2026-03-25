@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useCallback } from 'react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { Loader2, RefreshCw } from 'lucide-react'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import uPlot from 'uplot'
 import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
@@ -41,7 +42,17 @@ function formatCount(value: number): string {
   return value.toString()
 }
 
+function RefreshButton({ fetching, onClick }: { fetching: boolean; onClick: () => void }) {
+  if (fetching) return <Loader2 className="h-3 w-3 animate-spin" />
+  return (
+    <button onClick={onClick} className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground" title="Refresh">
+      <RefreshCw className="h-3 w-3" />
+    </button>
+  )
+}
+
 export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className }: LinkStatusChartsProps) {
+  const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
@@ -63,7 +74,14 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     return Math.ceil(rangeS / bucketS)
   }, [bucket, timeRange])
 
-  const { data: historyData, isLoading, error } = useQuery({
+  // X-axis bounds from time range
+  const chartScales = useMemo((): uPlot.Scales => {
+    const now = Date.now() / 1000
+    const rangeSeconds = presetToSeconds(timeRange as TimeRangePreset)
+    return { x: { time: true, min: now - rangeSeconds, max: now }, y: { auto: true } }
+  }, [timeRange])
+
+  const { data: historyData, isLoading, isFetching, error } = useQuery({
     queryKey: ['single-link-history', linkPk, timeRange, bucketCount],
     queryFn: () => fetchSingleLinkHistory(linkPk, timeRange, bucketCount),
     refetchInterval: 60000,
@@ -184,6 +202,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     series: packetLossSeries,
     height: 144,
     axes: pctAxes,
+    scales: chartScales,
     onCursorIdx: handleLossCursorIdx,
   })
 
@@ -193,6 +212,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     series: issuesSeries,
     height: 144,
     axes: countAxes,
+    scales: chartScales,
     onCursorIdx: handleIssuesCursorIdx,
   })
 
@@ -269,9 +289,15 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   return (
     <div className="space-y-6">
       {showPacketLoss && (
-        <div className={className}>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Packet Loss ({timeRange})
+        <div className={`${className} group/chart`}>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+            <span>Packet Loss</span>
+            <RefreshButton fetching={isFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['single-link-history'] })} />
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {isFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
           </div>
           <div ref={packetLossChartRef} className="h-36" />
           <ChartLegendTable series={packetLossLegendSeries} legend={packetLossLegend} values={lossDisplayValues} maxValues={lossMaxValues} hoveredTime={lossHoveredTime} />
@@ -279,9 +305,15 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
       )}
 
       {showInterfaceIssues && (
-        <div className={className}>
-          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Interface Issues ({timeRange})
+        <div className={`${className} group/chart`}>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
+            <span>Interface Issues</span>
+            <RefreshButton fetching={isFetching} onClick={() => queryClient.invalidateQueries({ queryKey: ['single-link-history'] })} />
+          </div>
+          <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
+            {isFetching && (
+              <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+            )}
           </div>
           <div ref={interfaceIssuesChartRef} className="h-36" />
           <ChartLegendTable series={interfaceIssueLegendSeries} legend={interfaceIssueLegend} values={issuesDisplayValues} maxValues={issuesMaxValues} hoveredTime={issuesHoveredTime} />

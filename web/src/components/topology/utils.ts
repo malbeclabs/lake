@@ -273,7 +273,8 @@ export function timeRangeToString(timeRange: TimeRange): string {
 export async function fetchLatencyHistory(
   pk: string,
   timeRange?: TimeRange,
-  bucket?: BucketSize
+  bucket?: BucketSize,
+  agg?: string
 ): Promise<LatencyDataPoint[]> {
   const params = new URLSearchParams({ pk })
 
@@ -287,6 +288,9 @@ export async function fetchLatencyHistory(
   }
   if (bucket && bucket !== 'auto') {
     params.set('bucket', bucket)
+  }
+  if (agg && agg !== 'avg') {
+    params.set('agg', agg)
   }
 
   const res = await apiFetch(`/api/topology/link-latency?${params.toString()}`)
