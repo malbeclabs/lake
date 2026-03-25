@@ -78,7 +78,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   const chartScales = useMemo((): uPlot.Scales => {
     const now = Date.now() / 1000
     const rangeSeconds = presetToSeconds(timeRange as TimeRangePreset)
-    return { x: { time: true, min: now - rangeSeconds }, y: { auto: true } }
+    return { x: { time: true, min: now - rangeSeconds, max: now }, y: { auto: true } }
   }, [timeRange])
 
   const { data: historyData, isLoading, isFetching, error } = useQuery({
