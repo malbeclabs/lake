@@ -1016,49 +1016,10 @@ function MulticastTrafficChartSection({
     }
   }, [uplotData, uplotSeries, open, metric])
 
-  // Sync series alpha on hover — dim non-hovered lines, preview hidden ones
-  useEffect(() => {
-    const u = plotRef.current
-    if (!u || serisTidMap.length === 0) return
-    // Skip if nothing is hovered — let initial alpha from useMemo stand
-    if (effectiveHoveredSeries === null) return
-
-    const hoveredTid = serisTidMap.includes(effectiveHoveredSeries)
-      ? effectiveHoveredSeries
-      : null
-    // If hovered tunnel isn't in the chart, don't change anything
-    if (hoveredTid === null) return
-
-    let changed = false
-    for (let i = 0; i < serisTidMap.length; i++) {
-      const tid = serisTidMap[i]
-      const seriesIdx = i + 1
-      if (seriesIdx >= u.series.length) continue
-
-      const alpha = tid === hoveredTid ? 1 : 0.15
-      if (u.series[seriesIdx].alpha !== alpha) {
-        u.series[seriesIdx].alpha = alpha
-        changed = true
-      }
-    }
-    if (changed) u.redraw()
-  }, [serisTidMap, effectiveHoveredSeries])
-
-  // Restore alpha when hover ends
-  useEffect(() => {
-    const u = plotRef.current
-    if (!u || effectiveHoveredSeries !== null) return
-
-    let changed = false
-    for (let i = 1; i < u.series.length; i++) {
-      const initialAlpha = uplotSeries[i]?.alpha ?? 1
-      if (u.series[i].alpha !== initialAlpha) {
-        u.series[i].alpha = initialAlpha
-        changed = true
-      }
-    }
-    if (changed) u.redraw()
-  }, [effectiveHoveredSeries, uplotSeries])
+  // TODO: restore hover dimming — currently disabled because alpha sync
+  // conflicts with chart recreation when visibleSeries changes.
+  void effectiveHoveredSeries
+  void serisTidMap
 
   return (
     <div className="border-t border-[var(--border)] pt-2">
