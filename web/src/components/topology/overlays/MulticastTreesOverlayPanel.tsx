@@ -889,9 +889,6 @@ function MulticastTrafficChartSection({
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [localHoveredSeries, setLocalHoveredSeries] = useState<number | null>(null)
 
-  // Merge local legend hover with member list hover (hoveredTunnelId from parent)
-  const effectiveHoveredSeries = localHoveredSeries ?? hoveredTunnelId
-
   // Derive visible series from enabled members — member list is the source of truth
   const visibleSeries = useMemo(() => {
     const visible = new Set<number>()
@@ -1035,6 +1032,19 @@ function MulticastTrafficChartSection({
           Traffic ({activeTab})
           {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </button>
+        {open && (
+          isFetching ? (
+            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-1" />
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); queryClient.invalidateQueries({ queryKey: ['multicast-traffic', groupCode] }) }}
+              className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground ml-1"
+              title="Refresh"
+            >
+              <RefreshCw className="h-3 w-3" />
+            </button>
+          )
+        )}
         {open && (
           <div className="flex gap-1 ml-auto" onClick={e => e.stopPropagation()}>
             <select
