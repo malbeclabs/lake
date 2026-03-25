@@ -186,14 +186,13 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
     }
     const now = Date.now() / 1000
     const xMin = now - (rangeSeconds[timeRange] || 86400)
-    const xMax = now
 
     const opts: uPlot.Options = {
       width: chartRef.current.offsetWidth,
       height: 224,
       series: uplotSeries,
       scales: {
-        x: { time: true, min: xMin, max: xMax },
+        x: { time: true, min: xMin },
         y: { auto: true },
       },
       axes: [

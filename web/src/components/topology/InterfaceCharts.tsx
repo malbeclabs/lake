@@ -416,7 +416,7 @@ export function InterfaceCharts({ entityType, entityPk, timeRange, interfaceLabe
     if (effectiveRange.preset === 'custom') return undefined
     const now = Date.now() / 1000
     const rangeSeconds = presetToSeconds(effectiveRange.preset)
-    return { min: now - rangeSeconds, max: now }
+    return { min: now - rangeSeconds }
   }, [effectiveRange])
 
   const chartScales = useMemo((): uPlot.Scales => ({

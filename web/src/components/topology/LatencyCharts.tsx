@@ -66,7 +66,7 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
     if (effectiveRange.preset === 'custom') return { x: { time: true }, y: { auto: true } }
     const now = Date.now() / 1000
     const rangeSeconds = presetToSeconds(effectiveRange.preset)
-    return { x: { time: true, min: now - rangeSeconds, max: now }, y: { auto: true } }
+    return { x: { time: true, min: now - rangeSeconds }, y: { auto: true } }
   }, [effectiveRange])
 
   // Colors
