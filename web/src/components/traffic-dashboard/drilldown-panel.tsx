@@ -188,6 +188,7 @@ function DrilldownChart({ entity }: { entity: SelectedEntity }) {
       ],
       cursor: {
         drag: { x: true, y: false, setScale: false },
+        points: { size: 12, width: 2 },
       },
       hooks: {
         setCursor: [(u: uPlot) => {

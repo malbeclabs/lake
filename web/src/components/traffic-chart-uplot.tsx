@@ -560,22 +560,21 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       cursor: {
         drag: { x: true, y: false, setScale: false },
         focus: {
-          prox: stacked ? Infinity : 30,
+          prox: stacked ? Infinity : 50,
         },
         points: {
           size: (u: uPlot, seriesIdx: number) => {
-            // Only show point on focused series in non-stacked mode
             if (stacked) return 0
+            if (seriesIdx === 0) return 0
 
-            // If pinned, show point on pinned series
             if (isPinnedRef.current) {
-              return seriesIdx === pinnedSeriesIdxRef.current ? 8 : 0
+              return seriesIdx === pinnedSeriesIdxRef.current ? 12 : 0
             }
 
-            const series = u.series[seriesIdx] as uPlot.Series & { _focus?: boolean }
-            return series._focus ? 8 : 0
+            const s = u.series[seriesIdx] as uPlot.Series & { _focus?: boolean }
+            return s._focus ? 12 : 0
           },
-          width: 1.5,
+          width: 2,
         },
       },
       hooks: {

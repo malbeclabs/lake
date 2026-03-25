@@ -107,6 +107,7 @@ export function StressPanel() {
       ],
       cursor: {
         drag: { x: true, y: false },
+        points: { size: 12, width: 2 },
       },
       hooks: {
         setCursor: [(u: uPlot) => {
