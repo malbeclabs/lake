@@ -337,13 +337,14 @@ func main() {
 	}
 
 	// Start embedded page cache worker (unless --no-worker)
-	workerErrCh := make(chan error, 1)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	if !*noWorkerFlag {
 		go func() {
-			workerErrCh <- worker.Start(workerCtx, worker.Config{
+			if err := worker.Start(workerCtx, worker.Config{
 				Log: slog.Default(),
-			})
+			}); err != nil && workerCtx.Err() == nil {
+				slog.Error("page cache worker failed", "error", err)
+			}
 		}()
 	}
 
