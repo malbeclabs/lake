@@ -387,7 +387,7 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			}
 
 			type statLine struct {
-				pk, code string
+				pk, code          string
 				rtt, jitter, loss *float64
 			}
 			lines := []statLine{

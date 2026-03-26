@@ -7,7 +7,8 @@ import { DashboardProvider, useDashboard, dashboardFilterParams } from '@/compon
 import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
 import { PageHeader } from '@/components/page-header'
 import { InlineFilter } from '@/components/inline-filter'
-import { MultiLinkLatencyCharts, SERIES_COLORS_DARK, SERIES_COLORS_LIGHT } from '@/components/multi-link-latency-charts'
+import { MultiLinkLatencyCharts } from '@/components/multi-link-latency-charts'
+import { getSeriesColors } from '@/components/chart-colors'
 import { useTheme } from '@/hooks/use-theme'
 
 type AggMethod = 'max' | 'avg' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
@@ -237,7 +238,7 @@ function LinkLatencyPageContent() {
   const { timeRange, customStart, customEnd } = dashboardState
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
-  const seriesColors = isDark ? SERIES_COLORS_DARK : SERIES_COLORS_LIGHT
+  const seriesColors = getSeriesColors(isDark)
 
   const [searchParams, setSearchParamsRaw] = useSearchParams()
   const [, startTransition] = useTransition()
@@ -347,7 +348,7 @@ function LinkLatencyPageContent() {
     refetchInterval: dashboardState.refetchInterval,
   })
 
-  const links = data?.links ?? []
+  const links = useMemo(() => data?.links ?? [], [data])
 
   // Build name map for selected links
   const linkNameMap = useMemo(() => {
