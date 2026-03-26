@@ -682,15 +682,17 @@ function LinkLatencyPageContent() {
           )}
         </div>
 
-        {/* Charts — always visible */}
-        <MultiLinkLatencyCharts
-          pks={selectedPks.length > 0 ? selectedPks : filteredLinks.map(l => l.link_pk)}
-          selectedCount={selectedLinkPks.size}
-          linkNames={linkNameMap}
-          timeRange={timeRange}
-          agg={aggMethod}
-          filters={chartFilters}
-        />
+        {/* Charts — visible when there are links to show */}
+        {(selectedPks.length > 0 || filteredLinks.length > 0) && (
+          <MultiLinkLatencyCharts
+            pks={selectedPks.length > 0 ? selectedPks : filteredLinks.map(l => l.link_pk)}
+            selectedCount={selectedLinkPks.size}
+            linkNames={linkNameMap}
+            timeRange={timeRange}
+            agg={aggMethod}
+            filters={chartFilters}
+          />
+        )}
       </div>
     </div>
   )
