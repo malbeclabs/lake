@@ -642,7 +642,7 @@ function BucketDropdown() {
   )
 }
 
-export function DashboardFilters({ excludeMetrics, hideMetric, hideIntfType }: { excludeMetrics?: string[]; hideMetric?: boolean; hideIntfType?: boolean } = {}) {
+export function DashboardFilters({ excludeMetrics, hideMetric, hideIntfType, hideSearch }: { excludeMetrics?: string[]; hideMetric?: boolean; hideIntfType?: boolean; hideSearch?: boolean } = {}) {
   const { metric, setMetric, intfType, setIntfType } = useDashboard()
   const filteredMetricOptions = excludeMetrics
     ? metricOptions.filter(o => !excludeMetrics.includes(o.value))
@@ -672,7 +672,7 @@ export function DashboardFilters({ excludeMetrics, hideMetric, hideIntfType }: {
       >
         <RefreshCw className="h-3.5 w-3.5" />
       </button>
-      <DashboardSearch />
+      {!hideSearch && <DashboardSearch />}
     </div>
   )
 }

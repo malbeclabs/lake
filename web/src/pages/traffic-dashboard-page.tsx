@@ -35,8 +35,10 @@ function DashboardContent() {
             actions={<DashboardFilters />}
           />
         </div>
-        <div className="mt-3">
-          <DashboardFilterBadges />
+        <div className="flex items-center mt-3">
+          <div className="flex items-center gap-3 ml-auto">
+            <DashboardFilterBadges />
+          </div>
         </div>
       </div>
 

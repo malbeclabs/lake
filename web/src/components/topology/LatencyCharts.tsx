@@ -34,15 +34,17 @@ interface LatencyChartsProps {
   timeRange?: TimeRange
   bucket?: BucketSize
   className?: string
+  aggMode?: TrafficView
 }
 
-export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyChartsProps) {
+export function LatencyCharts({ linkPk, timeRange, bucket, className, aggMode: externalAggMode }: LatencyChartsProps) {
   const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const effectiveRange = timeRange ?? { preset: '24h' as const }
-  const [aggMode, setAggMode] = useState<TrafficView>('avg')
+  const [internalAggMode, setInternalAggMode] = useState<TrafficView>('avg')
+  const aggMode = externalAggMode ?? internalAggMode
   const aggParam = aggMode === 'peak' ? 'max' : aggMode
 
   const { data: latencyData, isFetching, error } = useQuery({
@@ -286,15 +288,17 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
             <span>Round-Trip Time</span>
             <RefreshButton fetching={isFetching} onClick={refreshLatency} />
           </div>
-          <select
-            value={aggMode}
-            onChange={e => setAggMode(e.target.value as TrafficView)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-          >
-            {AGG_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          {!externalAggMode && (
+            <select
+              value={aggMode}
+              onChange={e => setInternalAggMode(e.target.value as TrafficView)}
+              className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+            >
+              {AGG_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
           {isFetching && (
@@ -311,15 +315,17 @@ export function LatencyCharts({ linkPk, timeRange, bucket, className }: LatencyC
             <span>Jitter</span>
             <RefreshButton fetching={isFetching} onClick={refreshLatency} />
           </div>
-          <select
-            value={aggMode}
-            onChange={e => setAggMode(e.target.value as TrafficView)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-          >
-            {AGG_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          {!externalAggMode && (
+            <select
+              value={aggMode}
+              onChange={e => setInternalAggMode(e.target.value as TrafficView)}
+              className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
+            >
+              {AGG_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
           {isFetching && (

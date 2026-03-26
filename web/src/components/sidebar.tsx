@@ -33,6 +33,7 @@ import {
   Layers,
   BookOpen,
   Trophy,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -403,7 +404,7 @@ export function Sidebar() {
                   DZ vs Internet
                 </Link>
                 <Link to="/performance/link-latency" className={subNavItemClass(isPerformanceLinkLatency)}>
-                  <Activity className="h-4 w-4" />
+                  <ArrowRightLeft className="h-4 w-4" />
                   Link Latency
                 </Link>
                 {hasNeo4j && (

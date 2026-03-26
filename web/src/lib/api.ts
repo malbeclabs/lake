@@ -3804,44 +3804,44 @@ export async function fetchTrafficData(
 }
 
 // Link latency analytics types and functions
-export interface LinkLatencyPoint {
-  time: string
+export interface LinkLatencySummary {
   link_pk: string
   link_code: string
+  link_type: string
+  link_status: string
+  provisioning: boolean
+  isis_down: boolean
+  contributor_code: string
   side_a_code: string
   side_z_code: string
+  committed_rtt_ms: number
+  committed_jitter_ms: number
   rtt_a_to_z_ms: number
   rtt_z_to_a_ms: number
   jitter_a_to_z_ms: number
   jitter_z_to_a_ms: number
   loss_a_pct: number
   loss_z_pct: number
+  samples: number
 }
 
-export interface LinkLatencySeriesInfo {
-  link_pk: string
-  link_code: string
-  side_a_code: string
-  side_z_code: string
-  mean_rtt_ms: number
+export interface LinkLatencySummaryResponse {
+  links: LinkLatencySummary[]
 }
 
-export interface LinkLatencyDataResponse {
-  points: LinkLatencyPoint[]
-  series: LinkLatencySeriesInfo[]
-  effective_bucket: string
-}
-
-export async function fetchLinkLatencyData(
+export async function fetchLinkLatencySummary(
   timeRange: string = '24h',
-  bucket: string = 'auto',
   agg: string = 'avg',
   filters?: Record<string, string>,
-): Promise<LinkLatencyDataResponse> {
+  showExcluded = false,
+): Promise<LinkLatencySummaryResponse> {
   const hasCustomRange = filters?.start_time && filters?.end_time
-  const params = new URLSearchParams({ bucket, agg })
+  const params = new URLSearchParams({ agg })
   if (!hasCustomRange) {
     params.set('time_range', timeRange)
+  }
+  if (showExcluded) {
+    params.set('show_excluded', 'true')
   }
   if (filters) {
     for (const [k, v] of Object.entries(filters)) {
@@ -3850,7 +3850,52 @@ export async function fetchLinkLatencyData(
   }
   const res = await fetchWithRetry(`/api/performance/link-latency?${params}`)
   if (!res.ok) {
-    throw new Error('Failed to fetch link latency data')
+    throw new Error('Failed to fetch link latency summary')
+  }
+  return res.json()
+}
+
+// Multi-link latency history types and functions
+export interface MultiLinkLatencyPoint {
+  time: string
+  link_pk: string
+  link_code: string
+  rtt_a_to_z_ms: number
+  rtt_z_to_a_ms: number
+  jitter_a_to_z_ms: number
+  jitter_z_to_a_ms: number
+  loss_pct: number
+}
+
+export interface MultiLinkLatencyResponse {
+  points: MultiLinkLatencyPoint[]
+}
+
+export async function fetchMultiLinkLatencyHistory(
+  opts: {
+    mode: 'aggregate' | 'per_link'
+    pks?: string[]
+    timeRange?: string
+    agg?: string
+    filters?: Record<string, string>
+  },
+): Promise<MultiLinkLatencyResponse> {
+  const params = new URLSearchParams({ mode: opts.mode, agg: opts.agg || 'avg' })
+  if (opts.mode === 'per_link' && opts.pks?.length) {
+    params.set('pks', opts.pks.join(','))
+  }
+  const hasCustomRange = opts.filters?.start_time && opts.filters?.end_time
+  if (!hasCustomRange && opts.timeRange) {
+    params.set('range', opts.timeRange)
+  }
+  if (opts.filters) {
+    for (const [k, v] of Object.entries(opts.filters)) {
+      if (v && k !== 'time_range' && k !== 'threshold') params.set(k, v)
+    }
+  }
+  const res = await fetchWithRetry(`/api/performance/link-latency/history?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multi-link latency history')
   }
   return res.json()
 }

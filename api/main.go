@@ -544,6 +544,7 @@ func main() {
 
 		// Performance analytics routes
 		r.Get("/api/performance/link-latency", handlers.GetLinkLatencyData)
+		r.Get("/api/performance/link-latency/history", handlers.GetMultiLinkLatencyHistory)
 
 		// Topology endpoints (ClickHouse only)
 		r.Get("/api/topology", handlers.GetTopology)
