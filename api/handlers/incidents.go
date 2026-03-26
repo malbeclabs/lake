@@ -258,13 +258,11 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 // GetLinkIncidents returns incidents for links with active and drained views
 func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
-	if isMainnet(r.Context()) && isDefaultIncidentsRequest(r) && pageCache != nil {
-		if cached := pageCache.GetIncidents(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultIncidentsRequest(r) {
+		if data, err := ReadPageCache(r.Context(), "incidents"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode cached incidents response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -644,8 +642,8 @@ func buildDrainedLinksInfo(linkMeta map[string]linkMetadataWithStatus, incidents
 	return drainedLinks
 }
 
-// fetchDefaultIncidentsData fetches incidents data with default parameters for caching.
-func fetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
+// FetchDefaultIncidentsData fetches incidents data with default parameters for caching.
+func FetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	params := incidentQueryParams{
 		Duration:          24 * time.Hour,
 		BucketInterval:    bucketIntervalForDuration(24 * time.Hour),

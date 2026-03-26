@@ -56,19 +56,19 @@ const (
 	avgSlotDurationSec    = 0.4
 )
 
-func getDZLedgerRPCURL() string {
+func GetDZLedgerRPCURL() string {
 	if url := os.Getenv("DZ_LEDGER_RPC_URL"); url != "" {
 		return url
 	}
 	return defaultDZLedgerRPCURL
 }
 
-func getSolanaRPCURL() string {
+func GetSolanaRPCURL() string {
 	return solana.GetRPCURL()
 }
 
-// fetchLedgerData fetches ledger telemetry from the given RPC URL.
-func fetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error) {
+// FetchLedgerData fetches ledger telemetry from the given RPC URL.
+func FetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error) {
 	client := solana.NewClient(rpcURL)
 
 	var (
@@ -191,18 +191,16 @@ func fetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error
 
 // GetDZLedger returns ledger telemetry for the DZ chain.
 func GetDZLedger(w http.ResponseWriter, r *http.Request) {
-	if pageCache != nil {
-		if resp := pageCache.GetDZLedger(); resp != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
-			return
-		}
+	if data, err := ReadPageCache(r.Context(), "dz_ledger"); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchLedgerData(ctx, getDZLedgerRPCURL())
+	resp, err := FetchLedgerData(ctx, GetDZLedgerRPCURL())
 	if err != nil {
 		slog.Error("DZ ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -217,18 +215,16 @@ func GetDZLedger(w http.ResponseWriter, r *http.Request) {
 
 // GetSolanaLedger returns ledger telemetry for Solana.
 func GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
-	if pageCache != nil {
-		if resp := pageCache.GetSolanaLedger(); resp != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
-			return
-		}
+	if data, err := ReadPageCache(r.Context(), "solana_ledger"); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchLedgerData(ctx, getSolanaRPCURL())
+	resp, err := FetchLedgerData(ctx, GetSolanaRPCURL())
 	if err != nil {
 		slog.Error("Solana ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -269,8 +265,8 @@ FROM solana_validators_performance_current
 GROUP BY dz_status
 `
 
-// fetchValidatorPerfData fetches aggregated validator performance data.
-func fetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error) {
+// FetchValidatorPerfData fetches aggregated validator performance data.
+func FetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error) {
 	rows, err := config.DB.Query(ctx, validatorPerfQuery)
 	if err != nil {
 		return nil, err
@@ -311,18 +307,16 @@ func fetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error)
 
 // GetValidatorPerformance returns aggregated validator performance comparing DZ vs non-DZ.
 func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
-	if pageCache != nil {
-		if resp := pageCache.GetValidatorPerf(); resp != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
-			return
-		}
+	if data, err := ReadPageCache(r.Context(), "validator_perf"); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchValidatorPerfData(ctx)
+	resp, err := FetchValidatorPerfData(ctx)
 	if err != nil {
 		slog.Error("validator performance query failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")

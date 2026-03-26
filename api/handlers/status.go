@@ -211,13 +211,11 @@ const (
 
 func GetStatus(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && pageCache != nil {
-		if cached := pageCache.GetStatus(); cached != nil {
+	if isMainnet(r.Context()) {
+		if data, err := ReadPageCache(r.Context(), "status"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -227,7 +225,7 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp := fetchStatusData(ctx)
+	resp := FetchStatusData(ctx)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -235,9 +233,9 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchStatusData performs the actual status data fetch from the database.
+// FetchStatusData performs the actual status data fetch from the database.
 // This is called by both the cache refresh and direct requests.
-func fetchStatusData(ctx context.Context) *StatusResponse {
+func FetchStatusData(ctx context.Context) *StatusResponse {
 	start := time.Now()
 
 	resp := &StatusResponse{
@@ -1379,13 +1377,12 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try to serve from cache first (cache only holds mainnet data, skip for raw source)
-	if isMainnet(r.Context()) && pageCache != nil && r.URL.Query().Get("source") == "" {
-		if cached := pageCache.GetLinkHistory(timeRange, requestedBuckets); cached != nil {
+	if isMainnet(r.Context()) && r.URL.Query().Get("source") == "" {
+		cacheKey := "link_history:" + timeRange + ":" + strconv.Itoa(requestedBuckets)
+		if data, err := ReadPageCache(r.Context(), cacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -1403,14 +1400,14 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
-	resp, err := fetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
+	resp, err := FetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
 		if dberror.IsTransient(err) {
 			cancel()
 			var retryCancel context.CancelFunc
 			ctx, retryCancel = context.WithTimeout(r.Context(), timeout)
 			defer retryCancel()
-			resp, err = fetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
+			resp, err = FetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
 		}
 	}
 	if err != nil {
@@ -1440,8 +1437,8 @@ func snapBucketMinutes(raw int) int {
 	return 5
 }
 
-// fetchLinkHistoryData delegates to the rollup-based implementation.
-func fetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
+// FetchLinkHistoryData delegates to the rollup-based implementation.
+func FetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
 	return fetchLinkHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
 }
 
@@ -1543,13 +1540,12 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try to serve from cache first (cache only holds mainnet data, skip for raw source)
-	if isMainnet(r.Context()) && pageCache != nil && r.URL.Query().Get("source") == "" {
-		if cached := pageCache.GetDeviceHistory(timeRange, requestedBuckets); cached != nil {
+	if isMainnet(r.Context()) && r.URL.Query().Get("source") == "" {
+		cacheKey := "device_history:" + timeRange + ":" + strconv.Itoa(requestedBuckets)
+		if data, err := ReadPageCache(r.Context(), cacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -1560,7 +1556,7 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
-	resp, err := fetchDeviceHistoryData(ctx, timeRange, requestedBuckets, filters...)
+	resp, err := FetchDeviceHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
 		slog.Error("fetchDeviceHistoryData error", "error", err)
 		http.Error(w, "Failed to fetch device history", http.StatusInternalServerError)
@@ -1573,8 +1569,8 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchDeviceHistoryData delegates to the rollup-based implementation.
-func fetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
+// FetchDeviceHistoryData delegates to the rollup-based implementation.
+func FetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
 	return fetchDeviceHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
 }
 

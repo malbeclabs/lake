@@ -577,13 +577,11 @@ func isDefaultTimelineRequest(r *http.Request) bool {
 // GetTimeline returns timeline events across the network
 func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
-	if isMainnet(r.Context()) && isDefaultTimelineRequest(r) && pageCache != nil {
-		if cached := pageCache.GetTimeline(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultTimelineRequest(r) {
+		if data, err := ReadPageCache(r.Context(), "timeline"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("error encoding cached timeline response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -3223,10 +3221,10 @@ func queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error
 	return info, nil
 }
 
-// fetchDefaultTimelineData fetches timeline data with default parameters for caching.
+// FetchDefaultTimelineData fetches timeline data with default parameters for caching.
 // This returns the same data as GetTimeline with default params: 24h range, all categories,
 // all entity types except gossip_node, dz_filter="on_dz", limit=50, offset=0.
-func fetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
+func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	now := time.Now().UTC()
 	startTime := now.Add(-24 * time.Hour)
 	endTime := now

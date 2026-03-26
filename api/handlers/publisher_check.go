@@ -98,13 +98,11 @@ func isDefaultPublisherCheckRequest(r *http.Request) bool {
 
 func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default requests
-	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) && pageCache != nil {
-		if cached := pageCache.GetPublisherCheck(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) {
+		if data, err := ReadPageCache(r.Context(), "publisher_check"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -136,13 +134,13 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
+	resp, err := FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
 		var retryCancel context.CancelFunc
 		ctx, retryCancel = context.WithTimeout(r.Context(), 20*time.Second)
 		defer retryCancel()
-		resp, err = fetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
+		resp, err = FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	}
 
 	if err != nil {
@@ -157,8 +155,8 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchPublisherCheckData performs the actual publisher check query.
-func fetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
+// FetchPublisherCheckData performs the actual publisher check query.
+func FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
 	start := time.Now()
 
 	// Multicast group PK for edge-solana-shreds (formerly "bebop").

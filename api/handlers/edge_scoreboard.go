@@ -2,10 +2,8 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -111,13 +109,11 @@ func isDefaultEdgeScoreboardRequest(r *http.Request) bool {
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.
 func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default requests
-	if isMainnet(r.Context()) && isDefaultEdgeScoreboardRequest(r) && pageCache != nil {
-		if cached := pageCache.GetEdgeScoreboard(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultEdgeScoreboardRequest(r) {
+		if data, err := ReadPageCache(r.Context(), "edge_scoreboard"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -131,7 +127,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		window = "24h"
 	}
 
-	resp, err := fetchEdgeScoreboardData(ctx, window)
+	resp, err := FetchEdgeScoreboardData(ctx, window)
 	if err != nil {
 		log.Printf("EdgeScoreboard error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -141,8 +137,8 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// fetchEdgeScoreboardData performs the actual edge scoreboard queries.
-func fetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboardResponse, error) {
+// FetchEdgeScoreboardData performs the actual edge scoreboard queries.
+func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboardResponse, error) {
 	// Excluded nodes — fra-mn-bm2 produces unreliable race data
 	excludedNodes := []string{"fra-mn-bm2", "tyo-mn-bm1"}
 

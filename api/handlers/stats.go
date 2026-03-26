@@ -28,27 +28,30 @@ type StatsResponse struct {
 
 func GetStats(w http.ResponseWriter, r *http.Request) {
 	// Try to derive stats from the status cache (cache only holds mainnet data)
-	if isMainnet(r.Context()) && pageCache != nil {
-		if cached := pageCache.GetStatus(); cached != nil {
-			stats := StatsResponse{
-				ValidatorsOnDZ: cached.Network.ValidatorsOnDZ,
-				TotalStakeSol:  cached.Network.TotalStakeSol,
-				StakeSharePct:  cached.Network.StakeSharePct,
-				Users:          cached.Network.Users,
-				Devices:        cached.Network.Devices,
-				Links:          cached.Network.Links,
-				Contributors:   cached.Network.Contributors,
-				Metros:         cached.Network.Metros,
-				BandwidthBps:   cached.Network.BandwidthBps,
-				UserInboundBps: cached.Network.UserInboundBps,
-				FetchedAt:      cached.Timestamp,
+	if isMainnet(r.Context()) {
+		if data, err := ReadPageCache(r.Context(), "status"); err == nil {
+			var cached StatusResponse
+			if json.Unmarshal(data, &cached) == nil {
+				stats := StatsResponse{
+					ValidatorsOnDZ: cached.Network.ValidatorsOnDZ,
+					TotalStakeSol:  cached.Network.TotalStakeSol,
+					StakeSharePct:  cached.Network.StakeSharePct,
+					Users:          cached.Network.Users,
+					Devices:        cached.Network.Devices,
+					Links:          cached.Network.Links,
+					Contributors:   cached.Network.Contributors,
+					Metros:         cached.Network.Metros,
+					BandwidthBps:   cached.Network.BandwidthBps,
+					UserInboundBps: cached.Network.UserInboundBps,
+					FetchedAt:      cached.Timestamp,
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Cache", "HIT")
+				if err := json.NewEncoder(w).Encode(stats); err != nil {
+					slog.Error("failed to encode response", "error", err)
+				}
+				return
 			}
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(stats); err != nil {
-				slog.Error("failed to encode response", "error", err)
-			}
-			return
 		}
 	}
 

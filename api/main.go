@@ -27,6 +27,7 @@ import (
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/malbeclabs/lake/api/metrics"
+	"github.com/malbeclabs/lake/api/worker"
 	slackbot "github.com/malbeclabs/lake/slack/bot"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/slack-go/slack/socketmode"
@@ -216,6 +217,7 @@ func spaHandler(staticDir, assetBucketURL string) http.HandlerFunc {
 func main() {
 	metricsAddrFlag := flag.String("metrics-addr", defaultMetricsAddr, "Address to listen on for prometheus metrics")
 	useRemoteFlag := flag.Bool("use-remote", false, "Use remote proxy database (e.g., lake_remote) instead of local data")
+	noWorkerFlag := flag.Bool("no-worker", false, "Disable embedded page cache worker (for prod where it runs standalone)")
 	flag.Parse()
 
 	// Set env var so config.Load() picks it up (flag takes precedence over env)
@@ -334,9 +336,16 @@ func main() {
 		defer func() { _ = config.CloseNeo4j() }()
 	}
 
-	// Initialize page cache for fast page loads
-	handlers.InitPageCache()
-	// Note: StopPageCache() is called explicitly before server shutdown, not deferred
+	// Start embedded page cache worker (unless --no-worker)
+	workerErrCh := make(chan error, 1)
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	if !*noWorkerFlag {
+		go func() {
+			workerErrCh <- worker.Start(workerCtx, worker.Config{
+				Log: slog.Default(),
+			})
+		}()
+	}
 
 	// Start metrics server
 	var metricsServer *http.Server
@@ -738,8 +747,8 @@ func main() {
 	// This triggers ctx.Done() in all active request handlers
 	serverCancel()
 
-	// Stop background cache goroutines (they may be blocking on DB queries)
-	handlers.StopPageCache()
+	// Stop embedded page cache worker
+	workerCancel()
 
 	// Give existing connections a short time to complete after context cancellation
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

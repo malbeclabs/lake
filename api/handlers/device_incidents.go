@@ -325,13 +325,11 @@ func isDefaultDeviceIncidentsRequest(r *http.Request) bool {
 
 // GetDeviceIncidents returns incidents for devices with active and drained views
 func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
-	if isMainnet(r.Context()) && isDefaultDeviceIncidentsRequest(r) && pageCache != nil {
-		if cached := pageCache.GetDeviceIncidents(); cached != nil {
+	if isMainnet(r.Context()) && isDefaultDeviceIncidentsRequest(r) {
+		if data, err := ReadPageCache(r.Context(), "device_incidents"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
-			if err := json.NewEncoder(w).Encode(cached); err != nil {
-				slog.Error("failed to encode cached device incidents response", "error", err)
-			}
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -554,8 +552,8 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchDefaultDeviceIncidentsData fetches device incidents data with default parameters for caching.
-func fetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsResponse {
+// FetchDefaultDeviceIncidentsData fetches device incidents data with default parameters for caching.
+func FetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsResponse {
 	params := incidentQueryParams{
 		Duration:          24 * time.Hour,
 		BucketInterval:    bucketIntervalForDuration(24 * time.Hour),

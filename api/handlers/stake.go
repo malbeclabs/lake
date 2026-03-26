@@ -49,8 +49,8 @@ type StakeHistoryResponse struct {
 	Error     string              `json:"error,omitempty"`
 }
 
-// fetchStakeOverviewData fetches stake overview data from ClickHouse.
-func fetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
+// FetchStakeOverviewData fetches stake overview data from ClickHouse.
+func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 	start := time.Now()
 	overview := StakeOverview{
 		FetchedAt: time.Now().UTC().Format(time.RFC3339),
@@ -231,18 +231,16 @@ func fetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 }
 
 func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
-	if pageCache != nil {
-		if resp := pageCache.GetStakeOverview(); resp != nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
-			return
-		}
+	if data, err := ReadPageCache(r.Context(), "stake_overview"); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchStakeOverviewData(ctx)
+	resp, err := FetchStakeOverviewData(ctx)
 	if err != nil {
 		slog.Error("stake overview query error", "error", err)
 		w.Header().Set("Content-Type", "application/json")

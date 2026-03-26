@@ -1719,10 +1719,11 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && pageCache != nil {
-		if cached := pageCache.GetMetroPathLatency(optimize); cached != nil {
+	if isMainnet(r.Context()) {
+		if data, err := ReadPageCache(r.Context(), "metro_path_latency:"+optimize); err == nil {
 			w.Header().Set("X-Cache", "HIT")
-			writeJSON(w, cached)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -1731,7 +1732,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	response, err := fetchMetroPathLatencyData(ctx, optimize)
+	response, err := FetchMetroPathLatencyData(ctx, optimize)
 	if err != nil {
 		slog.Error("metro path latency error", "error", err)
 		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
@@ -1741,9 +1742,9 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, response)
 }
 
-// fetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
+// FetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
 // Used by both the handler and the cache.
-func fetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
+func FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
 	if config.Neo4jClient == nil {
 		return nil, fmt.Errorf("neo4j not available")
 	}

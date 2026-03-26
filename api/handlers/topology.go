@@ -1025,11 +1025,11 @@ type LatencyComparisonResponse struct {
 
 func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	// Try cache first (cache only holds mainnet data)
-	if isMainnet(r.Context()) && pageCache != nil {
-		if cached := pageCache.GetLatencyComparison(); cached != nil {
+	if isMainnet(r.Context()) {
+		if data, err := ReadPageCache(r.Context(), "latency_comparison"); err == nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(cached)
+			_, _ = w.Write(data)
 			return
 		}
 	}
@@ -1149,9 +1149,9 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// fetchLatencyComparisonData fetches DZ vs Internet latency comparison data.
+// FetchLatencyComparisonData fetches DZ vs Internet latency comparison data.
 // Used by both the handler and the cache.
-func fetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse, error) {
+func FetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse, error) {
 	start := time.Now()
 
 	query := `
