@@ -57,30 +57,21 @@ func GetLinks(w http.ResponseWriter, r *http.Request) {
 		WITH traffic_rates AS (
 			SELECT
 				link_pk,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
+				avg(avg_in_bps) as in_bps,
+				avg(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND link_pk != ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY link_pk
 		),
 		latency_stats AS (
 			SELECT
 				link_pk,
-				avg(rtt_us) as avg_rtt_us,
-				avg(abs(ipdv_us)) as avg_jitter_us,
-				countIf(loss) * 100.0 / count(*) as loss_percent
-			FROM fact_dz_device_link_latency
-			WHERE event_ts > now() - INTERVAL 3 HOUR
+				sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
+				sum(a_avg_jitter_us * a_samples + z_avg_jitter_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_jitter_us,
+				sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent
+			FROM link_rollup_5m FINAL
+			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
 			GROUP BY link_pk
 		)
 		SELECT
@@ -471,56 +462,43 @@ func linkDetailQuery() string {
 		traffic_rates AS (
 			SELECT
 				link_pk,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
+				avg(avg_in_bps) as in_bps,
+				avg(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND link_pk != ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY link_pk
 		),
 		peak_rates AS (
 			SELECT
 				link_pk,
-				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-				max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 1 HOUR
+				max(max_in_bps) as peak_in_bps,
+				max(max_out_bps) as peak_out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
 				AND link_pk != ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY link_pk
 		),
 		latency_stats AS (
 			SELECT
 				link_pk,
-				avg(rtt_us) as avg_rtt_us,
-				avg(abs(ipdv_us)) as avg_jitter_us,
-				countIf(loss) * 100.0 / count(*) as loss_percent
-			FROM fact_dz_device_link_latency
-			WHERE event_ts > now() - INTERVAL 3 HOUR
+				sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
+				sum(a_avg_jitter_us * a_samples + z_avg_jitter_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_jitter_us,
+				sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent
+			FROM link_rollup_5m FINAL
+			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
 			GROUP BY link_pk
 		),
 		latency_per_direction AS (
 			SELECT
-				f.link_pk,
-				ifNotFinite(avgIf(f.rtt_us, f.origin_device_pk = l.side_a_pk), 0) as avg_rtt_a_to_z,
-				ifNotFinite(avgIf(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk), 0) as avg_jitter_a_to_z,
-				ifNotFinite(avgIf(f.rtt_us, f.origin_device_pk = l.side_z_pk), 0) as avg_rtt_z_to_a,
-				ifNotFinite(avgIf(abs(f.ipdv_us), f.origin_device_pk = l.side_z_pk), 0) as avg_jitter_z_to_a
-			FROM fact_dz_device_link_latency f
-			JOIN dz_links_current l ON f.link_pk = l.pk
-			WHERE f.event_ts > now() - INTERVAL 3 HOUR
-			GROUP BY f.link_pk
+				link_pk,
+				ifNotFinite(sum(a_avg_rtt_us * a_samples) / greatest(sum(a_samples), 1), 0) as avg_rtt_a_to_z,
+				ifNotFinite(sum(a_avg_jitter_us * a_samples) / greatest(sum(a_samples), 1), 0) as avg_jitter_a_to_z,
+				ifNotFinite(sum(z_avg_rtt_us * z_samples) / greatest(sum(z_samples), 1), 0) as avg_rtt_z_to_a,
+				ifNotFinite(sum(z_avg_jitter_us * z_samples) / greatest(sum(z_samples), 1), 0) as avg_jitter_z_to_a
+			FROM link_rollup_5m FINAL
+			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+			GROUP BY link_pk
 		)
 		SELECT
 			l.pk,
