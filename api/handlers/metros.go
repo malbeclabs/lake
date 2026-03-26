@@ -175,17 +175,14 @@ func GetMetro(w http.ResponseWriter, r *http.Request) {
 		traffic_rates AS (
 			SELECT
 				d.metro_pk,
-				SUM(CASE WHEN f.delta_duration > 0 THEN f.in_octets_delta * 8 / f.delta_duration ELSE 0 END) as in_bps,
-				SUM(CASE WHEN f.delta_duration > 0 THEN f.out_octets_delta * 8 / f.delta_duration ELSE 0 END) as out_bps
-			FROM fact_dz_device_interface_counters f
+				SUM(f.avg_in_bps) as in_bps,
+				SUM(f.avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m f
 			JOIN dz_devices_current d ON f.device_pk = d.pk
-			WHERE f.event_ts > now() - INTERVAL 5 MINUTE
+			WHERE f.bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND f.user_tunnel_id IS NULL
 				AND f.link_pk = ''
 				AND d.metro_pk IS NOT NULL
-				AND f.delta_duration > 0
-				AND f.in_octets_delta >= 0
-				AND f.out_octets_delta >= 0
 			GROUP BY d.metro_pk
 		)
 		SELECT

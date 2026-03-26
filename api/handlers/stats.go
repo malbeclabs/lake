@@ -169,15 +169,10 @@ func GetStats(w http.ResponseWriter, r *http.Request) {
 	// Calculate total user inbound traffic rate (bps) over last hour
 	g.Go(func() error {
 		query := `
-			SELECT COALESCE(SUM(interface_rate), 0) FROM (
-				SELECT SUM(in_octets_delta) * 8.0 / NULLIF(SUM(delta_duration), 0) AS interface_rate
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts > now() - INTERVAL 1 HOUR
-				  AND user_tunnel_id IS NOT NULL
-				  AND delta_duration > 0
-				  AND in_octets_delta >= 0
-				GROUP BY device_pk, intf
-			)
+			SELECT COALESCE(SUM(avg_in_bps), 0)
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
+			  AND user_tunnel_id IS NOT NULL
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&stats.UserInboundBps)

@@ -13,60 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupStatsSchema creates the minimal schema needed for stats queries
+// setupStatsSchema creates the schema needed for stats queries via migrations
 func setupStatsSchema(t *testing.T) {
-	ctx := t.Context()
-
-	// Create minimal tables for stats queries
-	tables := []string{
-		`CREATE TABLE IF NOT EXISTS dz_users_current (
-			client_ip String,
-			dz_ip String,
-			status String
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS dz_devices_current (
-			pk String
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS dz_links_current (
-			pk String,
-			status String,
-			link_type String,
-			bandwidth_bps Int64
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS dz_contributors_current (
-			pk String
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS dz_metros_current (
-			pk String
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS solana_gossip_nodes_current (
-			pubkey String,
-			gossip_ip String
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS solana_vote_accounts_current (
-			vote_pubkey String,
-			node_pubkey String,
-			activated_stake_lamports UInt64,
-			epoch_vote_account String
-		) ENGINE = Memory`,
-		`CREATE TABLE IF NOT EXISTS fact_dz_device_interface_counters (
-			event_ts DateTime,
-			device_pk String,
-			intf String,
-			user_tunnel_id Nullable(String),
-			in_octets_delta UInt64,
-			delta_duration Float64
-		) ENGINE = Memory`,
-	}
-
-	for _, ddl := range tables {
-		err := config.DB.Exec(ctx, ddl)
-		require.NoError(t, err)
-	}
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 }
 
 func TestGetStats_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupStatsSchema(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
@@ -93,33 +45,41 @@ func TestGetStats_Empty(t *testing.T) {
 }
 
 func TestGetStats_WithData(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupStatsSchema(t)
 	ctx := t.Context()
 
-	// Insert test data for users
-	err := config.DB.Exec(ctx, `INSERT INTO dz_users_current (client_ip, dz_ip, status) VALUES ('1.2.3.4', '1.2.3.4', 'activated'), ('5.6.7.8', '5.6.7.8', 'activated')`)
-	require.NoError(t, err)
+	// Insert users via history table
+	for _, ip := range []string{"1.2.3.4", "5.6.7.8"} {
+		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_users_history (
+			entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, client_ip, dz_ip, status, kind, owner_pubkey, device_pk
+		) VALUES ($1, now(), now(), $2, 0, $3, $4, $5, 'activated', '', '', '')`,
+			ip, "00000000-0000-0000-0000-000000000001", ip, ip, ip))
+	}
 
-	// Insert test data for devices
-	err = config.DB.Exec(ctx, `INSERT INTO dz_devices_current (pk) VALUES ('device1'), ('device2'), ('device3')`)
-	require.NoError(t, err)
+	// Insert devices
+	for _, pk := range []string{"device1", "device2", "device3"} {
+		seedDeviceMetadata(t, pk, pk, "router", "", "", 0, "activated")
+	}
 
-	// Insert test data for links (WAN and PNI types)
-	err = config.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, status, link_type, bandwidth_bps) VALUES
-		('link1', 'activated', 'WAN', 1000000000),
-		('link2', 'activated', 'WAN', 2000000000),
-		('link3', 'inactive', 'WAN', 500000000),
-		('link4', 'activated', 'PNI', 10000000000)`)
-	require.NoError(t, err)
+	// Insert links
+	seedLinkMetadata(t, "link1", "link1", "WAN", "", "", "", 1000000000, 0, "activated")
+	seedLinkMetadata(t, "link2", "link2", "WAN", "", "", "", 2000000000, 0, "activated")
+	seedLinkMetadata(t, "link3", "link3", "WAN", "", "", "", 500000000, 0, "inactive")
+	seedLinkMetadata(t, "link4", "link4", "PNI", "", "", "", 10000000000, 0, "activated")
 
-	// Insert test data for contributors
-	err = config.DB.Exec(ctx, `INSERT INTO dz_contributors_current (pk) VALUES ('contrib1'), ('contrib2')`)
-	require.NoError(t, err)
+	// Insert contributors
+	seedContributor(t, "contrib1", "contrib1")
+	seedContributor(t, "contrib2", "contrib2")
 
-	// Insert test data for metros
-	err = config.DB.Exec(ctx, `INSERT INTO dz_metros_current (pk) VALUES ('NYC'), ('LAX'), ('SFO')`)
-	require.NoError(t, err)
+	// Insert metros
+	seedMetro(t, "NYC", "NYC")
+	seedMetro(t, "LAX", "LAX")
+	seedMetro(t, "SFO", "SFO")
+
+	// Optimize all history tables
+	for _, table := range []string{"dim_dz_users_history", "dim_dz_devices_history", "dim_dz_links_history", "dim_dz_contributors_history", "dim_dz_metros_history"} {
+		require.NoError(t, config.DB.Exec(ctx, "OPTIMIZE TABLE "+table+" FINAL"))
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
@@ -129,7 +89,7 @@ func TestGetStats_WithData(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var response handlers.StatsResponse
-	err = json.NewDecoder(rr.Body).Decode(&response)
+	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(2), response.Users)
@@ -142,7 +102,6 @@ func TestGetStats_WithData(t *testing.T) {
 }
 
 func TestGetStats_ResponseHeaders(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupStatsSchema(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
@@ -158,30 +117,32 @@ func TestGetStats_ResponseHeaders(t *testing.T) {
 }
 
 func TestGetStats_ValidatorsWithStake(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupStatsSchema(t)
 	ctx := t.Context()
 
-	// Set up the chain: dz_user -> gossip_node -> vote_account
 	// User with gossip IP
-	err := config.DB.Exec(ctx, `INSERT INTO dz_users_current (client_ip, dz_ip, status) VALUES ('10.0.0.1', '10.0.0.1', 'activated')`)
-	require.NoError(t, err)
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_users_history (
+		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, client_ip, dz_ip, status, kind, owner_pubkey, device_pk
+	) VALUES ('u1', now(), now(), '00000000-0000-0000-0000-000000000001', 0, 'u1', '10.0.0.1', '10.0.0.1', 'activated', '', '', '')`))
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_dz_users_history FINAL`))
 
-	// Gossip node matching the user's IP
-	err = config.DB.Exec(ctx, `INSERT INTO solana_gossip_nodes_current (pubkey, gossip_ip) VALUES ('node_pubkey_1', '10.0.0.1')`)
-	require.NoError(t, err)
+	// Gossip nodes
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_solana_gossip_nodes_history (
+		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version
+	) VALUES ('g1', now(), now(), '00000000-0000-0000-0000-000000000001', 0, 'node_pubkey_1', 0, '10.0.0.1', 0, '', 0, '')`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_solana_gossip_nodes_history (
+		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version
+	) VALUES ('g2', now(), now(), '00000000-0000-0000-0000-000000000001', 0, 'node_pubkey_2', 0, '20.0.0.1', 0, '', 0, '')`))
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_solana_gossip_nodes_history FINAL`))
 
-	// Vote account for the gossip node with stake
-	err = config.DB.Exec(ctx, `INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports, epoch_vote_account) VALUES
-		('vote_1', 'node_pubkey_1', 10000000000000, 'true')`) // 10000 SOL in lamports
-	require.NoError(t, err)
-
-	// Also add a vote account without matching user for total stake calculation
-	err = config.DB.Exec(ctx, `INSERT INTO solana_gossip_nodes_current (pubkey, gossip_ip) VALUES ('node_pubkey_2', '20.0.0.1')`)
-	require.NoError(t, err)
-	err = config.DB.Exec(ctx, `INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports, epoch_vote_account) VALUES
-		('vote_2', 'node_pubkey_2', 10000000000000, 'true')`) // Another 10000 SOL
-	require.NoError(t, err)
+	// Vote accounts
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_solana_vote_accounts_history (
+		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage
+	) VALUES ('v1', now(), now(), '00000000-0000-0000-0000-000000000001', 0, 'vote_1', 0, 'node_pubkey_1', 10000000000000, 'true', 0)`))
+	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_solana_vote_accounts_history (
+		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage
+	) VALUES ('v2', now(), now(), '00000000-0000-0000-0000-000000000001', 0, 'vote_2', 0, 'node_pubkey_2', 10000000000000, 'true', 0)`))
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_solana_vote_accounts_history FINAL`))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
@@ -191,7 +152,7 @@ func TestGetStats_ValidatorsWithStake(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var response handlers.StatsResponse
-	err = json.NewDecoder(rr.Body).Decode(&response)
+	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
 	assert.Equal(t, uint64(1), response.ValidatorsOnDZ)
