@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { ArrowUp, ArrowDown } from 'lucide-react'
 import type { UseChartLegendReturn } from '@/hooks/use-chart-legend'
 import type { ChartLegendSeries } from './ChartLegend'
@@ -91,46 +91,97 @@ export function ChartLegendTable({ series, legend, values, maxValues, hoveredTim
       <div className="space-y-0.5">
         {sortedSeries.map((s) => {
           const opacity = legend.getOpacity(s.key)
+          const isSelected = legend.selectedSeries.size > 0 && legend.selectedSeries.has(s.key)
           const value = values?.get(s.key)
           const maxValue = maxValues?.get(s.key)
           return (
-            <div
+            <LegendRow
               key={s.key}
-              className="flex items-center px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50 transition-colors"
-              style={{ opacity }}
+              series={s}
+              opacity={opacity}
+              isSelected={isSelected}
+              value={value}
+              maxValue={maxValue}
+              hasMaxColumn={!!maxValues}
               onClick={(e) => legend.handleClick(s.key, e)}
               onMouseEnter={() => legend.handleMouseEnter(s.key)}
               onMouseLeave={legend.handleMouseLeave}
-            >
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                {s.dashed ? (
-                  <span
-                    className="w-3 h-0.5 flex-shrink-0"
-                    style={{
-                      backgroundImage: `repeating-linear-gradient(90deg, ${s.color} 0, ${s.color} 2px, transparent 2px, transparent 4px)`,
-                      backgroundSize: '4px 1px',
-                    }}
-                  />
-                ) : (
-                  <span
-                    className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-                    style={{ backgroundColor: s.color }}
-                  />
-                )}
-                <span className="font-mono text-foreground truncate">{s.label}</span>
-              </div>
-              {maxValues && (
-                <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-28 text-right">
-                  {maxValue ?? '—'}
-                </span>
-              )}
-              <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-28 text-right">
-                {value ?? '—'}
-              </span>
-            </div>
+            />
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function LegendRow({
+  series: s,
+  opacity,
+  isSelected,
+  value,
+  maxValue,
+  hasMaxColumn,
+  onClick,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  series: ChartLegendSeries
+  opacity: number
+  isSelected: boolean
+  value?: string
+  maxValue?: string
+  hasMaxColumn: boolean
+  onClick: (e: React.MouseEvent) => void
+  onMouseEnter: () => void
+  onMouseLeave: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Scroll into view when selected (e.g. by clicking chart line)
+  useEffect(() => {
+    if (isSelected && ref.current) {
+      ref.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }, [isSelected])
+
+  return (
+    <div
+      ref={ref}
+      className={`flex items-center px-1 py-0.5 rounded cursor-pointer transition-colors ${
+        isSelected
+          ? 'bg-foreground/10 ring-1 ring-foreground/20'
+          : 'hover:bg-muted/50'
+      }`}
+      style={{ opacity }}
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        {s.dashed ? (
+          <span
+            className="w-3 h-0.5 flex-shrink-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(90deg, ${s.color} 0, ${s.color} 2px, transparent 2px, transparent 4px)`,
+              backgroundSize: '4px 1px',
+            }}
+          />
+        ) : (
+          <span
+            className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
+            style={{ backgroundColor: s.color }}
+          />
+        )}
+        <span className={`font-mono truncate ${isSelected ? 'text-foreground font-medium' : 'text-foreground'}`}>{s.label}</span>
+      </div>
+      {hasMaxColumn && (
+        <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-28 text-right">
+          {maxValue ?? '—'}
+        </span>
+      )}
+      <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-28 text-right">
+        {value ?? '—'}
+      </span>
     </div>
   )
 }
