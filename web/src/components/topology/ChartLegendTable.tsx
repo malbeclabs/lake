@@ -41,7 +41,7 @@ export function ChartLegendTable({ series, legend, values, maxValues, hoveredTim
   const sortedSeries = useMemo(() => {
     if (!sortField) return series
     return [...series].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortField === 'name') {
         cmp = a.label.localeCompare(b.label)
       } else {
