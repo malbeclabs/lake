@@ -16,138 +16,53 @@ import (
 )
 
 func setupDevicesTables(t *testing.T) {
-	ctx := t.Context()
-
-	// Create devices table
-	err := config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_devices_current (
-			pk String,
-			code String,
-			status String,
-			device_type String,
-			contributor_pk Nullable(String),
-			metro_pk Nullable(String),
-			public_ip Nullable(String),
-			max_users Nullable(Int32),
-			interfaces Nullable(String)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create contributors table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_contributors_current (
-			pk String,
-			code String,
-			name Nullable(String)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create metros table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_metros_current (
-			pk String,
-			code String,
-			name Nullable(String),
-			latitude Nullable(Float64),
-			longitude Nullable(Float64)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create users table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_users_current (
-			pk String,
-			status String,
-			device_pk String,
-			kind String,
-			owner_pubkey String,
-			client_ip Nullable(String),
-			dz_ip Nullable(String)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create traffic counters fact table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS fact_dz_device_interface_counters (
-			event_ts DateTime,
-			device_pk String,
-			in_octets_delta UInt64,
-			out_octets_delta UInt64,
-			delta_duration Float64,
-			user_tunnel_id Nullable(String),
-			link_pk String
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create gossip nodes table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS solana_gossip_nodes_current (
-			pubkey String,
-			gossip_ip Nullable(String),
-			version Nullable(String),
-			gossip_port Int32
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create vote accounts table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS solana_vote_accounts_current (
-			vote_pubkey String,
-			node_pubkey String,
-			activated_stake_lamports Int64,
-			epoch_vote_account String,
-			commission_percentage Nullable(Int64)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 }
 
 func insertDevicesTestData(t *testing.T) {
 	ctx := t.Context()
 
-	// Insert contributors
-	err := config.DB.Exec(ctx, `
-		INSERT INTO dz_contributors_current (pk, code, name) VALUES
-		('contrib-1', 'CONTRIB1', 'Contributor One')
-	`)
-	require.NoError(t, err)
+	seedContributor(t, "contrib-1", "CONTRIB1")
 
-	// Insert metros
-	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_metros_current (pk, code, name, latitude, longitude) VALUES
-		('metro-nyc', 'NYC', 'New York', 40.7128, -74.0060),
-		('metro-lax', 'LAX', 'Los Angeles', 34.0522, -118.2437)
-	`)
-	require.NoError(t, err)
-
-	// Insert devices
-	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_devices_current (pk, code, status, device_type, contributor_pk, metro_pk, public_ip, max_users) VALUES
-		('dev-1', 'NYC-CORE-01', 'up', 'router', 'contrib-1', 'metro-nyc', '10.0.0.1', 100),
-		('dev-2', 'NYC-EDGE-01', 'up', 'switch', NULL, 'metro-nyc', '10.0.0.2', 50),
-		('dev-3', 'LAX-CORE-01', 'down', 'router', 'contrib-1', 'metro-lax', '10.0.1.1', 100)
-	`)
-	require.NoError(t, err)
+	// Insert metros with names (seedMetro doesn't include name)
+	for _, m := range []struct{ pk, code, name string }{
+		{"metro-nyc", "NYC", "New York"},
+		{"metro-lax", "LAX", "Los Angeles"},
+	} {
+		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history (
+			entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, code, name
+		) VALUES ($1, now(), now(), $2, 0, $3, $4, $5)`,
+			m.pk, "00000000-0000-0000-0000-000000000003", m.pk, m.code, m.name,
+		))
+	}
+	seedDeviceMetadata(t, "dev-1", "NYC-CORE-01", "router", "contrib-1", "metro-nyc", 100, "up")
+	seedDeviceMetadata(t, "dev-2", "NYC-EDGE-01", "switch", "", "metro-nyc", 50, "up")
+	seedDeviceMetadata(t, "dev-3", "LAX-CORE-01", "router", "contrib-1", "metro-lax", 100, "down")
 
 	// Insert users
-	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_users_current (pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip) VALUES
-		('user-1', 'activated', 'dev-1', 'validator', 'pubkey1', '192.168.1.1', '192.168.1.1'),
-		('user-2', 'activated', 'dev-1', 'validator', 'pubkey2', '192.168.1.2', '192.168.1.2'),
-		('user-3', 'pending', 'dev-1', 'validator', 'pubkey3', '192.168.1.3', '192.168.1.3'),
-		('user-4', 'activated', 'dev-3', 'validator', 'pubkey4', '192.168.2.1', '192.168.2.1')
-	`)
-	require.NoError(t, err)
+	for _, u := range []struct {
+		pk, status, devicePK, clientIP string
+	}{
+		{"user-1", "activated", "dev-1", "192.168.1.1"},
+		{"user-2", "activated", "dev-1", "192.168.1.2"},
+		{"user-3", "pending", "dev-1", "192.168.1.3"},
+		{"user-4", "activated", "dev-3", "192.168.2.1"},
+	} {
+		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_users_history (
+			entity_id, snapshot_ts, ingested_at, op_id, is_deleted,
+			pk, status, device_pk, client_ip, dz_ip, kind, owner_pubkey
+		) VALUES ($1, now(), now(), $2, 0, $3, $4, $5, $6, $7, 'validator', 'pubkey')`,
+			u.pk, "00000000-0000-0000-0000-000000000001", u.pk, u.status, u.devicePK, u.clientIP, u.clientIP,
+		))
+	}
+
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_dz_devices_history FINAL`))
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_dz_metros_history FINAL`))
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_dz_contributors_history FINAL`))
+	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_dz_users_history FINAL`))
 }
 
 func TestGetDevices_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
@@ -164,7 +79,6 @@ func TestGetDevices_Empty(t *testing.T) {
 }
 
 func TestGetDevices_ReturnsAllDevices(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -182,7 +96,6 @@ func TestGetDevices_ReturnsAllDevices(t *testing.T) {
 }
 
 func TestGetDevices_IncludesMetroInfo(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -211,7 +124,6 @@ func TestGetDevices_IncludesMetroInfo(t *testing.T) {
 }
 
 func TestGetDevices_IncludesUserCounts(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -238,7 +150,6 @@ func TestGetDevices_IncludesUserCounts(t *testing.T) {
 }
 
 func TestGetDevices_Pagination(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -270,7 +181,6 @@ func TestGetDevices_Pagination(t *testing.T) {
 }
 
 func TestGetDevices_OrderedByCode(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -291,7 +201,6 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 }
 
 func TestGetDevice_NotFound(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -307,7 +216,6 @@ func TestGetDevice_NotFound(t *testing.T) {
 }
 
 func TestGetDevice_MissingPK(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/", nil)
@@ -322,7 +230,6 @@ func TestGetDevice_MissingPK(t *testing.T) {
 }
 
 func TestGetDevice_ReturnsDetails(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -353,7 +260,6 @@ func TestGetDevice_ReturnsDetails(t *testing.T) {
 }
 
 func TestGetDevice_IncludesContributorInfo(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 
@@ -376,7 +282,6 @@ func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 }
 
 func TestGetDevice_HandlesNullContributor(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
 	setupDevicesTables(t)
 	insertDevicesTestData(t)
 

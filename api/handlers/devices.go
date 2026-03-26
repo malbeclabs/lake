@@ -55,35 +55,23 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 		traffic_rates AS (
 			SELECT
 				device_pk,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
+				avg(avg_in_bps) as in_bps,
+				avg(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY device_pk
 		),
 		peak_rates AS (
 			SELECT
 				device_pk,
-				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-				max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 1 HOUR
+				max(max_in_bps) as peak_in_bps,
+				max(max_out_bps) as peak_out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY device_pk
 		)
 		SELECT
@@ -218,35 +206,23 @@ func GetDevice(w http.ResponseWriter, r *http.Request) {
 		traffic_rates AS (
 			SELECT
 				device_pk,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(in_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as in_bps,
-				CASE WHEN SUM(delta_duration) > 0
-					THEN SUM(out_octets_delta) * 8 / SUM(delta_duration)
-					ELSE 0
-				END as out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 5 MINUTE
+				avg(avg_in_bps) as in_bps,
+				avg(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY device_pk
 		),
 		peak_rates AS (
 			SELECT
 				device_pk,
-				max(in_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_in_bps,
-				max(out_octets_delta * 8 / nullIf(delta_duration, 0)) as peak_out_bps
-			FROM fact_dz_device_interface_counters
-			WHERE event_ts > now() - INTERVAL 1 HOUR
+				max(max_in_bps) as peak_in_bps,
+				max(max_out_bps) as peak_out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
-				AND delta_duration > 0
-				AND in_octets_delta >= 0
-				AND out_octets_delta >= 0
 			GROUP BY device_pk
 		),
 		validator_stats AS (
