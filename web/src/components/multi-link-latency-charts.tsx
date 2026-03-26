@@ -274,6 +274,25 @@ export function MultiLinkLatencyCharts({
   useUPlotLegendSync(jitterPlotRef, jitterLegend, jitterChart.keys)
   useUPlotLegendSync(lossPlotRef, lossLegend, lossChart.keys)
 
+  // Click on a chart line to select/highlight it in the legend
+  const handleChartClick = useCallback((
+    plotRef: React.MutableRefObject<uPlot | null>,
+    keys: string[],
+    legend: ReturnType<typeof useChartLegend>,
+    e: React.MouseEvent,
+  ) => {
+    const u = plotRef.current
+    if (!u) return
+    // Find the focused series (nearest to cursor)
+    for (let i = 1; i < u.series.length; i++) {
+      if ((u.series[i] as uPlot.Series & { _focus?: boolean })._focus) {
+        const key = keys[i - 1] // keys array is offset by 1 (no x-axis entry)
+        if (key) legend.handleClick(key, e)
+        return
+      }
+    }
+  }, [])
+
   // Legend series definitions
   const buildLegendSeries = useCallback((keys: string[]): ChartLegendSeries[] =>
     keys.map(pk => ({
@@ -404,7 +423,7 @@ export function MultiLinkLatencyCharts({
         </div>
         {rttOpen && (
           <div className="px-4 pb-4">
-            <div ref={rttChartRef} className="h-[180px]" />
+            <div ref={rttChartRef} className="h-[180px]" onClick={(e) => handleChartClick(rttPlotRef, rttChart.keys, rttLegend, e)} />
             <LegendPanel series={rttLegendSeries} legend={rttLegend} values={rttDisplayValues} maxValues={rttMaxValues} hoveredTime={rttHoveredTime} height={rttLegendHeight} onResize={setRttLegendHeight} />
           </div>
         )}
@@ -425,7 +444,7 @@ export function MultiLinkLatencyCharts({
         </div>
         {jitterOpen && (
           <div className="px-4 pb-4">
-            <div ref={jitterChartRef} className="h-36" />
+            <div ref={jitterChartRef} className="h-36" onClick={(e) => handleChartClick(jitterPlotRef, jitterChart.keys, jitterLegend, e)} />
             <LegendPanel series={jitterLegendSeries} legend={jitterLegend} values={jitterDisplayValues} maxValues={jitterMaxValues} hoveredTime={jitterHoveredTime} height={jitterLegendHeight} onResize={setJitterLegendHeight} />
           </div>
         )}
@@ -447,7 +466,7 @@ export function MultiLinkLatencyCharts({
           </div>
           {lossOpen && (
             <div className="px-4 pb-4">
-              <div ref={lossChartRef} className="h-[120px]" />
+              <div ref={lossChartRef} className="h-[120px]" onClick={(e) => handleChartClick(lossPlotRef, lossChart.keys, lossLegend, e)} />
               <LegendPanel series={lossLegendSeries} legend={lossLegend} values={lossDisplayValues} maxValues={lossMaxValues} hoveredTime={lossHoveredTime} height={lossLegendHeight} onResize={setLossLegendHeight} />
             </div>
           )}
