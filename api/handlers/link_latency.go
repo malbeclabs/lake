@@ -180,6 +180,15 @@ func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJo
 			needle, needle, needle, needle))
 	}
 
+	if pksParam := r.URL.Query().Get("pks"); pksParam != "" {
+		pks := strings.Split(pksParam, ",")
+		quoted := make([]string, len(pks))
+		for i, pk := range pks {
+			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(strings.TrimSpace(pk)))
+		}
+		filterClauses = append(filterClauses, fmt.Sprintf("r.link_pk IN (%s)", strings.Join(quoted, ",")))
+	}
+
 	if len(filterClauses) > 0 {
 		filterSQL = " AND " + strings.Join(filterClauses, " AND ")
 	}
@@ -449,21 +458,11 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		// Per-link mode: one series per link
-		// Supports both explicit PKs (for pinned selections) and filter params
+		// Supports both explicit PKs (for pinned selections) and filter params — all via linkLatencyFilterSQL
 		filterSQL, needsContributorJoin, _ := linkLatencyFilterSQL(r)
 		extraJoins := ""
 		if needsContributorJoin {
 			extraJoins += " LEFT JOIN dz_contributors_current co ON l.contributor_pk = co.pk"
-		}
-
-		// If specific PKs are provided, scope to those
-		if pksParam := r.URL.Query().Get("pks"); pksParam != "" {
-			pks := strings.Split(pksParam, ",")
-			quoted := make([]string, len(pks))
-			for i, pk := range pks {
-				quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(pk))
-			}
-			filterSQL += fmt.Sprintf(" AND r.link_pk IN (%s)", strings.Join(quoted, ","))
 		}
 
 		query = fmt.Sprintf(`
