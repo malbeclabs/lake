@@ -193,14 +193,13 @@ func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 
 	ctx := t.Context()
 
-	// Insert traffic counter data for both tunnels (recent, within 5 min)
+	// Insert rollup data for both tunnels (recent, within 15 min)
 	err := config.DB.Exec(ctx, `
-		INSERT INTO fact_dz_device_interface_counters
-			(event_ts, device_pk, user_tunnel_id, in_octets_delta, out_octets_delta, delta_duration)
+		INSERT INTO device_interface_rollup_5m
+			(bucket_ts, device_pk, intf, user_tunnel_id, ingested_at, avg_in_bps, avg_out_bps, avg_in_pps, avg_out_pps)
 		VALUES
-			(now(), 'dev-ams1', 501, 1000, 50000000, 4.0),
-			(now(), 'dev-ams1', 501, 1000, 50000000, 4.0),
-			(now(), 'dev-nyc1', 502, 50000000, 1000, 4.0)
+			(now() - INTERVAL 5 MINUTE, 'dev-ams1', 'tun501', 501, now(), 2000.0, 100000000.0, 10.0, 50.0),
+			(now() - INTERVAL 5 MINUTE, 'dev-nyc1', 'tun502', 502, now(), 100000000.0, 2000.0, 50.0, 10.0)
 	`)
 	require.NoError(t, err)
 

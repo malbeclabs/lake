@@ -994,13 +994,13 @@ func enrichPathsWithMeasuredLatency(ctx context.Context, response *MultiPathResp
 		SELECT
 			l.side_a_pk,
 			l.side_z_pk,
-			round(avg(lat.rtt_us) / 1000.0, 3) AS avg_rtt_ms,
-			round(avg(abs(lat.ipdv_us)) / 1000.0, 3) AS avg_jitter_ms,
-			countIf(lat.loss OR lat.rtt_us = 0) * 100.0 / count(*) AS loss_pct,
-			count(*) AS sample_count
+			round(sum(r.a_avg_rtt_us * r.a_samples + r.z_avg_rtt_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS avg_rtt_ms,
+			round(sum(r.a_avg_jitter_us * r.a_samples + r.z_avg_jitter_us * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) / 1000.0, 3) AS avg_jitter_ms,
+			sum(r.a_loss_pct * r.a_samples + r.z_loss_pct * r.z_samples) / greatest(sum(r.a_samples + r.z_samples), 1) AS loss_pct,
+			sum(r.a_samples + r.z_samples) AS sample_count
 		FROM dz_links_current l
-		JOIN fact_dz_device_link_latency lat ON l.pk = lat.link_pk
-		WHERE lat.event_ts > now() - INTERVAL 3 HOUR
+		JOIN link_rollup_5m r FINAL ON l.pk = r.link_pk
+		WHERE r.bucket_ts >= now() - INTERVAL 3 HOUR
 		  AND l.side_a_pk != ''
 		  AND l.side_z_pk != ''
 		GROUP BY l.side_a_pk, l.side_z_pk

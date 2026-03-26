@@ -532,14 +532,13 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 				SELECT
 					device_pk,
 					user_tunnel_id,
-					(sum(coalesce(in_octets_delta, 0)) * 8.0) / sum(delta_duration) as in_bps,
-					(sum(coalesce(out_octets_delta, 0)) * 8.0) / sum(delta_duration) as out_bps,
-					sum(coalesce(in_pkts_delta, 0)) / sum(delta_duration) as in_pps,
-					sum(coalesce(out_pkts_delta, 0)) / sum(delta_duration) as out_pps
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts >= now() - INTERVAL 5 MINUTE
+					avg(avg_in_bps) as in_bps,
+					avg(avg_out_bps) as out_bps,
+					avg(avg_in_pps) as in_pps,
+					avg(avg_out_pps) as out_pps
+				FROM device_interface_rollup_5m
+				WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
 					AND user_tunnel_id > 0
-					AND delta_duration > 0
 				GROUP BY device_pk, user_tunnel_id
 			`
 			rows, err := envDB(ctx).Query(ctx, trafficQuery)
