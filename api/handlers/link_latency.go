@@ -320,6 +320,17 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	if mode == "aggregate" {
 		// Aggregate mode: multiple percentile series (avg, p95, p99, max) across all matching links
 		filterSQL, needsContributorJoin, needsMetroJoin := linkLatencyFilterSQL(r)
+
+		// Scope aggregate to specific links if pks param is provided
+		if pksParam := r.URL.Query().Get("pks"); pksParam != "" {
+			pks := strings.Split(pksParam, ",")
+			quoted := make([]string, len(pks))
+			for i, pk := range pks {
+				quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(strings.TrimSpace(pk)))
+			}
+			filterSQL += fmt.Sprintf(" AND r.link_pk IN (%s)", strings.Join(quoted, ","))
+		}
+
 		extraJoins := ""
 		if needsContributorJoin {
 			extraJoins += " LEFT JOIN dz_contributors_current co ON l.contributor_pk = co.pk"

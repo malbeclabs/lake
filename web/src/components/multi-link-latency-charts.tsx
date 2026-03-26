@@ -83,7 +83,7 @@ export function MultiLinkLatencyCharts({
     queryKey: ['multi-link-latency', chartMode, sortedPks, timeRange, agg, filters],
     queryFn: () => fetchMultiLinkLatencyHistory({
       mode: chartMode,
-      pks: chartMode === 'per_link' ? sortedPks : undefined,
+      pks: sortedPks.length > 0 ? sortedPks : undefined,
       timeRange,
       agg,
       filters,

@@ -3881,7 +3881,7 @@ export async function fetchMultiLinkLatencyHistory(
   },
 ): Promise<MultiLinkLatencyResponse> {
   const params = new URLSearchParams({ mode: opts.mode, agg: opts.agg || 'avg' })
-  if (opts.mode === 'per_link' && opts.pks?.length) {
+  if (opts.pks?.length) {
     params.set('pks', opts.pks.join(','))
   }
   const hasCustomRange = opts.filters?.start_time && opts.filters?.end_time
