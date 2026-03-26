@@ -155,6 +155,31 @@ func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJo
 		filterClauses = append(filterClauses, fmt.Sprintf("l.link_type IN (%s)", strings.Join(quoted, ",")))
 	}
 
+	if codes := r.URL.Query().Get("code"); codes != "" {
+		vals := strings.Split(codes, ",")
+		quoted := make([]string, len(vals))
+		for i, v := range vals {
+			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
+		}
+		filterClauses = append(filterClauses, fmt.Sprintf("l.code IN (%s)", strings.Join(quoted, ",")))
+	}
+
+	if statuses := r.URL.Query().Get("status"); statuses != "" {
+		vals := strings.Split(statuses, ",")
+		quoted := make([]string, len(vals))
+		for i, v := range vals {
+			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
+		}
+		filterClauses = append(filterClauses, fmt.Sprintf("l.status IN (%s)", strings.Join(quoted, ",")))
+	}
+
+	if search := r.URL.Query().Get("search"); search != "" {
+		needle := escapeSingleQuote(search)
+		filterClauses = append(filterClauses, fmt.Sprintf(
+			"(l.code ILIKE '%%%s%%' OR l.link_type ILIKE '%%%s%%' OR da.code ILIKE '%%%s%%' OR dz.code ILIKE '%%%s%%')",
+			needle, needle, needle, needle))
+	}
+
 	if len(filterClauses) > 0 {
 		filterSQL = " AND " + strings.Join(filterClauses, " AND ")
 	}
@@ -321,16 +346,6 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		// Aggregate mode: multiple percentile series (avg, p95, p99, max) across all matching links
 		filterSQL, needsContributorJoin, needsMetroJoin := linkLatencyFilterSQL(r)
 
-		// Scope aggregate to specific links if pks param is provided
-		if pksParam := r.URL.Query().Get("pks"); pksParam != "" {
-			pks := strings.Split(pksParam, ",")
-			quoted := make([]string, len(pks))
-			for i, pk := range pks {
-				quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(strings.TrimSpace(pk)))
-			}
-			filterSQL += fmt.Sprintf(" AND r.link_pk IN (%s)", strings.Join(quoted, ","))
-		}
-
 		extraJoins := ""
 		if needsContributorJoin {
 			extraJoins += " LEFT JOIN dz_contributors_current co ON l.contributor_pk = co.pk"
@@ -434,20 +449,22 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	} else {
 		// Per-link mode: one series per link
-		pksParam := r.URL.Query().Get("pks")
-		if pksParam == "" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(MultiLinkLatencyResponse{Points: []MultiLinkLatencyPoint{}})
-			return
+		// Supports both explicit PKs (for pinned selections) and filter params
+		filterSQL, needsContributorJoin, _ := linkLatencyFilterSQL(r)
+		extraJoins := ""
+		if needsContributorJoin {
+			extraJoins += " LEFT JOIN dz_contributors_current co ON l.contributor_pk = co.pk"
 		}
 
-		pks := strings.Split(pksParam, ",")
-
-		quoted := make([]string, len(pks))
-		for i, pk := range pks {
-			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(pk))
+		// If specific PKs are provided, scope to those
+		if pksParam := r.URL.Query().Get("pks"); pksParam != "" {
+			pks := strings.Split(pksParam, ",")
+			quoted := make([]string, len(pks))
+			for i, pk := range pks {
+				quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(pk))
+			}
+			filterSQL += fmt.Sprintf(" AND r.link_pk IN (%s)", strings.Join(quoted, ","))
 		}
-		inClause := strings.Join(quoted, ",")
 
 		query = fmt.Sprintf(`
 			SELECT
@@ -461,9 +478,12 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 				MAX(greatest(r.a_loss_pct, r.z_loss_pct)) AS loss_pct
 			FROM link_rollup_5m r
 			JOIN dz_links_current l ON r.link_pk = l.pk
+			JOIN dz_devices_current da ON l.side_a_pk = da.pk
+			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+			%s
 			WHERE r.%s
-				AND r.link_pk IN (%s)
 				AND (r.a_samples > 0 OR r.z_samples > 0)
+				%s
 			GROUP BY time_bucket, r.link_pk, l.code
 			ORDER BY time_bucket, l.code`,
 			bucketInterval,
@@ -471,8 +491,9 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			rollupAggFunc, aggPrefix,
 			rollupAggFunc, aggPrefix,
 			rollupAggFunc, aggPrefix,
+			extraJoins,
 			timeFilter,
-			inClause)
+			filterSQL)
 		scanPerLink = true
 	}
 

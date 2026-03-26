@@ -440,7 +440,7 @@ function LinkLatencyPageContent() {
     setSelectedLinkPks(next)
   }, [selectedLinkPks, setSelectedLinkPks])
 
-  // Build chart filter params — same filters as the table query so aggregate matches
+  // Build chart filter params — same filters as the table query so charts match
   const chartFilters = useMemo(() => {
     const params: Record<string, string> = {}
     if (customStart && customEnd) {
@@ -453,8 +453,38 @@ function LinkLatencyPageContent() {
         params[k] = v
       }
     }
+    // Convert inline filters to API params so charts respect the same scope
+    // Map: inline field name → API param name
+    const fieldToParam: Record<string, string> = {
+      code: 'code',
+      type: 'link_type',
+      contributor: 'contributor',
+      sideA: 'device_a',
+      sideZ: 'device_z',
+      status: 'status',
+    }
+    const grouped = new Map<string, string[]>()
+    for (const f of allFilters) {
+      const { field, value } = parseFilter(f)
+      if (field === 'all') {
+        // Free text search
+        params.search = value
+      } else {
+        const paramName = fieldToParam[field]
+        if (paramName) {
+          const existing = grouped.get(paramName) ?? []
+          existing.push(value)
+          grouped.set(paramName, existing)
+        }
+      }
+    }
+    for (const [paramName, values] of grouped) {
+      // Multiple values on same field: comma-separated (OR logic in backend)
+      const existing = params[paramName]
+      params[paramName] = existing ? `${existing},${values.join(',')}` : values.join(',')
+    }
     return Object.keys(params).length > 0 ? params : undefined
-  }, [customStart, customEnd, filterParams])
+  }, [customStart, customEnd, filterParams, allFilters])
 
   const deltaBadge = (measured: number, committed: number | undefined) => {
     if (!committed || committed <= 0 || committed >= COMMITTED_RTT_PROVISIONING_MS || measured <= 0) return null
@@ -685,7 +715,7 @@ function LinkLatencyPageContent() {
         {/* Charts — visible when there are links to show */}
         {(selectedPks.length > 0 || filteredLinks.length > 0) && (
           <MultiLinkLatencyCharts
-            pks={selectedPks.length > 0 ? selectedPks : filteredLinks.map(l => l.link_pk)}
+            pks={selectedPks.length > 0 ? selectedPks : undefined}
             selectedCount={selectedLinkPks.size}
             linkNames={linkNameMap}
             timeRange={timeRange}
