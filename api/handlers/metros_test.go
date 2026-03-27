@@ -55,7 +55,6 @@ func TestGetMetros_Empty(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
-
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetMetros(rr, req)
@@ -215,7 +214,6 @@ func TestGetMetro_NotFound(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
-
 	insertMetrosTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros/nonexistent", nil)
@@ -233,8 +231,6 @@ func TestGetMetro_MissingPK(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
-
-
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros/", nil)
 	rctx := chi.NewRouteContext()
 	// Don't add pk param
@@ -249,7 +245,6 @@ func TestGetMetro_MissingPK(t *testing.T) {
 func TestGetMetro_ReturnsDetails(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-
 
 	insertMetrosTestData(t)
 

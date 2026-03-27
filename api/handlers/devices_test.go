@@ -61,7 +61,6 @@ func TestGetDevices_Empty(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
-
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetDevices(rr, req)
@@ -227,7 +226,6 @@ func TestGetDevice_NotFound(t *testing.T) {
 func TestGetDevice_MissingPK(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/", nil)
 	rctx := chi.NewRouteContext()

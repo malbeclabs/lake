@@ -60,7 +60,6 @@ func TestGetLinks_Empty(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
-
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
 	handlers.GetLinks(rr, req)
@@ -201,7 +200,6 @@ func TestGetLink_MissingPK(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 
-
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/", nil)
 	rctx := chi.NewRouteContext()
 	// Don't add pk param
@@ -258,7 +256,6 @@ func setupLinkHealthData(t *testing.T) {
 func TestGetLinkHealth_Empty(t *testing.T) {
 	t.Parallel()
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
