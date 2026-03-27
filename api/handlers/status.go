@@ -279,9 +279,9 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 	// Get last ingested timestamp
 	g.Go(func() error {
 		query := `
-			SELECT formatDateTime(max(event_ts), '%Y-%m-%dT%H:%i:%sZ', 'UTC')
-			FROM fact_dz_device_link_latency
-			WHERE event_ts > now() - INTERVAL 1 HOUR
+			SELECT formatDateTime(max(bucket_ts), '%Y-%m-%dT%H:%i:%sZ', 'UTC')
+			FROM link_rollup_5m
+			WHERE bucket_ts > now() - INTERVAL 1 HOUR
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
 		var ts string
@@ -542,35 +542,29 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			) h ON l.pk = h.link_pk
 			LEFT JOIN (
 				SELECT link_pk,
-					avg(rtt_us) as avg_rtt_us,
-					countIf(loss OR rtt_us = 0) * 100.0 / count(*) as loss_percent
-				FROM fact_dz_device_link_latency
-				WHERE event_ts > now() - INTERVAL 1 HOUR
+					sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
+					sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 1 HOUR
 				GROUP BY link_pk
 			) lat ON l.pk = lat.link_pk
 			-- Direct link traffic (where link_pk is populated)
 			LEFT JOIN (
 				SELECT link_pk,
-					quantile(0.95)(CASE WHEN delta_duration > 0 THEN in_octets_delta * 8 / delta_duration ELSE 0 END) as in_bps,
-					quantile(0.95)(CASE WHEN delta_duration > 0 THEN out_octets_delta * 8 / delta_duration ELSE 0 END) as out_bps
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts > now() - INTERVAL 24 HOUR
+					max(p95_in_bps) as in_bps,
+					max(p95_out_bps) as out_bps
+				FROM device_interface_rollup_5m
+				WHERE bucket_ts >= now() - INTERVAL 24 HOUR
 					AND link_pk != ''
-					AND delta_duration > 0
-					AND in_octets_delta >= 0
-					AND out_octets_delta >= 0
 				GROUP BY link_pk
 			) traffic_direct ON l.pk = traffic_direct.link_pk
 			-- Parent interface traffic (for sub-interfaces like PortChannel2000.10023)
 			LEFT JOIN (
 				SELECT device_pk, intf,
-					quantile(0.95)(CASE WHEN delta_duration > 0 THEN in_octets_delta * 8 / delta_duration ELSE 0 END) as in_bps,
-					quantile(0.95)(CASE WHEN delta_duration > 0 THEN out_octets_delta * 8 / delta_duration ELSE 0 END) as out_bps
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts > now() - INTERVAL 24 HOUR
-					AND delta_duration > 0
-					AND in_octets_delta >= 0
-					AND out_octets_delta >= 0
+					max(p95_in_bps) as in_bps,
+					max(p95_out_bps) as out_bps
+				FROM device_interface_rollup_5m
+				WHERE bucket_ts >= now() - INTERVAL 24 HOUR
 				GROUP BY device_pk, intf
 			) traffic_parent ON traffic_parent.device_pk = l.side_a_pk
 				AND traffic_parent.intf = splitByChar('.', l.side_a_iface_name)[1]
@@ -718,14 +712,13 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				WITH buckets AS (
 					SELECT
 						l.code,
-						toStartOfInterval(event_ts, INTERVAL 5 MINUTE) as bucket,
-						countIf(loss OR rtt_us = 0) * 100.0 / count(*) as loss_pct
-					FROM fact_dz_device_link_latency lat
-					JOIN dz_links_current l ON lat.link_pk = l.pk
-					WHERE lat.event_ts > now() - INTERVAL 7 DAY
+						r.bucket_ts as bucket,
+						greatest(r.a_loss_pct, r.z_loss_pct) as loss_pct
+					FROM link_rollup_5m r
+					JOIN dz_links_current l ON r.link_pk = l.pk
+					WHERE r.bucket_ts >= now() - INTERVAL 7 DAY
 					  AND l.code IN (?)
-					GROUP BY l.code, bucket
-					HAVING count(*) >= 3
+					  AND (r.a_samples + r.z_samples) >= 3
 				),
 				last_healthy AS (
 					-- Find 3 consecutive healthy buckets (15 min, matching detection coalesce gap).
@@ -837,9 +830,9 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			WITH link_last_seen AS (
 				SELECT
 					link_pk,
-					max(event_ts) as last_seen
-				FROM fact_dz_device_link_latency
-				WHERE event_ts >= now() - INTERVAL 30 DAY
+					max(bucket_ts) as last_seen
+				FROM link_rollup_5m
+				WHERE bucket_ts >= now() - INTERVAL 30 DAY
 				  AND link_pk != ''
 				GROUP BY link_pk
 			)
@@ -897,18 +890,16 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 	g.Go(func() error {
 		query := `
 			SELECT
-				ifNotFinite(avg(rtt_us), 0) as avg_latency,
-				ifNotFinite(quantile(0.95)(rtt_us), 0) as p95_latency,
-				ifNotFinite(toFloat64(min(rtt_us)), 0) as min_latency,
-				ifNotFinite(toFloat64(max(rtt_us)), 0) as max_latency,
-				ifNotFinite(countIf(loss OR rtt_us = 0) * 100.0 / count(*), 0) as avg_loss,
-				ifNotFinite(avg(abs(ipdv_us)), 0) as avg_jitter
-			FROM fact_dz_device_link_latency lat
-			JOIN dz_links_current l ON lat.link_pk = l.pk
-			WHERE lat.event_ts > now() - INTERVAL 3 HOUR
+				ifNotFinite(sum((a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples)) / greatest(sum(a_samples + z_samples), 1), 0) as avg_latency,
+				ifNotFinite(max(greatest(a_p95_rtt_us, z_p95_rtt_us)), 0) as p95_latency,
+				ifNotFinite(min(least(a_min_rtt_us, z_min_rtt_us)), 0) as min_latency,
+				ifNotFinite(max(greatest(a_max_rtt_us, z_max_rtt_us)), 0) as max_latency,
+				ifNotFinite(sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1), 0) as avg_loss,
+				ifNotFinite(sum((a_avg_jitter_us * a_samples + z_avg_jitter_us * z_samples)) / greatest(sum(a_samples + z_samples), 1), 0) as avg_jitter
+			FROM link_rollup_5m r
+			JOIN dz_links_current l ON r.link_pk = l.pk
+			WHERE r.bucket_ts >= now() - INTERVAL 3 HOUR
 			  AND l.link_type = 'WAN'
-			  AND lat.loss = false
-			  AND lat.rtt_us > 0
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(
@@ -925,20 +916,11 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 	g.Go(func() error {
 		query := `
 			SELECT
-				COALESCE(SUM(in_rate), 0) as total_in_bps,
-				COALESCE(SUM(out_rate), 0) as total_out_bps
-			FROM (
-				SELECT
-					SUM(in_octets_delta) * 8.0 / NULLIF(SUM(delta_duration), 0) AS in_rate,
-					SUM(out_octets_delta) * 8.0 / NULLIF(SUM(delta_duration), 0) AS out_rate
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts > now() - INTERVAL 5 MINUTE
-				  AND link_pk != ''
-				  AND delta_duration > 0
-				  AND in_octets_delta >= 0
-				  AND out_octets_delta >= 0
-				GROUP BY device_pk, intf
-			)
+				COALESCE(SUM(avg_in_bps), 0) as total_in_bps,
+				COALESCE(SUM(avg_out_bps), 0) as total_out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 5 MINUTE
+			  AND link_pk != ''
 		`
 		row := envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Performance.TotalInBps, &resp.Performance.TotalOutBps)

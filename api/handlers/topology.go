@@ -263,40 +263,37 @@ func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
 			LEFT JOIN (
 				SELECT link_pk,
-					avg(rtt_us) as avg_rtt_us,
-					avg(abs(ipdv_us)) as avg_ipdv_us,
-					countIf(loss) * 100.0 / count(*) as loss_percent,
-					count(*) as sample_count
-				FROM fact_dz_device_link_latency
-				WHERE event_ts > now() - INTERVAL 3 HOUR
+					sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
+					sum(a_avg_jitter_us * a_samples + z_avg_jitter_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_ipdv_us,
+					sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent,
+					sum(a_samples + z_samples) as sample_count
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
 				GROUP BY link_pk
 			) lat ON l.pk = lat.link_pk
 			LEFT JOIN (
-				SELECT link_pk, origin_device_pk,
-					avg(rtt_us) as avg_rtt_us,
-					avg(abs(ipdv_us)) as avg_ipdv_us
-				FROM fact_dz_device_link_latency
-				WHERE event_ts > now() - INTERVAL 3 HOUR
-				GROUP BY link_pk, origin_device_pk
-			) lat_a ON l.pk = lat_a.link_pk AND l.side_a_pk = lat_a.origin_device_pk
-			LEFT JOIN (
-				SELECT link_pk, origin_device_pk,
-					avg(rtt_us) as avg_rtt_us,
-					avg(abs(ipdv_us)) as avg_ipdv_us
-				FROM fact_dz_device_link_latency
-				WHERE event_ts > now() - INTERVAL 3 HOUR
-				GROUP BY link_pk, origin_device_pk
-			) lat_z ON l.pk = lat_z.link_pk AND l.side_z_pk = lat_z.origin_device_pk
+				SELECT link_pk,
+					sum(a_avg_rtt_us * a_samples) / greatest(sum(a_samples), 1) as avg_rtt_us,
+					sum(a_avg_jitter_us * a_samples) / greatest(sum(a_samples), 1) as avg_ipdv_us
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				GROUP BY link_pk
+			) lat_a ON l.pk = lat_a.link_pk
 			LEFT JOIN (
 				SELECT link_pk,
-					CASE WHEN SUM(delta_duration) > 0 THEN SUM(in_octets_delta) * 8 / SUM(delta_duration) ELSE 0 END as in_bps,
-					CASE WHEN SUM(delta_duration) > 0 THEN SUM(out_octets_delta) * 8 / SUM(delta_duration) ELSE 0 END as out_bps
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts > now() - INTERVAL 5 MINUTE
+					sum(z_avg_rtt_us * z_samples) / greatest(sum(z_samples), 1) as avg_rtt_us,
+					sum(z_avg_jitter_us * z_samples) / greatest(sum(z_samples), 1) as avg_ipdv_us
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				GROUP BY link_pk
+			) lat_z ON l.pk = lat_z.link_pk
+			LEFT JOIN (
+				SELECT link_pk,
+					avg(avg_in_bps) as in_bps,
+					avg(avg_out_bps) as out_bps
+				FROM device_interface_rollup_5m
+				WHERE bucket_ts >= now() - INTERVAL 5 MINUTE
 					AND link_pk != ''
-					AND delta_duration > 0
-					AND in_octets_delta >= 0
-					AND out_octets_delta >= 0
 				GROUP BY link_pk
 			) traffic ON l.pk = traffic.link_pk
 			WHERE l.status = 'activated'
