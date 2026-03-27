@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  namespace: lake-dev
+spec:
+  selector:
+    app: temporal-ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-ui
+  namespace: lake-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: temporal-ui
+  template:
+    metadata:
+      labels:
+        app: temporal-ui
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: temporal-ui
+          image: temporalio/ui:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: temporal:7233

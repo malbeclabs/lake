@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: indexer
+  namespace: lake-dev
+spec:
+  selector:
+    app: indexer
+  ports:
+    - port: 3010
+      targetPort: 3010
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer
+  namespace: lake-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: indexer
+  template:
+    metadata:
+      labels:
+        app: indexer
+    spec:
+      containers:
+        - name: indexer
+          image: lake-indexer
+          ports:
+            - containerPort: 3010
+          envFrom:
+            - configMapRef:
+                name: lake-config
+            - secretRef:
+                name: lake-secrets
+                optional: true
+          volumeMounts:
+            - name: geoip
+              mountPath: /data/geoip
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3010
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+      volumes:
+        - name: geoip
+          hostPath:
+            path: /data/geoip
+            type: DirectoryOrCreate

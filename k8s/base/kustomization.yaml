@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: lake-dev
+
+resources:
+  - namespace.yaml
+  # Infrastructure
+  - postgres.yaml
+  - clickhouse.yaml
+  - neo4j.yaml
+  - temporal.yaml
+  - temporal-ui.yaml
+  # Application
+  - api.yaml
+  - indexer.yaml
+  - web.yaml
+  # Configuration
+  - configmap.yaml
