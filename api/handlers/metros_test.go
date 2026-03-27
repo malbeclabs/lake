@@ -23,7 +23,10 @@ func insertMetrosTestData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert metros with names and coordinates
-	for _, m := range []struct{ pk, code, name string; lat, lon float64 }{
+	for _, m := range []struct {
+		pk, code, name string
+		lat, lon       float64
+	}{
 		{"metro-nyc", "NYC", "New York", 40.7128, -74.0060},
 		{"metro-lax", "LAX", "Los Angeles", 34.0522, -118.2437},
 		{"metro-chi", "CHI", "Chicago", 41.8781, -87.6298},
@@ -235,7 +238,6 @@ func TestGetMetro_MissingPK(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
-
 
 func TestGetMetro_ReturnsDetails(t *testing.T) {
 	setupMetrosTables(t)

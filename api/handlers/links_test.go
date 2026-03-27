@@ -39,7 +39,6 @@ func insertLinksTestDimensions(t *testing.T) {
 	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE dim_dz_contributors_history FINAL`))
 }
 
-
 func TestGetLinks_Empty(t *testing.T) {
 	setupLinksTables(t)
 
