@@ -15,166 +15,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupLinksTables(t *testing.T) {
-	ctx := t.Context()
-
-	// Create links table
-	err := config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_links_current (
-			pk String,
-			code String,
-			status String,
-			link_type String,
-			bandwidth_bps Nullable(Int64),
-			side_a_pk Nullable(String),
-			side_z_pk Nullable(String),
-			contributor_pk Nullable(String),
-			side_a_iface_name Nullable(String),
-			side_a_ip Nullable(String),
-			side_z_iface_name Nullable(String),
-			side_z_ip Nullable(String),
-			committed_rtt_ns Nullable(Int64),
-			isis_delay_override_ns Nullable(Int64)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create devices table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_devices_current (
-			pk String,
-			code String,
-			device_type String,
-			metro_pk Nullable(String),
-			public_ip String
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create metros table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_metros_current (
-			pk String,
-			code String,
-			name Nullable(String),
-			latitude Nullable(Float64),
-			longitude Nullable(Float64)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create contributors table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS dz_contributors_current (
-			pk String,
-			code String,
-			name Nullable(String)
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create traffic counters fact table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS fact_dz_device_interface_counters (
-			event_ts DateTime,
-			device_pk String,
-			in_octets_delta UInt64,
-			out_octets_delta UInt64,
-			delta_duration Float64,
-			user_tunnel_id Nullable(String),
-			link_pk String
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create latency fact table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS fact_dz_device_link_latency (
-			event_ts DateTime,
-			link_pk String,
-			rtt_us Float64,
-			ipdv_us Float64,
-			loss UInt8,
-			direction Nullable(String),
-			origin_device_pk String DEFAULT ''
-		) ENGINE = Memory
-	`)
-	require.NoError(t, err)
-
-	// Create link rollup table
-	err = config.DB.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS link_rollup_5m (
-			bucket_ts DateTime,
-			link_pk String,
-			ingested_at DateTime64(3),
-			a_avg_rtt_us Float64,
-			a_min_rtt_us Float64,
-			a_p50_rtt_us Float64,
-			a_p90_rtt_us Float64,
-			a_p95_rtt_us Float64,
-			a_p99_rtt_us Float64,
-			a_max_rtt_us Float64,
-			a_loss_pct Float64,
-			a_samples UInt32,
-			z_avg_rtt_us Float64,
-			z_min_rtt_us Float64,
-			z_p50_rtt_us Float64,
-			z_p90_rtt_us Float64,
-			z_p95_rtt_us Float64,
-			z_p99_rtt_us Float64,
-			z_max_rtt_us Float64,
-			z_loss_pct Float64,
-			z_samples UInt32,
-			status String DEFAULT '',
-			provisioning Bool DEFAULT false,
-			isis_down Bool DEFAULT false
-		) ENGINE = ReplacingMergeTree(ingested_at)
-		ORDER BY (bucket_ts, link_pk)
-	`)
-	require.NoError(t, err)
-}
-
 func insertLinksTestData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert metros
 	err := config.DB.Exec(ctx, `
-		INSERT INTO dz_metros_current (pk, code, name) VALUES
-		('metro-nyc', 'NYC', 'New York'),
-		('metro-lax', 'LAX', 'Los Angeles')
+		INSERT INTO dim_dz_metros_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name, latitude, longitude) VALUES
+		('metro-nyc', now(), now(), generateUUIDv4(), 0, 1, 'metro-nyc', 'NYC', 'New York', 0, 0),
+		('metro-lax', now(), now(), generateUUIDv4(), 0, 2, 'metro-lax', 'LAX', 'Los Angeles', 0, 0)
 	`)
 	require.NoError(t, err)
 
 	// Insert devices
 	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_devices_current (pk, code, device_type, metro_pk, public_ip) VALUES
-		('dev-nyc-1', 'NYC-CORE-01', 'router', 'metro-nyc', '10.0.0.1'),
-		('dev-lax-1', 'LAX-CORE-01', 'router', 'metro-lax', '10.0.1.1'),
-		('dev-nyc-2', 'NYC-EDGE-01', 'router', 'metro-nyc', '10.0.0.2')
+		INSERT INTO dim_dz_devices_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, metro_pk, public_ip, contributor_pk, max_users) VALUES
+		('dev-nyc-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-nyc-1', 'NYC-CORE-01', 'up', 'router', 'metro-nyc', '10.0.0.1', '', 0),
+		('dev-lax-1', now(), now(), generateUUIDv4(), 0, 2, 'dev-lax-1', 'LAX-CORE-01', 'up', 'router', 'metro-lax', '10.0.1.1', '', 0),
+		('dev-nyc-2', now(), now(), generateUUIDv4(), 0, 3, 'dev-nyc-2', 'NYC-EDGE-01', 'up', 'router', 'metro-nyc', '10.0.0.2', '', 0)
 	`)
 	require.NoError(t, err)
 
 	// Insert contributors
 	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_contributors_current (pk, code, name) VALUES
-		('contrib-1', 'CONTRIB1', 'Contributor One')
+		INSERT INTO dim_dz_contributors_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES
+		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'CONTRIB1', 'Contributor One')
 	`)
 	require.NoError(t, err)
 
 	// Insert links
 	err = config.DB.Exec(ctx, `
-		INSERT INTO dz_links_current (pk, code, status, link_type, bandwidth_bps, side_a_pk, side_z_pk, contributor_pk, committed_rtt_ns) VALUES
-		('link-1', 'NYC-LAX-001', 'up', 'backbone', 10000000000, 'dev-nyc-1', 'dev-lax-1', 'contrib-1', 3000000),
-		('link-2', 'NYC-EDGE-001', 'up', 'access', 1000000000, 'dev-nyc-1', 'dev-nyc-2', NULL, 1000000),
-		('link-3', 'LAX-INTERNAL', 'down', 'internal', 100000000, 'dev-lax-1', NULL, NULL, NULL)
+		INSERT INTO dim_dz_links_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, link_type, bandwidth_bps, side_a_pk, side_z_pk, contributor_pk, committed_rtt_ns, tunnel_net, side_a_iface_name, side_z_iface_name, committed_jitter_ns, isis_delay_override_ns) VALUES
+		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'NYC-LAX-001', 'up', 'backbone', 10000000000, 'dev-nyc-1', 'dev-lax-1', 'contrib-1', 3000000, '', '', '', 0, 0),
+		('link-2', now(), now(), generateUUIDv4(), 0, 2, 'link-2', 'NYC-EDGE-001', 'up', 'access', 1000000000, 'dev-nyc-1', 'dev-nyc-2', '', 1000000, '', '', '', 0, 0),
+		('link-3', now(), now(), generateUUIDv4(), 0, 3, 'link-3', 'LAX-INTERNAL', 'down', 'internal', 100000000, 'dev-lax-1', '', '', 0, '', '', '', 0, 0)
 	`)
 	require.NoError(t, err)
 }
 
 func TestGetLinks_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
@@ -191,8 +76,8 @@ func TestGetLinks_Empty(t *testing.T) {
 
 func TestGetLinks_ReturnsAllLinks(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
@@ -210,8 +95,8 @@ func TestGetLinks_ReturnsAllLinks(t *testing.T) {
 
 func TestGetLinks_IncludesDeviceInfo(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
@@ -242,8 +127,8 @@ func TestGetLinks_IncludesDeviceInfo(t *testing.T) {
 
 func TestGetLinks_Pagination(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	// First page
@@ -275,8 +160,8 @@ func TestGetLinks_Pagination(t *testing.T) {
 
 func TestGetLinks_OrderedByCode(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
@@ -297,8 +182,8 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 
 func TestGetLink_NotFound(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/nonexistent", nil)
@@ -314,8 +199,8 @@ func TestGetLink_NotFound(t *testing.T) {
 
 func TestGetLink_MissingPK(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/", nil)
 	rctx := chi.NewRouteContext()
@@ -330,8 +215,8 @@ func TestGetLink_MissingPK(t *testing.T) {
 
 func TestGetLink_ReturnsDetails(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/link-1", nil)
@@ -372,8 +257,8 @@ func setupLinkHealthData(t *testing.T) {
 
 func TestGetLinkHealth_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
@@ -390,8 +275,8 @@ func TestGetLinkHealth_Empty(t *testing.T) {
 
 func TestGetLinkHealth_ReturnsHealth(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 	setupLinkHealthData(t)
 
@@ -413,8 +298,8 @@ func TestGetLinkHealth_ReturnsHealth(t *testing.T) {
 
 func TestGetLinkHealth_CalculatesSlaStatus(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 	setupLinkHealthData(t)
 
@@ -443,8 +328,8 @@ func TestGetLinkHealth_CalculatesSlaStatus(t *testing.T) {
 
 func TestGetLinkHealth_CountsByStatus(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 	setupLinkHealthData(t)
 
@@ -467,8 +352,8 @@ func TestGetLinkHealth_CountsByStatus(t *testing.T) {
 
 func TestGetLinkHealth_IsDownForcesCritical(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupLinksTables(t)
+	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+
 	insertLinksTestData(t)
 
 	ctx := t.Context()
