@@ -219,10 +219,6 @@ export function PublisherCheckPage() {
     nonBackupPublishers.filter(p => p.publishing_leader_shreds).length,
   [nonBackupPublishers])
 
-  const totalPublisherStake = useMemo(() =>
-    nonBackupPublishers.reduce((sum, p) => sum + p.activated_stake, 0),
-  [nonBackupPublishers])
-
   const publishingStake = useMemo(() =>
     nonBackupPublishers.filter(p => p.publishing_leader_shreds).reduce((sum, p) => sum + p.activated_stake, 0),
   [nonBackupPublishers])
@@ -320,10 +316,10 @@ export function PublisherCheckPage() {
           <div className="flex items-center gap-4">
             <div className="rounded-md bg-muted px-3 py-1.5 text-sm">
               <span className="text-muted-foreground">Total Publishers</span>{' '}
-              <span className="font-medium">{nonBackupPublishers.length}</span>
-              {totalPublisherStake > 0 && (
-                <span className="ml-1.5 text-muted-foreground" title={formatStakeExact(totalPublisherStake)}>
-                  ({formatStakePct(totalPublisherStake)} of stake)
+              <span className="font-medium">{data?.total_publishers ?? 0}</span>
+              {(data?.total_publisher_stake ?? 0) > 0 && (
+                <span className="ml-1.5 text-muted-foreground" title={formatStakeExact(data?.total_publisher_stake ?? 0)}>
+                  ({formatStakePct(data?.total_publisher_stake ?? 0)} of stake)
                 </span>
               )}
             </div>

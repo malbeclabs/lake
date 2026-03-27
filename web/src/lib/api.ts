@@ -4687,6 +4687,8 @@ export interface PublisherCheckResponse {
   epoch: number
   max_slot: number
   total_network_stake: number
+  total_publishers: number
+  total_publisher_stake: number
   publishers: PublisherCheckItem[]
 }
 
