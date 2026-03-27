@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	flag "github.com/spf13/pflag"
 
+	"github.com/malbeclabs/lake/admin/remotetables"
+
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
@@ -114,6 +116,9 @@ func run() error {
 	// Rollup worker configuration
 	noRollupFlag := flag.Bool("no-rollup", false, "Disable the embedded rollup worker (Temporal-based health bucket computation)")
 
+	// Remote tables configuration
+	setupRemoteTablesFlag := flag.Bool("setup-remote-tables", false, "Set up remote proxy tables on startup (or set SETUP_REMOTE_TABLES=true env var)")
+
 	// Readiness configuration
 	skipReadyWaitFlag := flag.Bool("skip-ready-wait", false, "Skip waiting for views to be ready (for preview/dev environments)")
 
@@ -138,6 +143,9 @@ func run() error {
 	}
 	if os.Getenv("CLICKHOUSE_SECURE") == "true" {
 		*clickhouseSecureFlag = true
+	}
+	if os.Getenv("SETUP_REMOTE_TABLES") == "true" {
+		*setupRemoteTablesFlag = true
 	}
 	if envDZEnv := os.Getenv("DZ_ENV"); envDZEnv != "" {
 		*dzEnvFlag = envDZEnv
@@ -301,6 +309,33 @@ func run() error {
 			return fmt.Errorf("failed to create database %s: %w", *clickhouseDatabaseFlag, err)
 		}
 		adminClient.Close()
+	}
+
+	// Set up remote proxy tables if requested (for dev use).
+	if *setupRemoteTablesFlag {
+		remoteHost := os.Getenv("REMOTE_CH_HOST")
+		remoteUser := os.Getenv("REMOTE_CH_USER")
+		remotePassword := os.Getenv("REMOTE_CH_PASSWORD")
+		remoteDatabase := os.Getenv("REMOTE_CH_DATABASE")
+		if remoteHost != "" && remoteUser != "" && remotePassword != "" {
+			log.Info("setting up remote proxy tables", "remote_host", remoteHost)
+			if err := remotetables.Setup(log, remotetables.Config{
+				LocalAddr:      *clickhouseAddrFlag,
+				LocalDatabase:  *clickhouseDatabaseFlag,
+				LocalUsername:  *clickhouseUsernameFlag,
+				LocalPassword:  *clickhousePasswordFlag,
+				LocalSecure:    *clickhouseSecureFlag,
+				RemoteHost:     remoteHost,
+				RemoteUser:     remoteUser,
+				RemotePassword: remotePassword,
+				RemoteDatabase: remoteDatabase,
+				Force:          true,
+			}); err != nil {
+				return fmt.Errorf("failed to set up remote tables: %w", err)
+			}
+		} else {
+			log.Info("skipping remote tables setup (REMOTE_CH_HOST, REMOTE_CH_USER, or REMOTE_CH_PASSWORD not set)")
+		}
 	}
 
 	log.Debug("clickhouse client initializing", "addr", *clickhouseAddrFlag, "database", *clickhouseDatabaseFlag, "username", *clickhouseUsernameFlag, "secure", *clickhouseSecureFlag)

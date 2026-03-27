@@ -79,7 +79,7 @@ docker_build_with_restart(
 )
 
 k8s_resource('api', labels=['app'],
-    resource_deps=['clickhouse', 'postgres', 'neo4j', 'temporal'],
+    resource_deps=['indexer', 'postgres', 'neo4j', 'temporal'],
     port_forwards=[p(8080)])
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ docker_build_with_restart(
         'indexer/', 'admin/',
         'api/', 'agent/', 'slack/', 'utils/',
     ],
-    entrypoint=['/usr/local/bin/lake-indexer', '--verbose', '--migrations-enable'],
+    entrypoint=['/usr/local/bin/lake-indexer', '--verbose', '--migrations-enable', '--setup-remote-tables'],
     live_update=[
         sync('.', '/lake'),
         run(
