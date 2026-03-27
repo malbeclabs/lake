@@ -21,6 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAKE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+KUBECONFIG_DIR="$LAKE_ROOT/.tmp/k8s"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,6 +31,14 @@ NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Isolated kubeconfig — never touches ~/.kube/config
+# ---------------------------------------------------------------------------
+use_isolated_kubeconfig() {
+    mkdir -p "$KUBECONFIG_DIR"
+    export KUBECONFIG="$KUBECONFIG_DIR/$CLUSTER_NAME.kubeconfig"
+}
 
 cluster_exists() {
     k3d cluster list 2>/dev/null | grep -q "^$CLUSTER_NAME "
@@ -140,7 +149,8 @@ ensure_registry() {
 ensure_cluster() {
     if cluster_exists; then
         info "Cluster '$CLUSTER_NAME' already exists."
-        kubectl config use-context "k3d-$CLUSTER_NAME" >/dev/null
+        # Re-export kubeconfig in case it was lost
+        k3d kubeconfig get "$CLUSTER_NAME" > "$KUBECONFIG" 2>/dev/null
         return
     fi
 
@@ -151,7 +161,10 @@ ensure_cluster() {
     k3d cluster create "$CLUSTER_NAME" \
         --volume "$geoip_dir:/data/geoip@server:0" \
         --registry-use k3d-lake-registry:5050 \
+        --kubeconfig-update-default=false \
         --wait
+    # Write kubeconfig to our isolated file
+    k3d kubeconfig get "$CLUSTER_NAME" > "$KUBECONFIG"
     info "Cluster created."
 }
 
@@ -234,6 +247,7 @@ cmd_down() {
     if cluster_exists; then
         info "Deleting cluster '$CLUSTER_NAME'..."
         k3d cluster delete "$CLUSTER_NAME"
+        rm -f "$KUBECONFIG_DIR/$CLUSTER_NAME.kubeconfig"
         info "Cluster deleted."
     else
         info "Cluster '$CLUSTER_NAME' does not exist — nothing to do."
@@ -246,7 +260,8 @@ cmd_status() {
         exit 0
     fi
 
-    kubectl config use-context "k3d-$CLUSTER_NAME" >/dev/null
+    # Ensure we have a valid kubeconfig for this cluster
+    k3d kubeconfig get "$CLUSTER_NAME" > "$KUBECONFIG" 2>/dev/null
     echo ""
     info "Cluster: $CLUSTER_NAME"
     echo ""
@@ -283,6 +298,7 @@ cmd_list() {
 ACTION="${1:-}"
 NAME_ARG="${2:-}"
 CLUSTER_NAME="$(resolve_cluster_name "$NAME_ARG")"
+use_isolated_kubeconfig
 
 case "$ACTION" in
     up)     cmd_up ;;
