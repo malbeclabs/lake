@@ -17,7 +17,6 @@ func TestGetStats_Empty(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	apitesting.SetSequentialFallback(t)
 
-
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
 
@@ -109,7 +108,6 @@ func TestGetStats_WithData(t *testing.T) {
 func TestGetStats_ResponseHeaders(t *testing.T) {
 	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
 	apitesting.SetSequentialFallback(t)
-
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
