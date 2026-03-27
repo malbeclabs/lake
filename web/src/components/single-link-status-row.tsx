@@ -64,7 +64,7 @@ export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkSta
   const hasAnyFcsErrors = data.hours.some(h => (h.side_a_in_fcs_errors ?? 0) > 0 || (h.side_z_in_fcs_errors ?? 0) > 0)
   const hasAnyDiscards = data.hours.some(h => (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 || (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0)
   const hasAnyCarrier = data.hours.some(h => (h.side_a_carrier_transitions ?? 0) > 0 || (h.side_z_carrier_transitions ?? 0) > 0)
-  const hasAnyNoData = data.hours.some(h => h.status === 'no_data')
+  const hasAnyNoData = data.hours.some(h => !h.collecting && h.status === 'no_data')
   const hasAnyISISDown = data.hours.some(h => h.isis_down)
 
   if (hasAnyPacketLoss) issueReasons.push('packet_loss')

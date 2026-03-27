@@ -36,6 +36,7 @@ function deviceHourToLinkHour(hour: DeviceHourStatus) {
   return {
     hour: hour.hour,
     status: hour.status,
+    collecting: hour.collecting,
     avg_loss_pct: 0, // Devices don't have packet loss
     avg_latency_us: 0, // Devices don't have latency
     samples: 0,
@@ -81,7 +82,7 @@ export function SingleDeviceStatusRow({ devicePk, timeRange = '24h' }: SingleDev
   const hasAnyDiscards = data.hours.some(h => h.in_discards > 0 || h.out_discards > 0)
   const hasAnyCarrier = data.hours.some(h => h.carrier_transitions > 0)
   const hasAnyDrained = data.issue_reasons?.includes('drained') ?? false
-  const hasAnyNoData = data.hours.some(h => h.status === 'no_data')
+  const hasAnyNoData = data.hours.some(h => !h.collecting && h.status === 'no_data')
 
   if (hasAnyErrors) issueReasons.push('interface_errors')
   if (hasAnyFcsErrors) issueReasons.push('fcs_errors')
