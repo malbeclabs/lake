@@ -130,12 +130,12 @@ func (a *Activities) refresh(ctx context.Context, name, key string, fn func(cont
 
 	result, err := fn(ctx)
 	if err != nil {
-		a.log.Info("cache refresh failed", "cache", name, "error", err)
+		a.log.Error("cache refresh failed", "cache", name, "error", err)
 		return
 	}
 
 	if err := handlers.WritePageCache(ctx, key, result); err != nil {
-		a.log.Info("cache write failed", "cache", name, "error", err)
+		a.log.Error("cache write failed", "cache", name, "error", err)
 		return
 	}
 

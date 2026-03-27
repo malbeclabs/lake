@@ -3253,7 +3253,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryEntityChangeEvents(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Info("cache: entity changes query unsuccessful", "detail", err)
+			slog.Error("cache: entity changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3266,7 +3266,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryIncidentEvents(ctx, startTime, endTime)
 		if err != nil {
-			slog.Info("cache: incident events query unsuccessful", "detail", err)
+			slog.Error("cache: incident events query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3279,7 +3279,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryValidatorEvents(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Info("cache: validator events query unsuccessful", "detail", err)
+			slog.Error("cache: validator events query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3292,7 +3292,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryGossipNetworkChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Info("cache: gossip network changes query unsuccessful", "detail", err)
+			slog.Error("cache: gossip network changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3305,7 +3305,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryVoteAccountChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Info("cache: vote account changes query unsuccessful", "detail", err)
+			slog.Error("cache: vote account changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3318,7 +3318,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := queryStakeChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Info("cache: stake changes query unsuccessful", "detail", err)
+			slog.Error("cache: stake changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3327,8 +3327,36 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 		return nil
 	})
 
+	// DZ stake attribution events
+	var dzStakeAttrEvents []TimelineEvent
+	g.Go(func() error {
+		events, err := queryDZStakeAttribution(ctx, startTime, endTime)
+		if err != nil {
+			slog.Error("cache: DZ stake attribution query failed", "error", err)
+			return nil
+		}
+		mu.Lock()
+		dzStakeAttrEvents = events
+		mu.Unlock()
+		return nil
+	})
+
+	// Current DZ total stake share
+	var dzTotalInfo dzTotalStakeInfo
+	g.Go(func() error {
+		info, err := queryCurrentDZTotalStakeShare(ctx)
+		if err != nil {
+			slog.Error("cache: DZ total stake share query failed", "error", err)
+			return nil
+		}
+		mu.Lock()
+		dzTotalInfo = info
+		mu.Unlock()
+		return nil
+	})
+
 	if err := g.Wait(); err != nil {
-		slog.Info("cache: timeline queries unsuccessful", "detail", err)
+		slog.Error("cache: timeline queries failed", "error", err)
 	}
 
 	// Merge all events
@@ -3339,6 +3367,86 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	allEvents = append(allEvents, gossipNetworkEvents...)
 	allEvents = append(allEvents, voteAccountEvents...)
 	allEvents = append(allEvents, stakeChangeEvents...)
+	allEvents = append(allEvents, dzStakeAttrEvents...)
+
+	// Populate DZ total stake share for validator events by walking backwards
+	if dzTotalInfo.DZTotalPct > 0 && dzTotalInfo.TotalStakeLamports > 0 {
+		sort.Slice(allEvents, func(i, j int) bool {
+			if allEvents[i].Timestamp != allEvents[j].Timestamp {
+				return allEvents[i].Timestamp > allEvents[j].Timestamp
+			}
+			return allEvents[i].ID > allEvents[j].ID
+		})
+
+		runningDZTotalPct := dzTotalInfo.DZTotalPct
+		totalStake := float64(dzTotalInfo.TotalStakeLamports)
+		for i := range allEvents {
+			if allEvents[i].EntityType != "validator" && allEvents[i].EntityType != "gossip_node" {
+				continue
+			}
+			details, ok := allEvents[i].Details.(ValidatorEventDetails)
+			if !ok {
+				continue
+			}
+
+			details.DZTotalStakeSharePct = math.Round(runningDZTotalPct*100) / 100
+
+			if details.ContributionChangeLamports != 0 {
+				changePct := float64(details.ContributionChangeLamports) * 100.0 / totalStake
+				if details.StakeShareChangePct == 0 {
+					details.StakeShareChangePct = math.Round(changePct*1000) / 1000
+				}
+				runningDZTotalPct -= changePct
+			}
+
+			allEvents[i].Details = details
+		}
+	}
+
+	// Deduplicate validator events (both queryValidatorEvents and queryDZStakeAttribution
+	// can produce the same event; keep the one with ContributionChangeLamports)
+	{
+		type dedupKey struct {
+			votePubkey string
+			eventType  string
+			timestamp  string
+		}
+		indices := make(map[dedupKey]int)
+		remove := make(map[int]bool)
+		for i, e := range allEvents {
+			if !strings.HasPrefix(e.EventType, "validator_") {
+				continue
+			}
+			if !strings.Contains(e.EventType, "_joined_") && !strings.Contains(e.EventType, "_left_") && !strings.Contains(e.EventType, "_stake_changed") {
+				continue
+			}
+			details, ok := e.Details.(ValidatorEventDetails)
+			if !ok || details.VotePubkey == "" {
+				continue
+			}
+			key := dedupKey{details.VotePubkey, e.EventType, e.Timestamp}
+			if prevIdx, exists := indices[key]; exists {
+				prevDetails := allEvents[prevIdx].Details.(ValidatorEventDetails)
+				if prevDetails.ContributionChangeLamports != 0 {
+					remove[i] = true
+				} else {
+					remove[prevIdx] = true
+					indices[key] = i
+				}
+			} else {
+				indices[key] = i
+			}
+		}
+		if len(remove) > 0 {
+			deduped := make([]TimelineEvent, 0, len(allEvents)-len(remove))
+			for i, e := range allEvents {
+				if !remove[i] {
+					deduped = append(deduped, e)
+				}
+			}
+			allEvents = deduped
+		}
+	}
 
 	// Filter by default entity types (exclude gossip_node)
 	filtered := make([]TimelineEvent, 0)
