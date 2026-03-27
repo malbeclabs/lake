@@ -72,12 +72,12 @@ type PublisherCheckItem struct {
 
 // PublisherCheckResponse is the response for the publisher check endpoint.
 type PublisherCheckResponse struct {
-	Epoch             uint64               `json:"epoch"`
-	MaxSlot           uint64               `json:"max_slot"`
-	TotalNetworkStake int64                `json:"total_network_stake"`
-	TotalPublishers      uint64               `json:"total_publishers"`
+	Epoch               uint64               `json:"epoch"`
+	MaxSlot             uint64               `json:"max_slot"`
+	TotalNetworkStake   int64                `json:"total_network_stake"`
+	TotalPublishers     uint64               `json:"total_publishers"`
 	TotalPublisherStake int64                `json:"total_publisher_stake"`
-	Publishers        []PublisherCheckItem `json:"publishers"`
+	Publishers          []PublisherCheckItem `json:"publishers"`
 }
 
 // GetPublisherCheck returns publisher status for all publishers in the current epoch,
@@ -345,8 +345,8 @@ func FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsPa
 	}
 
 	return &PublisherCheckResponse{
-		Epoch:             epoch,
-		MaxSlot:           maxSlot,
+		Epoch:               epoch,
+		MaxSlot:             maxSlot,
 		TotalNetworkStake:   totalNetworkStake,
 		TotalPublishers:     totalPublishers,
 		TotalPublisherStake: totalPublisherStake,
