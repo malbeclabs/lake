@@ -210,7 +210,7 @@ type TimelineBoundsResponse struct {
 }
 
 // GetTimelineBounds returns the available date range for timeline data
-func GetTimelineBounds(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTimelineBounds(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -231,7 +231,7 @@ func GetTimelineBounds(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var earliest, latest time.Time
-	err := envDB(ctx).QueryRow(ctx, query).Scan(&earliest, &latest)
+	err := a.envDB(ctx).QueryRow(ctx, query).Scan(&earliest, &latest)
 	if err != nil {
 		http.Error(w, "Failed to get timeline bounds", http.StatusInternalServerError)
 		return
@@ -575,10 +575,10 @@ func isDefaultTimelineRequest(r *http.Request) bool {
 }
 
 // GetTimeline returns timeline events across the network
-func GetTimeline(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
 	if isMainnet(r.Context()) && isDefaultTimelineRequest(r) {
-		if data, err := ReadPageCache(r.Context(), "timeline"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "timeline"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -617,7 +617,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Query consolidated entity changes (devices, links, metros, contributors, users)
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryEntityChangeEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
+			events, err := a.queryEntityChangeEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
 			if err != nil {
 				slog.Error("error querying entity changes", "error", err)
 				return nil // Don't fail the whole request
@@ -639,7 +639,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	if hasIncidentCategory {
 		g.Go(func() error {
-			events, err := queryIncidentEvents(ctx, params.StartTime, params.EndTime)
+			events, err := a.queryIncidentEvents(ctx, params.StartTime, params.EndTime)
 			if err != nil {
 				slog.Error("error querying incident events", "error", err)
 				return nil
@@ -668,7 +668,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Query validator/gossip node events
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryValidatorEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
+			events, err := a.queryValidatorEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
 			if err != nil {
 				slog.Error("error querying validator events", "error", err)
 				return nil
@@ -684,7 +684,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	var gossipNetworkEvents []TimelineEvent
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryGossipNetworkChanges(ctx, params.StartTime, params.EndTime)
+			events, err := a.queryGossipNetworkChanges(ctx, params.StartTime, params.EndTime)
 			if err != nil {
 				slog.Error("error querying gossip network changes", "error", err)
 				return nil
@@ -700,7 +700,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	var voteAccountEvents []TimelineEvent
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryVoteAccountChanges(ctx, params.StartTime, params.EndTime)
+			events, err := a.queryVoteAccountChanges(ctx, params.StartTime, params.EndTime)
 			if err != nil {
 				slog.Error("error querying vote account changes", "error", err)
 				return nil
@@ -716,7 +716,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	var stakeChangeEvents []TimelineEvent
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryStakeChanges(ctx, params.StartTime, params.EndTime)
+			events, err := a.queryStakeChanges(ctx, params.StartTime, params.EndTime)
 			if err != nil {
 				slog.Error("error querying stake changes", "error", err)
 				return nil
@@ -732,7 +732,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	var dzStakeAttrEvents []TimelineEvent
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			events, err := queryDZStakeAttribution(ctx, params.StartTime, params.EndTime)
+			events, err := a.queryDZStakeAttribution(ctx, params.StartTime, params.EndTime)
 			if err != nil {
 				slog.Error("error querying DZ stake attribution", "error", err)
 				return nil
@@ -748,7 +748,7 @@ func GetTimeline(w http.ResponseWriter, r *http.Request) {
 	var dzTotalInfo dzTotalStakeInfo
 	if shouldIncludeCategory("state_change") {
 		g.Go(func() error {
-			info, err := queryCurrentDZTotalStakeShare(ctx)
+			info, err := a.queryCurrentDZTotalStakeShare(ctx)
 			if err != nil {
 				slog.Error("error querying DZ total stake share", "error", err)
 				return nil
@@ -1096,7 +1096,7 @@ type entityChangeRow struct {
 }
 
 // queryEntityChanges queries the entity_changes_v view for all entity state changes.
-func queryEntityChanges(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]entityChangeRow, error) {
+func (a *API) queryEntityChanges(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]entityChangeRow, error) {
 	internalFilter := ""
 	if !includeInternal && len(internalUserPubkeys) > 0 {
 		internalFilter = fmt.Sprintf(" AND NOT (entity_type = 'user' AND entity_code IN ('%s'))", strings.Join(internalUserPubkeys, "','"))
@@ -1112,7 +1112,7 @@ func queryEntityChanges(ctx context.Context, startTime, endTime time.Time, inclu
 	`, internalFilter)
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -1134,7 +1134,7 @@ func queryEntityChanges(ctx context.Context, startTime, endTime time.Time, inclu
 }
 
 // fetchDeviceChangeDetails batch-fetches device entity details for the given (entity_pk, snapshot_ts) pairs.
-func fetchDeviceChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+func (a *API) fetchDeviceChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -1180,7 +1180,7 @@ func fetchDeviceChangeDetails(ctx context.Context, rows []entityChangeRow) (map[
 	}
 
 	start := time.Now()
-	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	dbRows, err := a.envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
@@ -1279,7 +1279,7 @@ func fetchDeviceChangeDetails(ctx context.Context, rows []entityChangeRow) (map[
 }
 
 // fetchLinkChangeDetails batch-fetches link entity details for the given feed rows.
-func fetchLinkChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+func (a *API) fetchLinkChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -1335,7 +1335,7 @@ func fetchLinkChangeDetails(ctx context.Context, rows []entityChangeRow) (map[st
 	`
 
 	start := time.Now()
-	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	dbRows, err := a.envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
@@ -1475,7 +1475,7 @@ func fetchLinkChangeDetails(ctx context.Context, rows []entityChangeRow) (map[st
 }
 
 // fetchMetroChangeDetails batch-fetches metro entity details for the given feed rows.
-func fetchMetroChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+func (a *API) fetchMetroChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -1506,7 +1506,7 @@ func fetchMetroChangeDetails(ctx context.Context, rows []entityChangeRow) (map[s
 	`
 
 	start := time.Now()
-	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	dbRows, err := a.envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
@@ -1580,7 +1580,7 @@ func fetchMetroChangeDetails(ctx context.Context, rows []entityChangeRow) (map[s
 }
 
 // fetchContributorChangeDetails batch-fetches contributor entity details for the given feed rows.
-func fetchContributorChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+func (a *API) fetchContributorChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -1610,7 +1610,7 @@ func fetchContributorChangeDetails(ctx context.Context, rows []entityChangeRow) 
 	`
 
 	start := time.Now()
-	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	dbRows, err := a.envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
@@ -1675,7 +1675,7 @@ func fetchContributorChangeDetails(ctx context.Context, rows []entityChangeRow) 
 }
 
 // fetchUserChangeDetails batch-fetches user entity details for the given feed rows.
-func fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+func (a *API) fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -1716,7 +1716,7 @@ func fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow) (map[st
 	`
 
 	start := time.Now()
-	dbRows, err := envDB(ctx).Query(ctx, query, pks, pks, tsList)
+	dbRows, err := a.envDB(ctx).Query(ctx, query, pks, pks, tsList)
 	if err != nil {
 		return nil, err
 	}
@@ -1815,7 +1815,7 @@ func fetchUserChangeDetails(ctx context.Context, rows []entityChangeRow) (map[st
 }
 
 // batchFetchEntityDetails fetches full entity details for all feed rows, grouped by entity type.
-func batchFetchEntityDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
+func (a *API) batchFetchEntityDetails(ctx context.Context, rows []entityChangeRow) (map[string]EntityChangeDetails, error) {
 	// Group rows by entity type
 	grouped := make(map[string][]entityChangeRow)
 	for _, r := range rows {
@@ -1842,19 +1842,19 @@ func batchFetchEntityDetails(ctx context.Context, rows []entityChangeRow) (map[s
 	}
 
 	if typeRows, ok := grouped["device"]; ok {
-		fetchAndMerge(fetchDeviceChangeDetails, typeRows)
+		fetchAndMerge(a.fetchDeviceChangeDetails, typeRows)
 	}
 	if typeRows, ok := grouped["link"]; ok {
-		fetchAndMerge(fetchLinkChangeDetails, typeRows)
+		fetchAndMerge(a.fetchLinkChangeDetails, typeRows)
 	}
 	if typeRows, ok := grouped["metro"]; ok {
-		fetchAndMerge(fetchMetroChangeDetails, typeRows)
+		fetchAndMerge(a.fetchMetroChangeDetails, typeRows)
 	}
 	if typeRows, ok := grouped["contributor"]; ok {
-		fetchAndMerge(fetchContributorChangeDetails, typeRows)
+		fetchAndMerge(a.fetchContributorChangeDetails, typeRows)
 	}
 	if typeRows, ok := grouped["user"]; ok {
-		fetchAndMerge(fetchUserChangeDetails, typeRows)
+		fetchAndMerge(a.fetchUserChangeDetails, typeRows)
 	}
 
 	if err := g.Wait(); err != nil {
@@ -1991,8 +1991,8 @@ func buildEntityChangeSeverity(row entityChangeRow) string {
 
 // queryEntityChangeEvents queries the entity_changes_v view and batch-fetches details,
 // returning fully assembled TimelineEvent slice.
-func queryEntityChangeEvents(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
-	feedRows, err := queryEntityChanges(ctx, startTime, endTime, includeInternal)
+func (a *API) queryEntityChangeEvents(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
+	feedRows, err := a.queryEntityChanges(ctx, startTime, endTime, includeInternal)
 	if err != nil {
 		return nil, fmt.Errorf("entity changes feed: %w", err)
 	}
@@ -2000,7 +2000,7 @@ func queryEntityChangeEvents(ctx context.Context, startTime, endTime time.Time, 
 		return nil, nil
 	}
 
-	detailMap, err := batchFetchEntityDetails(ctx, feedRows)
+	detailMap, err := a.batchFetchEntityDetails(ctx, feedRows)
 	if err != nil {
 		return nil, fmt.Errorf("entity changes details: %w", err)
 	}
@@ -2062,7 +2062,7 @@ var incidentCategories = []string{
 	"no_data", "isis_down", "isis_overload", "isis_unreachable",
 }
 
-func queryIncidentEvents(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+func (a *API) queryIncidentEvents(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	query := `
 		SELECT 'link' AS entity_type, entity_pk, incident_type, started_at, ended_at,
 			is_ongoing, peak_value, duration_seconds,
@@ -2084,7 +2084,7 @@ func queryIncidentEvents(ctx context.Context, startTime, endTime time.Time) ([]T
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, endTime, startTime, endTime, startTime)
+	rows, err := a.envDB(ctx).Query(ctx, query, endTime, startTime, endTime, startTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2226,7 +2226,7 @@ func incidentTypeLabel(incidentType string) string {
 	}
 }
 
-func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
+func (a *API) queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, includeInternal bool) ([]TimelineEvent, error) {
 	// Build internal user filter
 	internalFilter := ""
 	if !includeInternal && len(internalUserPubkeys) > 0 {
@@ -2324,7 +2324,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 
 	start := time.Now()
 	// Query has 4 pairs of time parameters: gossip_ips, latest_gossip, latest_vote, and final WHERE
-	rows, err := envDB(ctx).Query(ctx, query,
+	rows, err := a.envDB(ctx).Query(ctx, query,
 		startTime, endTime, // gossip_ips CTE
 		startTime, endTime, // latest_gossip CTE
 		startTime, endTime, // latest_vote CTE
@@ -2434,7 +2434,7 @@ func queryValidatorEvents(ctx context.Context, startTime, endTime time.Time, inc
 
 // queryGossipNetworkChanges detects when gossip nodes appear or disappear from the Solana network
 // This is separate from DZ user status - it tracks the Solana gossip network itself
-func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+func (a *API) queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Find gossip nodes that disappeared from the network
 	// by tracking node PUBKEYS (not IPs) that are no longer in the current gossip table
 	// This correctly handles validators that change IP addresses
@@ -2492,7 +2492,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2578,7 +2578,7 @@ func queryGossipNetworkChanges(ctx context.Context, startTime, endTime time.Time
 	return events, nil
 }
 
-func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+func (a *API) queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Track validators (vote accounts) joining or leaving the network
 	// A validator "joins" when their vote_pubkey first appears in the vote accounts table
 	// A validator "leaves" when their vote_pubkey is no longer in the current vote accounts table
@@ -2672,7 +2672,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime, startTime, endTime)
+	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2749,7 +2749,7 @@ func queryVoteAccountChanges(ctx context.Context, startTime, endTime time.Time) 
 	return events, nil
 }
 
-func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+func (a *API) queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Track significant stake changes for validators
 	// A significant change is >10k SOL or >5% change
 	query := `
@@ -2820,7 +2820,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 	`
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query, startTime, endTime)
+	rows, err := a.envDB(ctx).Query(ctx, query, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -2914,7 +2914,7 @@ func queryStakeChanges(ctx context.Context, startTime, endTime time.Time) ([]Tim
 
 // queryDZStakeAttribution finds snapshots where the DZ total stake changed significantly
 // and attributes the change to specific validators (connected, disconnected, stake changed, or left).
-func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
+func (a *API) queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) ([]TimelineEvent, error) {
 	// Phase 1: Find interesting snapshot pairs where DZ total changed significantly
 	querySnapshots := `
 		WITH total_stake AS (
@@ -2957,7 +2957,7 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 	`
 
 	start := time.Now()
-	snapRows, err := envDB(ctx).Query(ctx, querySnapshots, startTime, endTime)
+	snapRows, err := a.envDB(ctx).Query(ctx, querySnapshots, startTime, endTime)
 	if err != nil {
 		return nil, err
 	}
@@ -3022,7 +3022,7 @@ func queryDZStakeAttribution(ctx context.Context, startTime, endTime time.Time) 
 	`, tsInClause)
 
 	start2 := time.Now()
-	valRows, err := envDB(ctx).Query(ctx, queryValidators)
+	valRows, err := a.envDB(ctx).Query(ctx, queryValidators)
 	if err != nil {
 		return nil, err
 	}
@@ -3195,7 +3195,7 @@ type dzTotalStakeInfo struct {
 
 // queryCurrentDZTotalStakeShare returns the current DZ-connected total stake
 // share as a percentage of total network stake, plus the total network stake.
-func queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error) {
+func (a *API) queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error) {
 	query := `
 		WITH total_stake AS (
 			SELECT sum(activated_stake_lamports) as total
@@ -3214,7 +3214,7 @@ func queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error
 	`
 
 	var info dzTotalStakeInfo
-	err := envDB(ctx).QueryRow(ctx, query).Scan(&info.DZTotalPct, &info.TotalStakeLamports)
+	err := a.envDB(ctx).QueryRow(ctx, query).Scan(&info.DZTotalPct, &info.TotalStakeLamports)
 	if err != nil {
 		return dzTotalStakeInfo{}, err
 	}
@@ -3224,7 +3224,7 @@ func queryCurrentDZTotalStakeShare(ctx context.Context) (dzTotalStakeInfo, error
 // FetchDefaultTimelineData fetches timeline data with default parameters for caching.
 // This returns the same data as GetTimeline with default params: 24h range, all categories,
 // all entity types except gossip_node, dz_filter="on_dz", limit=50, offset=0.
-func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
+func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	now := time.Now().UTC()
 	startTime := now.Add(-24 * time.Hour)
 	endTime := now
@@ -3251,7 +3251,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Consolidated entity changes (devices, links, metros, contributors, users)
 	g.Go(func() error {
-		events, err := queryEntityChangeEvents(ctx, startTime, endTime, false)
+		events, err := a.queryEntityChangeEvents(ctx, startTime, endTime, false)
 		if err != nil {
 			slog.Error("cache: entity changes query failed", "error", err)
 			return nil
@@ -3264,7 +3264,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Incident events (packet loss, errors, discards, carrier, no_data, isis_down, etc.)
 	g.Go(func() error {
-		events, err := queryIncidentEvents(ctx, startTime, endTime)
+		events, err := a.queryIncidentEvents(ctx, startTime, endTime)
 		if err != nil {
 			slog.Error("cache: incident events query failed", "error", err)
 			return nil
@@ -3277,7 +3277,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Validator events (exclude internal users by default)
 	g.Go(func() error {
-		events, err := queryValidatorEvents(ctx, startTime, endTime, false)
+		events, err := a.queryValidatorEvents(ctx, startTime, endTime, false)
 		if err != nil {
 			slog.Error("cache: validator events query failed", "error", err)
 			return nil
@@ -3290,7 +3290,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Gossip network changes
 	g.Go(func() error {
-		events, err := queryGossipNetworkChanges(ctx, startTime, endTime)
+		events, err := a.queryGossipNetworkChanges(ctx, startTime, endTime)
 		if err != nil {
 			slog.Error("cache: gossip network changes query failed", "error", err)
 			return nil
@@ -3303,7 +3303,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Vote account changes
 	g.Go(func() error {
-		events, err := queryVoteAccountChanges(ctx, startTime, endTime)
+		events, err := a.queryVoteAccountChanges(ctx, startTime, endTime)
 		if err != nil {
 			slog.Error("cache: vote account changes query failed", "error", err)
 			return nil
@@ -3316,7 +3316,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 
 	// Stake changes
 	g.Go(func() error {
-		events, err := queryStakeChanges(ctx, startTime, endTime)
+		events, err := a.queryStakeChanges(ctx, startTime, endTime)
 		if err != nil {
 			slog.Error("cache: stake changes query failed", "error", err)
 			return nil
@@ -3330,7 +3330,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	// DZ stake attribution events
 	var dzStakeAttrEvents []TimelineEvent
 	g.Go(func() error {
-		events, err := queryDZStakeAttribution(ctx, startTime, endTime)
+		events, err := a.queryDZStakeAttribution(ctx, startTime, endTime)
 		if err != nil {
 			slog.Error("cache: DZ stake attribution query failed", "error", err)
 			return nil
@@ -3344,7 +3344,7 @@ func FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	// Current DZ total stake share
 	var dzTotalInfo dzTotalStakeInfo
 	g.Go(func() error {
-		info, err := queryCurrentDZTotalStakeShare(ctx)
+		info, err := a.queryCurrentDZTotalStakeShare(ctx)
 		if err != nil {
 			slog.Error("cache: DZ total stake share query failed", "error", err)
 			return nil

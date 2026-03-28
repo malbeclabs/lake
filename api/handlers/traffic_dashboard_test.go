@@ -161,7 +161,7 @@ func TestTrafficDashboardStress(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardStress(rr, req)
+			testAPI.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -194,7 +194,7 @@ func TestTrafficDashboardStress_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardStress(rr, req)
+	testAPI.GetTrafficDashboardStress(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -236,7 +236,7 @@ func TestTrafficDashboardTop(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardTop(rr, req)
+			testAPI.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -258,7 +258,7 @@ func TestTrafficDashboardTop_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardTop(rr, req)
+	testAPI.GetTrafficDashboardTop(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -288,7 +288,7 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardTop(rr, req)
+			testAPI.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -322,7 +322,7 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardTop(rr, req)
+			testAPI.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -353,7 +353,7 @@ func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardStress(rr, req)
+			testAPI.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -371,7 +371,7 @@ func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h&intf=Port-Channel1000", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardBurstiness(rr, req)
+	testAPI.GetTrafficDashboardBurstiness(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -614,7 +614,7 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardTop(rr, req)
+			testAPI.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -651,7 +651,7 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardStress(rr, req)
+			testAPI.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -704,7 +704,7 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardBurstiness(rr, req)
+			testAPI.GetTrafficDashboardBurstiness(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -749,7 +749,7 @@ func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardStress(rr, req)
+			testAPI.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -797,7 +797,7 @@ func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardTop(rr, req)
+			testAPI.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -850,7 +850,7 @@ func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardBurstiness(rr, req)
+			testAPI.GetTrafficDashboardBurstiness(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -876,7 +876,7 @@ func TestTrafficDashboardHealth_WithUserKind(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=tunnel&user_kind=ibrl", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardHealth(rr, req)
+	testAPI.GetTrafficDashboardHealth(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -913,7 +913,7 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardDrilldown(rr, req)
+			testAPI.GetTrafficDashboardDrilldown(rr, req)
 
 			require.Equal(t, tt.status, rr.Code, "body: %s", rr.Body.String())
 
@@ -934,7 +934,7 @@ func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown?time_range=1h&device_pk=nonexistent", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardDrilldown(rr, req)
+	testAPI.GetTrafficDashboardDrilldown(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -969,7 +969,7 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardBurstiness(rr, req)
+			testAPI.GetTrafficDashboardBurstiness(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1049,7 +1049,7 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetFieldValues(rr, req)
+			testAPI.GetFieldValues(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1104,7 +1104,7 @@ func TestFieldValues_WithTimeRange(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetFieldValues(rr, req)
+			testAPI.GetFieldValues(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1127,7 +1127,7 @@ func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardBurstiness(rr, req)
+	testAPI.GetTrafficDashboardBurstiness(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1232,7 +1232,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
 		rr := httptest.NewRecorder()
 
-		handlers.GetTrafficDashboardHealth(rr, req)
+		testAPI.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1251,7 +1251,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_errors&dir=desc", nil)
 		rr := httptest.NewRecorder()
 
-		handlers.GetTrafficDashboardHealth(rr, req)
+		testAPI.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1267,7 +1267,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_carrier_transitions&dir=desc", nil)
 		rr := httptest.NewRecorder()
 
-		handlers.GetTrafficDashboardHealth(rr, req)
+		testAPI.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1283,7 +1283,7 @@ func TestTrafficDashboardHealth(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=link", nil)
 		rr := httptest.NewRecorder()
 
-		handlers.GetTrafficDashboardHealth(rr, req)
+		testAPI.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1302,7 +1302,7 @@ func TestTrafficDashboardHealth_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficDashboardHealth(rr, req)
+	testAPI.GetTrafficDashboardHealth(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1322,7 +1322,7 @@ func TestGetTrafficData_RawPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=1h&agg=max", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficData(rr, req)
+	testAPI.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1342,7 +1342,7 @@ func TestGetTrafficData_RollupPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=12h&agg=max", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficData(rr, req)
+	testAPI.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1362,7 +1362,7 @@ func TestGetTrafficData_ExplicitBucket_Raw(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=3h&bucket=30+SECOND", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficData(rr, req)
+	testAPI.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1380,7 +1380,7 @@ func TestGetTrafficData_ExplicitBucket_Rollup(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=3h&bucket=30+MINUTE", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetTrafficData(rr, req)
+	testAPI.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1408,7 +1408,7 @@ func TestGetTrafficData_Packets(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficData(rr, req)
+			testAPI.GetTrafficData(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1437,7 +1437,7 @@ func TestGetTrafficData_AvgAgg(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficData(rr, req)
+			testAPI.GetTrafficData(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1458,7 +1458,7 @@ func TestGetDiscardsData_RawPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/discards?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetDiscardsData(rr, req)
+	testAPI.GetDiscardsData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1475,7 +1475,7 @@ func TestGetDiscardsData_RollupPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/discards?time_range=12h", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetDiscardsData(rr, req)
+	testAPI.GetDiscardsData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1510,7 +1510,7 @@ func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardStress(rr, req)
+			testAPI.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1544,7 +1544,7 @@ func TestTrafficDashboardDrilldown_RawVsRollup(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			handlers.GetTrafficDashboardDrilldown(rr, req)
+			testAPI.GetTrafficDashboardDrilldown(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 

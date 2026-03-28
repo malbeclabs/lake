@@ -42,8 +42,15 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 		"testnet":      "lake_testnet",
 	}
 	config.SetDatabase("lake_mainnet")
+	// Sync testAPI with the new config
+	origAPIEnvDatabases := testAPI.EnvDatabases
+	origAPIDatabase := testAPI.Database
+	testAPI.EnvDatabases = config.EnvDatabases
+	testAPI.Database = "lake_mainnet"
 	t.Cleanup(func() {
 		config.EnvDatabases = origEnvDatabases
+		testAPI.EnvDatabases = origAPIEnvDatabases
+		testAPI.Database = origAPIDatabase
 	})
 
 	tests := []struct {
@@ -59,7 +66,7 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := handlers.ContextWithEnv(context.Background(), tt.env)
-			assert.Equal(t, tt.expected, handlers.DatabaseForEnvFromContext(ctx))
+			assert.Equal(t, tt.expected, testAPI.DatabaseForEnvFromContext(ctx))
 		})
 	}
 }
@@ -69,7 +76,7 @@ func TestBuildEnvContext(t *testing.T) {
 
 	t.Run("mainnet mentions other envs and cross-query syntax", func(t *testing.T) {
 		t.Parallel()
-		result := handlers.BuildEnvContext(handlers.EnvMainnet)
+		result := handlers.BuildEnvContext(handlers.EnvMainnet, "default")
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "mainnet-beta")
 		assert.Contains(t, result, "lake_devnet")
@@ -79,7 +86,7 @@ func TestBuildEnvContext(t *testing.T) {
 
 	t.Run("devnet requires database prefix", func(t *testing.T) {
 		t.Parallel()
-		result := handlers.BuildEnvContext(handlers.EnvDevnet)
+		result := handlers.BuildEnvContext(handlers.EnvDevnet, "default")
 		assert.NotEmpty(t, result)
 		assert.Contains(t, result, "devnet")
 		assert.Contains(t, result, "lake_devnet.")
@@ -89,8 +96,8 @@ func TestBuildEnvContext(t *testing.T) {
 
 	t.Run("different envs produce different context", func(t *testing.T) {
 		t.Parallel()
-		mainnet := handlers.BuildEnvContext(handlers.EnvMainnet)
-		devnet := handlers.BuildEnvContext(handlers.EnvDevnet)
+		mainnet := handlers.BuildEnvContext(handlers.EnvMainnet, "default")
+		devnet := handlers.BuildEnvContext(handlers.EnvDevnet, "default")
 		assert.NotEqual(t, mainnet, devnet)
 	})
 }
@@ -140,7 +147,7 @@ func TestRequireNeo4jMiddleware(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := handlers.RequireNeo4jMiddleware(inner)
+	handler := testAPI.RequireNeo4jMiddleware(inner)
 
 	t.Run("returns 503 for non-mainnet", func(t *testing.T) {
 		t.Parallel()
@@ -157,8 +164,13 @@ func TestRequireNeo4jMiddleware(t *testing.T) {
 	t.Run("returns 503 when Neo4jClient is nil", func(t *testing.T) {
 		t.Parallel()
 		origClient := config.Neo4jClient
+		origAPIClient := testAPI.Neo4jClient
 		config.Neo4jClient = nil
-		t.Cleanup(func() { config.Neo4jClient = origClient })
+		testAPI.Neo4jClient = nil
+		t.Cleanup(func() {
+			config.Neo4jClient = origClient
+			testAPI.Neo4jClient = origAPIClient
+		})
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		ctx := handlers.ContextWithEnv(req.Context(), handlers.EnvMainnet)

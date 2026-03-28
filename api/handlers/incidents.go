@@ -256,10 +256,10 @@ func isDefaultIncidentsRequest(r *http.Request) bool {
 }
 
 // GetLinkIncidents returns incidents for links with active and drained views
-func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a default request that can be served from cache
 	if isMainnet(r.Context()) && isDefaultIncidentsRequest(r) {
-		if data, err := ReadPageCache(r.Context(), "incidents"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "incidents"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -317,7 +317,7 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 		UseRaw:            isRawSource(ctx),
 	}
 
-	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, envDB(ctx), params)
+	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
 		slog.Error("failed to fetch incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch incidents: %v", err), http.StatusInternalServerError)
@@ -325,9 +325,9 @@ func GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrich counter incidents with affected interface names
-	enrichLinkIncidentsWithInterfacesRollup(ctx, envDB(ctx), allIncidents)
+	enrichLinkIncidentsWithInterfacesRollup(ctx, a.envDB(ctx), allIncidents)
 
-	response := buildLinkIncidentsResponse(ctx, envDB(ctx), allIncidents, filters)
+	response := buildLinkIncidentsResponse(ctx, a.envDB(ctx), allIncidents, filters)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
@@ -406,7 +406,7 @@ func buildLinkIncidentsResponse(ctx context.Context, conn driver.Conn, allIncide
 }
 
 // GetLinkIncidentsCSV returns link incidents as a CSV download
-func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
 		timeRange = "24h"
@@ -456,13 +456,13 @@ func GetLinkIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		UseRaw:            isRawSource(ctx),
 	}
 
-	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, envDB(ctx), params)
+	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to fetch incidents: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	enrichLinkIncidentsWithInterfacesRollup(ctx, envDB(ctx), allIncidents)
+	enrichLinkIncidentsWithInterfacesRollup(ctx, a.envDB(ctx), allIncidents)
 
 	sort.Slice(allIncidents, func(i, j int) bool {
 		return allIncidents[i].StartedAt > allIncidents[j].StartedAt
@@ -643,7 +643,7 @@ func buildDrainedLinksInfo(linkMeta map[string]linkMetadataWithStatus, incidents
 }
 
 // FetchDefaultIncidentsData fetches incidents data with default parameters for caching.
-func FetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
+func (a *API) FetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 	params := incidentQueryParams{
 		Duration:          24 * time.Hour,
 		BucketInterval:    bucketIntervalForDuration(24 * time.Hour),
@@ -657,14 +657,14 @@ func FetchDefaultIncidentsData(ctx context.Context) *LinkIncidentsResponse {
 		TypeFilter:        "all",
 	}
 
-	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, envDB(ctx), params)
+	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
 		slog.Info("cache: incidents rollup fetch unsuccessful", "detail", err)
 		return nil
 	}
 
-	enrichLinkIncidentsWithInterfacesRollup(ctx, envDB(ctx), allIncidents)
+	enrichLinkIncidentsWithInterfacesRollup(ctx, a.envDB(ctx), allIncidents)
 
-	resp := buildLinkIncidentsResponse(ctx, envDB(ctx), allIncidents, nil)
+	resp := buildLinkIncidentsResponse(ctx, a.envDB(ctx), allIncidents, nil)
 	return &resp
 }

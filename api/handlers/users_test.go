@@ -64,7 +64,7 @@ func TestGetUser_ReturnsDetail(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUser(rr, req)
+	testAPI.GetUser(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -100,7 +100,7 @@ func TestGetUser_IsValidatorFalseWhenNoGossipMatch(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUser(rr, req)
+	testAPI.GetUser(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -146,7 +146,7 @@ func TestGetUser_IsValidatorTrueWhenMatched(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUser(rr, req)
+	testAPI.GetUser(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -169,7 +169,7 @@ func TestGetUser_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUser(rr, req)
+	testAPI.GetUser(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -197,7 +197,7 @@ func TestGetUserTraffic_ReturnsData(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUserTraffic(rr, req)
+	testAPI.GetUserTraffic(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -227,7 +227,7 @@ func TestGetUserTraffic_Empty(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUserTraffic(rr, req)
+	testAPI.GetUserTraffic(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -246,7 +246,7 @@ func TestGetUserTraffic_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetUserTraffic(rr, req)
+	testAPI.GetUserTraffic(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }

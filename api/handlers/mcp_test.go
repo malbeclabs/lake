@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/malbeclabs/lake/api/config"
-	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -51,7 +50,7 @@ func parseSSEResponse(body string) (map[string]any, error) {
 }
 
 func TestMCPHandler_Initialize(t *testing.T) {
-	handler := handlers.InitMCP()
+	handler := testAPI.InitMCP()
 	require.NotNil(t, handler)
 
 	// MCP initialize request (JSON-RPC 2.0)
@@ -98,7 +97,7 @@ func TestMCPHandler_Initialize(t *testing.T) {
 }
 
 func TestMCPHandler_ListTools(t *testing.T) {
-	handler := handlers.InitMCP()
+	handler := testAPI.InitMCP()
 	require.NotNil(t, handler)
 
 	// First initialize
@@ -166,7 +165,7 @@ func TestMCPHandler_ListTools(t *testing.T) {
 }
 
 func TestMCPHandler_ListResources(t *testing.T) {
-	handler := handlers.InitMCP()
+	handler := testAPI.InitMCP()
 	require.NotNil(t, handler)
 
 	// First initialize
@@ -231,7 +230,7 @@ func TestMCPHandler_ListResources(t *testing.T) {
 }
 
 func TestMCPHandler_ListPrompts(t *testing.T) {
-	handler := handlers.InitMCP()
+	handler := testAPI.InitMCP()
 	require.NotNil(t, handler)
 
 	// First initialize
@@ -295,7 +294,7 @@ func TestMCPHandler_ListPrompts(t *testing.T) {
 
 // mcpSession initializes an MCP session and returns the handler and session ID.
 func mcpSession(t *testing.T) (http.Handler, string) {
-	handler := handlers.InitMCP()
+	handler := testAPI.InitMCP()
 	require.NotNil(t, handler)
 
 	initRequest := map[string]any{
@@ -451,7 +450,7 @@ func TestMCPHandler_ExecuteSQL_InvalidQuery(t *testing.T) {
 }
 
 func TestMCPHandler_ExecuteCypher_EmptyResults(t *testing.T) {
-	apitesting.SetupTestNeo4j(t, testNeo4jDB)
+	setupTestNeo4j(t)
 
 	handler, sessionID := mcpSession(t)
 
@@ -498,6 +497,8 @@ func TestMCPHandler_ExecuteCypher_WithData(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	handler, sessionID := mcpSession(t)
 

@@ -37,7 +37,7 @@ type LinkListItem struct {
 	LossPercent     float64 `json:"loss_percent"`
 }
 
-func GetLinks(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -47,7 +47,7 @@ func GetLinks(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_links_current`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		slog.Error("links count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -107,7 +107,7 @@ func GetLinks(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -237,7 +237,7 @@ type TopologyLinkHealthResponse struct {
 	UnknownCount  int                  `json:"unknown_count"`
 }
 
-func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -276,7 +276,7 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 		WHERE l.side_a_pk != '' AND l.side_z_pk != ''
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
+	rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -388,7 +388,7 @@ func GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func GetLink(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -402,7 +402,7 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 	query := linkDetailQuery()
 
 	var link LinkDetail
-	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&link.PK,
 		&link.Code,
 		&link.Status,

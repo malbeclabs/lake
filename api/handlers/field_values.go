@@ -227,7 +227,7 @@ func BuildScopedFieldValuesQuery(entity, field string, cfg fieldConfig, r *http.
 }
 
 // GetFieldValues returns distinct values for a given entity field
-func GetFieldValues(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -272,7 +272,7 @@ func GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

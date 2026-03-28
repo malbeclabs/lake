@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/malbeclabs/lake/api/config"
 )
 
 // panicRows implements driver.Rows but panics on any method call.
@@ -34,15 +33,14 @@ func (m *mockConn) Query(ctx context.Context, query string, args ...any) (driver
 }
 
 func TestSafeQueryRows_ErrorReturnsNilRows(t *testing.T) {
-	orig := config.DB
-	defer func() { config.DB = orig }()
-
-	config.DB = &mockConn{
-		rows: panicRows{}, // would panic if touched
-		err:  errors.New("query timeout"),
+	api := &API{
+		DB: &mockConn{
+			rows: panicRows{}, // would panic if touched
+			err:  errors.New("query timeout"),
+		},
 	}
 
-	rows, err := safeQueryRows(context.Background(), "SELECT 1")
+	rows, err := api.safeQueryRows(context.Background(), "SELECT 1")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -52,17 +50,16 @@ func TestSafeQueryRows_ErrorReturnsNilRows(t *testing.T) {
 }
 
 func TestSafeQueryRows_SuccessPassesRows(t *testing.T) {
-	orig := config.DB
-	defer func() { config.DB = orig }()
-
 	// Use a non-nil sentinel to verify pass-through (we won't call methods on it)
 	sentinel := panicRows{}
-	config.DB = &mockConn{
-		rows: sentinel,
-		err:  nil,
+	api := &API{
+		DB: &mockConn{
+			rows: sentinel,
+			err:  nil,
+		},
 	}
 
-	rows, err := safeQueryRows(context.Background(), "SELECT 1")
+	rows, err := api.safeQueryRows(context.Background(), "SELECT 1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

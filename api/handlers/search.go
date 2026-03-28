@@ -116,14 +116,14 @@ func buildSearchCondition(term string, fields []string) (string, []any) {
 }
 
 // searchDevices searches for devices matching the query
-func searchDevices(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchDevices(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	// Count query uses unqualified names (single table)
 	countFields := []string{"code", "pk", "public_ip"}
 	countCondition, countArgs := buildSearchCondition(term, countFields)
 
 	countQuery := `SELECT count(*) FROM dz_devices_current WHERE ` + countCondition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -144,7 +144,7 @@ func searchDevices(ctx context.Context, term string, limit int) ([]SearchSuggest
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -172,14 +172,14 @@ func searchDevices(ctx context.Context, term string, limit int) ([]SearchSuggest
 }
 
 // searchLinks searches for links matching the query
-func searchLinks(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchLinks(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	// Count query uses unqualified names (single table)
 	countFields := []string{"code", "pk"}
 	countCondition, countArgs := buildSearchCondition(term, countFields)
 
 	countQuery := `SELECT count(*) FROM dz_links_current WHERE ` + countCondition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -203,7 +203,7 @@ func searchLinks(ctx context.Context, term string, limit int) ([]SearchSuggestio
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -231,13 +231,13 @@ func searchLinks(ctx context.Context, term string, limit int) ([]SearchSuggestio
 }
 
 // searchMetros searches for metros matching the query
-func searchMetros(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchMetros(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	fields := []string{"code", "name", "pk"}
 	condition, args := buildSearchCondition(term, fields)
 
 	countQuery := `SELECT count(*) FROM dz_metros_current WHERE ` + condition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -249,7 +249,7 @@ func searchMetros(ctx context.Context, term string, limit int) ([]SearchSuggesti
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(args, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(args, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -273,13 +273,13 @@ func searchMetros(ctx context.Context, term string, limit int) ([]SearchSuggesti
 }
 
 // searchContributors searches for contributors matching the query
-func searchContributors(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchContributors(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	fields := []string{"code", "name", "pk"}
 	condition, args := buildSearchCondition(term, fields)
 
 	countQuery := `SELECT count(*) FROM dz_contributors_current WHERE ` + condition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -291,7 +291,7 @@ func searchContributors(ctx context.Context, term string, limit int) ([]SearchSu
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(args, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(args, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -315,14 +315,14 @@ func searchContributors(ctx context.Context, term string, limit int) ([]SearchSu
 }
 
 // searchUsers searches for users matching the query
-func searchUsers(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchUsers(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	// Count query uses unqualified names
 	countFields := []string{"pk", "owner_pubkey", "dz_ip"}
 	countCondition, countArgs := buildSearchCondition(term, countFields)
 
 	countQuery := `SELECT count(*) FROM dz_users_current WHERE ` + countCondition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -341,7 +341,7 @@ func searchUsers(ctx context.Context, term string, limit int) ([]SearchSuggestio
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -374,7 +374,7 @@ func searchUsers(ctx context.Context, term string, limit int) ([]SearchSuggestio
 }
 
 // searchValidators searches for validators matching the query
-func searchValidators(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchValidators(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	// Count query uses unqualified names
 	countFields := []string{"vote_pubkey", "node_pubkey"}
 	countCondition, countArgs := buildSearchCondition(term, countFields)
@@ -386,7 +386,7 @@ func searchValidators(ctx context.Context, term string, limit int) ([]SearchSugg
 		AND (` + countCondition + `)
 	`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -406,7 +406,7 @@ func searchValidators(ctx context.Context, term string, limit int) ([]SearchSugg
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -442,14 +442,14 @@ func searchValidators(ctx context.Context, term string, limit int) ([]SearchSugg
 }
 
 // searchGossipNodes searches for gossip nodes matching the query
-func searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	// Count query uses unqualified names
 	countFields := []string{"pubkey", "gossip_ip"}
 	countCondition, countArgs := buildSearchCondition(term, countFields)
 
 	countQuery := `SELECT count(*) FROM solana_gossip_nodes_current WHERE ` + countCondition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -468,7 +468,7 @@ func searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSug
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(mainArgs, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -503,13 +503,13 @@ func searchGossipNodes(ctx context.Context, term string, limit int) ([]SearchSug
 }
 
 // searchMulticastGroups searches for multicast groups matching the query
-func searchMulticastGroups(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
+func (a *API) searchMulticastGroups(ctx context.Context, term string, limit int) ([]SearchSuggestion, int, error) {
 	fields := []string{"code", "multicast_ip", "status"}
 	condition, args := buildSearchCondition(term, fields)
 
 	countQuery := `SELECT count(*) FROM dz_multicast_groups_current WHERE ` + condition
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -521,7 +521,7 @@ func searchMulticastGroups(ctx context.Context, term string, limit int) ([]Searc
 		LIMIT ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, append(args, limit)...)
+	rows, err := a.envDB(ctx).Query(ctx, query, append(args, limit)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -549,7 +549,7 @@ func searchMulticastGroups(ctx context.Context, term string, limit int) ([]Searc
 }
 
 // SearchAutocomplete handles the autocomplete endpoint
-func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
+func (a *API) SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
@@ -599,21 +599,21 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 			var err error
 			switch et {
 			case entityDevice:
-				suggestions, _, err = searchDevices(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchDevices(gCtx, term, perTypeLimit)
 			case entityLink:
-				suggestions, _, err = searchLinks(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchLinks(gCtx, term, perTypeLimit)
 			case entityMetro:
-				suggestions, _, err = searchMetros(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchMetros(gCtx, term, perTypeLimit)
 			case entityContributor:
-				suggestions, _, err = searchContributors(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchContributors(gCtx, term, perTypeLimit)
 			case entityUser:
-				suggestions, _, err = searchUsers(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchUsers(gCtx, term, perTypeLimit)
 			case entityValidator:
-				suggestions, _, err = searchValidators(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchValidators(gCtx, term, perTypeLimit)
 			case entityGossip:
-				suggestions, _, err = searchGossipNodes(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchGossipNodes(gCtx, term, perTypeLimit)
 			case entityMulticast:
-				suggestions, _, err = searchMulticastGroups(gCtx, term, perTypeLimit)
+				suggestions, _, err = a.searchMulticastGroups(gCtx, term, perTypeLimit)
 			}
 			if err != nil {
 				slog.Error("search query failed", "entity_type", string(et), "error", err)
@@ -648,7 +648,7 @@ func SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Search handles the full search endpoint
-func Search(w http.ResponseWriter, r *http.Request) {
+func (a *API) Search(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -713,21 +713,21 @@ func Search(w http.ResponseWriter, r *http.Request) {
 			var err error
 			switch et {
 			case entityDevice:
-				suggestions, total, err = searchDevices(gCtx, term, limit)
+				suggestions, total, err = a.searchDevices(gCtx, term, limit)
 			case entityLink:
-				suggestions, total, err = searchLinks(gCtx, term, limit)
+				suggestions, total, err = a.searchLinks(gCtx, term, limit)
 			case entityMetro:
-				suggestions, total, err = searchMetros(gCtx, term, limit)
+				suggestions, total, err = a.searchMetros(gCtx, term, limit)
 			case entityContributor:
-				suggestions, total, err = searchContributors(gCtx, term, limit)
+				suggestions, total, err = a.searchContributors(gCtx, term, limit)
 			case entityUser:
-				suggestions, total, err = searchUsers(gCtx, term, limit)
+				suggestions, total, err = a.searchUsers(gCtx, term, limit)
 			case entityValidator:
-				suggestions, total, err = searchValidators(gCtx, term, limit)
+				suggestions, total, err = a.searchValidators(gCtx, term, limit)
 			case entityGossip:
-				suggestions, total, err = searchGossipNodes(gCtx, term, limit)
+				suggestions, total, err = a.searchGossipNodes(gCtx, term, limit)
 			case entityMulticast:
-				suggestions, total, err = searchMulticastGroups(gCtx, term, limit)
+				suggestions, total, err = a.searchMulticastGroups(gCtx, term, limit)
 			}
 			if err != nil {
 				slog.Error("search query failed", "entity_type", string(et), "error", err)

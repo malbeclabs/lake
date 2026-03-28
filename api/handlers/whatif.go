@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
@@ -42,7 +41,7 @@ type AffectedPath struct {
 }
 
 // GetSimulateLinkRemoval simulates removing a link and shows the impact
-func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -56,7 +55,7 @@ func GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := SimulateLinkRemovalResponse{
@@ -297,7 +296,7 @@ type RedundancyGain struct {
 }
 
 // GetSimulateLinkAddition simulates adding a link and shows the benefits
-func GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -324,7 +323,7 @@ func GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := SimulateLinkAdditionResponse{
@@ -587,7 +586,7 @@ type WhatIfAffectedPath struct {
 }
 
 // PostWhatIfRemoval analyzes the impact of removing devices and/or links
-func PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
+func (a *API) PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -605,7 +604,7 @@ func PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := WhatIfRemovalResponse{
@@ -616,7 +615,7 @@ func PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 
 	// Analyze each device
 	for _, devicePK := range req.Devices {
-		item := analyzeDeviceRemoval(ctx, session, devicePK, 10)
+		item := a.analyzeDeviceRemoval(ctx, session, devicePK, 10)
 		response.Items = append(response.Items, item)
 		response.TotalAffectedPaths += item.AffectedPathCount
 		response.TotalDisconnected += item.DisconnectedCount
@@ -626,7 +625,7 @@ func PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 
 	// Analyze each link
 	for _, linkPK := range req.Links {
-		item := analyzeLinkRemoval(ctx, session, linkPK, 10)
+		item := a.analyzeLinkRemoval(ctx, session, linkPK, 10)
 		response.Items = append(response.Items, item)
 		response.TotalAffectedPaths += item.AffectedPathCount
 		response.TotalDisconnected += item.DisconnectedCount
@@ -650,7 +649,7 @@ func PostWhatIfRemoval(w http.ResponseWriter, r *http.Request) {
 }
 
 // analyzeDeviceRemoval computes the impact of removing a single device
-func analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK string, pathLimit int) WhatIfRemovalItem {
+func (a *API) analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK string, pathLimit int) WhatIfRemovalItem {
 	item := WhatIfRemovalItem{
 		Type:                "device",
 		PK:                  devicePK,
@@ -783,7 +782,7 @@ func analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK s
 				RETURN altHops, altMetric
 			`
 
-			pairSession := config.Neo4jSession(ctx)
+			pairSession := a.neo4jSession(ctx)
 			defer pairSession.Close(ctx)
 
 			altResult, err := pairSession.Run(ctx, altCypher, map[string]any{
@@ -846,7 +845,7 @@ func analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, devicePK s
 }
 
 // analyzeLinkRemoval computes the impact of removing a single link
-func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK string, pathLimit int) WhatIfRemovalItem {
+func (a *API) analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK string, pathLimit int) WhatIfRemovalItem {
 	item := WhatIfRemovalItem{
 		Type:                "link",
 		PK:                  linkPK,
@@ -868,7 +867,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 	`
 
 	var sideAPK, sideZPK, sideACode, sideZCode string
-	if err := envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
 		slog.Error("link lookup error", "link_pk", linkPK, "error", err)
 		item.Code = "Link not found"
 		return item
@@ -1046,7 +1045,7 @@ func analyzeLinkRemoval(ctx context.Context, session neo4j.Session, linkPK strin
 				RETURN altHops, altMetric
 			`
 
-			pairSession := config.Neo4jSession(ctx)
+			pairSession := a.neo4jSession(ctx)
 			defer pairSession.Close(ctx)
 
 			altResult, err := pairSession.Run(ctx, altCypher, map[string]any{

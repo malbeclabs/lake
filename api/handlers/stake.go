@@ -50,7 +50,7 @@ type StakeHistoryResponse struct {
 }
 
 // FetchStakeOverviewData fetches stake overview data from ClickHouse.
-func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
+func (a *API) FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 	start := time.Now()
 	overview := StakeOverview{
 		FetchedAt: time.Now().UTC().Format(time.RFC3339),
@@ -76,7 +76,7 @@ func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 				  AND va.activated_stake_lamports > 0
 			)
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol, &overview.ValidatorCount)
 	})
 
@@ -88,7 +88,7 @@ func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 			WHERE epoch_vote_account = 'true'
 			  AND activated_stake_lamports > 0
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.TotalStakeSol)
 	})
 
@@ -147,7 +147,7 @@ func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 				CASE WHEN ts.total > 0 THEN dz.dz_total * 100.0 / ts.total ELSE 0 END
 			FROM dz_stake dz, total_stake ts
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol24hAgo, &overview.StakeSharePct24hAgo)
 	})
 
@@ -206,7 +206,7 @@ func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 				CASE WHEN ts.total > 0 THEN dz.dz_total * 100.0 / ts.total ELSE 0 END
 			FROM dz_stake dz, total_stake ts
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&overview.DZStakeSol7dAgo, &overview.StakeSharePct7dAgo)
 	})
 
@@ -230,8 +230,8 @@ func FetchStakeOverviewData(ctx context.Context) (*StakeOverview, error) {
 	return &overview, nil
 }
 
-func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
-	if data, err := ReadPageCache(r.Context(), "stake_overview"); err == nil {
+func (a *API) GetStakeOverview(w http.ResponseWriter, r *http.Request) {
+	if data, err := a.readPageCache(r.Context(), "stake_overview"); err == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
 		return
@@ -240,7 +240,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := FetchStakeOverviewData(ctx)
+	resp, err := a.FetchStakeOverviewData(ctx)
 	if err != nil {
 		slog.Error("stake overview query error", "error", err)
 		w.Header().Set("Content-Type", "application/json")
@@ -253,7 +253,7 @@ func GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -328,7 +328,7 @@ func GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 		LIMIT 200
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -399,7 +399,7 @@ type ChangeSummary struct {
 	NetChangeSol     float64 `json:"net_change_sol"`
 }
 
-func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -480,7 +480,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 			ORDER BY stake_sol DESC
 			LIMIT 100
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -544,7 +544,7 @@ func GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 			ORDER BY stake_sol DESC
 			LIMIT 100
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -617,7 +617,7 @@ type StakeValidatorsResponse struct {
 	Error         string           `json:"error,omitempty"`
 }
 
-func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -643,7 +643,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 
 	// Get total stake first
 	var totalStake float64
-	err := envDB(ctx).QueryRow(ctx, `
+	err := a.envDB(ctx).QueryRow(ctx, `
 		SELECT COALESCE(SUM(activated_stake_lamports), 0) / 1e9
 		FROM solana_vote_accounts_current
 		WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
@@ -751,7 +751,7 @@ func GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 			LIMIT ` + strconv.Itoa(limit)
 	}
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

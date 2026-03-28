@@ -24,7 +24,7 @@ type MulticastGroupListItem struct {
 	SubscriberCount uint32 `json:"subscriber_count"`
 }
 
-func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -44,7 +44,7 @@ func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 		ORDER BY code
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -118,7 +118,7 @@ func GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 			GROUP BY group_pk
 		`
 
-		countRows, err := envDB(ctx).Query(ctx, countsQuery, groupPKs)
+		countRows, err := a.envDB(ctx).Query(ctx, countsQuery, groupPKs)
 		if err != nil {
 			slog.Warn("multicast groups counts query error", "error", err)
 		} else {
@@ -178,7 +178,7 @@ type MulticastGroupDetail struct {
 	SubscriberCount uint32 `json:"subscriber_count"`
 }
 
-func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -204,7 +204,7 @@ func GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var group MulticastGroupDetail
-	err := envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(
 		&group.PK,
 		&group.Code,
 		&group.MulticastIP,
@@ -256,7 +256,7 @@ var multicastMemberFilterFields = map[string]FilterFieldConfig{
 	"all":    {Column: "", Type: FieldTypeText}, // handled specially in BuildFilterClause
 }
 
-func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
@@ -278,7 +278,7 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve group PK
 	var groupPK string
-	err := envDB(ctx).QueryRow(ctx,
+	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
 		slog.Error("multicast group members group query error", "error", err)
@@ -429,12 +429,12 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		var r countResult
-		r.err = envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&r.total, &r.pubCount, &r.subCount)
+		r.err = a.envDB(ctx).QueryRow(ctx, countQuery, countArgs...).Scan(&r.total, &r.pubCount, &r.subCount)
 		countCh <- r
 	}()
 
 	go func() {
-		rows, err := envDB(ctx).Query(ctx, dataQuery, dataArgs...)
+		rows, err := a.envDB(ctx).Query(ctx, dataQuery, dataArgs...)
 		if err != nil {
 			dataCh <- dataResult{err: err}
 			return
@@ -541,7 +541,7 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 					AND user_tunnel_id > 0
 				GROUP BY device_pk, user_tunnel_id
 			`
-			rows, err := envDB(ctx).Query(ctx, trafficQuery)
+			rows, err := a.envDB(ctx).Query(ctx, trafficQuery)
 			if err != nil {
 				tr.err = err
 				trafficCh <- tr
@@ -602,7 +602,7 @@ func GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 				CROSS JOIN epoch_info ei
 				WHERE g.gossip_ip IN (?)
 			`
-			rows, err := envDB(ctx).Query(ctx, leaderQuery, clientIPs)
+			rows, err := a.envDB(ctx).Query(ctx, leaderQuery, clientIPs)
 			if err != nil {
 				lr.err = err
 				leaderCh <- lr
@@ -691,7 +691,7 @@ type MulticastTrafficPoint struct {
 	OutPps   float64 `json:"out_pps"`
 }
 
-func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -708,7 +708,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve pk from pk or code
 	var groupPK string
-	err := envDB(ctx).QueryRow(ctx,
+	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
 		slog.Error("multicast group traffic group query error", "error", err)
@@ -736,7 +736,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 			)
 	`
 
-	memberRows, err := envDB(ctx).Query(ctx, membersQuery, groupPK, groupPK, groupPK, groupPK, groupPK)
+	memberRows, err := a.envDB(ctx).Query(ctx, membersQuery, groupPK, groupPK, groupPK, groupPK, groupPK)
 	if err != nil {
 		slog.Error("multicast group traffic members query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -844,7 +844,7 @@ func GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	} else {
 		filterIDs = userPKs
 	}
-	trafficRows, err := envDB(ctx).Query(ctx, trafficQuery, filterIDs, devicePKs)
+	trafficRows, err := a.envDB(ctx).Query(ctx, trafficQuery, filterIDs, devicePKs)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -905,7 +905,7 @@ type MulticastMemberCountPoint struct {
 	SubscriberCount int64  `json:"subscriber_count"`
 }
 
-func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -942,7 +942,7 @@ func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve group PK
 	var groupPK string
-	err := envDB(ctx).QueryRow(ctx,
+	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
 		slog.Error("multicast group member counts group query error", "error", err)
@@ -1016,7 +1016,7 @@ func GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Request) {
 		) ORDER BY time
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, groupPK, groupPK, groupPK, groupPK)
+	rows, err := a.envDB(ctx).Query(ctx, query, groupPK, groupPK, groupPK, groupPK)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1126,7 +1126,7 @@ type MulticastTreeResponse struct {
 }
 
 // GetMulticastTreePaths computes paths from all publishers to all subscribers in a multicast group
-func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1145,7 +1145,7 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	groupQuery := `
 		SELECT pk, COALESCE(code, '') FROM dz_multicast_groups_current WHERE pk = ? OR code = ?
 	`
-	err := envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
+	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
 		slog.Error("multicast tree paths group query error", "error", err)
 		response.Error = "multicast group not found"
@@ -1173,7 +1173,7 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 			)
 	`
 
-	rows, err := envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
+	rows, err := a.envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1245,7 +1245,7 @@ func GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency for path finding
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		response.Error = fmt.Sprintf("failed to load topology graph: %v", err)
 		writeJSON(w, response)
@@ -1344,7 +1344,7 @@ type MulticastTreeSegmentsResponse struct {
 // Instead of returning full hop-by-hop paths, it returns unique (fromPK, toPK) pairs
 // with the set of publishers that traverse each segment. Uses batched Dijkstra queries
 // (one per publisher) instead of one per (publisher, subscriber) pair.
-func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1366,7 +1366,7 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	groupQuery := `
 		SELECT pk, COALESCE(code, '') FROM dz_multicast_groups_current WHERE pk = ? OR code = ?
 	`
-	err := envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
+	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
 		slog.Error("multicast tree segments group query error", "error", err)
 		response.Error = "multicast group not found"
@@ -1392,7 +1392,7 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 			)
 	`
 
-	rows, err := envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
+	rows, err := a.envDB(ctx).Query(ctx, membersQuery, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK, response.GroupPK)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1457,7 +1457,7 @@ func GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency for path finding
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		response.Error = fmt.Sprintf("failed to load topology graph: %v", err)
 		writeJSON(w, response)

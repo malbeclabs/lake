@@ -63,7 +63,7 @@ func TestGetDevices_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -82,7 +82,7 @@ func TestGetDevices_ReturnsAllDevices(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -101,7 +101,7 @@ func TestGetDevices_IncludesMetroInfo(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -131,7 +131,7 @@ func TestGetDevices_IncludesUserCounts(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -160,7 +160,7 @@ func TestGetDevices_Pagination(t *testing.T) {
 	// First page
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -175,7 +175,7 @@ func TestGetDevices_Pagination(t *testing.T) {
 	// Second page
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/devices?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDevices(rr, req)
+	testAPI.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -218,7 +218,7 @@ func TestGetDevice_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetDevice(rr, req)
+	testAPI.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -233,7 +233,7 @@ func TestGetDevice_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetDevice(rr, req)
+	testAPI.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -250,7 +250,7 @@ func TestGetDevice_ReturnsDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetDevice(rr, req)
+	testAPI.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -282,7 +282,7 @@ func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetDevice(rr, req)
+	testAPI.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -307,7 +307,7 @@ func TestGetDevice_HandlesNullContributor(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetDevice(rr, req)
+	testAPI.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

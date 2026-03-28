@@ -71,7 +71,7 @@ var validatorFilterFields = map[string]FilterFieldConfig{
 	"client":     {Column: "software_client", Type: FieldTypeText},
 }
 
-func GetValidators(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
@@ -223,7 +223,7 @@ func GetValidators(w http.ResponseWriter, r *http.Request) {
 	`
 
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
-	rows, err := envDB(ctx).Query(ctx, query, queryArgs...)
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -312,7 +312,7 @@ type ValidatorDetail struct {
 	SoftwareVersion string  `json:"software_version"`
 }
 
-func GetValidator(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -411,7 +411,7 @@ func GetValidator(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var validator ValidatorDetail
-	err := envDB(ctx).QueryRow(ctx, query, votePubkey).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, votePubkey).Scan(
 		&validator.VotePubkey,
 		&validator.NodePubkey,
 		&validator.StakeSol,

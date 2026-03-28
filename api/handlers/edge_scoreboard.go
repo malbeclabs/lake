@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -107,10 +106,10 @@ func isDefaultEdgeScoreboardRequest(r *http.Request) bool {
 }
 
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.
-func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default requests
 	if isMainnet(r.Context()) && isDefaultEdgeScoreboardRequest(r) {
-		if data, err := ReadPageCache(r.Context(), "edge_scoreboard"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "edge_scoreboard"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -127,7 +126,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		window = "24h"
 	}
 
-	resp, err := FetchEdgeScoreboardData(ctx, window)
+	resp, err := a.FetchEdgeScoreboardData(ctx, window)
 	if err != nil {
 		log.Printf("EdgeScoreboard error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -138,7 +137,7 @@ func GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // FetchEdgeScoreboardData performs the actual edge scoreboard queries.
-func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboardResponse, error) {
+func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboardResponse, error) {
 	// Excluded nodes — fra-mn-bm2 produces unreliable race data
 	excludedNodes := []string{"fra-mn-bm2", "tyo-mn-bm1"}
 
@@ -152,7 +151,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		timeFilter += fmt.Sprintf(" AND node_id != '%s'", n)
 	}
 
-	shredderDB := fmt.Sprintf("`%s`", config.GetShredderDB())
+	shredderDB := fmt.Sprintf("`%s`", a.shredderDB())
 
 	// Query 1: Per-node slot counts from win-count rows (loser_feed = '')
 	// Uses FINAL to handle ReplacingMergeTree pre-merge duplicates.
@@ -172,7 +171,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 	`, shredderDB, timeFilter)
 
 	start := time.Now()
-	rows1, err := envDB(ctx).Query(ctx, query1)
+	rows1, err := a.envDB(ctx).Query(ctx, query1)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 	if err != nil {
@@ -243,7 +242,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 	`, dzLeaderCTE, shredderDB, timeFilter)
 
 	start = time.Now()
-	rows1b, err := envDB(ctx).Query(ctx, query1b)
+	rows1b, err := a.envDB(ctx).Query(ctx, query1b)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 	if err != nil {
@@ -303,7 +302,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 	`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
 
 	start = time.Now()
-	rows2, err := envDB(ctx).Query(ctx, query2)
+	rows2, err := a.envDB(ctx).Query(ctx, query2)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 	if err != nil {
@@ -362,7 +361,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 	`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
 
 	start = time.Now()
-	rows2b, err := envDB(ctx).Query(ctx, query2b)
+	rows2b, err := a.envDB(ctx).Query(ctx, query2b)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 	if err != nil {
@@ -420,7 +419,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 
 		query3 := `SELECT code, name, latitude, longitude FROM dz_metros_current WHERE code IN (?)`
 		start = time.Now()
-		rows3, err := envDB(ctx).Query(ctx, query3, codes)
+		rows3, err := a.envDB(ctx).Query(ctx, query3, codes)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 		if err != nil {
@@ -483,7 +482,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		FROM nearest_metro
 		GROUP BY metro_code`
 	start = time.Now()
-	rows4, err := envDB(ctx).Query(ctx, query4)
+	rows4, err := a.envDB(ctx).Query(ctx, query4)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 	if err != nil {
@@ -537,7 +536,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 			WHERE g.ip IN (?)
 		`
 		start = time.Now()
-		rows4b, err := envDB(ctx).Query(ctx, query4b, lookupIPs)
+		rows4b, err := a.envDB(ctx).Query(ctx, query4b, lookupIPs)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 		if err != nil {
@@ -604,7 +603,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		ORDER BY r.node_id, r.slot, r.feed
 	`, dzLeaderCTE, shredderDB, nodeList, shredderDB, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
 	start = time.Now()
-	rows5, err := envDB(ctx).Query(ctx, query5)
+	rows5, err := a.envDB(ctx).Query(ctx, query5)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 	if err != nil {
@@ -658,7 +657,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 		`, globalMaxEpoch)
 
 		start = time.Now()
-		rows6a, err := envDB(ctx).Query(ctx, query6a, relativeSlots)
+		rows6a, err := a.envDB(ctx).Query(ctx, query6a, relativeSlots)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 
@@ -703,7 +702,7 @@ func FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboar
 			`
 
 			start = time.Now()
-			rows6b, err := envDB(ctx).Query(ctx, query6b, pubkeys)
+			rows6b, err := a.envDB(ctx).Query(ctx, query6b, pubkeys)
 			duration = time.Since(start)
 			metrics.RecordClickHouseQuery(duration, err)
 

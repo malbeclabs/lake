@@ -226,7 +226,7 @@ func main() {
 	}
 
 	slog.Info("starting lake-api", "version", version, "commit", commit, "date", date)
-	handlers.SetBuildInfo(version, commit, date)
+	
 
 	// Load .env files if they exist
 	// godotenv doesn't override existing env vars, so later files don't overwrite earlier ones
@@ -336,12 +336,30 @@ func main() {
 		defer func() { _ = config.CloseNeo4j() }()
 	}
 
+	// Construct API struct with all dependencies
+	api := &handlers.API{
+		DB:            config.DB,
+		HealthDB:      config.HealthDB,
+		EnvDBs:        config.EnvDBs,
+		EnvDatabases:  config.EnvDatabases,
+		Database:      config.Database(),
+		ShredderDB:    config.GetShredderDB(),
+		PgPool:        config.PgPool,
+		Neo4jClient:   config.Neo4jClient,
+		Neo4jDatabase: config.Neo4jDatabase,
+		BuildVersion:  version,
+		BuildCommit:   commit,
+		BuildDate:     date,
+	}
+	api.Manager = handlers.NewWorkflowManager(api)
+
 	// Start embedded page cache worker (unless --no-worker)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	if !*noWorkerFlag {
 		go func() {
 			if err := worker.Start(workerCtx, worker.Config{
 				Log: slog.Default(),
+				API: api,
 			}); err != nil && workerCtx.Err() == nil {
 				slog.Error("page cache worker failed", "error", err)
 			}
@@ -441,7 +459,7 @@ func main() {
 	})
 
 	// Apply optional auth middleware globally to attach user context
-	r.Use(handlers.OptionalAuth)
+	r.Use(api.OptionalAuth)
 
 	// Apply env middleware to extract X-DZ-Env header
 	r.Use(handlers.EnvMiddleware)
@@ -470,176 +488,176 @@ func main() {
 	})
 
 	// Lightweight endpoints (no rate limiting)
-	r.Get("/api/config", handlers.GetConfig)
-	r.Get("/api/version", handlers.GetVersion)
+	r.Get("/api/config", api.GetConfig)
+	r.Get("/api/version", api.GetVersion)
 
 	// Database query endpoints (rate limited)
 	r.Group(func(r chi.Router) {
 		r.Use(handlers.QueryRateLimitMiddleware)
 
-		r.Get("/api/catalog", handlers.GetCatalog)
-		r.Get("/api/stats", handlers.GetStats)
-		r.Get("/api/status", handlers.GetStatus)
-		r.Get("/api/status/link-history", handlers.GetLinkHistory)
-		r.Get("/api/status/device-history", handlers.GetDeviceHistory)
-		r.Get("/api/status/interface-issues", handlers.GetInterfaceIssues)
-		r.Get("/api/status/devices/{pk}/interface-history", handlers.GetDeviceInterfaceHistory)
-		r.Get("/api/status/devices/{pk}/history", handlers.GetSingleDeviceHistory)
-		r.Get("/api/status/links/{pk}/history", handlers.GetSingleLinkHistory)
-		r.Get("/api/timeline", handlers.GetTimeline)
-		r.Get("/api/timeline/bounds", handlers.GetTimelineBounds)
+		r.Get("/api/catalog", api.GetCatalog)
+		r.Get("/api/stats", api.GetStats)
+		r.Get("/api/status", api.GetStatus)
+		r.Get("/api/status/link-history", api.GetLinkHistory)
+		r.Get("/api/status/device-history", api.GetDeviceHistory)
+		r.Get("/api/status/interface-issues", api.GetInterfaceIssues)
+		r.Get("/api/status/devices/{pk}/interface-history", api.GetDeviceInterfaceHistory)
+		r.Get("/api/status/devices/{pk}/history", api.GetSingleDeviceHistory)
+		r.Get("/api/status/links/{pk}/history", api.GetSingleLinkHistory)
+		r.Get("/api/timeline", api.GetTimeline)
+		r.Get("/api/timeline/bounds", api.GetTimelineBounds)
 
 		// Incident routes
-		r.Get("/api/incidents/links", handlers.GetLinkIncidents)
-		r.Get("/api/incidents/links/csv", handlers.GetLinkIncidentsCSV)
-		r.Get("/api/incidents/devices", handlers.GetDeviceIncidents)
-		r.Get("/api/incidents/devices/csv", handlers.GetDeviceIncidentsCSV)
+		r.Get("/api/incidents/links", api.GetLinkIncidents)
+		r.Get("/api/incidents/links/csv", api.GetLinkIncidentsCSV)
+		r.Get("/api/incidents/devices", api.GetDeviceIncidents)
+		r.Get("/api/incidents/devices/csv", api.GetDeviceIncidentsCSV)
 
 		// Search routes
-		r.Get("/api/search", handlers.Search)
-		r.Get("/api/search/autocomplete", handlers.SearchAutocomplete)
+		r.Get("/api/search", api.Search)
+		r.Get("/api/search/autocomplete", api.SearchAutocomplete)
 
 		// DZ entity routes
-		r.Get("/api/dz/devices", handlers.GetDevices)
-		r.Get("/api/dz/devices/{pk}", handlers.GetDevice)
-		r.Get("/api/dz/links", handlers.GetLinks)
-		r.Get("/api/dz/links/{pk}", handlers.GetLink)
-		r.Get("/api/dz/links-health", handlers.GetLinkHealth)
-		r.Get("/api/dz/metros", handlers.GetMetros)
-		r.Get("/api/dz/metros/{pk}", handlers.GetMetro)
-		r.Get("/api/dz/contributors", handlers.GetContributors)
-		r.Get("/api/dz/contributors/{pk}", handlers.GetContributor)
-		r.Get("/api/dz/users", handlers.GetUsers)
-		r.Get("/api/dz/users/{pk}", handlers.GetUser)
-		r.Get("/api/dz/users/{pk}/traffic", handlers.GetUserTraffic)
-		r.Get("/api/dz/users/{pk}/multicast-groups", handlers.GetUserMulticastGroups)
-		r.Get("/api/dz/multicast-groups", handlers.GetMulticastGroups)
-		r.Get("/api/dz/multicast-groups/{pk}", handlers.GetMulticastGroup)
-		r.Get("/api/dz/multicast-groups/{pk}/members", handlers.GetMulticastGroupMembers)
-		r.Get("/api/dz/multicast-groups/{pk}/tree-paths", handlers.GetMulticastTreePaths)
-		r.Get("/api/dz/multicast-groups/{pk}/tree-segments", handlers.GetMulticastTreeSegments)
-		r.Get("/api/dz/multicast-groups/{pk}/traffic", handlers.GetMulticastGroupTraffic)
-		r.Get("/api/dz/multicast-groups/{pk}/member-counts", handlers.GetMulticastGroupMemberCounts)
-		r.Get("/api/dz/publisher-check", handlers.GetPublisherCheck)
-		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", handlers.GetEdgeScoreboard)
-		r.Get("/api/dz/tenants", handlers.GetTenants)
-		r.Get("/api/dz/tenants/{pk}", handlers.GetTenant)
-		r.Get("/api/dz/field-values", handlers.GetFieldValues)
-		r.Get("/api/dz/ledger", handlers.GetDZLedger)
+		r.Get("/api/dz/devices", api.GetDevices)
+		r.Get("/api/dz/devices/{pk}", api.GetDevice)
+		r.Get("/api/dz/links", api.GetLinks)
+		r.Get("/api/dz/links/{pk}", api.GetLink)
+		r.Get("/api/dz/links-health", api.GetLinkHealth)
+		r.Get("/api/dz/metros", api.GetMetros)
+		r.Get("/api/dz/metros/{pk}", api.GetMetro)
+		r.Get("/api/dz/contributors", api.GetContributors)
+		r.Get("/api/dz/contributors/{pk}", api.GetContributor)
+		r.Get("/api/dz/users", api.GetUsers)
+		r.Get("/api/dz/users/{pk}", api.GetUser)
+		r.Get("/api/dz/users/{pk}/traffic", api.GetUserTraffic)
+		r.Get("/api/dz/users/{pk}/multicast-groups", api.GetUserMulticastGroups)
+		r.Get("/api/dz/multicast-groups", api.GetMulticastGroups)
+		r.Get("/api/dz/multicast-groups/{pk}", api.GetMulticastGroup)
+		r.Get("/api/dz/multicast-groups/{pk}/members", api.GetMulticastGroupMembers)
+		r.Get("/api/dz/multicast-groups/{pk}/tree-paths", api.GetMulticastTreePaths)
+		r.Get("/api/dz/multicast-groups/{pk}/tree-segments", api.GetMulticastTreeSegments)
+		r.Get("/api/dz/multicast-groups/{pk}/traffic", api.GetMulticastGroupTraffic)
+		r.Get("/api/dz/multicast-groups/{pk}/member-counts", api.GetMulticastGroupMemberCounts)
+		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
+		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
+		r.Get("/api/dz/tenants", api.GetTenants)
+		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
+		r.Get("/api/dz/field-values", api.GetFieldValues)
+		r.Get("/api/dz/ledger", api.GetDZLedger)
 
 		// Solana entity routes
-		r.Get("/api/solana/validators", handlers.GetValidators)
-		r.Get("/api/solana/validators/{vote_pubkey}", handlers.GetValidator)
-		r.Get("/api/solana/gossip-nodes", handlers.GetGossipNodes)
-		r.Get("/api/solana/gossip-nodes/{pubkey}", handlers.GetGossipNode)
-		r.Get("/api/solana/ledger", handlers.GetSolanaLedger)
-		r.Get("/api/solana/validator-performance", handlers.GetValidatorPerformance)
+		r.Get("/api/solana/validators", api.GetValidators)
+		r.Get("/api/solana/validators/{vote_pubkey}", api.GetValidator)
+		r.Get("/api/solana/gossip-nodes", api.GetGossipNodes)
+		r.Get("/api/solana/gossip-nodes/{pubkey}", api.GetGossipNode)
+		r.Get("/api/solana/ledger", api.GetSolanaLedger)
+		r.Get("/api/solana/validator-performance", api.GetValidatorPerformance)
 
 		// Stake analytics routes
-		r.Get("/api/stake/overview", handlers.GetStakeOverview)
-		r.Get("/api/stake/history", handlers.GetStakeHistory)
-		r.Get("/api/stake/changes", handlers.GetStakeChanges)
-		r.Get("/api/stake/validators", handlers.GetStakeValidators)
+		r.Get("/api/stake/overview", api.GetStakeOverview)
+		r.Get("/api/stake/history", api.GetStakeHistory)
+		r.Get("/api/stake/changes", api.GetStakeChanges)
+		r.Get("/api/stake/validators", api.GetStakeValidators)
 
 		// Traffic analytics routes
-		r.Get("/api/traffic/data", handlers.GetTrafficData)
-		r.Get("/api/traffic/discards", handlers.GetDiscardsData)
+		r.Get("/api/traffic/data", api.GetTrafficData)
+		r.Get("/api/traffic/discards", api.GetDiscardsData)
 
 		// Traffic dashboard routes
-		r.Get("/api/traffic/dashboard/stress", handlers.GetTrafficDashboardStress)
-		r.Get("/api/traffic/dashboard/top", handlers.GetTrafficDashboardTop)
-		r.Get("/api/traffic/dashboard/drilldown", handlers.GetTrafficDashboardDrilldown)
-		r.Get("/api/traffic/dashboard/burstiness", handlers.GetTrafficDashboardBurstiness)
-		r.Get("/api/traffic/dashboard/health", handlers.GetTrafficDashboardHealth)
+		r.Get("/api/traffic/dashboard/stress", api.GetTrafficDashboardStress)
+		r.Get("/api/traffic/dashboard/top", api.GetTrafficDashboardTop)
+		r.Get("/api/traffic/dashboard/drilldown", api.GetTrafficDashboardDrilldown)
+		r.Get("/api/traffic/dashboard/burstiness", api.GetTrafficDashboardBurstiness)
+		r.Get("/api/traffic/dashboard/health", api.GetTrafficDashboardHealth)
 
 		// Performance analytics routes
-		r.Get("/api/performance/link-latency", handlers.GetLinkLatencyData)
-		r.Get("/api/performance/link-latency/history", handlers.GetMultiLinkLatencyHistory)
+		r.Get("/api/performance/link-latency", api.GetLinkLatencyData)
+		r.Get("/api/performance/link-latency/history", api.GetMultiLinkLatencyHistory)
 
 		// Topology endpoints (ClickHouse only)
-		r.Get("/api/topology", handlers.GetTopology)
-		r.Get("/api/traffic/entity", handlers.GetEntityTraffic)
-		r.Get("/api/topology/link-latency", handlers.GetLinkLatencyHistory)
-		r.Get("/api/topology/latency-comparison", handlers.GetLatencyComparison)
-		r.Get("/api/topology/latency-history/{origin}/{target}", handlers.GetLatencyHistory)
+		r.Get("/api/topology", api.GetTopology)
+		r.Get("/api/traffic/entity", api.GetEntityTraffic)
+		r.Get("/api/topology/link-latency", api.GetLinkLatencyHistory)
+		r.Get("/api/topology/latency-comparison", api.GetLatencyComparison)
+		r.Get("/api/topology/latency-history/{origin}/{target}", api.GetLatencyHistory)
 
 		// Topology endpoints (require Neo4j — mainnet only)
 		r.Group(func(r chi.Router) {
-			r.Use(handlers.RequireNeo4jMiddleware)
-			r.Get("/api/topology/isis", handlers.GetISISTopology)
-			r.Get("/api/topology/path", handlers.GetISISPath)
-			r.Get("/api/topology/paths", handlers.GetISISPaths)
-			r.Get("/api/topology/compare", handlers.GetTopologyCompare)
-			r.Get("/api/topology/impact/{pk}", handlers.GetFailureImpact)
-			r.Get("/api/topology/critical-links", handlers.GetCriticalLinks)
-			r.Get("/api/topology/redundancy-report", handlers.GetRedundancyReport)
-			r.Get("/api/topology/simulate-link-removal", handlers.GetSimulateLinkRemoval)
-			r.Get("/api/topology/simulate-link-addition", handlers.GetSimulateLinkAddition)
-			r.Get("/api/topology/metro-connectivity", handlers.GetMetroConnectivity)
-			r.Get("/api/topology/metro-path-latency", handlers.GetMetroPathLatency)
-			r.Get("/api/topology/metro-path-detail", handlers.GetMetroPathDetail)
-			r.Get("/api/topology/metro-paths", handlers.GetMetroPaths)
-			r.Get("/api/topology/metro-device-paths", handlers.GetMetroDevicePaths)
-			r.Post("/api/topology/maintenance-impact", handlers.PostMaintenanceImpact)
-			r.Post("/api/topology/whatif-removal", handlers.PostWhatIfRemoval)
+			r.Use(api.RequireNeo4jMiddleware)
+			r.Get("/api/topology/isis", api.GetISISTopology)
+			r.Get("/api/topology/path", api.GetISISPath)
+			r.Get("/api/topology/paths", api.GetISISPaths)
+			r.Get("/api/topology/compare", api.GetTopologyCompare)
+			r.Get("/api/topology/impact/{pk}", api.GetFailureImpact)
+			r.Get("/api/topology/critical-links", api.GetCriticalLinks)
+			r.Get("/api/topology/redundancy-report", api.GetRedundancyReport)
+			r.Get("/api/topology/simulate-link-removal", api.GetSimulateLinkRemoval)
+			r.Get("/api/topology/simulate-link-addition", api.GetSimulateLinkAddition)
+			r.Get("/api/topology/metro-connectivity", api.GetMetroConnectivity)
+			r.Get("/api/topology/metro-path-latency", api.GetMetroPathLatency)
+			r.Get("/api/topology/metro-path-detail", api.GetMetroPathDetail)
+			r.Get("/api/topology/metro-paths", api.GetMetroPaths)
+			r.Get("/api/topology/metro-device-paths", api.GetMetroDevicePaths)
+			r.Post("/api/topology/maintenance-impact", api.PostMaintenanceImpact)
+			r.Post("/api/topology/whatif-removal", api.PostWhatIfRemoval)
 		})
 
 		// SQL endpoints
-		r.Post("/api/sql/query", handlers.ExecuteQuery)
-		r.Post("/api/sql/generate", handlers.GenerateSQL)
-		r.Post("/api/sql/generate/stream", handlers.GenerateSQLStream)
+		r.Post("/api/sql/query", api.ExecuteQuery)
+		r.Post("/api/sql/generate", api.GenerateSQL)
+		r.Post("/api/sql/generate/stream", api.GenerateSQLStream)
 
 		// Cypher endpoints (require Neo4j — mainnet only)
 		r.Group(func(r chi.Router) {
-			r.Use(handlers.RequireNeo4jMiddleware)
-			r.Post("/api/cypher/query", handlers.ExecuteCypher)
-			r.Post("/api/cypher/generate", handlers.GenerateCypher)
-			r.Post("/api/cypher/generate/stream", handlers.GenerateCypherStream)
+			r.Use(api.RequireNeo4jMiddleware)
+			r.Post("/api/cypher/query", api.ExecuteCypher)
+			r.Post("/api/cypher/generate", api.GenerateCypher)
+			r.Post("/api/cypher/generate/stream", api.GenerateCypherStream)
 		})
 
 		// Auto-detection endpoint
-		r.Post("/api/auto/generate/stream", handlers.AutoGenerateStream)
+		r.Post("/api/auto/generate/stream", api.AutoGenerateStream)
 
 		// Legacy SQL endpoints (backward compatibility)
-		r.Post("/api/query", handlers.ExecuteQuery)
-		r.Post("/api/generate", handlers.GenerateSQL)
-		r.Post("/api/generate/stream", handlers.GenerateSQLStream)
-		r.Post("/api/chat", handlers.Chat)
-		r.Post("/api/chat/stream", handlers.ChatStream)
-		r.Post("/api/complete", handlers.Complete)
-		r.Post("/api/visualize/recommend", handlers.RecommendVisualization)
+		r.Post("/api/query", api.ExecuteQuery)
+		r.Post("/api/generate", api.GenerateSQL)
+		r.Post("/api/generate/stream", api.GenerateSQLStream)
+		r.Post("/api/chat", api.Chat)
+		r.Post("/api/chat/stream", api.ChatStream)
+		r.Post("/api/complete", api.Complete)
+		r.Post("/api/visualize/recommend", api.RecommendVisualization)
 	})
 
 	// Session persistence routes
-	r.Get("/api/sessions", handlers.ListSessions)
-	r.Post("/api/sessions", handlers.CreateSession)
-	r.Post("/api/sessions/batch", handlers.BatchGetSessions)
-	r.Get("/api/sessions/{id}", handlers.GetSession)
-	r.Put("/api/sessions/{id}", handlers.UpdateSession)
-	r.Delete("/api/sessions/{id}", handlers.DeleteSession)
+	r.Get("/api/sessions", api.ListSessions)
+	r.Post("/api/sessions", api.CreateSession)
+	r.Post("/api/sessions/batch", api.BatchGetSessions)
+	r.Get("/api/sessions/{id}", api.GetSession)
+	r.Put("/api/sessions/{id}", api.UpdateSession)
+	r.Delete("/api/sessions/{id}", api.DeleteSession)
 
 	// Session workflow route (get running workflow for a session)
-	r.Get("/api/sessions/{id}/workflow", handlers.GetWorkflowForSession)
+	r.Get("/api/sessions/{id}/workflow", api.GetWorkflowForSession)
 
 	// Workflow routes (for durable workflow persistence)
-	r.Get("/api/workflows/{id}", handlers.GetWorkflow)
-	r.Get("/api/workflows/{id}/stream", handlers.StreamWorkflow)
+	r.Get("/api/workflows/{id}", api.GetWorkflow)
+	r.Get("/api/workflows/{id}/stream", api.StreamWorkflow)
 
 	// Auth routes
-	r.Get("/api/auth/me", handlers.GetAuthMe)
-	r.Post("/api/auth/logout", handlers.PostAuthLogout)
-	r.Get("/api/auth/nonce", handlers.GetAuthNonce)
-	r.Post("/api/auth/wallet", handlers.PostAuthWallet)
-	r.Post("/api/auth/google", handlers.PostAuthGoogle)
-	r.Get("/api/usage/quota", handlers.GetUsageQuota)
+	r.Get("/api/auth/me", api.GetAuthMe)
+	r.Post("/api/auth/logout", api.PostAuthLogout)
+	r.Get("/api/auth/nonce", api.GetAuthNonce)
+	r.Post("/api/auth/wallet", api.PostAuthWallet)
+	r.Post("/api/auth/google", api.PostAuthGoogle)
+	r.Get("/api/usage/quota", api.GetUsageQuota)
 
 	// MCP (Model Context Protocol) server endpoint
-	mcpHandler := handlers.InitMCP()
+	mcpHandler := api.InitMCP()
 	r.Handle("/api/mcp", mcpHandler)
 	r.Handle("/api/mcp/*", mcpHandler)
 
 	// Grafana alert enrichment webhook (no auth required)
-	r.Post("/api/webhooks/grafana-alerts", handlers.HandleGrafanaAlerts)
+	r.Post("/api/webhooks/grafana-alerts", api.HandleGrafanaAlerts)
 
 	// Serve static files from the web dist directory
 	webDir := os.Getenv("WEB_DIST_DIR")
@@ -692,35 +710,35 @@ func main() {
 	}()
 
 	// Start auto-resume of incomplete workflows in background
-	go handlers.Manager.ResumeIncompleteWorkflows()
+	go api.Manager.ResumeIncompleteWorkflows()
 
 	// Start cleanup worker for expired sessions/nonces
-	handlers.StartCleanupWorker(serverCtx)
+	api.StartCleanupWorker(serverCtx)
 
 	// Initialize usage metrics and start daily reset worker
-	handlers.InitUsageMetrics(serverCtx)
-	handlers.StartDailyResetWorker(serverCtx)
+	api.InitUsageMetrics(serverCtx)
+	api.StartDailyResetWorker(serverCtx)
 
 	// Slack OAuth routes (available when SLACK_CLIENT_ID is set, regardless of bot mode)
 	if os.Getenv("SLACK_CLIENT_ID") != "" {
 		r.Group(func(r chi.Router) {
-			r.Use(handlers.RequireAuth)
-			r.Get("/api/slack/oauth/start", handlers.GetSlackOAuthStart)
-			r.Get("/api/slack/installations", handlers.GetSlackInstallations)
-			r.Post("/api/slack/installations/confirm/{pending_id}", handlers.ConfirmSlackInstallation)
-			r.Delete("/api/slack/installations/{team_id}", handlers.DeleteSlackInstallation)
+			r.Use(api.RequireAuth)
+			r.Get("/api/slack/oauth/start", api.GetSlackOAuthStart)
+			r.Get("/api/slack/installations", api.GetSlackInstallations)
+			r.Post("/api/slack/installations/confirm/{pending_id}", api.ConfirmSlackInstallation)
+			r.Delete("/api/slack/installations/{team_id}", api.DeleteSlackInstallation)
 		})
-		r.Get("/api/slack/oauth/callback", handlers.GetSlackOAuthCallback)
+		r.Get("/api/slack/oauth/callback", api.GetSlackOAuthCallback)
 	}
 
 	// Start Slack bot if configured
 	var slackEventHandler *slackbot.EventHandler
 	if slackBotToken := os.Getenv("SLACK_BOT_TOKEN"); slackBotToken != "" {
 		// Single-tenant dev mode
-		slackEventHandler = startSlackBot(serverCtx, r)
+		slackEventHandler = startSlackBot(serverCtx, r, api)
 	} else if os.Getenv("SLACK_CLIENT_ID") != "" && os.Getenv("SLACK_CLIENT_SECRET") != "" {
 		// Multi-tenant mode
-		slackEventHandler = startSlackBotMultiTenant(serverCtx, r)
+		slackEventHandler = startSlackBotMultiTenant(serverCtx, r, api)
 	}
 
 	// Wait for shutdown signal
@@ -776,7 +794,7 @@ func main() {
 
 // startSlackBot initializes and starts the Slack bot in the background.
 // Returns the event handler for graceful shutdown, or nil if startup fails.
-func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
+func startSlackBot(ctx context.Context, r *chi.Mux, api *handlers.API) *slackbot.EventHandler {
 	// Load Slack config from env
 	// Determine mode: socket if SLACK_APP_TOKEN is set, otherwise HTTP
 	modeFlag := ""
@@ -795,7 +813,7 @@ func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 	cfg.BotUserID = botUserID
 
 	// Set up workflow runner (direct in-process calls instead of HTTP)
-	runner := slackbot.NewWorkflowRunner(slog.Default())
+	runner := slackbot.NewWorkflowRunner(slog.Default(), api)
 
 	// Set up conversation manager
 	convManager := slackbot.NewManager(slog.Default())
@@ -854,10 +872,12 @@ func startSlackBot(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
 }
 
 // pgInstallationStore implements slackbot.InstallationStore using the handlers package
-type pgInstallationStore struct{}
+type pgInstallationStore struct {
+	api *handlers.API
+}
 
 func (s *pgInstallationStore) GetSlackInstallation(ctx context.Context, teamID string) (*slackbot.Installation, error) {
-	inst, err := handlers.GetSlackInstallationByTeamID(ctx, teamID)
+	inst, err := s.api.GetSlackInstallationByTeamID(ctx, teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -874,7 +894,7 @@ func (s *pgInstallationStore) GetSlackInstallation(ctx context.Context, teamID s
 }
 
 // startSlackBotMultiTenant initializes the Slack bot in multi-tenant mode (HTTP only).
-func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux) *slackbot.EventHandler {
+func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux, api *handlers.API) *slackbot.EventHandler {
 	signingSecret := os.Getenv("SLACK_SIGNING_SECRET")
 	if signingSecret == "" {
 		slog.Error("SLACK_SIGNING_SECRET is required for multi-tenant mode, bot will not start")
@@ -882,16 +902,16 @@ func startSlackBotMultiTenant(ctx context.Context, r *chi.Mux) *slackbot.EventHa
 	}
 
 	// Create client manager backed by Postgres
-	store := &pgInstallationStore{}
+	store := &pgInstallationStore{api: api}
 	clientManager := slackbot.NewClientManager(store, slog.Default())
 
 	// Invalidate cached clients when installations change
-	handlers.OnSlackInstallationChange = func(teamID string) {
+	api.OnSlackInstallationChange = func(teamID string) {
 		clientManager.InvalidateClient(teamID)
 	}
 
 	// Set up workflow runner
-	runner := slackbot.NewWorkflowRunner(slog.Default())
+	runner := slackbot.NewWorkflowRunner(slog.Default(), api)
 
 	// Set up conversation manager
 	convManager := slackbot.NewManager(slog.Default())

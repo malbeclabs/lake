@@ -7,13 +7,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
-	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestClaimIncompleteWorkflow_SingleWorkflow(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session first (required for foreign key)
@@ -25,13 +24,13 @@ func TestClaimIncompleteWorkflow_SingleWorkflow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a workflow run
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 	require.NotNil(t, run)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed, err := handlers.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.Equal(t, run.ID, claimed.ID)
@@ -40,7 +39,7 @@ func TestClaimIncompleteWorkflow_SingleWorkflow(t *testing.T) {
 }
 
 func TestClaimIncompleteWorkflow_AlreadyClaimed(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session
@@ -52,25 +51,25 @@ func TestClaimIncompleteWorkflow_AlreadyClaimed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a workflow run
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed1, err := handlers.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed1, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed1)
 	assert.Equal(t, run.ID, claimed1.ID)
 
 	// Server 2 tries to claim - should get nothing (workflow already claimed)
 	server2ID := "server-2"
-	claimed2, err := handlers.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
+	claimed2, err := testAPI.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed2, "second server should not be able to claim already-claimed workflow")
 }
 
 func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session
@@ -82,12 +81,12 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a workflow run
-	_, err = handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed1, err := handlers.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed1, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed1)
 
@@ -102,7 +101,7 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 
 	// Server 2 should now be able to steal the workflow (stale claim)
 	server2ID := "server-2"
-	claimed2, err := handlers.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
+	claimed2, err := testAPI.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed2, "second server should steal stale-claimed workflow")
 	assert.Equal(t, claimed1.ID, claimed2.ID)
@@ -110,7 +109,7 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 }
 
 func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session
@@ -122,12 +121,12 @@ func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a workflow run
-	_, err = handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed1, err := handlers.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed1, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed1)
 
@@ -142,13 +141,13 @@ func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
 
 	// Server 2 should NOT be able to steal (updated_at is recent)
 	server2ID := "server-2"
-	claimed2, err := handlers.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
+	claimed2, err := testAPI.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed2, "second server should not steal workflow with recent progress")
 }
 
 func TestClaimIncompleteWorkflow_CompletedNotClaimable(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session
@@ -160,21 +159,21 @@ func TestClaimIncompleteWorkflow_CompletedNotClaimable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create and immediately complete a workflow
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
-	err = handlers.CompleteWorkflowRun(ctx, run.ID, "test answer", &handlers.WorkflowCheckpoint{})
+	err = testAPI.CompleteWorkflowRun(ctx, run.ID, "test answer", &handlers.WorkflowCheckpoint{})
 	require.NoError(t, err)
 
 	// Try to claim - should get nothing (workflow is completed)
 	serverID := "server-1"
-	claimed, err := handlers.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
+	claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed, "completed workflow should not be claimable")
 }
 
 func TestClaimIncompleteWorkflow_FailedNotClaimable(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session
@@ -186,21 +185,21 @@ func TestClaimIncompleteWorkflow_FailedNotClaimable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create and immediately fail a workflow
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
-	err = handlers.FailWorkflowRun(ctx, run.ID, "test error")
+	err = testAPI.FailWorkflowRun(ctx, run.ID, "test error")
 	require.NoError(t, err)
 
 	// Try to claim - should get nothing (workflow is failed)
 	serverID := "server-1"
-	claimed, err := handlers.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
+	claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed, "failed workflow should not be claimable")
 }
 
 func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create sessions and workflows
@@ -213,7 +212,7 @@ func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
 		`, sessionID)
 		require.NoError(t, err)
 
-		run, err := handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+		run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 		require.NoError(t, err)
 		workflowIDs = append(workflowIDs, run.ID)
 
@@ -225,7 +224,7 @@ func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
 	server1ID := "server-1"
 	var claimedByServer1 []uuid.UUID
 	for {
-		claimed, err := handlers.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+		claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 		require.NoError(t, err)
 		if claimed == nil {
 			break
@@ -240,7 +239,7 @@ func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
 }
 
 func TestClaimIncompleteWorkflow_ConcurrentClaims(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session and workflow
@@ -251,7 +250,7 @@ func TestClaimIncompleteWorkflow_ConcurrentClaims(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	_, err = handlers.CreateWorkflowRun(ctx, sessionID, "test question")
+	_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Simulate concurrent claims from multiple servers
@@ -261,7 +260,7 @@ func TestClaimIncompleteWorkflow_ConcurrentClaims(t *testing.T) {
 	for i := 0; i < numServers; i++ {
 		go func(serverNum int) {
 			serverID := uuid.NewString()
-			claimed, err := handlers.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
+			claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
 			if err != nil {
 				t.Logf("server %d error: %v", serverNum, err)
 			}

@@ -32,6 +32,8 @@ func TestExecuteCypher_Match(t *testing.T) {
 	}
 
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "MATCH (n:TestNode) RETURN n.name as name, n.value as value ORDER BY n.name",
@@ -42,7 +44,7 @@ func TestExecuteCypher_Match(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -57,7 +59,7 @@ func TestExecuteCypher_Match(t *testing.T) {
 }
 
 func TestExecuteCypher_EmptyQuery(t *testing.T) {
-	apitesting.SetupTestNeo4j(t, testNeo4jDB)
+	setupTestNeo4j(t)
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "",
@@ -68,13 +70,13 @@ func TestExecuteCypher_EmptyQuery(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestExecuteCypher_WhitespaceOnly(t *testing.T) {
-	apitesting.SetupTestNeo4j(t, testNeo4jDB)
+	setupTestNeo4j(t)
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "   \t\n  ",
@@ -85,13 +87,13 @@ func TestExecuteCypher_WhitespaceOnly(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestExecuteCypher_InvalidQuery(t *testing.T) {
-	apitesting.SetupTestNeo4j(t, testNeo4jDB)
+	setupTestNeo4j(t)
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "THIS IS NOT VALID CYPHER",
@@ -102,7 +104,7 @@ func TestExecuteCypher_InvalidQuery(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	// Returns 200 OK with error in response
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -114,13 +116,13 @@ func TestExecuteCypher_InvalidQuery(t *testing.T) {
 }
 
 func TestExecuteCypher_InvalidRequestBody(t *testing.T) {
-	apitesting.SetupTestNeo4j(t, testNeo4jDB)
+	setupTestNeo4j(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/cypher", bytes.NewReader([]byte("not json")))
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -129,7 +131,9 @@ func TestExecuteCypher_NoNeo4j(t *testing.T) {
 	// Don't set up Neo4j - test graceful fallback
 	oldClient := config.Neo4jClient
 	config.Neo4jClient = nil
-	defer func() { config.Neo4jClient = oldClient }()
+	testAPI.Neo4jClient = nil
+	oldAPIClient := testAPI.Neo4jClient
+	defer func() { config.Neo4jClient = oldClient; testAPI.Neo4jClient = oldAPIClient }()
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "MATCH (n) RETURN n",
@@ -140,7 +144,7 @@ func TestExecuteCypher_NoNeo4j(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -151,7 +155,7 @@ func TestExecuteCypher_NoNeo4j(t *testing.T) {
 }
 
 func TestExecuteCypher_EmptyResult(t *testing.T) {
-	apitesting.SetupTestNeo4j(t, testNeo4jDB)
+	setupTestNeo4j(t)
 
 	// Query for non-existent nodes
 	reqBody := handlers.CypherQueryRequest{
@@ -163,7 +167,7 @@ func TestExecuteCypher_EmptyResult(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -188,6 +192,8 @@ func TestExecuteCypher_RelationshipQuery(t *testing.T) {
 	}
 
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a.name as from, b.name as to, r.since as since ORDER BY a.name",
@@ -198,7 +204,7 @@ func TestExecuteCypher_RelationshipQuery(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -223,6 +229,8 @@ func TestExecuteCypher_CountQuery(t *testing.T) {
 	}
 
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "MATCH (n:CountNode) RETURN count(n) as total",
@@ -233,7 +241,7 @@ func TestExecuteCypher_CountQuery(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteCypher(rr, req)
+	testAPI.ExecuteCypher(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

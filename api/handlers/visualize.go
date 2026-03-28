@@ -31,7 +31,7 @@ type VisualizeResponse struct {
 	Error       string   `json:"error,omitempty"`
 }
 
-func RecommendVisualization(w http.ResponseWriter, r *http.Request) {
+func (a *API) RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 	var req VisualizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)

@@ -44,10 +44,12 @@ func TestGetMetroConnectivity_FiltersMetrosWithoutMaxUsers(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-connectivity", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetroConnectivity(rr, req)
+	testAPI.GetMetroConnectivity(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -91,10 +93,12 @@ func TestGetMetroConnectivity_IncludesMetrosWithMaxUsers(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-connectivity", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetroConnectivity(rr, req)
+	testAPI.GetMetroConnectivity(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -137,10 +141,12 @@ func TestGetMetroConnectivity_Empty(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-connectivity", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetroConnectivity(rr, req)
+	testAPI.GetMetroConnectivity(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

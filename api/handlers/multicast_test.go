@@ -67,7 +67,7 @@ func TestGetMulticastGroups_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroups(rr, req)
+	testAPI.GetMulticastGroups(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -84,7 +84,7 @@ func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroups(rr, req)
+	testAPI.GetMulticastGroups(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -110,7 +110,7 @@ func TestGetMulticastGroup_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	testAPI.GetMulticastGroup(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -126,7 +126,7 @@ func TestGetMulticastGroup_ReturnsMetadataOnly(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	testAPI.GetMulticastGroup(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -150,7 +150,7 @@ func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -176,7 +176,7 @@ func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr = httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -216,7 +216,7 @@ func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -233,7 +233,7 @@ func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr = httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -256,7 +256,7 @@ func TestGetMulticastGroupMembers_TrafficBps_NoCounters(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -276,7 +276,7 @@ func TestGetMulticastGroup_MissingCode(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroup(rr, req)
+	testAPI.GetMulticastGroup(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -320,7 +320,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -345,7 +345,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr = httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -382,7 +382,7 @@ func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupTraffic(rr, req)
+	testAPI.GetMulticastGroupTraffic(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -412,7 +412,7 @@ func TestGetMulticastGroupTraffic_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupTraffic(rr, req)
+	testAPI.GetMulticastGroupTraffic(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -428,7 +428,7 @@ func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupTraffic(rr, req)
+	testAPI.GetMulticastGroupTraffic(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -476,7 +476,7 @@ func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -528,7 +528,7 @@ func TestGetMulticastGroupMembers_ValidatorEnrichment(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMulticastGroupMembers(rr, req)
+	testAPI.GetMulticastGroupMembers(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

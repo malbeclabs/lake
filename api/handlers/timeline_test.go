@@ -53,7 +53,7 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -104,7 +104,7 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -150,7 +150,7 @@ func TestDZStakeAttribution_StakeChange(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -201,7 +201,7 @@ func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -239,7 +239,7 @@ func TestDZStakeAttribution_NoChange(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -284,7 +284,7 @@ func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -389,7 +389,7 @@ func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t4.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -481,7 +481,7 @@ func TestDZTotalBackfillWalk_StableTotal(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t3.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -549,7 +549,7 @@ func TestDedup_SameValidatorDifferentTimestamps(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t3.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -651,7 +651,7 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t4.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -784,7 +784,7 @@ func TestTimeline_FullResponse_DZFilter(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rrAll := httptest.NewRecorder()
-	handlers.GetTimeline(rrAll, reqAll)
+	testAPI.GetTimeline(rrAll, reqAll)
 	require.Equal(t, http.StatusOK, rrAll.Code)
 
 	var respAll handlers.TimelineResponse
@@ -809,7 +809,7 @@ func TestTimeline_FullResponse_DZFilter(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rrDZ := httptest.NewRecorder()
-	handlers.GetTimeline(rrDZ, reqDZ)
+	testAPI.GetTimeline(rrDZ, reqDZ)
 	require.Equal(t, http.StatusOK, rrDZ.Code)
 
 	var respDZ handlers.TimelineResponse
@@ -879,7 +879,7 @@ func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -937,7 +937,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		endTime.Format(time.RFC3339)), nil)
 	rrAll := httptest.NewRecorder()
-	handlers.GetTimeline(rrAll, reqAll)
+	testAPI.GetTimeline(rrAll, reqAll)
 	require.Equal(t, http.StatusOK, rrAll.Code)
 
 	var respAll handlers.TimelineResponse
@@ -954,7 +954,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		endTime.Format(time.RFC3339)), nil)
 	rr1 := httptest.NewRecorder()
-	handlers.GetTimeline(rr1, req1)
+	testAPI.GetTimeline(rr1, req1)
 	require.Equal(t, http.StatusOK, rr1.Code)
 
 	var resp1 handlers.TimelineResponse
@@ -970,7 +970,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		endTime.Format(time.RFC3339)), nil)
 	rr2 := httptest.NewRecorder()
-	handlers.GetTimeline(rr2, req2)
+	testAPI.GetTimeline(rr2, req2)
 	require.Equal(t, http.StatusOK, rr2.Code)
 
 	var resp2 handlers.TimelineResponse
@@ -1028,7 +1028,7 @@ func TestTimeline_FullResponse_EventFields(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1134,7 +1134,7 @@ func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
 	reqAdded := httptest.NewRequest(http.MethodGet,
 		"/api/timeline?"+timeRange+"&category=state_change&entity_type=validator&action=added&limit=500", nil)
 	rrAdded := httptest.NewRecorder()
-	handlers.GetTimeline(rrAdded, reqAdded)
+	testAPI.GetTimeline(rrAdded, reqAdded)
 	require.Equal(t, http.StatusOK, rrAdded.Code)
 
 	var respAdded handlers.TimelineResponse
@@ -1150,7 +1150,7 @@ func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
 	reqRemoved := httptest.NewRequest(http.MethodGet,
 		"/api/timeline?"+timeRange+"&category=state_change&entity_type=validator&action=removed&limit=500", nil)
 	rrRemoved := httptest.NewRecorder()
-	handlers.GetTimeline(rrRemoved, reqRemoved)
+	testAPI.GetTimeline(rrRemoved, reqRemoved)
 	require.Equal(t, http.StatusOK, rrRemoved.Code)
 
 	var respRemoved handlers.TimelineResponse
@@ -1336,7 +1336,7 @@ func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1387,7 +1387,7 @@ func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1443,7 +1443,7 @@ func TestVoteAccountChanges_DZMetadata(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1500,7 +1500,7 @@ func TestGossipNetworkChanges_ValidatorOffline(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1534,7 +1534,7 @@ func TestGossipNetworkChanges_GossipNodeOffline(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1569,7 +1569,7 @@ func TestStakeChanges_Increase(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1600,7 +1600,7 @@ func TestStakeChanges_Decrease(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1631,7 +1631,7 @@ func TestStakeChanges_BelowThreshold(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1661,7 +1661,7 @@ func TestStakeChanges_PercentageThreshold(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1692,7 +1692,7 @@ func TestStakeChanges_OnDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1726,7 +1726,7 @@ func TestStakeChanges_OnDZ_ContributorEnrichment(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1766,7 +1766,7 @@ func TestValidatorEvents_JoinedDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1809,7 +1809,7 @@ func TestValidatorEvents_LeftDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1850,7 +1850,7 @@ func TestValidatorEvents_LeftDZ_DeletedWhileActivated(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1893,7 +1893,7 @@ func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1930,7 +1930,7 @@ func TestValidatorEvents_GossipNodeLeftDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1970,7 +1970,7 @@ func TestDZFilter_OnDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=on_dz",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2007,7 +2007,7 @@ func TestDZFilter_OffDZ(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=off_dz",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2051,7 +2051,7 @@ func TestDZFilter_AttributionPassThrough(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=on_dz",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2090,7 +2090,7 @@ func TestActionFilter_Added(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=added",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2137,7 +2137,7 @@ func TestActionFilter_Removed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=removed",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2171,7 +2171,7 @@ func TestActionFilter_Changed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=changed",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2206,7 +2206,7 @@ func TestActionFilter_AlertingIncludesStakeIncrease(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=alerting",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2247,7 +2247,7 @@ func TestMinStakePct_FiltersValidators(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&min_stake_pct=5",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2294,7 +2294,7 @@ func TestMinStakePct_NonValidatorPassThrough(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&min_stake_pct=5",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2340,7 +2340,7 @@ func TestDZTotal_OnAllEventTypes(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2376,7 +2376,7 @@ func TestEdge_NoDZUsers(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2409,7 +2409,7 @@ func TestEdge_ZeroStake(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	// Should not crash
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
@@ -2460,7 +2460,7 @@ func TestCombinedFilters(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=on_dz&action=added&min_stake_pct=2&entity_type=validator",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	handlers.GetTimeline(rr, req)
+	testAPI.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse

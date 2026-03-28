@@ -240,7 +240,7 @@ func TestGetPublisherCheck_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -257,7 +257,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -315,7 +315,7 @@ func TestGetPublisherCheck_FilterByIP(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=10.0.0.1", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -333,7 +333,7 @@ func TestGetPublisherCheck_FilterByClientIP(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=203.0.113.2", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -352,7 +352,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	// Default (epochs=2) should work the same as before
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -364,7 +364,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	// epochs=1 should also work (single epoch)
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?epochs=1", nil)
 	rr = httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	err = json.NewDecoder(rr.Body).Decode(&resp)
@@ -374,7 +374,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	// Invalid epochs param should use default
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?epochs=abc", nil)
 	rr = httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	err = json.NewDecoder(rr.Body).Decode(&resp)
@@ -414,7 +414,7 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=dzuser1", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -437,7 +437,7 @@ func TestGetPublisherCheck_MaxSlotInResponse(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -470,7 +470,7 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=500&q=dzuser2", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -492,7 +492,7 @@ func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=999", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -511,7 +511,7 @@ func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=500&epochs=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -530,7 +530,7 @@ func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=dzuser1", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetPublisherCheck(rr, req)
+	testAPI.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -604,7 +604,7 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q="+tt.dzUser, nil)
 			rr := httptest.NewRecorder()
-			handlers.GetPublisherCheck(rr, req)
+			testAPI.GetPublisherCheck(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 

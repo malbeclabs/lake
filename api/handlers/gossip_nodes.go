@@ -58,7 +58,7 @@ var gossipNodeFilterFields = map[string]FilterFieldConfig{
 	"device":    {Column: "device_code", Type: FieldTypeText},
 }
 
-func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
@@ -128,7 +128,7 @@ func GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	`
 
 	queryArgs := append(filterArgs, pagination.Limit, pagination.Offset)
-	rows, err := envDB(ctx).Query(ctx, query, queryArgs...)
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -211,7 +211,7 @@ type GossipNodeDetail struct {
 	VotePubkey  string  `json:"vote_pubkey"`
 }
 
-func GetGossipNode(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -273,7 +273,7 @@ func GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var node GossipNodeDetail
-	err := envDB(ctx).QueryRow(ctx, query, pubkey).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pubkey).Scan(
 		&node.Pubkey,
 		&node.GossipIP,
 		&node.GossipPort,

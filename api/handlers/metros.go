@@ -22,7 +22,7 @@ type MetroListItem struct {
 	UserCount   uint64  `json:"user_count"`
 }
 
-func GetMetros(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -32,7 +32,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_metros_current`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		slog.Error("metros count query failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
@@ -67,7 +67,7 @@ func GetMetros(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -135,7 +135,7 @@ type MetroDetail struct {
 	OutBps         float64 `json:"out_bps"`
 }
 
-func GetMetro(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -206,7 +206,7 @@ func GetMetro(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var metro MetroDetail
-	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&metro.PK,
 		&metro.Code,
 		&metro.Name,

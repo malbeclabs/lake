@@ -197,7 +197,7 @@ func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJo
 
 // GetLinkLatencyData returns per-link aggregated latency summary data.
 // Supports filtering by device, device_a, device_z, contributor, link_type.
-func GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
@@ -265,7 +265,7 @@ func GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 		filterSQL,
 		statusFilter)
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -328,7 +328,7 @@ func GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 //     Requires "pks" param (comma-separated link PKs, max 20).
 //   - "aggregate": returns a single aggregated time series across all matching links.
 //     Uses the same filter params as GetLinkLatencyData (device, contributor, link_type).
-func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -392,7 +392,7 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			timeFilter,
 			filterSQL)
 
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		duration := time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 
@@ -496,7 +496,7 @@ func GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		scanPerLink = true
 	}
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

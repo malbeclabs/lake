@@ -59,7 +59,7 @@ func TestGetValidators(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetValidators(rr, req)
+	testAPI.GetValidators(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -84,7 +84,7 @@ func TestGetValidators_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetValidators(rr, req)
+	testAPI.GetValidators(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -106,7 +106,7 @@ func TestGetValidator(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 
-	handlers.GetValidator(rr, req)
+	testAPI.GetValidator(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -131,7 +131,7 @@ func TestGetValidator_NotFound(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 
-	handlers.GetValidator(rr, req)
+	testAPI.GetValidator(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }

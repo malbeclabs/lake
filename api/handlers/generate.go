@@ -14,7 +14,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	"github.com/malbeclabs/lake/api/config"
+	
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -75,7 +75,7 @@ func getGeneratePrompt() (string, error) {
 	return cachedGeneratePrompt, nil
 }
 
-func GenerateSQL(w http.ResponseWriter, r *http.Request) {
+func (a *API) GenerateSQL(w http.ResponseWriter, r *http.Request) {
 	var req GenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -88,7 +88,7 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch schema using shared DBSchemaFetcher
-	schemaFetcher := NewDBSchemaFetcher()
+	schemaFetcher := a.NewDBSchemaFetcher()
 	schema, err := schemaFetcher.FetchSchema(r.Context())
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -133,7 +133,7 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 		sql = cleanSQL(sql)
 
 		// Validate with EXPLAIN
-		validationErr := validateQuery(sql)
+		validationErr := a.validateQuery(sql)
 		if validationErr == "" {
 			// Query is valid
 			w.Header().Set("Content-Type", "application/json")
@@ -156,7 +156,7 @@ func GenerateSQL(w http.ResponseWriter, r *http.Request) {
 }
 
 // GenerateSQLStream streams the SQL generation with SSE
-func GenerateSQLStream(w http.ResponseWriter, r *http.Request) {
+func (a *API) GenerateSQLStream(w http.ResponseWriter, r *http.Request) {
 	var req GenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -187,7 +187,7 @@ func GenerateSQLStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch schema using shared DBSchemaFetcher
-	schemaFetcher := NewDBSchemaFetcher()
+	schemaFetcher := a.NewDBSchemaFetcher()
 	schema, err := schemaFetcher.FetchSchema(r.Context())
 	if err != nil {
 		sendEvent("error", internalError("Failed to fetch schema", err))
@@ -241,7 +241,7 @@ func GenerateSQLStream(w http.ResponseWriter, r *http.Request) {
 
 		// Validate with EXPLAIN
 		sendEvent("status", `{"status":"validating"}`)
-		validationErr := validateQuery(sql)
+		validationErr := a.validateQuery(sql)
 		if validationErr == "" {
 			// Query is valid
 			sendEvent("done", fmt.Sprintf(`{"sql":"%s","provider":"anthropic","attempts":%d}`, escapeJSON(sql), attempts))
@@ -343,7 +343,7 @@ func cleanSQL(response string) string {
 	return strings.TrimSpace(response)
 }
 
-func validateQuery(sql string) string {
+func (a *API) validateQuery(sql string) string {
 	// Run EXPLAIN on the query to check validity (always against mainnet database)
 	explainQuery := "EXPLAIN " + sql
 
@@ -351,7 +351,7 @@ func validateQuery(sql string) string {
 	defer cancel()
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, explainQuery)
+	rows, err := a.DB.Query(ctx, explainQuery)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

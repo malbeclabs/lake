@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
+	
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -88,7 +88,7 @@ type QueryResponse struct {
 	Error     string   `json:"error,omitempty"`
 }
 
-func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
+func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -110,7 +110,7 @@ func ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Agent queries always run against the mainnet database. To query other
 	// environments, use fully-qualified table names (e.g., lake_devnet.dim_devices_current).
-	rows, err := config.DB.Query(ctx, query)
+	rows, err := a.DB.Query(ctx, query)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

@@ -47,7 +47,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -73,7 +73,7 @@ func TestExecuteQuery_Empty(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -91,7 +91,7 @@ func TestExecuteQuery_WhitespaceOnly(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -109,7 +109,7 @@ func TestExecuteQuery_InvalidSQL(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	// Should return 200 OK with error in response body
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -128,7 +128,7 @@ func TestExecuteQuery_InvalidRequestBody(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -146,7 +146,7 @@ func TestExecuteQuery_TrimsTrailingSemicolon(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -348,7 +348,7 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -387,7 +387,7 @@ func TestExecuteQuery_EmptyResult(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.ExecuteQuery(rr, req)
+	testAPI.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

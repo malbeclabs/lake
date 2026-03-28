@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 )
 
 // Graph types for in-memory shortest path computation.
@@ -41,8 +40,8 @@ type kspPath struct {
 
 // loadTopologyGraph loads the device/link topology from Neo4j into memory.
 // Edge weights use committed_rtt_ns (converted to microseconds) as the metric.
-func loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
-	session := config.Neo4jSession(ctx)
+func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	g := &kspGraph{
@@ -340,9 +339,9 @@ func kspToSinglePaths(g *kspGraph, paths []kspPath) []SinglePath {
 }
 
 // findKShortestPaths loads the graph and runs Yen's algorithm.
-func findKShortestPaths(ctx context.Context, fromPK, toPK string, k int) ([]SinglePath, error) {
+func (a *API) findKShortestPaths(ctx context.Context, fromPK, toPK string, k int) ([]SinglePath, error) {
 	start := time.Now()
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		return nil, err
 	}

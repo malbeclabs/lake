@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"github.com/malbeclabs/lake/api/config"
 )
 
 // DZEnv represents a DoubleZero network environment.
@@ -40,27 +38,10 @@ func EnvFromContext(ctx context.Context) DZEnv {
 	return EnvMainnet
 }
 
-// envDB returns the ClickHouse connection pool for the environment in the context.
-func envDB(ctx context.Context) driver.Conn {
-	return config.DBForEnv(string(EnvFromContext(ctx)))
-}
-
-// DatabaseForEnvFromContext returns the database name for the environment in the context.
-func DatabaseForEnvFromContext(ctx context.Context) string {
-	env := EnvFromContext(ctx)
-	db, ok := config.DatabaseForEnv(string(env))
-	if !ok {
-		return config.Database()
-	}
-	return db
-}
-
 // BuildEnvContext returns the agent system prompt context for the given environment.
 // All agent queries run against the mainnet database by default. For other environments,
 // the agent uses fully-qualified table names (e.g., lake_devnet.dim_devices_current).
-func BuildEnvContext(env DZEnv) string {
-	mainnetDB := config.Database()
-
+func BuildEnvContext(env DZEnv, mainnetDB string) string {
 	if env == EnvMainnet {
 		return fmt.Sprintf("You are querying the mainnet-beta environment (database: `%s`). Other DZ environments are available: devnet (`lake_devnet`), testnet (`lake_testnet`). To query these, use fully-qualified `database.table` syntax (e.g., `lake_devnet.dim_devices_current`).", mainnetDB)
 	}
@@ -83,9 +64,9 @@ func isMainnet(ctx context.Context) bool {
 
 // RequireNeo4jMiddleware returns 503 for non-mainnet requests on Neo4j-dependent
 // endpoints, since Neo4j only contains mainnet data.
-func RequireNeo4jMiddleware(next http.Handler) http.Handler {
+func (a *API) RequireNeo4jMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isMainnet(r.Context()) || config.Neo4jClient == nil {
+		if !isMainnet(r.Context()) || a.Neo4jClient == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"error":"This feature is only available on mainnet-beta"}`))

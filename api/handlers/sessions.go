@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 )
 
 // Session represents a chat or query session
@@ -76,7 +75,7 @@ type BatchGetSessionsResponse struct {
 }
 
 // ListSessions returns a paginated list of sessions for the current user
-func ListSessions(w http.ResponseWriter, r *http.Request) {
+func (a *API) ListSessions(w http.ResponseWriter, r *http.Request) {
 	sessionType := r.URL.Query().Get("type")
 	if sessionType != "chat" && sessionType != "query" {
 		http.Error(w, "type query parameter must be 'chat' or 'query'", http.StatusBadRequest)
@@ -117,7 +116,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Get total count
 	var total int
-	err := config.PgPool.QueryRow(ctx, fmt.Sprintf(`
+	err := a.PgPool.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(*) FROM sessions WHERE type = $1 AND %s
 	`, ownerFilter), sessionType, ownerArg).Scan(&total)
 	if err != nil {
@@ -129,7 +128,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	// If include_content is true, return full sessions
 	if includeContent {
-		rows, err := config.PgPool.Query(ctx, fmt.Sprintf(`
+		rows, err := a.PgPool.Query(ctx, fmt.Sprintf(`
 			SELECT id, type, name, content, created_at, updated_at, account_id, anonymous_id
 			FROM sessions
 			WHERE type = $1 AND %s
@@ -167,7 +166,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get sessions without content
-	rows, err := config.PgPool.Query(ctx, fmt.Sprintf(`
+	rows, err := a.PgPool.Query(ctx, fmt.Sprintf(`
 		SELECT id, type, name, jsonb_array_length(content) as content_length,
 		       created_at, updated_at, account_id, anonymous_id
 		FROM sessions
@@ -211,7 +210,7 @@ type BatchGetSessionsRequestWithOwner struct {
 }
 
 // BatchGetSessions returns multiple sessions by their IDs (filtered by owner)
-func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
+func (a *API) BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 	var req BatchGetSessionsRequestWithOwner
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -243,14 +242,14 @@ func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if account != nil {
-		rows, err = config.PgPool.Query(ctx, `
+		rows, err = a.PgPool.Query(ctx, `
 			SELECT id, type, name, content, created_at, updated_at, account_id, anonymous_id
 			FROM sessions
 			WHERE id = ANY($1) AND account_id = $2
 			ORDER BY updated_at DESC, id ASC
 		`, req.IDs, account.ID)
 	} else if req.AnonymousID != nil && *req.AnonymousID != "" {
-		rows, err = config.PgPool.Query(ctx, `
+		rows, err = a.PgPool.Query(ctx, `
 			SELECT id, type, name, content, created_at, updated_at, account_id, anonymous_id
 			FROM sessions
 			WHERE id = ANY($1) AND anonymous_id = $2
@@ -288,7 +287,7 @@ func BatchGetSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSession returns a single session by ID (must belong to current user)
-func GetSession(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSession(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -303,7 +302,7 @@ func GetSession(w http.ResponseWriter, r *http.Request) {
 	anonymousID := r.URL.Query().Get("anonymous_id")
 
 	var session Session
-	err = config.PgPool.QueryRow(ctx, `
+	err = a.PgPool.QueryRow(ctx, `
 		SELECT id, type, name, content, created_at, updated_at, account_id, anonymous_id
 		FROM sessions WHERE id = $1
 	`, id).Scan(&session.ID, &session.Type, &session.Name, &session.Content, &session.CreatedAt, &session.UpdatedAt, &session.AccountID, &session.AnonymousID)
@@ -335,7 +334,7 @@ func GetSession(w http.ResponseWriter, r *http.Request) {
 
 	// For chat sessions, fetch the env from the first workflow run
 	if session.Type == "chat" {
-		if env, err := GetSessionEnv(ctx, id); err == nil && env != "" {
+		if env, err := a.GetSessionEnv(ctx, id); err == nil && env != "" {
 			session.Env = &env
 		}
 	}
@@ -354,7 +353,7 @@ type CreateSessionRequestWithOwner struct {
 }
 
 // CreateSession creates a new session owned by the current user
-func CreateSession(w http.ResponseWriter, r *http.Request) {
+func (a *API) CreateSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateSessionRequestWithOwner
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -392,7 +391,7 @@ func CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var session Session
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		INSERT INTO sessions (id, type, name, content, account_id, anonymous_id)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, type, name, content, created_at, updated_at, account_id, anonymous_id
@@ -422,7 +421,7 @@ type UpdateSessionRequestWithOwner struct {
 }
 
 // UpdateSession updates an existing session (must belong to current user)
-func UpdateSession(w http.ResponseWriter, r *http.Request) {
+func (a *API) UpdateSession(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -449,7 +448,7 @@ func UpdateSession(w http.ResponseWriter, r *http.Request) {
 
 	if account != nil {
 		// Authenticated user - update if owned by them OR if orphaned (claim it)
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			UPDATE sessions
 			SET name = $2, content = $3, account_id = $4, updated_at = NOW()
 			WHERE id = $1 AND (account_id = $4 OR (account_id IS NULL AND anonymous_id IS NULL))
@@ -459,7 +458,7 @@ func UpdateSession(w http.ResponseWriter, r *http.Request) {
 		)
 	} else if req.AnonymousID != nil && *req.AnonymousID != "" {
 		// Anonymous user - update if owned by them OR if orphaned (claim it)
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			UPDATE sessions
 			SET name = $2, content = $3, anonymous_id = $4, updated_at = NOW()
 			WHERE id = $1 AND (anonymous_id = $4 OR (account_id IS NULL AND anonymous_id IS NULL))
@@ -485,7 +484,7 @@ func UpdateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteSession deletes a session by ID (must belong to current user)
-func DeleteSession(w http.ResponseWriter, r *http.Request) {
+func (a *API) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -501,9 +500,9 @@ func DeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	var result interface{ RowsAffected() int64 }
 	if account != nil {
-		result, err = config.PgPool.Exec(ctx, `DELETE FROM sessions WHERE id = $1 AND account_id = $2`, id, account.ID)
+		result, err = a.PgPool.Exec(ctx, `DELETE FROM sessions WHERE id = $1 AND account_id = $2`, id, account.ID)
 	} else if anonymousID != "" {
-		result, err = config.PgPool.Exec(ctx, `DELETE FROM sessions WHERE id = $1 AND anonymous_id = $2`, id, anonymousID)
+		result, err = a.PgPool.Exec(ctx, `DELETE FROM sessions WHERE id = $1 AND anonymous_id = $2`, id, anonymousID)
 	} else {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return

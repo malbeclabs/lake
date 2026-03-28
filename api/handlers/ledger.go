@@ -8,7 +8,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/solana"
 	"golang.org/x/sync/errgroup"
 )
@@ -190,8 +189,8 @@ func FetchLedgerData(ctx context.Context, rpcURL string) (*LedgerResponse, error
 }
 
 // GetDZLedger returns ledger telemetry for the DZ chain.
-func GetDZLedger(w http.ResponseWriter, r *http.Request) {
-	if data, err := ReadPageCache(r.Context(), "dz_ledger"); err == nil {
+func (a *API) GetDZLedger(w http.ResponseWriter, r *http.Request) {
+	if data, err := a.readPageCache(r.Context(), "dz_ledger"); err == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
 		return
@@ -214,8 +213,8 @@ func GetDZLedger(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSolanaLedger returns ledger telemetry for Solana.
-func GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
-	if data, err := ReadPageCache(r.Context(), "solana_ledger"); err == nil {
+func (a *API) GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
+	if data, err := a.readPageCache(r.Context(), "solana_ledger"); err == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
 		return
@@ -266,8 +265,8 @@ GROUP BY dz_status
 `
 
 // FetchValidatorPerfData fetches aggregated validator performance data.
-func FetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error) {
-	rows, err := config.DB.Query(ctx, validatorPerfQuery)
+func (a *API) FetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error) {
+	rows, err := a.DB.Query(ctx, validatorPerfQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -306,8 +305,8 @@ func FetchValidatorPerfData(ctx context.Context) (*ValidatorPerfResponse, error)
 }
 
 // GetValidatorPerformance returns aggregated validator performance comparing DZ vs non-DZ.
-func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
-	if data, err := ReadPageCache(r.Context(), "validator_perf"); err == nil {
+func (a *API) GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
+	if data, err := a.readPageCache(r.Context(), "validator_perf"); err == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(data)
 		return
@@ -316,7 +315,7 @@ func GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp, err := FetchValidatorPerfData(ctx)
+	resp, err := a.FetchValidatorPerfData(ctx)
 	if err != nil {
 		slog.Error("validator performance query failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")

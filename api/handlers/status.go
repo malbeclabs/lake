@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/health"
 	"github.com/malbeclabs/lake/api/metrics"
@@ -209,10 +208,10 @@ const (
 	committedRttProvisioningNs = health.CommittedRttProvisioningNs
 )
 
-func GetStatus(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetStatus(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache first (cache only holds mainnet data)
 	if isMainnet(r.Context()) {
-		if data, err := ReadPageCache(r.Context(), "status"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "status"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -225,7 +224,7 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	resp := FetchStatusData(ctx)
+	resp := a.FetchStatusData(ctx)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -235,7 +234,7 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 
 // FetchStatusData performs the actual status data fetch from the database.
 // This is called by both the cache refresh and direct requests.
-func FetchStatusData(ctx context.Context) *StatusResponse {
+func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 	start := time.Now()
 
 	resp := &StatusResponse{
@@ -267,7 +266,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 	g.Go(func() error {
 		pingCtx, pingCancel := context.WithTimeout(ctx, 2*time.Second)
 		defer pingCancel()
-		if err := config.DB.Ping(pingCtx); err != nil {
+		if err := a.DB.Ping(pingCtx); err != nil {
 			resp.System.Database = false
 			resp.System.DatabaseMsg = err.Error()
 		} else {
@@ -283,7 +282,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			FROM link_rollup_5m
 			WHERE bucket_ts > now() - INTERVAL 1 HOUR
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		var ts string
 		if err := row.Scan(&ts); err == nil && ts != "" {
 			resp.System.LastIngested = ts
@@ -303,7 +302,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			  AND va.epoch_vote_account = 'true'
 			  AND va.activated_stake_lamports > 0
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.ValidatorsOnDZ)
 	})
 
@@ -321,7 +320,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				  AND va.activated_stake_lamports > 0
 			)
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.TotalStakeSol)
 	})
 
@@ -340,7 +339,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 					0
 				) AS stake_share_pct
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.StakeSharePct)
 	})
 
@@ -401,7 +400,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				END AS delta
 			FROM current_share, historical_share
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		var delta float64
 		if err := row.Scan(&delta); err != nil {
 			// If historical data unavailable, delta is 0
@@ -414,38 +413,38 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_users_current`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Users)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_devices_current`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Devices)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(*) FROM dz_links_current`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Links)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_contributors_current`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Contributors)
 	})
 
 	g.Go(func() error {
 		query := `SELECT COUNT(DISTINCT pk) FROM dz_metros_current`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.Metros)
 	})
 
 	// Sum total bandwidth for all links
 	g.Go(func() error {
 		query := `SELECT COALESCE(SUM(bandwidth_bps), 0) FROM dz_links_current`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.BandwidthBps)
 	})
 
@@ -461,14 +460,14 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				GROUP BY device_pk, intf
 			)
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Network.UserInboundBps)
 	})
 
 	// Device status breakdown
 	g.Go(func() error {
 		query := `SELECT status, COUNT(*) as cnt FROM dz_devices_current GROUP BY status`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -491,7 +490,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			COUNT(*) as cnt
 		FROM dz_links_current
 		GROUP BY effective_status`
-		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
+		rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
@@ -573,7 +572,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				AND l.isis_delay_override_ns != ?
 				AND l.committed_rtt_ns != ?
 		`
-		rows, err := envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs, committedRttProvisioningNs)
+		rows, err := a.envDB(ctx).Query(ctx, query, delayOverrideSoftDrainedNs, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
@@ -746,7 +745,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				FROM earliest_issue ei
 				LEFT JOIN last_healthy lh ON ei.code = lh.code
 			`
-			issueRows, err := envDB(ctx).Query(ctx, issueStartQuery, linkCodes, LossWarningPct, LossWarningPct, LossWarningPct, LossWarningPct)
+			issueRows, err := a.envDB(ctx).Query(ctx, issueStartQuery, linkCodes, LossWarningPct, LossWarningPct, LossWarningPct, LossWarningPct)
 			if err == nil {
 				defer issueRows.Close()
 				issueSince := make(map[string]time.Time)
@@ -857,7 +856,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY lls.last_seen DESC
 			LIMIT 10
 		`
-		noDataRows, err := envDB(ctx).Query(ctx, noDataQuery, committedRttProvisioningNs)
+		noDataRows, err := a.envDB(ctx).Query(ctx, noDataQuery, committedRttProvisioningNs)
 		if err == nil {
 			defer noDataRows.Close()
 			for noDataRows.Next() {
@@ -901,7 +900,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			WHERE r.bucket_ts >= now() - INTERVAL 3 HOUR
 			  AND l.link_type = 'WAN'
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(
 			&resp.Performance.AvgLatencyUs,
 			&resp.Performance.P95LatencyUs,
@@ -922,7 +921,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			WHERE bucket_ts >= now() - INTERVAL 5 MINUTE
 			  AND link_pk != ''
 		`
-		row := envDB(ctx).QueryRow(ctx, query)
+		row := a.envDB(ctx).QueryRow(ctx, query)
 		return row.Scan(&resp.Performance.TotalInBps, &resp.Performance.TotalOutBps)
 	})
 
@@ -948,7 +947,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY utilization DESC
 			LIMIT 100
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -1000,7 +999,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY (in_errors + out_errors + in_fcs_errors + in_discards + out_discards + carrier_transitions) DESC
 			LIMIT 20
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -1053,7 +1052,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY d.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -1092,7 +1091,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY l.snapshot_ts DESC
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs, committedRttProvisioningNs)
+		rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs, committedRttProvisioningNs)
 		if err != nil {
 			return err
 		}
@@ -1130,7 +1129,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY id.hostname
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			slog.Warn("status: failed to query ISIS device issues", "error", err)
 			return nil
@@ -1183,7 +1182,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 			ORDER BY l.code
 			LIMIT 50
 		`
-		rows, err := envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
+		rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 		if err != nil {
 			slog.Warn("status: failed to query missing ISIS adjacencies", "error", err)
 			return nil
@@ -1222,7 +1221,7 @@ func FetchStatusData(ctx context.Context) *StatusResponse {
 				  AND is_deleted = 0
 				GROUP BY link_pk
 			`
-			sinceRows, sinceErr := envDB(ctx).Query(ctx, sinceQuery, linkPKs)
+			sinceRows, sinceErr := a.envDB(ctx).Query(ctx, sinceQuery, linkPKs)
 			if sinceErr == nil {
 				defer sinceRows.Close()
 				for sinceRows.Next() {
@@ -1343,7 +1342,7 @@ type LinkHistoryResponse struct {
 	Error         string        `json:"error,omitempty"`
 }
 
-func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	// Parse time range parameter
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
@@ -1361,7 +1360,7 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache first (cache only holds mainnet data, skip for raw source)
 	if isMainnet(r.Context()) && r.URL.Query().Get("source") == "" {
 		cacheKey := "link_history:" + timeRange + ":" + strconv.Itoa(requestedBuckets)
-		if data, err := ReadPageCache(r.Context(), cacheKey); err == nil {
+		if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -1382,14 +1381,14 @@ func GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
-	resp, err := FetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
+	resp, err := a.FetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
 		if dberror.IsTransient(err) {
 			cancel()
 			var retryCancel context.CancelFunc
 			ctx, retryCancel = context.WithTimeout(r.Context(), timeout)
 			defer retryCancel()
-			resp, err = FetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
+			resp, err = a.FetchLinkHistoryData(ctx, timeRange, requestedBuckets, filters...)
 		}
 	}
 	if err != nil {
@@ -1420,8 +1419,8 @@ func snapBucketMinutes(raw int) int {
 }
 
 // FetchLinkHistoryData delegates to the rollup-based implementation.
-func FetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
-	return fetchLinkHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
+func (a *API) FetchLinkHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
+	return a.fetchLinkHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
 }
 
 // statusContext returns a context with raw source flag set if ?source=raw is present.
@@ -1506,7 +1505,7 @@ type DeviceHistoryResponse struct {
 	BucketCount   int             `json:"bucket_count"`
 }
 
-func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	// Parse time range parameter
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
@@ -1524,7 +1523,7 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache first (cache only holds mainnet data, skip for raw source)
 	if isMainnet(r.Context()) && r.URL.Query().Get("source") == "" {
 		cacheKey := "device_history:" + timeRange + ":" + strconv.Itoa(requestedBuckets)
-		if data, err := ReadPageCache(r.Context(), cacheKey); err == nil {
+		if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -1538,7 +1537,7 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
-	resp, err := FetchDeviceHistoryData(ctx, timeRange, requestedBuckets, filters...)
+	resp, err := a.FetchDeviceHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
 		slog.Error("fetchDeviceHistoryData error", "error", err)
 		http.Error(w, "Failed to fetch device history", http.StatusInternalServerError)
@@ -1552,8 +1551,8 @@ func GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // FetchDeviceHistoryData delegates to the rollup-based implementation.
-func FetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
-	return fetchDeviceHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
+func (a *API) FetchDeviceHistoryData(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
+	return a.fetchDeviceHistoryFromRollup(ctx, timeRange, requestedBuckets, filters...)
 }
 
 func classifyDeviceStatus(totalErrors, totalDiscards uint64, carrierTransitions uint64) string { //nolint:unused
@@ -1567,7 +1566,7 @@ type InterfaceIssuesResponse struct {
 }
 
 // GetInterfaceIssues returns interface issues for a given time range
-func GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
 		timeRange = "24h"
@@ -1596,7 +1595,7 @@ func GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := statusContext(r, 15*time.Second)
 	defer cancel()
 
-	issues, err := fetchInterfaceIssuesData(ctx, duration)
+	issues, err := a.fetchInterfaceIssuesData(ctx, duration)
 	if err != nil {
 		slog.Error("error fetching interface issues", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1612,8 +1611,8 @@ func GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) {
-	return fetchInterfaceIssuesFromRollup(ctx, duration)
+func (a *API) fetchInterfaceIssuesData(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) {
+	return a.fetchInterfaceIssuesFromRollup(ctx, duration)
 }
 
 // DeviceInterfaceHistoryResponse is the response for device interface history endpoint
@@ -1646,7 +1645,7 @@ type InterfaceHourStatus struct {
 }
 
 // GetDeviceInterfaceHistory returns interface-level history for a specific device
-func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 	devicePK := chi.URLParam(r, "pk")
 	if devicePK == "" {
 		http.Error(w, "Device PK is required", http.StatusBadRequest)
@@ -1669,7 +1668,7 @@ func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := statusContext(r, 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchDeviceInterfaceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
+	resp, err := a.fetchDeviceInterfaceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
 	if err != nil {
 		slog.Error("error fetching device interface history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1680,8 +1679,8 @@ func GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {
-	return fetchDeviceInterfaceHistoryFromRollup(ctx, devicePK, timeRange, requestedBuckets)
+func (a *API) fetchDeviceInterfaceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {
+	return a.fetchDeviceInterfaceHistoryFromRollup(ctx, devicePK, timeRange, requestedBuckets)
 }
 
 // SingleLinkHistoryResponse is the response for a single link's status history
@@ -1696,7 +1695,7 @@ type SingleLinkHistoryResponse struct {
 }
 
 // GetSingleLinkHistory returns the status history for a single link
-func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 	linkPK := chi.URLParam(r, "pk")
 	if linkPK == "" {
 		http.Error(w, "missing link pk", http.StatusBadRequest)
@@ -1720,7 +1719,7 @@ func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := statusContext(r, 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchSingleLinkHistoryData(ctx, linkPK, timeRange, requestedBuckets)
+	resp, err := a.fetchSingleLinkHistoryData(ctx, linkPK, timeRange, requestedBuckets)
 	if err != nil {
 		slog.Error("error fetching single link history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1738,8 +1737,8 @@ func GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
-	return fetchSingleLinkHistoryFromRollup(ctx, linkPK, timeRange, requestedBuckets)
+func (a *API) fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
+	return a.fetchSingleLinkHistoryFromRollup(ctx, linkPK, timeRange, requestedBuckets)
 }
 
 // SingleDeviceHistoryResponse is the response for single device history endpoint
@@ -1758,7 +1757,7 @@ type SingleDeviceHistoryResponse struct {
 }
 
 // GetSingleDeviceHistory returns the status history for a single device
-func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	devicePK := chi.URLParam(r, "pk")
 	if devicePK == "" {
 		http.Error(w, "missing device pk", http.StatusBadRequest)
@@ -1782,7 +1781,7 @@ func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := statusContext(r, 15*time.Second)
 	defer cancel()
 
-	resp, err := fetchSingleDeviceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
+	resp, err := a.fetchSingleDeviceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
 	if err != nil {
 		slog.Error("error fetching single device history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1800,6 +1799,6 @@ func GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) {
-	return fetchSingleDeviceHistoryFromRollup(ctx, devicePK, timeRange, requestedBuckets)
+func (a *API) fetchSingleDeviceHistoryData(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) {
+	return a.fetchSingleDeviceHistoryFromRollup(ctx, devicePK, timeRange, requestedBuckets)
 }

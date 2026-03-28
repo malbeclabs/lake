@@ -8,11 +8,14 @@ import (
 
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+
+	"github.com/malbeclabs/lake/api/handlers"
 )
 
 // Config configures the page cache worker.
 type Config struct {
 	Log *slog.Logger
+	API *handlers.API
 }
 
 // Start connects to Temporal, registers workflows and activities, then runs
@@ -39,7 +42,8 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Register workflows and activities
 	activities := &Activities{
-		log: log.With("component", "page-cache"),
+		Log: log.With("component", "page-cache"),
+		API: cfg.API,
 	}
 
 	w := worker.New(tc, TaskQueue, worker.Options{})

@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
-	"github.com/malbeclabs/lake/api/config"
+	
 )
 
 // ChatMessage represents a single message in conversation history.
@@ -114,7 +114,7 @@ type ChatResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-func Chat(w http.ResponseWriter, r *http.Request) {
+func (a *API) Chat(w http.ResponseWriter, r *http.Request) {
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -144,8 +144,8 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 
 	// Create workflow components
 	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
-	querier := NewDBQuerier()
-	schemaFetcher := NewDBSchemaFetcher()
+	querier := a.NewDBQuerier()
+	schemaFetcher := a.NewDBSchemaFetcher()
 
 	// Create workflow config
 	cfg := &workflow.Config{
@@ -159,13 +159,13 @@ func Chat(w http.ResponseWriter, r *http.Request) {
 
 	// Add Neo4j support if available (mainnet only)
 	env := EnvFromContext(r.Context())
-	if config.Neo4jClient != nil && env == EnvMainnet {
-		cfg.GraphQuerier = NewNeo4jQuerier()
-		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
+	if a.Neo4jClient != nil && env == EnvMainnet {
+		cfg.GraphQuerier = a.NewNeo4jQuerier()
+		cfg.GraphSchemaFetcher = a.NewNeo4jSchemaFetcher()
 	}
 
 	// Add env context to agent
-	cfg.EnvContext = BuildEnvContext(env)
+	cfg.EnvContext = a.buildEnvContext(env)
 
 	// Create and run workflow
 	wf, err := v3.New(cfg)
@@ -265,7 +265,7 @@ type QuotaExceededError struct {
 }
 
 // ChatStream handles streaming chat requests with SSE progress updates.
-func ChatStream(w http.ResponseWriter, r *http.Request) {
+func (a *API) ChatStream(w http.ResponseWriter, r *http.Request) {
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -283,7 +283,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 	ip := GetIPFromRequest(r)
 
 	// Check quota before processing
-	remaining, err := CheckQuota(ctx, account, ip)
+	remaining, err := a.CheckQuota(ctx, account, ip)
 	if err != nil {
 		// Handle specific errors
 		if err == ErrKillSwitch {
@@ -331,7 +331,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 		// Check if the session exists and if caller owns it
 		var accountID *uuid.UUID
 		var anonymousID *string
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT account_id, anonymous_id FROM sessions WHERE id = $1
 		`, sessionUUID).Scan(&accountID, &anonymousID)
 
@@ -373,7 +373,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// Add quota headers
 	if remaining != nil {
-		quota, _ := GetQuotaForAccount(ctx, account, ip)
+		quota, _ := a.GetQuotaForAccount(ctx, account, ip)
 		SetQuotaHeaders(w, quota)
 	}
 
@@ -407,7 +407,7 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record usage immediately (before starting workflow to prevent gaming)
-	if err := IncrementQuestionCount(ctx, account, ip); err != nil {
+	if err := a.IncrementQuestionCount(ctx, account, ip); err != nil {
 		slog.Error("Failed to record usage", "error", err)
 		// Continue even on error - don't block the user
 	}
@@ -416,12 +416,12 @@ func ChatStream(w http.ResponseWriter, r *http.Request) {
 	history := convertHistory(req.History, EnvFromContext(ctx))
 
 	// Use v3 workflow
-	chatStreamV3(ctx, req, history, sendEvent)
+	a.chatStreamV3(ctx, req, history, sendEvent)
 }
 
 // chatStreamV3 handles the v3 workflow streaming using background execution.
 // The workflow runs in a background goroutine and continues even if the client disconnects.
-func chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.ConversationMessage, sendEvent func(string, any)) {
+func (a *API) chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.ConversationMessage, sendEvent func(string, any)) {
 	// Validate session_id is provided (required for background execution)
 	if req.SessionID == "" {
 		sendEvent("error", map[string]string{"error": "session_id is required"})
@@ -436,12 +436,12 @@ func chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.Conve
 
 	// Use session's existing env if available (for followup messages), otherwise use request env
 	env := EnvFromContext(ctx)
-	if sessionEnv, err := GetSessionEnv(ctx, sessionUUID); err == nil && sessionEnv != "" {
+	if sessionEnv, err := a.GetSessionEnv(ctx, sessionUUID); err == nil && sessionEnv != "" {
 		env = DZEnv(sessionEnv)
 	}
 
 	// Start the workflow in background
-	workflowID, err := Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, env)
+	workflowID, err := a.Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, env)
 	if err != nil {
 		slog.Error("Failed to start background workflow", "session_id", req.SessionID, "error", err)
 		// Don't expose internal errors to the UI
@@ -456,13 +456,13 @@ func chatStreamV3(ctx context.Context, req ChatRequest, history []workflow.Conve
 	slog.Info("Started background workflow from chat", "workflow_id", workflowID, "session_id", req.SessionID)
 
 	// Subscribe to workflow events
-	sub := Manager.Subscribe(workflowID)
+	sub := a.Manager.Subscribe(workflowID)
 	if sub == nil {
 		// Workflow already completed (shouldn't happen, but handle gracefully)
 		sendEvent("error", map[string]string{"error": "Workflow not found"})
 		return
 	}
-	defer Manager.Unsubscribe(workflowID, sub)
+	defer a.Manager.Unsubscribe(workflowID, sub)
 
 	// Send periodic heartbeats to keep connection alive through proxies
 	heartbeatTicker := time.NewTicker(15 * time.Second)
@@ -512,7 +512,7 @@ type CompleteResponse struct {
 
 // Complete handles simple LLM completion requests without the full workflow.
 // This is useful for tasks like generating titles.
-func Complete(w http.ResponseWriter, r *http.Request) {
+func (a *API) Complete(w http.ResponseWriter, r *http.Request) {
 	var req CompleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)

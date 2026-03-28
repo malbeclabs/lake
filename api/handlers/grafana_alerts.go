@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/slack-go/slack"
 )
@@ -42,7 +41,7 @@ type grafanaAlert struct {
 //
 // Query parameters:
 //   - channel: Slack channel ID to post to (required)
-func HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
+func (a *API) HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 	var payload grafanaWebhook
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		slog.Error("grafana webhook: failed to parse", "error", err)
@@ -60,7 +59,7 @@ func HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	alertName := payload.GroupLabels["alertname"]
 
-	if err := postEnrichedAlerts(r.Context(), payload, channelID); err != nil {
+	if err := a.postEnrichedAlerts(r.Context(), payload, channelID); err != nil {
 		slog.Error("grafana webhook: failed to post", "error", err, "channel", channelID)
 		metrics.GrafanaWebhookTotal.WithLabelValues("error", alertName).Inc()
 		metrics.GrafanaWebhookDuration.Observe(time.Since(start).Seconds())
@@ -73,7 +72,7 @@ func HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID string) error {
+func (a *API) postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID string) error {
 	botToken := os.Getenv("GRAFANA_SLACK_BOT_TOKEN")
 	if botToken == "" {
 		return fmt.Errorf("GRAFANA_SLACK_BOT_TOKEN not configured")
@@ -82,7 +81,7 @@ func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID s
 
 	var sections []string
 	for _, alert := range payload.Alerts {
-		sections = append(sections, enrichAndFormat(ctx, alert))
+		sections = append(sections, a.enrichAndFormat(ctx, alert))
 	}
 
 	color := "#E01E5A" // red for firing
@@ -112,17 +111,17 @@ func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID s
 
 // enrichAndFormat dispatches to an alert-type-specific formatter, falling back
 // to a generic renderer for unrecognised alert types.
-func enrichAndFormat(ctx context.Context, alert grafanaAlert) string {
+func (a *API) enrichAndFormat(ctx context.Context, alert grafanaAlert) string {
 	name := alert.Labels["alertname"]
 	switch {
 	case strings.Contains(name, "Link Down"), strings.Contains(name, "Link Degraded"):
-		return formatLinkAlert(ctx, alert)
+		return a.formatLinkAlert(ctx, alert)
 	case strings.Contains(name, "Link Interface"):
-		return formatLinkIntfAlert(ctx, alert)
+		return a.formatLinkIntfAlert(ctx, alert)
 	case strings.Contains(name, "Device Interface"):
-		return formatDeviceIntfAlert(ctx, alert)
+		return a.formatDeviceIntfAlert(ctx, alert)
 	case strings.Contains(name, "Device Not Reporting"):
-		return formatDeviceNotReportingAlert(ctx, alert)
+		return a.formatDeviceNotReportingAlert(ctx, alert)
 	default:
 		return formatGenericAlert(alert)
 	}
@@ -130,7 +129,7 @@ func enrichAndFormat(ctx context.Context, alert grafanaAlert) string {
 
 // --- Link Down / Degraded ---
 
-func formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
+func (a *API) formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
 	l := alert.Labels
 	linkPK := l["link_pk"]
 	linkPKShort := l["link_pk_short"]
@@ -139,7 +138,7 @@ func formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
 	bandwidth := l["bandwidth"]
 	metro := l["metro"]
 
-	e := enrichLink(ctx, linkPK, alert)
+	e := a.enrichLink(ctx, linkPK, alert)
 
 	linkURL := fmt.Sprintf("https://data.malbeclabs.com/dz/links/%s", linkPK)
 
@@ -164,8 +163,8 @@ type linkEnrichment struct {
 	StartedAt  string
 }
 
-func enrichLink(ctx context.Context, linkPK string, alert grafanaAlert) linkEnrichment {
-	db := config.DB
+func (a *API) enrichLink(ctx context.Context, linkPK string, alert grafanaAlert) linkEnrichment {
+	db := a.DB
 	if db == nil {
 		return linkEnrichment{Duration: "-", StartedAt: "-"}
 	}
@@ -195,7 +194,7 @@ func enrichLink(ctx context.Context, linkPK string, alert grafanaAlert) linkEnri
 		if strings.Contains(alertName, "Degraded") {
 			okCond = "greatest(a_loss_pct, z_loss_pct) <= 1"
 		}
-		e.Duration, e.StartedAt = queryDuration(ctx,
+		e.Duration, e.StartedAt = a.queryDuration(ctx,
 			"lake.link_rollup_5m", "link_pk", linkPK,
 			"AND NOT provisioning AND "+okCond)
 	}
@@ -205,7 +204,7 @@ func enrichLink(ctx context.Context, linkPK string, alert grafanaAlert) linkEnri
 
 // --- Link Interface (carrier/discards/errors) ---
 
-func formatLinkIntfAlert(ctx context.Context, alert grafanaAlert) string {
+func (a *API) formatLinkIntfAlert(ctx context.Context, alert grafanaAlert) string {
 	l := alert.Labels
 	linkPK := l["link_pk"]
 	linkPKShort := l["link_pk_short"]
@@ -215,7 +214,7 @@ func formatLinkIntfAlert(ctx context.Context, alert grafanaAlert) string {
 	metro := l["metro"]
 
 	metricCol, okCond := intfMetricInfo(alert.Labels["alertname"])
-	e := enrichIntf(ctx, "link_pk", linkPK, intf, metricCol, okCond)
+	e := a.enrichIntf(ctx, "link_pk", linkPK, intf, metricCol, okCond)
 
 	linkURL := fmt.Sprintf("https://data.malbeclabs.com/dz/links/%s", linkPK)
 
@@ -232,7 +231,7 @@ func formatLinkIntfAlert(ctx context.Context, alert grafanaAlert) string {
 
 // --- Device Interface (carrier/discards/errors) ---
 
-func formatDeviceIntfAlert(ctx context.Context, alert grafanaAlert) string {
+func (a *API) formatDeviceIntfAlert(ctx context.Context, alert grafanaAlert) string {
 	l := alert.Labels
 	devicePK := l["device_pk"]
 	devicePKShort := l["device_pk_short"]
@@ -241,7 +240,7 @@ func formatDeviceIntfAlert(ctx context.Context, alert grafanaAlert) string {
 	metro := l["metro"]
 
 	metricCol, okCond := intfMetricInfo(alert.Labels["alertname"])
-	e := enrichIntf(ctx, "device_pk", devicePK, intf, metricCol, okCond)
+	e := a.enrichIntf(ctx, "device_pk", devicePK, intf, metricCol, okCond)
 
 	deviceURL := fmt.Sprintf("https://data.malbeclabs.com/dz/devices/%s", devicePK)
 
@@ -278,8 +277,8 @@ func intfMetricInfo(alertName string) (metricExpr string, okCond string) {
 	}
 }
 
-func enrichIntf(ctx context.Context, pkCol, pkVal, intf, metricExpr, okCond string) intfEnrichment {
-	db := config.DB
+func (a *API) enrichIntf(ctx context.Context, pkCol, pkVal, intf, metricExpr, okCond string) intfEnrichment {
+	db := a.DB
 	if db == nil {
 		return intfEnrichment{Duration: "-", StartedAt: "-"}
 	}
@@ -311,7 +310,7 @@ func enrichIntf(ctx context.Context, pkCol, pkVal, intf, metricExpr, okCond stri
 	}
 
 	// Duration since last clean bucket.
-	e.Duration, e.StartedAt = queryDuration(ctx,
+	e.Duration, e.StartedAt = a.queryDuration(ctx,
 		"lake.device_interface_rollup_5m", pkCol, pkVal,
 		fmt.Sprintf("AND intf = '%s' AND %s", intf, okCond))
 
@@ -320,7 +319,7 @@ func enrichIntf(ctx context.Context, pkCol, pkVal, intf, metricExpr, okCond stri
 
 // --- Device Not Reporting ---
 
-func formatDeviceNotReportingAlert(ctx context.Context, alert grafanaAlert) string {
+func (a *API) formatDeviceNotReportingAlert(ctx context.Context, alert grafanaAlert) string {
 	l := alert.Labels
 	devicePK := l["device_pk"]
 	devicePKShort := l["device_pk_short"]
@@ -328,7 +327,7 @@ func formatDeviceNotReportingAlert(ctx context.Context, alert grafanaAlert) stri
 	deviceType := l["device_type"]
 	metro := l["metro_code"]
 
-	lastReport, duration := enrichDeviceNotReporting(ctx, devicePK)
+	lastReport, duration := a.enrichDeviceNotReporting(ctx, devicePK)
 
 	deviceURL := fmt.Sprintf("https://data.malbeclabs.com/dz/devices/%s", devicePK)
 
@@ -338,8 +337,8 @@ func formatDeviceNotReportingAlert(ctx context.Context, alert grafanaAlert) stri
 	return joinLines(summary, desc, footerLine(alert, "https://data.malbeclabs.com/status/devices"))
 }
 
-func enrichDeviceNotReporting(ctx context.Context, devicePK string) (lastReport, duration string) {
-	db := config.DB
+func (a *API) enrichDeviceNotReporting(ctx context.Context, devicePK string) (lastReport, duration string) {
+	db := a.DB
 	if db == nil {
 		return "-", "-"
 	}
@@ -378,8 +377,8 @@ func formatGenericAlert(alert grafanaAlert) string {
 
 // queryDuration finds the last bucket matching the OK condition in the past 7 days
 // and returns a human-readable duration and start timestamp.
-func queryDuration(ctx context.Context, table, pkCol, pkVal, extraCond string) (duration, startedAt string) {
-	db := config.DB
+func (a *API) queryDuration(ctx context.Context, table, pkCol, pkVal, extraCond string) (duration, startedAt string) {
+	db := a.DB
 	if db == nil {
 		return "-", "-"
 	}

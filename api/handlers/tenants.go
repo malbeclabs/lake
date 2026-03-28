@@ -22,7 +22,7 @@ type TenantListItem struct {
 	BillingRate   uint64 `json:"billing_rate"`
 }
 
-func GetTenants(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -31,7 +31,7 @@ func GetTenants(w http.ResponseWriter, r *http.Request) {
 
 	countQuery := `SELECT count(*) FROM dz_tenants_current`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		slog.Error("tenants count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -52,7 +52,7 @@ func GetTenants(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -106,7 +106,7 @@ func GetTenants(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func GetTenant(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTenant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -132,7 +132,7 @@ func GetTenant(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var t TenantListItem
-	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&t.PK,
 		&t.OwnerPubkey,
 		&t.Code,

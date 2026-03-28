@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
@@ -54,7 +53,7 @@ type ISISTopologyResponse struct {
 }
 
 // GetISISTopology returns the full ISIS topology graph from ClickHouse
-func GetISISTopology(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetISISTopology(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -79,7 +78,7 @@ func GetISISTopology(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_devices_current d ON id.device_pk = d.pk
 		WHERE id.device_pk != ''
 	`
-	deviceRows, err := envDB(ctx).Query(ctx, deviceQuery)
+	deviceRows, err := a.envDB(ctx).Query(ctx, deviceQuery)
 	if err != nil {
 		slog.Error("ISIS topology device query error", "error", err)
 		response.Error = "Failed to query ISIS devices"
@@ -119,7 +118,7 @@ func GetISISTopology(w http.ResponseWriter, r *http.Request) {
 		JOIN isis_devices_current nd ON a.neighbor_system_id = concat(nd.hostname, '.00')
 		WHERE a.device_pk != '' AND nd.device_pk != ''
 	`
-	adjRows, err := envDB(ctx).Query(ctx, adjQuery)
+	adjRows, err := a.envDB(ctx).Query(ctx, adjQuery)
 	if err != nil {
 		slog.Error("ISIS topology adjacency query error", "error", err)
 		response.Error = "Failed to query ISIS adjacencies"
@@ -234,7 +233,7 @@ type PathResponse struct {
 }
 
 // GetISISPath finds the shortest path between two devices using ISIS metrics
-func GetISISPath(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetISISPath(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -253,7 +252,7 @@ func GetISISPath(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	// Find shortest path with total ISIS metric
@@ -350,7 +349,7 @@ type TopologyCompareResponse struct {
 }
 
 // GetTopologyCompare compares configured links vs ISIS adjacencies using ClickHouse
-func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -360,7 +359,7 @@ func GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 		Discrepancies: []TopologyDiscrepancy{},
 	}
 
-	db := envDB(ctx)
+	db := a.envDB(ctx)
 
 	// Build ISIS adjacency data keyed by link_pk.
 	// Each adjacency is directional (device_pk -> neighbor), so a fully matched
@@ -617,7 +616,7 @@ type FailureImpactResponse struct {
 }
 
 // GetFailureImpact returns devices that would become unreachable if a device goes down
-func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -630,7 +629,7 @@ func GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := FailureImpactResponse{
@@ -909,7 +908,7 @@ type MultiPathResponse struct {
 
 // GetISISPaths finds K-shortest paths between two devices using Yen's algorithm in-memory.
 // Paths are ranked by lowest total ISIS metric (latency proxy), then enriched with measured latency.
-func GetISISPaths(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -944,7 +943,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	// Load graph into memory and run Yen's k-shortest paths algorithm.
 	// This is faster than Neo4j's allSimplePaths which has combinatorial explosion at high depths.
-	paths, err := findKShortestPaths(ctx, fromPK, toPK, k)
+	paths, err := a.findKShortestPaths(ctx, fromPK, toPK, k)
 	if err != nil {
 		slog.Error("KSP error", "error", err)
 		response.Error = "Failed to find paths: " + err.Error()
@@ -961,7 +960,7 @@ func GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	response.Paths = paths
 
 	// Enrich paths with measured latency from ClickHouse
-	if err := enrichPathsWithMeasuredLatency(ctx, &response); err != nil {
+	if err := a.enrichPathsWithMeasuredLatency(ctx, &response); err != nil {
 		slog.Error("enrichPathsWithMeasuredLatency error", "error", err)
 		response.Error = fmt.Sprintf("failed to enrich paths with measured latency: %v", err)
 	}
@@ -984,7 +983,7 @@ type linkLatencyData struct {
 }
 
 // enrichPathsWithMeasuredLatency queries ClickHouse for measured latency and adds it to path hops
-func enrichPathsWithMeasuredLatency(ctx context.Context, response *MultiPathResponse) error {
+func (a *API) enrichPathsWithMeasuredLatency(ctx context.Context, response *MultiPathResponse) error {
 	if len(response.Paths) == 0 {
 		return nil
 	}
@@ -1006,7 +1005,7 @@ func enrichPathsWithMeasuredLatency(ctx context.Context, response *MultiPathResp
 		GROUP BY l.side_a_pk, l.side_z_pk
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	if err != nil {
 		return fmt.Errorf("enrichPathsWithMeasuredLatency query error: %w", err)
 	}
@@ -1079,13 +1078,13 @@ type CriticalLinksResponse struct {
 
 // GetCriticalLinks returns links that are critical for network connectivity
 // Critical links are identified based on node degrees and connectivity patterns
-func GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := CriticalLinksResponse{
@@ -1227,13 +1226,13 @@ type RedundancySummary struct {
 }
 
 // GetRedundancyReport returns a comprehensive redundancy analysis report
-func GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := RedundancyReportResponse{
@@ -1478,7 +1477,7 @@ type MetroInfo struct {
 }
 
 // GetMetroConnectivity returns the connectivity matrix between all metros
-func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1493,7 +1492,7 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 	runNeo4jQuery := func(cypher string) ([]*neo4jdriver.Record, error) {
 		cfg := dberror.DefaultRetryConfig()
 		return dberror.Retry(ctx, cfg, func() ([]*neo4jdriver.Record, error) {
-			session := config.Neo4jSession(ctx)
+			session := a.neo4jSession(ctx)
 			defer session.Close(ctx)
 
 			result, err := session.Run(ctx, cypher, nil)
@@ -1512,7 +1511,7 @@ func GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 		FROM dz_devices_current
 		WHERE metro_pk != '' AND max_users > 0
 	`
-	chRows, err := config.DB.Query(ctx, chQuery)
+	chRows, err := a.DB.Query(ctx, chQuery)
 	if err != nil {
 		slog.Error("metro connectivity ClickHouse query error", "error", err)
 		response.Error = dberror.UserMessage(err)
@@ -1708,7 +1707,7 @@ type MetroPathLatencyResponse struct {
 
 // GetMetroPathLatency returns path-based latency between all metro pairs
 // with configurable optimization strategy (hops, latency, or bandwidth)
-func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	optimize := r.URL.Query().Get("optimize")
 	if optimize == "" {
 		optimize = "latency" // default to latency optimization
@@ -1720,7 +1719,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 	// Try cache first (cache only holds mainnet data)
 	if isMainnet(r.Context()) {
-		if data, err := ReadPageCache(r.Context(), "metro_path_latency:"+optimize); err == nil {
+		if data, err := a.readPageCache(r.Context(), "metro_path_latency:"+optimize); err == nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(data)
@@ -1732,7 +1731,7 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	response, err := FetchMetroPathLatencyData(ctx, optimize)
+	response, err := a.FetchMetroPathLatencyData(ctx, optimize)
 	if err != nil {
 		slog.Error("metro path latency error", "error", err)
 		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
@@ -1744,8 +1743,8 @@ func GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 // FetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
 // Used by both the handler and the cache.
-func FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
-	if config.Neo4jClient == nil {
+func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
+	if a.Neo4jClient == nil {
 		return nil, fmt.Errorf("neo4j not available")
 	}
 
@@ -1755,7 +1754,7 @@ func FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 	// This uses Device-Link-Device (CONNECTS) relationships with committed_rtt_ns
 	// as edge weights, which gives accurate latency values (unlike ISIS_ADJACENT
 	// metrics which can be artificially low on transit switches).
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}
@@ -1810,7 +1809,7 @@ func FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPath
 		GROUP BY metro1, metro2
 	`
 
-	rows, err := safeQueryRows(ctx, internetQuery)
+	rows, err := a.safeQueryRows(ctx, internetQuery)
 	if err != nil {
 		return nil, fmt.Errorf("internet latency query failed: %w", err)
 	}
@@ -1897,7 +1896,7 @@ type MetroPathDetailResponse struct {
 }
 
 // GetMetroPathDetail returns detailed path breakdown between two metros
-func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -1923,7 +1922,7 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		slog.Error("metro path detail graph load error", "error", err)
 		response.Error = err.Error()
@@ -1985,7 +1984,7 @@ func GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var internetLatency float64
-	row := envDB(ctx).QueryRow(ctx, internetQuery, fromCode, toCode)
+	row := a.envDB(ctx).QueryRow(ctx, internetQuery, fromCode, toCode)
 	if err := row.Scan(&internetLatency); err == nil && internetLatency > 0 {
 		response.InternetLatencyMs = internetLatency
 		if response.TotalLatencyMs > 0 {
@@ -2025,7 +2024,7 @@ type MetroPathsResponse struct {
 }
 
 // GetMetroPaths returns distinct paths between two metros
-func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -2050,7 +2049,7 @@ func GetMetroPaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load in-memory topology graph with committed latency
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		response.Error = err.Error()
 		writeJSON(w, response)
@@ -2182,7 +2181,7 @@ type MaintenanceImpactResponse struct {
 }
 
 // PostMaintenanceImpact analyzes the impact of taking multiple devices/links offline
-func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
+func (a *API) PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -2200,7 +2199,7 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := MaintenanceImpactResponse{
@@ -2221,7 +2220,7 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 
 	// Batch analyze all devices in a single query
 	if len(req.Devices) > 0 {
-		deviceItems := analyzeDevicesImpactBatch(ctx, session, req.Devices)
+		deviceItems := a.analyzeDevicesImpactBatch(ctx, session, req.Devices)
 		for _, item := range deviceItems {
 			response.Items = append(response.Items, item)
 			for _, dc := range item.DisconnectedDevices {
@@ -2232,7 +2231,7 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 
 	// Batch analyze all links
 	if len(req.Links) > 0 {
-		linkItems, err := analyzeLinksImpactBatch(ctx, session, req.Links)
+		linkItems, err := a.analyzeLinksImpactBatch(ctx, session, req.Links)
 		if err != nil {
 			response.Error = fmt.Sprintf("failed to analyze links impact: %v", err)
 			writeJSON(w, response)
@@ -2246,7 +2245,7 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 		}
 		// Track link endpoints for path analysis
 		for _, linkPK := range req.Links {
-			endpoints := getLinkEndpoints(ctx, linkPK)
+			endpoints := a.getLinkEndpoints(ctx, linkPK)
 			if endpoints != "" {
 				offlineLinkEndpoints[endpoints] = true
 			}
@@ -2292,10 +2291,10 @@ func PostMaintenanceImpact(w http.ResponseWriter, r *http.Request) {
 }
 
 // getLinkEndpoints returns "sourcePK:targetPK" for a link PK
-func getLinkEndpoints(ctx context.Context, linkPK string) string {
+func (a *API) getLinkEndpoints(ctx context.Context, linkPK string) string {
 	query := `SELECT side_a_pk, side_z_pk FROM dz_links_current WHERE pk = $1`
 	var sideA, sideZ string
-	if err := envDB(ctx).QueryRow(ctx, query, linkPK).Scan(&sideA, &sideZ); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, query, linkPK).Scan(&sideA, &sideZ); err != nil {
 		return ""
 	}
 	if sideA == "" || sideZ == "" {
@@ -2305,7 +2304,7 @@ func getLinkEndpoints(ctx context.Context, linkPK string) string {
 }
 
 // analyzeDevicesImpactBatch computes the impact of taking multiple devices offline in a single query
-func analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devicePKs []string) []MaintenanceItem {
+func (a *API) analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devicePKs []string) []MaintenanceItem {
 	items := make([]MaintenanceItem, 0, len(devicePKs))
 
 	// Single query to get all device info, neighbor counts, and leaf neighbors
@@ -2413,7 +2412,7 @@ func analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Session, devic
 }
 
 // analyzeLinksImpactBatch computes the impact of taking multiple links offline
-func analyzeLinksImpactBatch(ctx context.Context, session neo4j.Session, linkPKs []string) ([]MaintenanceItem, error) {
+func (a *API) analyzeLinksImpactBatch(ctx context.Context, session neo4j.Session, linkPKs []string) ([]MaintenanceItem, error) {
 	items := make([]MaintenanceItem, 0, len(linkPKs))
 
 	// First, batch lookup links from ClickHouse
@@ -2437,7 +2436,7 @@ func analyzeLinksImpactBatch(ctx context.Context, session neo4j.Session, linkPKs
 	`
 
 	// For ClickHouse we need to pass as a tuple
-	rows, err := envDB(ctx).Query(ctx, linkQuery, linkPKs)
+	rows, err := a.envDB(ctx).Query(ctx, linkQuery, linkPKs)
 	if err != nil {
 		return nil, fmt.Errorf("batch link lookup error: %w", err)
 	}
@@ -2944,7 +2943,7 @@ type MetroDevicePathsResponse struct {
 
 // GetMetroDevicePaths returns all paths between devices in two metros
 // Query params: from (metro PK), to (metro PK)
-func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -2963,7 +2962,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	response := MetroDevicePathsResponse{
@@ -3054,7 +3053,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load graph once, find shortest path for each pair in-memory
-	g, err := loadTopologyGraph(ctx)
+	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		slog.Error("metro device paths graph load error", "error", err)
 		response.Error = "Failed to load graph: " + err.Error()
@@ -3141,7 +3140,7 @@ func GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 		for i, pair := range response.DevicePairs {
 			multiPathResp.Paths[i] = pair.BestPath
 		}
-		if err := enrichPathsWithMeasuredLatency(ctx, multiPathResp); err != nil {
+		if err := a.enrichPathsWithMeasuredLatency(ctx, multiPathResp); err != nil {
 			slog.Error("enrichPathsWithMeasuredLatency error for metro paths", "error", err)
 		} else {
 			// Copy enriched paths back

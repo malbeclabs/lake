@@ -13,12 +13,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 )
 
-// OnSlackInstallationChange is called when a Slack installation is created, updated, or removed.
 // Set this to invalidate cached clients in the ClientManager.
-var OnSlackInstallationChange func(teamID string)
 
 // isSlackTeamAllowed checks if a Slack team ID is permitted to install the app.
 // If SLACK_ALLOWED_TEAM_IDS is not set, all teams are allowed.
@@ -50,14 +47,14 @@ type SlackInstallation struct {
 }
 
 // CreateOAuthState creates a new OAuth state token tied to an account
-func CreateOAuthState(ctx context.Context, accountID string) (string, error) {
+func (a *API) CreateOAuthState(ctx context.Context, accountID string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("failed to generate state: %w", err)
 	}
 	state := hex.EncodeToString(b)
 
-	_, err := config.PgPool.Exec(ctx,
+	_, err := a.PgPool.Exec(ctx,
 		`INSERT INTO slack_oauth_states (state, account_id) VALUES ($1, $2)`,
 		state, accountID,
 	)
@@ -69,9 +66,9 @@ func CreateOAuthState(ctx context.Context, accountID string) (string, error) {
 }
 
 // ValidateOAuthState validates and consumes an OAuth state token, returning the account ID
-func ValidateOAuthState(ctx context.Context, state string) (string, error) {
+func (a *API) ValidateOAuthState(ctx context.Context, state string) (string, error) {
 	var accountID string
-	err := config.PgPool.QueryRow(ctx,
+	err := a.PgPool.QueryRow(ctx,
 		`DELETE FROM slack_oauth_states WHERE state = $1 AND expires_at > NOW() RETURNING account_id`,
 		state,
 	).Scan(&accountID)
@@ -82,8 +79,8 @@ func ValidateOAuthState(ctx context.Context, state string) (string, error) {
 }
 
 // UpsertSlackInstallation creates or updates a Slack installation
-func UpsertSlackInstallation(ctx context.Context, teamID, teamName, botToken, botUserID, scope, installedBy string) error {
-	_, err := config.PgPool.Exec(ctx,
+func (a *API) UpsertSlackInstallation(ctx context.Context, teamID, teamName, botToken, botUserID, scope, installedBy string) error {
+	_, err := a.PgPool.Exec(ctx,
 		`INSERT INTO slack_installations (team_id, team_name, bot_token, bot_user_id, scope, installed_by, is_active, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
 		 ON CONFLICT (team_id) DO UPDATE SET
@@ -100,8 +97,8 @@ func UpsertSlackInstallation(ctx context.Context, teamID, teamName, botToken, bo
 }
 
 // DeactivateSlackInstallation deactivates a Slack installation by team ID
-func DeactivateSlackInstallation(ctx context.Context, teamID string) error {
-	cmdTag, err := config.PgPool.Exec(ctx,
+func (a *API) DeactivateSlackInstallation(ctx context.Context, teamID string) error {
+	cmdTag, err := a.PgPool.Exec(ctx,
 		`UPDATE slack_installations SET is_active = false, updated_at = NOW() WHERE team_id = $1`,
 		teamID,
 	)
@@ -115,8 +112,8 @@ func DeactivateSlackInstallation(ctx context.Context, teamID string) error {
 }
 
 // ListSlackInstallations returns active installations for a specific account
-func ListSlackInstallations(ctx context.Context, accountID string) ([]SlackInstallation, error) {
-	rows, err := config.PgPool.Query(ctx,
+func (a *API) ListSlackInstallations(ctx context.Context, accountID string) ([]SlackInstallation, error) {
+	rows, err := a.PgPool.Query(ctx,
 		`SELECT id, team_id, team_name, bot_user_id, scope, installed_by, is_active, installed_at, updated_at
 		 FROM slack_installations WHERE is_active = true AND installed_by = $1 ORDER BY installed_at DESC`,
 		accountID,
@@ -138,9 +135,9 @@ func ListSlackInstallations(ctx context.Context, accountID string) ([]SlackInsta
 }
 
 // GetSlackInstallationByTeamID returns an active installation by team ID
-func GetSlackInstallationByTeamID(ctx context.Context, teamID string) (*SlackInstallation, error) {
+func (a *API) GetSlackInstallationByTeamID(ctx context.Context, teamID string) (*SlackInstallation, error) {
 	var inst SlackInstallation
-	err := config.PgPool.QueryRow(ctx,
+	err := a.PgPool.QueryRow(ctx,
 		`SELECT id, team_id, team_name, bot_token, bot_user_id, scope, installed_by, is_active, installed_at, updated_at
 		 FROM slack_installations WHERE team_id = $1 AND is_active = true`,
 		teamID,
@@ -152,7 +149,7 @@ func GetSlackInstallationByTeamID(ctx context.Context, teamID string) (*SlackIns
 }
 
 // GetSlackOAuthStart initiates the Slack OAuth flow
-func GetSlackOAuthStart(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSlackOAuthStart(w http.ResponseWriter, r *http.Request) {
 	account := GetAccountFromContext(r.Context())
 	if account == nil {
 		http.Error(w, "Authentication required", http.StatusUnauthorized)
@@ -165,7 +162,7 @@ func GetSlackOAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := CreateOAuthState(r.Context(), account.ID.String())
+	state, err := a.CreateOAuthState(r.Context(), account.ID.String())
 	if err != nil {
 		slog.Error("failed to create oauth state", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -203,7 +200,7 @@ func getSlackRedirectURI(r *http.Request) string {
 }
 
 // settingsRedirect redirects to the settings page, using WEB_BASE_URL if set.
-func settingsRedirect(w http.ResponseWriter, r *http.Request, query string) {
+func (a *API) settingsRedirect(w http.ResponseWriter, r *http.Request, query string) {
 	base := os.Getenv("WEB_BASE_URL")
 	if base == "" {
 		http.Redirect(w, r, "/settings?"+query, http.StatusFound)
@@ -213,26 +210,26 @@ func settingsRedirect(w http.ResponseWriter, r *http.Request, query string) {
 }
 
 // GetSlackOAuthCallback handles the Slack OAuth callback
-func GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	errParam := r.URL.Query().Get("error")
 	if errParam != "" {
 		slog.Warn("slack oauth error", "error", errParam)
-		settingsRedirect(w, r, "slack=error&reason="+errParam)
+		a.settingsRedirect(w, r, "slack=error&reason="+errParam)
 		return
 	}
 
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	if code == "" || state == "" {
-		settingsRedirect(w, r, "slack=error&reason=missing_params")
+		a.settingsRedirect(w, r, "slack=error&reason=missing_params")
 		return
 	}
 
 	// Validate state
-	accountID, err := ValidateOAuthState(r.Context(), state)
+	accountID, err := a.ValidateOAuthState(r.Context(), state)
 	if err != nil {
 		slog.Warn("invalid oauth state", "error", err)
-		settingsRedirect(w, r, "slack=error&reason=invalid_state")
+		a.settingsRedirect(w, r, "slack=error&reason=invalid_state")
 		return
 	}
 
@@ -244,43 +241,43 @@ func GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	tokenResp, err := exchangeSlackCode(r.Context(), clientID, clientSecret, code, redirectURI)
 	if err != nil {
 		slog.Error("failed to exchange slack code", "error", err)
-		settingsRedirect(w, r, "slack=error&reason=token_exchange")
+		a.settingsRedirect(w, r, "slack=error&reason=token_exchange")
 		return
 	}
 
 	if !tokenResp.OK {
 		slog.Error("slack oauth token response not ok", "error", tokenResp.Error)
-		settingsRedirect(w, r, "slack=error&reason="+tokenResp.Error)
+		a.settingsRedirect(w, r, "slack=error&reason="+tokenResp.Error)
 		return
 	}
 
 	// Check workspace allowlist
 	if !isSlackTeamAllowed(tokenResp.Team.ID) {
 		slog.Warn("slack workspace not in allowlist", "team_id", tokenResp.Team.ID, "team_name", tokenResp.Team.Name)
-		settingsRedirect(w, r, "slack=error&reason=workspace_not_allowed")
+		a.settingsRedirect(w, r, "slack=error&reason=workspace_not_allowed")
 		return
 	}
 
 	// Check if this workspace is already installed by someone else
-	existing, _ := GetSlackInstallationByTeamID(r.Context(), tokenResp.Team.ID)
+	existing, _ := a.GetSlackInstallationByTeamID(r.Context(), tokenResp.Team.ID)
 	if existing != nil && existing.InstalledBy != nil && *existing.InstalledBy != accountID {
 		// Store as pending and ask user to confirm the takeover
-		pendingID, err := CreatePendingInstallation(r.Context(), accountID, tokenResp)
+		pendingID, err := a.CreatePendingInstallation(r.Context(), accountID, tokenResp)
 		if err != nil {
 			slog.Error("failed to create pending installation", "error", err)
-			settingsRedirect(w, r, "slack=error&reason=storage")
+			a.settingsRedirect(w, r, "slack=error&reason=storage")
 			return
 		}
 		teamName := tokenResp.Team.Name
 		if teamName == "" {
 			teamName = tokenResp.Team.ID
 		}
-		settingsRedirect(w, r, "slack=confirm_takeover&team="+teamName+"&pending_id="+pendingID)
+		a.settingsRedirect(w, r, "slack=confirm_takeover&team="+teamName+"&pending_id="+pendingID)
 		return
 	}
 
 	// Store installation (upserts on team_id)
-	err = UpsertSlackInstallation(
+	err = a.UpsertSlackInstallation(
 		r.Context(),
 		tokenResp.Team.ID,
 		tokenResp.Team.Name,
@@ -291,15 +288,15 @@ func GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		slog.Error("failed to store slack installation", "error", err)
-		settingsRedirect(w, r, "slack=error&reason=storage")
+		a.settingsRedirect(w, r, "slack=error&reason=storage")
 		return
 	}
 
 	slog.Info("slack installation created", "team_id", tokenResp.Team.ID, "team_name", tokenResp.Team.Name, "account_id", accountID)
-	if OnSlackInstallationChange != nil {
-		OnSlackInstallationChange(tokenResp.Team.ID)
+	if a.OnSlackInstallationChange != nil {
+		a.OnSlackInstallationChange(tokenResp.Team.ID)
 	}
-	settingsRedirect(w, r, "slack=installed")
+	a.settingsRedirect(w, r, "slack=installed")
 }
 
 // slackOAuthResponse represents the response from Slack's oauth.v2.access endpoint
@@ -342,14 +339,14 @@ func exchangeSlackCode(ctx context.Context, clientID, clientSecret, code, redire
 }
 
 // GetSlackInstallations returns active Slack installations
-func GetSlackInstallations(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetSlackInstallations(w http.ResponseWriter, r *http.Request) {
 	account := GetAccountFromContext(r.Context())
 	if account == nil {
 		http.Error(w, "Authentication required", http.StatusUnauthorized)
 		return
 	}
 
-	installations, err := ListSlackInstallations(r.Context(), account.ID.String())
+	installations, err := a.ListSlackInstallations(r.Context(), account.ID.String())
 	if err != nil {
 		slog.Error("failed to list slack installations", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -365,7 +362,7 @@ func GetSlackInstallations(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteSlackInstallation uninstalls the app from the Slack workspace and deactivates the installation
-func DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
+func (a *API) DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	account := GetAccountFromContext(r.Context())
 	if account == nil {
 		http.Error(w, "Authentication required", http.StatusUnauthorized)
@@ -379,7 +376,7 @@ func DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the installation to get the bot token for uninstall
-	inst, err := GetSlackInstallationByTeamID(r.Context(), teamID)
+	inst, err := a.GetSlackInstallationByTeamID(r.Context(), teamID)
 	if err != nil {
 		slog.Error("failed to get slack installation for uninstall", "error", err, "team_id", teamID)
 		http.Error(w, "Installation not found", http.StatusNotFound)
@@ -403,28 +400,28 @@ func DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := DeactivateSlackInstallation(r.Context(), teamID); err != nil {
+	if err := a.DeactivateSlackInstallation(r.Context(), teamID); err != nil {
 		slog.Error("failed to deactivate slack installation", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if OnSlackInstallationChange != nil {
-		OnSlackInstallationChange(teamID)
+	if a.OnSlackInstallationChange != nil {
+		a.OnSlackInstallationChange(teamID)
 	}
 	slog.Info("slack installation removed", "team_id", teamID, "by_account", account.ID.String())
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // CreatePendingInstallation stores token data for a pending takeover confirmation
-func CreatePendingInstallation(ctx context.Context, accountID string, tokenResp *slackOAuthResponse) (string, error) {
+func (a *API) CreatePendingInstallation(ctx context.Context, accountID string, tokenResp *slackOAuthResponse) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("failed to generate pending id: %w", err)
 	}
 	pendingID := hex.EncodeToString(b)
 
-	_, err := config.PgPool.Exec(ctx,
+	_, err := a.PgPool.Exec(ctx,
 		`INSERT INTO slack_pending_installations (id, account_id, team_id, team_name, bot_token, bot_user_id, scope)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		pendingID, accountID, tokenResp.Team.ID, tokenResp.Team.Name, tokenResp.AccessToken, tokenResp.BotUserID, tokenResp.Scope,
@@ -436,7 +433,7 @@ func CreatePendingInstallation(ctx context.Context, accountID string, tokenResp 
 }
 
 // ConfirmSlackInstallation confirms a pending takeover installation
-func ConfirmSlackInstallation(w http.ResponseWriter, r *http.Request) {
+func (a *API) ConfirmSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	account := GetAccountFromContext(r.Context())
 	if account == nil {
 		http.Error(w, "Authentication required", http.StatusUnauthorized)
@@ -451,7 +448,7 @@ func ConfirmSlackInstallation(w http.ResponseWriter, r *http.Request) {
 
 	// Consume the pending installation (must belong to this account and not be expired)
 	var teamID, teamName, botToken, botUserID, scope string
-	err := config.PgPool.QueryRow(r.Context(),
+	err := a.PgPool.QueryRow(r.Context(),
 		`DELETE FROM slack_pending_installations
 		 WHERE id = $1 AND account_id = $2 AND expires_at > NOW()
 		 RETURNING team_id, team_name, bot_token, bot_user_id, scope`,
@@ -464,7 +461,7 @@ func ConfirmSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Upsert the installation
-	err = UpsertSlackInstallation(r.Context(), teamID, teamName, botToken, botUserID, scope, account.ID.String())
+	err = a.UpsertSlackInstallation(r.Context(), teamID, teamName, botToken, botUserID, scope, account.ID.String())
 	if err != nil {
 		slog.Error("failed to store slack installation from pending", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -472,8 +469,8 @@ func ConfirmSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("slack installation confirmed (takeover)", "team_id", teamID, "team_name", teamName, "account_id", account.ID.String())
-	if OnSlackInstallationChange != nil {
-		OnSlackInstallationChange(teamID)
+	if a.OnSlackInstallationChange != nil {
+		a.OnSlackInstallationChange(teamID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

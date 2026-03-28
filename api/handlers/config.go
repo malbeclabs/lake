@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"os"
 	"sort"
-
-	appconfig "github.com/malbeclabs/lake/api/config"
 )
 
 // PublicConfig holds configuration that is safe to expose to the frontend
@@ -21,7 +19,7 @@ type PublicConfig struct {
 }
 
 // GetConfig returns public configuration for the frontend
-func GetConfig(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetConfig(w http.ResponseWriter, r *http.Request) {
 	sentryEnv := os.Getenv("SENTRY_ENVIRONMENT")
 	if sentryEnv == "" {
 		sentryEnv = "development"
@@ -30,13 +28,13 @@ func GetConfig(w http.ResponseWriter, r *http.Request) {
 	env := EnvFromContext(r.Context())
 
 	// Determine available envs
-	availableEnvs := appconfig.AvailableEnvs()
+	availableEnvs := a.availableEnvs()
 	sort.Strings(availableEnvs)
 
 	// Feature flags based on environment
 	// Mainnet gets all features; non-mainnet environments have restricted features
 	features := map[string]bool{
-		"neo4j":  appconfig.Neo4jClient != nil && env == EnvMainnet,
+		"neo4j":  a.Neo4jClient != nil && env == EnvMainnet,
 		"solana": env == EnvMainnet,
 		"geoip":  env == EnvMainnet,
 	}

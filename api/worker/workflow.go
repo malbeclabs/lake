@@ -28,63 +28,67 @@ type cacheEntry struct {
 	fn   func(ctx context.Context) (any, error)
 }
 
-// Activities holds the logger for the refresh activity.
+// Activities holds the logger and API deps for the refresh activity.
 type Activities struct {
-	log *slog.Logger
+	Log *slog.Logger
+	API *handlers.API
 }
 
-var entries = []cacheEntry{
-	{"status", "status", func(ctx context.Context) (any, error) {
-		resp := handlers.FetchStatusData(ctx)
-		if resp.Error != "" {
-			return nil, &refreshError{resp.Error}
-		}
-		return resp, nil
-	}},
-	{"timeline", "timeline", func(ctx context.Context) (any, error) {
-		return handlers.FetchDefaultTimelineData(ctx), nil
-	}},
-	{"incidents", "incidents", func(ctx context.Context) (any, error) {
-		resp := handlers.FetchDefaultIncidentsData(ctx)
-		if resp == nil {
-			return nil, &refreshError{"nil response"}
-		}
-		return resp, nil
-	}},
-	{"device incidents", "device_incidents", func(ctx context.Context) (any, error) {
-		resp := handlers.FetchDefaultDeviceIncidentsData(ctx)
-		if resp == nil {
-			return nil, &refreshError{"nil response"}
-		}
-		return resp, nil
-	}},
-	{"link history", "link_history:24h:72", func(ctx context.Context) (any, error) {
-		return handlers.FetchLinkHistoryData(ctx, "24h", 72)
-	}},
-	{"device history", "device_history:24h:72", func(ctx context.Context) (any, error) {
-		return handlers.FetchDeviceHistoryData(ctx, "24h", 72)
-	}},
-	{"latency comparison", "latency_comparison", func(ctx context.Context) (any, error) {
-		return handlers.FetchLatencyComparisonData(ctx)
-	}},
-	{"dz ledger", "dz_ledger", func(ctx context.Context) (any, error) {
-		return handlers.FetchLedgerData(ctx, handlers.GetDZLedgerRPCURL())
-	}},
-	{"solana ledger", "solana_ledger", func(ctx context.Context) (any, error) {
-		return handlers.FetchLedgerData(ctx, handlers.GetSolanaRPCURL())
-	}},
-	{"validator perf", "validator_perf", func(ctx context.Context) (any, error) {
-		return handlers.FetchValidatorPerfData(ctx)
-	}},
-	{"stake overview", "stake_overview", func(ctx context.Context) (any, error) {
-		return handlers.FetchStakeOverviewData(ctx)
-	}},
-	{"publisher check", "publisher_check", func(ctx context.Context) (any, error) {
-		return handlers.FetchPublisherCheckData(ctx, "", 2, 0)
-	}},
-	{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
-		return handlers.FetchEdgeScoreboardData(ctx, "24h")
-	}},
+func (a *Activities) entries() []cacheEntry {
+	api := a.API
+	return []cacheEntry{
+		{"status", "status", func(ctx context.Context) (any, error) {
+			resp := api.FetchStatusData(ctx)
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
+		{"timeline", "timeline", func(ctx context.Context) (any, error) {
+			return api.FetchDefaultTimelineData(ctx), nil
+		}},
+		{"incidents", "incidents", func(ctx context.Context) (any, error) {
+			resp := api.FetchDefaultIncidentsData(ctx)
+			if resp == nil {
+				return nil, &refreshError{"nil response"}
+			}
+			return resp, nil
+		}},
+		{"device incidents", "device_incidents", func(ctx context.Context) (any, error) {
+			resp := api.FetchDefaultDeviceIncidentsData(ctx)
+			if resp == nil {
+				return nil, &refreshError{"nil response"}
+			}
+			return resp, nil
+		}},
+		{"link history", "link_history:24h:72", func(ctx context.Context) (any, error) {
+			return api.FetchLinkHistoryData(ctx, "24h", 72)
+		}},
+		{"device history", "device_history:24h:72", func(ctx context.Context) (any, error) {
+			return api.FetchDeviceHistoryData(ctx, "24h", 72)
+		}},
+		{"latency comparison", "latency_comparison", func(ctx context.Context) (any, error) {
+			return api.FetchLatencyComparisonData(ctx)
+		}},
+		{"dz ledger", "dz_ledger", func(ctx context.Context) (any, error) {
+			return handlers.FetchLedgerData(ctx, handlers.GetDZLedgerRPCURL())
+		}},
+		{"solana ledger", "solana_ledger", func(ctx context.Context) (any, error) {
+			return handlers.FetchLedgerData(ctx, handlers.GetSolanaRPCURL())
+		}},
+		{"validator perf", "validator_perf", func(ctx context.Context) (any, error) {
+			return api.FetchValidatorPerfData(ctx)
+		}},
+		{"stake overview", "stake_overview", func(ctx context.Context) (any, error) {
+			return api.FetchStakeOverviewData(ctx)
+		}},
+		{"publisher check", "publisher_check", func(ctx context.Context) (any, error) {
+			return api.FetchPublisherCheckData(ctx, "", 2, 0)
+		}},
+		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardData(ctx, "24h")
+		}},
+	}
 }
 
 // metroPathLatencyStrategies are refreshed as separate keys under one logical entry.
@@ -100,7 +104,7 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(maxConcurrentRefreshes)
 
-	for _, entry := range entries {
+	for _, entry := range a.entries() {
 		entry := entry
 		g.Go(func() error {
 			a.refresh(gctx, entry.name, entry.key, entry.fn)
@@ -113,14 +117,14 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 		strategy := strategy
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
-				return handlers.FetchMetroPathLatencyData(ctx, strategy)
+				return a.API.FetchMetroPathLatencyData(ctx, strategy)
 			})
 			return nil
 		})
 	}
 
 	_ = g.Wait()
-	a.log.Info("page cache refresh complete", "duration", time.Since(start).Round(time.Millisecond))
+	a.Log.Info("page cache refresh complete", "duration", time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
@@ -130,16 +134,16 @@ func (a *Activities) refresh(ctx context.Context, name, key string, fn func(cont
 
 	result, err := fn(ctx)
 	if err != nil {
-		a.log.Error("cache refresh failed", "cache", name, "error", err)
+		a.Log.Error("cache refresh failed", "cache", name, "error", err)
 		return
 	}
 
-	if err := handlers.WritePageCache(ctx, key, result); err != nil {
-		a.log.Error("cache write failed", "cache", name, "error", err)
+	if err := a.API.WritePageCache(ctx, key, result); err != nil {
+		a.Log.Error("cache write failed", "cache", name, "error", err)
 		return
 	}
 
-	a.log.Debug("cache refreshed", "cache", name)
+	a.Log.Debug("cache refreshed", "cache", name)
 }
 
 // PageCacheWorkflow is a long-running workflow that refreshes all page caches

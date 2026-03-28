@@ -13,7 +13,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	"github.com/malbeclabs/lake/api/config"
+	
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
@@ -56,7 +56,7 @@ func getCypherGeneratePrompt() (string, error) {
 }
 
 // GenerateCypher handles synchronous Cypher generation requests.
-func GenerateCypher(w http.ResponseWriter, r *http.Request) {
+func (a *API) GenerateCypher(w http.ResponseWriter, r *http.Request) {
 	var req GenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -69,14 +69,14 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if Neo4j is available for schema fetching
-	if config.Neo4jClient == nil {
+	if a.Neo4jClient == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: "Neo4j is not available"})
 		return
 	}
 
 	// Fetch Neo4j schema
-	schemaFetcher := NewNeo4jSchemaFetcher()
+	schemaFetcher := a.NewNeo4jSchemaFetcher()
 	schema, err := schemaFetcher.FetchSchema(r.Context())
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -121,7 +121,7 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 		cypher = cleanCypher(cypher)
 
 		// Validate with EXPLAIN
-		validationErr := validateCypherQuery(r.Context(), cypher)
+		validationErr := a.validateCypherQuery(r.Context(), cypher)
 		if validationErr == "" {
 			// Query is valid
 			w.Header().Set("Content-Type", "application/json")
@@ -144,7 +144,7 @@ func GenerateCypher(w http.ResponseWriter, r *http.Request) {
 }
 
 // GenerateCypherStream streams the Cypher generation with SSE.
-func GenerateCypherStream(w http.ResponseWriter, r *http.Request) {
+func (a *API) GenerateCypherStream(w http.ResponseWriter, r *http.Request) {
 	var req GenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -175,13 +175,13 @@ func GenerateCypherStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if Neo4j is available
-	if config.Neo4jClient == nil {
+	if a.Neo4jClient == nil {
 		sendEvent("error", "Neo4j is not available")
 		return
 	}
 
 	// Fetch Neo4j schema
-	schemaFetcher := NewNeo4jSchemaFetcher()
+	schemaFetcher := a.NewNeo4jSchemaFetcher()
 	schema, err := schemaFetcher.FetchSchema(r.Context())
 	if err != nil {
 		sendEvent("error", internalError("Failed to fetch Neo4j schema", err))
@@ -235,7 +235,7 @@ func GenerateCypherStream(w http.ResponseWriter, r *http.Request) {
 
 		// Validate with EXPLAIN
 		sendEvent("status", `{"status":"validating"}`)
-		validationErr := validateCypherQuery(r.Context(), cypher)
+		validationErr := a.validateCypherQuery(r.Context(), cypher)
 		if validationErr == "" {
 			// Query is valid
 			sendEvent("done", fmt.Sprintf(`{"sql":"%s","provider":"anthropic","attempts":%d}`, escapeJSON(cypher), attempts))
@@ -277,15 +277,15 @@ func cleanCypher(response string) string {
 	return strings.TrimSpace(response)
 }
 
-func validateCypherQuery(ctx context.Context, cypher string) string {
-	if config.Neo4jClient == nil {
+func (a *API) validateCypherQuery(ctx context.Context, cypher string) string {
+	if a.Neo4jClient == nil {
 		return "Neo4j is not available"
 	}
 
 	// Use EXPLAIN to validate the query syntax
 	explainQuery := "EXPLAIN " + cypher
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	_, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {

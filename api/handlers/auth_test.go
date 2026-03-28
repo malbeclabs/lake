@@ -11,18 +11,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
-	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetAuthNonce(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/nonce", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetAuthNonce(rr, req)
+	testAPI.GetAuthNonce(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -41,7 +40,7 @@ func TestGetAuthNonce(t *testing.T) {
 }
 
 func TestGetAuthNonce_CleansExpired(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Insert an expired nonce
@@ -53,7 +52,7 @@ func TestGetAuthNonce_CleansExpired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/nonce", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetAuthNonce(rr, req)
+	testAPI.GetAuthNonce(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -65,7 +64,7 @@ func TestGetAuthNonce_CleansExpired(t *testing.T) {
 }
 
 func TestGetAuthMe_Authenticated(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -74,7 +73,7 @@ func TestGetAuthMe_Authenticated(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.GetAuthMe(rr, req)
+	testAPI.GetAuthMe(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -86,13 +85,13 @@ func TestGetAuthMe_Authenticated(t *testing.T) {
 }
 
 func TestGetAuthMe_Anonymous(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	// No account in context
 
 	rr := httptest.NewRecorder()
-	handlers.GetAuthMe(rr, req)
+	testAPI.GetAuthMe(rr, req)
 
 	// Should still return 200 OK with null account
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -104,7 +103,7 @@ func TestGetAuthMe_Anonymous(t *testing.T) {
 }
 
 func TestPostAuthLogout(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -122,13 +121,13 @@ func TestPostAuthLogout(t *testing.T) {
 	// For testing, we just verify that a logout with no token succeeds
 
 	rr := httptest.NewRecorder()
-	handlers.PostAuthLogout(rr, req)
+	testAPI.PostAuthLogout(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
 func TestGetUsageQuota_Anonymous(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Set up anonymous limit
@@ -144,7 +143,7 @@ func TestGetUsageQuota_Anonymous(t *testing.T) {
 	// No account in context
 
 	rr := httptest.NewRecorder()
-	handlers.GetUsageQuota(rr, req)
+	testAPI.GetUsageQuota(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -157,7 +156,7 @@ func TestGetUsageQuota_Anonymous(t *testing.T) {
 }
 
 func TestGetUsageQuota_Authenticated(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -174,7 +173,7 @@ func TestGetUsageQuota_Authenticated(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.GetUsageQuota(rr, req)
+	testAPI.GetUsageQuota(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -186,7 +185,7 @@ func TestGetUsageQuota_Authenticated(t *testing.T) {
 }
 
 func TestGetAccountByToken_Valid(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create account
@@ -218,7 +217,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 
 	// Test retrieval - since we can't easily generate matching token/hash,
 	// we'll just verify the error case
-	account, err := handlers.GetAccountByToken(ctx, "invalid_token")
+	account, err := testAPI.GetAccountByToken(ctx, "invalid_token")
 	assert.Error(t, err)
 	assert.Nil(t, account)
 
@@ -228,7 +227,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 }
 
 func TestGetAccountByToken_Expired(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create account
@@ -248,13 +247,13 @@ func TestGetAccountByToken_Expired(t *testing.T) {
 	require.NoError(t, err)
 
 	// Attempt to get account with expired session
-	account, err := handlers.GetAccountByToken(ctx, "any_token")
+	account, err := testAPI.GetAccountByToken(ctx, "any_token")
 	assert.Error(t, err)
 	assert.Nil(t, account)
 }
 
 func TestGetAccountByToken_InactiveAccount(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create inactive account
@@ -274,13 +273,13 @@ func TestGetAccountByToken_InactiveAccount(t *testing.T) {
 	require.NoError(t, err)
 
 	// Attempt to get inactive account
-	account, err := handlers.GetAccountByToken(ctx, "any_token")
+	account, err := testAPI.GetAccountByToken(ctx, "any_token")
 	assert.Error(t, err)
 	assert.Nil(t, account)
 }
 
 func TestGetQuotaForAccount_WithUsage(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -300,7 +299,7 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 	`, account.ID)
 	require.NoError(t, err)
 
-	quota, err := handlers.GetQuotaForAccount(ctx, account, "")
+	quota, err := testAPI.GetQuotaForAccount(ctx, account, "")
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 	assert.NotNil(t, quota.Limit)
@@ -310,7 +309,7 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 }
 
 func TestGetQuotaForAccount_NoLimit(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Account with type that has no limit entry (defaults to anonymous limit)
@@ -321,14 +320,14 @@ func TestGetQuotaForAccount_NoLimit(t *testing.T) {
 	}
 
 	// Don't insert any limit for this account type
-	quota, err := handlers.GetQuotaForAccount(ctx, account, "")
+	quota, err := testAPI.GetQuotaForAccount(ctx, account, "")
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 	// Falls back to default limit
 }
 
 func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Set up anonymous limit
@@ -348,7 +347,7 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 	`, testIP)
 	require.NoError(t, err)
 
-	quota, err := handlers.GetQuotaForAccount(ctx, nil, testIP)
+	quota, err := testAPI.GetQuotaForAccount(ctx, nil, testIP)
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 	assert.NotNil(t, quota.Remaining)
@@ -356,7 +355,7 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 }
 
 func TestMigrateAnonymousSessions(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -458,7 +457,7 @@ func TestNextMidnightUTC(t *testing.T) {
 
 	// We can't directly call nextMidnightUTC (it's unexported), but we can verify
 	// quota.ResetsAt is a valid RFC3339 timestamp representing midnight UTC
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Set up anonymous limit
@@ -469,7 +468,7 @@ func TestNextMidnightUTC(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	quota, err := handlers.GetQuotaForAccount(ctx, nil, "127.0.0.1")
+	quota, err := testAPI.GetQuotaForAccount(ctx, nil, "127.0.0.1")
 	require.NoError(t, err)
 
 	resetTime, err := time.Parse(time.RFC3339, quota.ResetsAt)

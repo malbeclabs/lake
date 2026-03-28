@@ -154,7 +154,7 @@ func TestSearchAutocomplete_EmptyQuery(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -172,7 +172,7 @@ func TestSearchAutocomplete_ShortQuery(t *testing.T) {
 	// Query too short (< 2 chars)
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=a", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -190,7 +190,7 @@ func TestSearchAutocomplete_FindsDevices(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=NYC", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -231,7 +231,7 @@ func TestSearchAutocomplete_DevicePrefix(t *testing.T) {
 	// Search with device: prefix
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=device:CORE", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -253,7 +253,7 @@ func TestSearchAutocomplete_MetroPrefix(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=metro:New", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -280,7 +280,7 @@ func TestSearchAutocomplete_LimitParam(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=NYC&limit=2", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -299,7 +299,7 @@ func TestSearchAutocomplete_IPPrefix(t *testing.T) {
 	// ip: prefix should search devices, users, and gossip nodes
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=ip:10.0", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -324,7 +324,7 @@ func TestSearch_EmptyQuery(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -343,7 +343,7 @@ func TestSearch_ReturnsGroupedResults(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -377,7 +377,7 @@ func TestSearch_TypesFilter(t *testing.T) {
 	// Filter to only devices
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -400,7 +400,7 @@ func TestSearch_MultipleTypes(t *testing.T) {
 	// Filter to devices and metros
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device,metro", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -422,7 +422,7 @@ func TestSearch_LimitParam(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device&limit=1", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -445,7 +445,7 @@ func TestSearch_ValidatorSearch(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=validator:validator1", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -467,7 +467,7 @@ func TestSearch_ContributorSearch(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=contributor:ACME", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -490,7 +490,7 @@ func TestSearch_MultiTokenQuery(t *testing.T) {
 	// Search for "NYC CORE" should match devices with both tokens
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC%20CORE&types=device", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -514,7 +514,7 @@ func TestSearchAutocomplete_NoResults(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=NONEXISTENT12345", nil)
 	rr := httptest.NewRecorder()
-	handlers.SearchAutocomplete(rr, req)
+	testAPI.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -532,7 +532,7 @@ func TestSearch_SuggestionURLFormat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device,metro,link", nil)
 	rr := httptest.NewRecorder()
-	handlers.Search(rr, req)
+	testAPI.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

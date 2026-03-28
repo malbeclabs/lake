@@ -21,7 +21,7 @@ type ContributorListItem struct {
 	LinkCount    uint64 `json:"link_count"`
 }
 
-func GetContributors(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -31,7 +31,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_contributors_current`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		slog.Error("contributors count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -81,7 +81,7 @@ func GetContributors(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -148,7 +148,7 @@ type ContributorDetail struct {
 	OutBps       float64 `json:"out_bps"`
 }
 
-func GetContributor(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetContributor(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -228,7 +228,7 @@ func GetContributor(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var contributor ContributorDetail
-	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&contributor.PK,
 		&contributor.Code,
 		&contributor.Name,

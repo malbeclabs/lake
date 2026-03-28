@@ -150,7 +150,7 @@ func TestGetEdgeScoreboard_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetEdgeScoreboard(rr, req)
+	testAPI.GetEdgeScoreboard(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -168,7 +168,7 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetEdgeScoreboard(rr, req)
+	testAPI.GetEdgeScoreboard(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -251,7 +251,7 @@ func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
 			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard?window="+w, nil)
 			rr := httptest.NewRecorder()
-			handlers.GetEdgeScoreboard(rr, req)
+			testAPI.GetEdgeScoreboard(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -270,7 +270,7 @@ func TestGetEdgeScoreboard_InvalidWindow(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard?window=bogus", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetEdgeScoreboard(rr, req)
+	testAPI.GetEdgeScoreboard(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

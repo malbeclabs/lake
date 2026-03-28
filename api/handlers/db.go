@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -21,12 +21,14 @@ var (
 	schemaCacheTTL = 60 * time.Second
 )
 
-// DBQuerier implements workflow.Querier using the global connection pool.
-type DBQuerier struct{}
+// DBQuerier implements workflow.Querier using a ClickHouse connection.
+type DBQuerier struct {
+	db driver.Conn
+}
 
 // NewDBQuerier creates a new DBQuerier.
-func NewDBQuerier() *DBQuerier {
-	return &DBQuerier{}
+func (a *API) NewDBQuerier() *DBQuerier {
+	return &DBQuerier{db: a.DB}
 }
 
 // Query executes a SQL query and returns the result.
@@ -36,7 +38,7 @@ func (q *DBQuerier) Query(ctx context.Context, sql string) (workflow.QueryResult
 	sql = strings.TrimSuffix(strings.TrimSpace(sql), ";")
 
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, sql)
+	rows, err := q.db.Query(ctx, sql)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
@@ -129,12 +131,15 @@ func formatQueryResult(result workflow.QueryResult) string {
 	return sb.String()
 }
 
-// DBSchemaFetcher implements workflow.SchemaFetcher using the global connection pool.
-type DBSchemaFetcher struct{}
+// DBSchemaFetcher implements workflow.SchemaFetcher using a ClickHouse connection.
+type DBSchemaFetcher struct {
+	db       driver.Conn
+	database string
+}
 
 // NewDBSchemaFetcher creates a new DBSchemaFetcher.
-func NewDBSchemaFetcher() *DBSchemaFetcher {
-	return &DBSchemaFetcher{}
+func (a *API) NewDBSchemaFetcher() *DBSchemaFetcher {
+	return &DBSchemaFetcher{db: a.DB, database: a.database()}
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.
@@ -152,7 +157,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 
 	// Fetch columns from mainnet database
 	start := time.Now()
-	rows, err := config.DB.Query(ctx, `
+	rows, err := f.db.Query(ctx, `
 		SELECT
 			table,
 			name,
@@ -162,7 +167,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		  AND table NOT LIKE 'stg_%'
 		  AND table != '_env_lock'
 		ORDER BY table, position
-	`, config.Database())
+	`, f.database)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)
@@ -187,7 +192,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 
 	// Fetch view definitions from mainnet database
 	start = time.Now()
-	viewRows, err := config.DB.Query(ctx, `
+	viewRows, err := f.db.Query(ctx, `
 		SELECT
 			name,
 			as_select
@@ -196,7 +201,7 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		  AND engine = 'View'
 		  AND name NOT LIKE 'stg_%'
 		  AND name != '_env_lock'
-	`, config.Database())
+	`, f.database)
 	duration = time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

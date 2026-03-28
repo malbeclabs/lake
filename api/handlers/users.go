@@ -29,7 +29,7 @@ type UserListItem struct {
 	OutBps      float64 `json:"out_bps"`
 }
 
-func GetUsers(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -39,7 +39,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_users_current`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		slog.Error("users count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -80,7 +80,7 @@ func GetUsers(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -167,7 +167,7 @@ type UserDetail struct {
 	StakeWeightPct  float64 `json:"stake_weight_pct"`
 }
 
-func GetUser(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -240,7 +240,7 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var user UserDetail
-	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&user.PK,
 		&user.OwnerPubkey,
 		&user.Status,
@@ -289,7 +289,7 @@ type UserTrafficPoint struct {
 	OutPps   float64 `json:"out_pps"`
 }
 
-func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -408,7 +408,7 @@ func GetUserTraffic(w http.ResponseWriter, r *http.Request) {
 			timeFilter)
 	}
 
-	rows, err := envDB(ctx).Query(ctx, query, pk)
+	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -456,7 +456,7 @@ type UserMulticastGroup struct {
 	SubscriberCount uint64 `json:"subscriber_count"`
 }
 
-func GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -522,7 +522,7 @@ func GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 		ORDER BY g.code
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pk, pk)
+	rows, err := a.envDB(ctx).Query(ctx, query, pk, pk)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

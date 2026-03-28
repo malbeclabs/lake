@@ -7,22 +7,23 @@ import (
 	"strings"
 
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 // Neo4jQuerier implements workflow.Querier for Neo4j graph queries.
-type Neo4jQuerier struct{}
+type Neo4jQuerier struct {
+	client neo4j.Client
+}
 
 // NewNeo4jQuerier creates a new Neo4jQuerier.
-func NewNeo4jQuerier() *Neo4jQuerier {
-	return &Neo4jQuerier{}
+func (a *API) NewNeo4jQuerier() *Neo4jQuerier {
+	return &Neo4jQuerier{client: a.Neo4jClient}
 }
 
 // Query executes a Cypher query and returns formatted results.
 func (q *Neo4jQuerier) Query(ctx context.Context, cypher string) (workflow.QueryResult, error) {
-	session := config.Neo4jSession(ctx)
+	session, _ := q.client.Session(ctx)
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {
@@ -390,16 +391,18 @@ func getNodeIdentifier(val map[string]any) string {
 }
 
 // Neo4jSchemaFetcher implements workflow.SchemaFetcher for Neo4j.
-type Neo4jSchemaFetcher struct{}
+type Neo4jSchemaFetcher struct {
+	client neo4j.Client
+}
 
 // NewNeo4jSchemaFetcher creates a new Neo4jSchemaFetcher.
-func NewNeo4jSchemaFetcher() *Neo4jSchemaFetcher {
-	return &Neo4jSchemaFetcher{}
+func (a *API) NewNeo4jSchemaFetcher() *Neo4jSchemaFetcher {
+	return &Neo4jSchemaFetcher{client: a.Neo4jClient}
 }
 
 // FetchSchema returns a formatted string describing the Neo4j graph schema.
 func (f *Neo4jSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
-	session := config.Neo4jSession(ctx)
+	session, _ := f.client.Session(ctx)
 	defer session.Close(ctx)
 
 	var sb strings.Builder

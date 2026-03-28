@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/solana"
 )
 
@@ -171,7 +170,7 @@ func extractEmailDomain(email string) string {
 }
 
 // createSession creates a new auth session for an account
-func createSession(ctx context.Context, accountID uuid.UUID) (string, error) {
+func (a *API) createSession(ctx context.Context, accountID uuid.UUID) (string, error) {
 	token, tokenHash, err := generateSessionToken()
 	if err != nil {
 		return "", fmt.Errorf("failed to generate token: %w", err)
@@ -179,7 +178,7 @@ func createSession(ctx context.Context, accountID uuid.UUID) (string, error) {
 
 	expiresAt := time.Now().Add(sessionTokenLifetime)
 
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = a.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, $2, $3)
 	`, accountID, tokenHash, expiresAt)
@@ -191,7 +190,7 @@ func createSession(ctx context.Context, accountID uuid.UUID) (string, error) {
 }
 
 // GetAccountByToken retrieves an account by session token
-func GetAccountByToken(ctx context.Context, token string) (*Account, error) {
+func (a *API) GetAccountByToken(ctx context.Context, token string) (*Account, error) {
 	tokenHash := hashToken(token)
 
 	var account Account
@@ -199,7 +198,7 @@ func GetAccountByToken(ctx context.Context, token string) (*Account, error) {
 	var solBalance *int64
 	var solBalanceUpdatedAt, lastLoginAt *time.Time
 
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		SELECT a.id, a.account_type, a.wallet_address, a.email, a.email_domain,
 		       a.google_id, a.display_name, a.sol_balance, a.sol_balance_updated_at,
 		       a.is_active, a.created_at, a.updated_at, a.last_login_at
@@ -242,7 +241,7 @@ func isInternalDomain(domain *string) bool {
 }
 
 // GetQuotaForAccount returns quota info for an account (or anonymous by IP)
-func GetQuotaForAccount(ctx context.Context, account *Account, ip string) (*QuotaInfo, error) {
+func (a *API) GetQuotaForAccount(ctx context.Context, account *Account, ip string) (*QuotaInfo, error) {
 	var accountType *string
 	var accountID *uuid.UUID
 	if account != nil {
@@ -259,7 +258,7 @@ func GetQuotaForAccount(ctx context.Context, account *Account, ip string) (*Quot
 		premiumLimit := GetWalletPremiumLimit()
 		limit = &premiumLimit
 	} else {
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT daily_question_limit FROM usage_limits
 			WHERE account_type IS NOT DISTINCT FROM $1
 		`, accountType).Scan(&limit)
@@ -272,12 +271,12 @@ func GetQuotaForAccount(ctx context.Context, account *Account, ip string) (*Quot
 	// Get current usage
 	var questionCount int
 	if accountID != nil {
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT COALESCE(question_count, 0) FROM usage_daily
 			WHERE account_id = $1 AND date = CURRENT_DATE
 		`, accountID).Scan(&questionCount)
 	} else {
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT COALESCE(question_count, 0) FROM usage_daily
 			WHERE account_id IS NULL AND ip_address = $1 AND date = CURRENT_DATE
 		`, ip).Scan(&questionCount)
@@ -315,12 +314,12 @@ func intPtr(i int) *int {
 }
 
 // migrateAnonymousSessions transfers sessions from anonymous_id to account_id
-func migrateAnonymousSessions(ctx context.Context, accountID uuid.UUID, anonymousID string) error {
+func (a *API) migrateAnonymousSessions(ctx context.Context, accountID uuid.UUID, anonymousID string) error {
 	if anonymousID == "" {
 		return nil
 	}
 
-	result, err := config.PgPool.Exec(ctx, `
+	result, err := a.PgPool.Exec(ctx, `
 		UPDATE sessions
 		SET account_id = $1, anonymous_id = NULL
 		WHERE anonymous_id = $2 AND account_id IS NULL
@@ -337,14 +336,14 @@ func migrateAnonymousSessions(ctx context.Context, accountID uuid.UUID, anonymou
 }
 
 // GetAuthMe handles GET /api/auth/me
-func GetAuthMe(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetAuthMe(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	account := GetAccountFromContext(ctx)
 	ip := GetIPFromRequest(r)
 
-	quota, err := GetQuotaForAccount(ctx, account, ip)
+	quota, err := a.GetQuotaForAccount(ctx, account, ip)
 	if err != nil {
 		slog.Error("Failed to get quota", "error", err)
 		// Return response anyway, just without quota
@@ -361,7 +360,7 @@ func GetAuthMe(w http.ResponseWriter, r *http.Request) {
 }
 
 // PostAuthLogout handles POST /api/auth/logout
-func PostAuthLogout(w http.ResponseWriter, r *http.Request) {
+func (a *API) PostAuthLogout(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
@@ -375,7 +374,7 @@ func PostAuthLogout(w http.ResponseWriter, r *http.Request) {
 	tokenHash := hashToken(token)
 
 	// Delete the session
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := a.PgPool.Exec(ctx, `
 		DELETE FROM auth_sessions WHERE token_hash = $1
 	`, tokenHash)
 	if err != nil {
@@ -386,7 +385,7 @@ func PostAuthLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetAuthNonce handles GET /api/auth/nonce - returns a nonce for wallet signing
-func GetAuthNonce(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetAuthNonce(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
@@ -398,10 +397,10 @@ func GetAuthNonce(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clean up expired nonces
-	_, _ = config.PgPool.Exec(ctx, `DELETE FROM auth_nonces WHERE expires_at < NOW()`)
+	_, _ = a.PgPool.Exec(ctx, `DELETE FROM auth_nonces WHERE expires_at < NOW()`)
 
 	// Store the nonce
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = a.PgPool.Exec(ctx, `
 		INSERT INTO auth_nonces (nonce, expires_at)
 		VALUES ($1, NOW() + INTERVAL '5 minutes')
 	`, nonce)
@@ -418,7 +417,7 @@ func GetAuthNonce(w http.ResponseWriter, r *http.Request) {
 }
 
 // PostAuthWallet handles POST /api/auth/wallet - verifies wallet signature and creates session
-func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
+func (a *API) PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -455,7 +454,7 @@ func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 
 	// Verify and delete nonce (one-time use)
 	var expiresAt time.Time
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		DELETE FROM auth_nonces WHERE nonce = $1 AND expires_at > NOW()
 		RETURNING expires_at
 	`, nonce).Scan(&expiresAt)
@@ -478,7 +477,7 @@ func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 	var account Account
 	var displayName *string
 
-	err = config.PgPool.QueryRow(ctx, `
+	err = a.PgPool.QueryRow(ctx, `
 		INSERT INTO accounts (account_type, wallet_address)
 		VALUES ($1, $2)
 		ON CONFLICT (wallet_address) DO UPDATE SET last_login_at = NOW()
@@ -501,7 +500,7 @@ func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 		// Don't fail auth, just skip balance update
 	} else {
 		now := time.Now()
-		_, err = config.PgPool.Exec(ctx, `
+		_, err = a.PgPool.Exec(ctx, `
 			UPDATE accounts SET sol_balance = $1, sol_balance_updated_at = $2 WHERE id = $3
 		`, balance, now, account.ID)
 		if err != nil {
@@ -516,14 +515,14 @@ func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 
 	// Migrate anonymous sessions to this account
 	if req.AnonymousID != nil && *req.AnonymousID != "" {
-		if err := migrateAnonymousSessions(ctx, account.ID, *req.AnonymousID); err != nil {
+		if err := a.migrateAnonymousSessions(ctx, account.ID, *req.AnonymousID); err != nil {
 			slog.Error("Failed to migrate sessions", "error", err)
 			// Don't fail auth, just log
 		}
 	}
 
 	// Create session
-	token, err := createSession(ctx, account.ID)
+	token, err := a.createSession(ctx, account.ID)
 	if err != nil {
 		slog.Error("Failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -540,7 +539,7 @@ func PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 }
 
 // PostAuthGoogle handles POST /api/auth/google - verifies Google ID token and creates session
-func PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
+func (a *API) PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -575,7 +574,7 @@ func PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	var account Account
 	var walletAddress, displayName *string
 
-	err = config.PgPool.QueryRow(ctx, `
+	err = a.PgPool.QueryRow(ctx, `
 		INSERT INTO accounts (account_type, email, email_domain, google_id, display_name)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (google_id) DO UPDATE SET
@@ -596,14 +595,14 @@ func PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 
 	// Migrate anonymous sessions to this account
 	if req.AnonymousID != nil && *req.AnonymousID != "" {
-		if err := migrateAnonymousSessions(ctx, account.ID, *req.AnonymousID); err != nil {
+		if err := a.migrateAnonymousSessions(ctx, account.ID, *req.AnonymousID); err != nil {
 			slog.Error("Failed to migrate sessions", "error", err)
 			// Don't fail auth, just log
 		}
 	}
 
 	// Create session
-	token, err := createSession(ctx, account.ID)
+	token, err := a.createSession(ctx, account.ID)
 	if err != nil {
 		slog.Error("Failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -618,14 +617,14 @@ func PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUsageQuota handles GET /api/usage/quota
-func GetUsageQuota(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetUsageQuota(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	account := GetAccountFromContext(ctx)
 	ip := GetIPFromRequest(r)
 
-	quota, err := GetQuotaForAccount(ctx, account, ip)
+	quota, err := a.GetQuotaForAccount(ctx, account, ip)
 	if err != nil {
 		slog.Error("Failed to get quota", "error", err)
 		http.Error(w, "Failed to get quota", http.StatusInternalServerError)

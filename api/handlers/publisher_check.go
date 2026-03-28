@@ -12,7 +12,6 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
@@ -96,10 +95,10 @@ func isDefaultPublisherCheckRequest(r *http.Request) bool {
 	return true
 }
 
-func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default requests
 	if isMainnet(r.Context()) && isDefaultPublisherCheckRequest(r) {
-		if data, err := ReadPageCache(r.Context(), "publisher_check"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "publisher_check"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -134,13 +133,13 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
+	resp, err := a.FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
 		var retryCancel context.CancelFunc
 		ctx, retryCancel = context.WithTimeout(r.Context(), 20*time.Second)
 		defer retryCancel()
-		resp, err = FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
+		resp, err = a.FetchPublisherCheckData(ctx, q, epochsParam, slotsParam)
 	}
 
 	if err != nil {
@@ -156,13 +155,13 @@ func GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // FetchPublisherCheckData performs the actual publisher check query.
-func FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
+func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
 	start := time.Now()
 
 	// Multicast group PK for edge-solana-shreds (formerly "bebop").
 	const shredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
 
-	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", config.GetShredderDB())
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.shredderDB())
 
 	var perSlotWhere string
 	var args []any
@@ -245,7 +244,7 @@ func FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsPa
 
 	query += " ORDER BY activated_stake DESC, publisher_ip"
 
-	rows, err := envDB(ctx).Query(ctx, query, args...)
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -319,7 +318,7 @@ func FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsPa
 	}
 
 	var totalNetworkStake int64
-	err = envDB(ctx).QueryRow(ctx,
+	err = a.envDB(ctx).QueryRow(ctx,
 		`SELECT COALESCE(SUM(activated_stake_lamports), 0)
 		 FROM solana_vote_accounts_current
 		 WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0`).Scan(&totalNetworkStake)

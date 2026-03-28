@@ -1012,7 +1012,7 @@ type HealthResponse struct {
 	Entities []HealthEntity `json:"entities"`
 }
 
-func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1036,7 +1036,7 @@ func GetTrafficDashboardHealth(w http.ResponseWriter, r *http.Request) {
 	query := BuildHealthQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, limit)
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1096,7 +1096,7 @@ type StressGroup struct {
 	StressedCount []int64   `json:"stressed_count"`
 }
 
-func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1128,7 +1128,7 @@ func GetTrafficDashboardStress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1294,7 +1294,7 @@ type TopResponse struct {
 	Entities []TopEntity `json:"entities"`
 }
 
-func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1324,7 +1324,7 @@ func GetTrafficDashboardTop(w http.ResponseWriter, r *http.Request) {
 	query := BuildTopQuery(timeFilter, entity, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, limit)
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1382,7 +1382,7 @@ type DrilldownResponse struct {
 	EffBucket string            `json:"effective_bucket"`
 }
 
-func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1412,7 +1412,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1477,7 +1477,7 @@ func GetTrafficDashboardDrilldown(w http.ResponseWriter, r *http.Request) {
 			strings.Join(quoted, ","),
 			timeFilter)
 
-		metaRows, err := envDB(ctx).Query(ctx, metaQuery)
+		metaRows, err := a.envDB(ctx).Query(ctx, metaQuery)
 		if err == nil {
 			defer metaRows.Close()
 			for metaRows.Next() {
@@ -1522,7 +1522,7 @@ type BurstinessResponse struct {
 	Total    uint64             `json:"total"`
 }
 
-func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -1574,7 +1574,7 @@ func GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Request) {
 	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, threshold, minBps, minPeakBps, limit, offset)
 
 	start := time.Now()
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

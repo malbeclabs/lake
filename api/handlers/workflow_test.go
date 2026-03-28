@@ -9,13 +9,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
-	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCreateWorkflowRun(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create a session first (required for foreign key)
@@ -27,7 +26,7 @@ func TestCreateWorkflowRun(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a workflow run
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "What is 2+2?")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "What is 2+2?")
 	require.NoError(t, err)
 	require.NotNil(t, run)
 
@@ -40,7 +39,7 @@ func TestCreateWorkflowRun(t *testing.T) {
 }
 
 func TestUpdateWorkflowCheckpoint(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session and workflow
@@ -51,7 +50,7 @@ func TestUpdateWorkflowCheckpoint(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Update checkpoint
@@ -63,11 +62,11 @@ func TestUpdateWorkflowCheckpoint(t *testing.T) {
 		OutputTokens:  50,
 	}
 
-	err = handlers.UpdateWorkflowCheckpoint(ctx, run.ID, checkpoint)
+	err = testAPI.UpdateWorkflowCheckpoint(ctx, run.ID, checkpoint)
 	require.NoError(t, err)
 
 	// Verify update
-	updatedRun, err := handlers.GetWorkflowRun(ctx, run.ID)
+	updatedRun, err := testAPI.GetWorkflowRun(ctx, run.ID)
 	require.NoError(t, err)
 	assert.Equal(t, 1, updatedRun.Iteration)
 	assert.Equal(t, 2, updatedRun.LLMCalls)
@@ -76,7 +75,7 @@ func TestUpdateWorkflowCheckpoint(t *testing.T) {
 }
 
 func TestCompleteWorkflowRun(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session and workflow
@@ -87,7 +86,7 @@ func TestCompleteWorkflowRun(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Complete workflow
@@ -99,11 +98,11 @@ func TestCompleteWorkflowRun(t *testing.T) {
 		OutputTokens:  200,
 	}
 
-	err = handlers.CompleteWorkflowRun(ctx, run.ID, "The answer is 42", finalCheckpoint)
+	err = testAPI.CompleteWorkflowRun(ctx, run.ID, "The answer is 42", finalCheckpoint)
 	require.NoError(t, err)
 
 	// Verify completion
-	completedRun, err := handlers.GetWorkflowRun(ctx, run.ID)
+	completedRun, err := testAPI.GetWorkflowRun(ctx, run.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "completed", completedRun.Status)
 	assert.NotNil(t, completedRun.FinalAnswer)
@@ -112,7 +111,7 @@ func TestCompleteWorkflowRun(t *testing.T) {
 }
 
 func TestFailWorkflowRun(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session and workflow
@@ -123,15 +122,15 @@ func TestFailWorkflowRun(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Fail workflow
-	err = handlers.FailWorkflowRun(ctx, run.ID, "Something went wrong")
+	err = testAPI.FailWorkflowRun(ctx, run.ID, "Something went wrong")
 	require.NoError(t, err)
 
 	// Verify failure
-	failedRun, err := handlers.GetWorkflowRun(ctx, run.ID)
+	failedRun, err := testAPI.GetWorkflowRun(ctx, run.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "failed", failedRun.Status)
 	assert.NotNil(t, failedRun.Error)
@@ -140,7 +139,7 @@ func TestFailWorkflowRun(t *testing.T) {
 }
 
 func TestCancelWorkflowRun(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session and workflow
@@ -151,31 +150,31 @@ func TestCancelWorkflowRun(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Cancel workflow
-	err = handlers.CancelWorkflowRun(ctx, run.ID)
+	err = testAPI.CancelWorkflowRun(ctx, run.ID)
 	require.NoError(t, err)
 
 	// Verify cancellation
-	cancelledRun, err := handlers.GetWorkflowRun(ctx, run.ID)
+	cancelledRun, err := testAPI.GetWorkflowRun(ctx, run.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "cancelled", cancelledRun.Status)
 	assert.NotNil(t, cancelledRun.CompletedAt)
 }
 
 func TestGetWorkflowRun_NotFound(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
-	run, err := handlers.GetWorkflowRun(ctx, uuid.New())
+	run, err := testAPI.GetWorkflowRun(ctx, uuid.New())
 	require.NoError(t, err)
 	assert.Nil(t, run)
 }
 
 func TestGetRunningWorkflowForSession(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session
@@ -187,33 +186,33 @@ func TestGetRunningWorkflowForSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// No running workflows initially
-	run, err := handlers.GetRunningWorkflowForSession(ctx, sessionID)
+	run, err := testAPI.GetRunningWorkflowForSession(ctx, sessionID)
 	require.NoError(t, err)
 	assert.Nil(t, run)
 
 	// Create a workflow
-	createdRun, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	createdRun, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Now should find the running workflow
-	run, err = handlers.GetRunningWorkflowForSession(ctx, sessionID)
+	run, err = testAPI.GetRunningWorkflowForSession(ctx, sessionID)
 	require.NoError(t, err)
 	require.NotNil(t, run)
 	assert.Equal(t, createdRun.ID, run.ID)
 	assert.Equal(t, "running", run.Status)
 
 	// Complete the workflow
-	err = handlers.CompleteWorkflowRun(ctx, createdRun.ID, "Done", &handlers.WorkflowCheckpoint{})
+	err = testAPI.CompleteWorkflowRun(ctx, createdRun.ID, "Done", &handlers.WorkflowCheckpoint{})
 	require.NoError(t, err)
 
 	// Should not find running workflow anymore
-	run, err = handlers.GetRunningWorkflowForSession(ctx, sessionID)
+	run, err = testAPI.GetRunningWorkflowForSession(ctx, sessionID)
 	require.NoError(t, err)
 	assert.Nil(t, run)
 }
 
 func TestGetLatestWorkflowForSession(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session
@@ -225,24 +224,24 @@ func TestGetLatestWorkflowForSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create first workflow and complete it
-	run1, err := handlers.CreateWorkflowRun(ctx, sessionID, "First question")
+	run1, err := testAPI.CreateWorkflowRun(ctx, sessionID, "First question")
 	require.NoError(t, err)
-	err = handlers.CompleteWorkflowRun(ctx, run1.ID, "First answer", &handlers.WorkflowCheckpoint{})
+	err = testAPI.CompleteWorkflowRun(ctx, run1.ID, "First answer", &handlers.WorkflowCheckpoint{})
 	require.NoError(t, err)
 
 	// Create second workflow
-	run2, err := handlers.CreateWorkflowRun(ctx, sessionID, "Second question")
+	run2, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Second question")
 	require.NoError(t, err)
 
 	// Latest should be the second one
-	latest, err := handlers.GetLatestWorkflowForSession(ctx, sessionID)
+	latest, err := testAPI.GetLatestWorkflowForSession(ctx, sessionID)
 	require.NoError(t, err)
 	require.NotNil(t, latest)
 	assert.Equal(t, run2.ID, latest.ID)
 }
 
 func TestGetIncompleteWorkflows(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Clean up any existing workflows from other tests
@@ -258,12 +257,12 @@ func TestGetIncompleteWorkflows(t *testing.T) {
 		`, sessionID)
 		require.NoError(t, err)
 
-		_, err = handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+		_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 		require.NoError(t, err)
 	}
 
 	// Get incomplete workflows
-	runs, err := handlers.GetIncompleteWorkflows(ctx)
+	runs, err := testAPI.GetIncompleteWorkflows(ctx)
 	require.NoError(t, err)
 	assert.Len(t, runs, 3)
 
@@ -274,7 +273,7 @@ func TestGetIncompleteWorkflows(t *testing.T) {
 }
 
 func TestGetWorkflow_HTTPHandler(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session and workflow
@@ -285,7 +284,7 @@ func TestGetWorkflow_HTTPHandler(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Test HTTP handler
@@ -293,7 +292,7 @@ func TestGetWorkflow_HTTPHandler(t *testing.T) {
 	req = withChiURLParams(req, map[string]string{"id": run.ID.String()})
 
 	rr := httptest.NewRecorder()
-	handlers.GetWorkflow(rr, req)
+	testAPI.GetWorkflow(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -304,31 +303,31 @@ func TestGetWorkflow_HTTPHandler(t *testing.T) {
 }
 
 func TestGetWorkflow_NotFound(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/workflows/"+uuid.New().String(), nil)
 	req = withChiURLParams(req, map[string]string{"id": uuid.New().String()})
 
 	rr := httptest.NewRecorder()
-	handlers.GetWorkflow(rr, req)
+	testAPI.GetWorkflow(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 func TestGetWorkflow_InvalidID(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/workflows/not-a-uuid", nil)
 	req = withChiURLParams(req, map[string]string{"id": "not-a-uuid"})
 
 	rr := httptest.NewRecorder()
-	handlers.GetWorkflow(rr, req)
+	testAPI.GetWorkflow(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session and workflow
@@ -339,7 +338,7 @@ func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
 	`, sessionID)
 	require.NoError(t, err)
 
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
 
 	// Test HTTP handler
@@ -347,7 +346,7 @@ func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
 
 	rr := httptest.NewRecorder()
-	handlers.GetWorkflowForSession(rr, req)
+	testAPI.GetWorkflowForSession(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -358,7 +357,7 @@ func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
 }
 
 func TestGetWorkflowForSession_NoWorkflow(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session without workflow
@@ -373,14 +372,14 @@ func TestGetWorkflowForSession_NoWorkflow(t *testing.T) {
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
 
 	rr := httptest.NewRecorder()
-	handlers.GetWorkflowForSession(rr, req)
+	testAPI.GetWorkflowForSession(rr, req)
 
 	// Should return 204 No Content
 	assert.Equal(t, http.StatusNoContent, rr.Code)
 }
 
 func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	// Create session
@@ -392,9 +391,9 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create and complete a workflow
-	run, err := handlers.CreateWorkflowRun(ctx, sessionID, "Test question")
+	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "Test question")
 	require.NoError(t, err)
-	err = handlers.CompleteWorkflowRun(ctx, run.ID, "Answer", &handlers.WorkflowCheckpoint{})
+	err = testAPI.CompleteWorkflowRun(ctx, run.ID, "Answer", &handlers.WorkflowCheckpoint{})
 	require.NoError(t, err)
 
 	// Request with status=running filter
@@ -402,7 +401,7 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
 
 	rr := httptest.NewRecorder()
-	handlers.GetWorkflowForSession(rr, req)
+	testAPI.GetWorkflowForSession(rr, req)
 
 	// Should return 204 No Content (no running workflow)
 	assert.Equal(t, http.StatusNoContent, rr.Code)
@@ -412,7 +411,7 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 	req = withChiURLParams(req, map[string]string{"id": sessionID.String()})
 
 	rr = httptest.NewRecorder()
-	handlers.GetWorkflowForSession(rr, req)
+	testAPI.GetWorkflowForSession(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 }

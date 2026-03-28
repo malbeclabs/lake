@@ -87,7 +87,7 @@ func trafficIntfTypeFilter(r *http.Request, intfTypeSQL string) string {
 	}
 }
 
-func GetTrafficData(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
@@ -349,7 +349,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
 	}
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -363,7 +363,7 @@ func GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	meanRows, err := envDB(ctx).Query(ctx, meanQuery)
+	meanRows, err := a.envDB(ctx).Query(ctx, meanQuery)
 	meanDuration := time.Since(start) - duration
 	metrics.RecordClickHouseQuery(meanDuration, err)
 	if err != nil {
@@ -493,7 +493,7 @@ type DiscardSeriesInfo struct {
 }
 
 // GetDiscardsData returns discard data for all device-interfaces
-func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
@@ -589,7 +589,7 @@ func GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	`, bucketInterval, dimJoins, userJoinSQL, timeFilter, intfFilterSQL, intfTypeFilter, filterSQL, userKindFilter)
 	}
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

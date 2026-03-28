@@ -62,7 +62,7 @@ func TestGetLinks_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinks(rr, req)
+	testAPI.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -81,7 +81,7 @@ func TestGetLinks_ReturnsAllLinks(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinks(rr, req)
+	testAPI.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -100,7 +100,7 @@ func TestGetLinks_IncludesDeviceInfo(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinks(rr, req)
+	testAPI.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -133,7 +133,7 @@ func TestGetLinks_Pagination(t *testing.T) {
 	// First page
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinks(rr, req)
+	testAPI.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -148,7 +148,7 @@ func TestGetLinks_Pagination(t *testing.T) {
 	// Second page
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/links?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
-	handlers.GetLinks(rr, req)
+	testAPI.GetLinks(rr, req)
 
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
@@ -165,7 +165,7 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinks(rr, req)
+	testAPI.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -191,7 +191,7 @@ func TestGetLink_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetLink(rr, req)
+	testAPI.GetLink(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -206,7 +206,7 @@ func TestGetLink_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetLink(rr, req)
+	testAPI.GetLink(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -223,7 +223,7 @@ func TestGetLink_ReturnsDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetLink(rr, req)
+	testAPI.GetLink(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -259,7 +259,7 @@ func TestGetLinkHealth_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkHealth(rr, req)
+	testAPI.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -279,7 +279,7 @@ func TestGetLinkHealth_ReturnsHealth(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkHealth(rr, req)
+	testAPI.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -302,7 +302,7 @@ func TestGetLinkHealth_CalculatesSlaStatus(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkHealth(rr, req)
+	testAPI.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -332,7 +332,7 @@ func TestGetLinkHealth_CountsByStatus(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkHealth(rr, req)
+	testAPI.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -366,7 +366,7 @@ func TestGetLinkHealth_IsDownForcesCritical(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkHealth(rr, req)
+	testAPI.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

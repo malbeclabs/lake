@@ -21,13 +21,13 @@ type CatalogResponse struct {
 	Tables []TableInfo `json:"tables"`
 }
 
-func GetCatalog(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetCatalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	start := time.Now()
 
-	rows, err := envDB(ctx).Query(ctx, `
+	rows, err := a.envDB(ctx).Query(ctx, `
 		SELECT
 			name,
 			database,
@@ -41,7 +41,7 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 		  AND name NOT LIKE 'stg_%'
 		  AND name != '_env_lock'
 		ORDER BY type, name
-	`, DatabaseForEnvFromContext(ctx))
+	`, a.DatabaseForEnvFromContext(ctx))
 
 	duration := time.Since(start)
 	if err != nil {
@@ -72,12 +72,12 @@ func GetCatalog(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch columns for each table
 	colStart := time.Now()
-	colRows, err := envDB(ctx).Query(ctx, `
+	colRows, err := a.envDB(ctx).Query(ctx, `
 		SELECT table, name
 		FROM system.columns
 		WHERE database = $1
 		ORDER BY table, position
-	`, DatabaseForEnvFromContext(ctx))
+	`, a.DatabaseForEnvFromContext(ctx))
 
 	colDuration := time.Since(colStart)
 	if err != nil {

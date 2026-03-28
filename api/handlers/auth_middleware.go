@@ -18,7 +18,7 @@ const (
 )
 
 // OptionalAuth middleware attaches user to context if authenticated, allows anonymous
-func OptionalAuth(next http.Handler) http.Handler {
+func (a *API) OptionalAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -29,7 +29,7 @@ func OptionalAuth(next http.Handler) http.Handler {
 		// Try to authenticate
 		token := extractBearerToken(r)
 		if token != "" {
-			account, err := GetAccountByToken(ctx, token)
+			account, err := a.GetAccountByToken(ctx, token)
 			if err == nil && account != nil {
 				ctx = context.WithValue(ctx, accountContextKey, account)
 			} else if err != nil {
@@ -42,7 +42,7 @@ func OptionalAuth(next http.Handler) http.Handler {
 }
 
 // RequireAuth middleware returns 401 if not authenticated
-func RequireAuth(next http.Handler) http.Handler {
+func (a *API) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -57,7 +57,7 @@ func RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		account, err := GetAccountByToken(ctx, token)
+		account, err := a.GetAccountByToken(ctx, token)
 		if err != nil || account == nil {
 			http.Error(w, "Invalid or expired token", http.StatusUnauthorized)
 			return

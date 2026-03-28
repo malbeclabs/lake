@@ -13,35 +13,24 @@ import (
 	"time"
 
 	commonprompts "github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	"github.com/malbeclabs/lake/api/config"
+	
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCP server instance (initialized once)
-var mcpHandler http.Handler
-
 // InitMCP initializes the MCP server and returns the HTTP handler.
 // This should be called once during startup.
-func InitMCP() http.Handler {
-	if mcpHandler != nil {
-		return mcpHandler
-	}
-
-	streamableHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		return createMCPServer(r)
+func (a *API) InitMCP() http.Handler {
+	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return a.createMCPServer(r)
 	}, &mcp.StreamableHTTPOptions{
 		Stateless: true,
 	})
-
-	mcpHandler = streamableHandler
-
-	return mcpHandler
 }
 
 // createMCPServer creates a new MCP server instance for each request.
 // The server is configured based on the request context (env, auth).
-func createMCPServer(r *http.Request) *mcp.Server {
+func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "doublezero",
 		Version: "1.0.0",
@@ -53,22 +42,22 @@ func createMCPServer(r *http.Request) *mcp.Server {
 	env := EnvFromContext(ctx)
 
 	// Register tools
-	registerExecuteSQLTool(server, r)
+	a.registerExecuteSQLTool(server, r)
 	registerReadDocsTool(server)
-	registerGetSchemaTool(server, r)
+	a.registerGetSchemaTool(server, r)
 
 	// Only add Cypher tool for mainnet-beta (where Neo4j is available)
-	if config.Neo4jClient != nil && env == EnvMainnet {
-		registerExecuteCypherTool(server, r)
+	if a.Neo4jClient != nil && env == EnvMainnet {
+		a.registerExecuteCypherTool(server, r)
 	}
 
 	// Register resources
-	registerSchemaResource(server, r)
+	a.registerSchemaResource(server, r)
 	registerSQLContextResource(server)
 	registerCypherContextResource(server)
 
 	// Register prompts
-	cypherAvailable := config.Neo4jClient != nil && env == EnvMainnet
+	cypherAvailable := a.Neo4jClient != nil && env == EnvMainnet
 	registerAnalyzeDataPrompt(server, cypherAvailable)
 
 	return server
@@ -88,7 +77,7 @@ type ExecuteSQLOutput struct {
 	ElapsedMs int64    `json:"elapsed_ms"`
 }
 
-func registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
+func (a *API) registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 	// Capture env and IP from original request for use in handler
 	env := EnvFromContext(r.Context())
 	ip := GetIPFromRequest(r)
@@ -119,7 +108,7 @@ func registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 		queryCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 
-		db := envDB(ctx)
+		db := a.envDB(ctx)
 
 		rows, err := db.Query(queryCtx, query)
 		duration := time.Since(start)
@@ -196,7 +185,7 @@ type ExecuteCypherOutput struct {
 	ElapsedMs int64            `json:"elapsed_ms"`
 }
 
-func registerExecuteCypherTool(server *mcp.Server, r *http.Request) {
+func (a *API) registerExecuteCypherTool(server *mcp.Server, r *http.Request) {
 	// Capture IP from original request for rate limiting
 	ip := GetIPFromRequest(r)
 
@@ -216,7 +205,7 @@ func registerExecuteCypherTool(server *mcp.Server, r *http.Request) {
 			return nil, ExecuteCypherOutput{}, errors.New("query is required")
 		}
 
-		if config.Neo4jClient == nil {
+		if a.Neo4jClient == nil {
 			return nil, ExecuteCypherOutput{}, errors.New("Neo4j is not available in this environment")
 		}
 
@@ -225,7 +214,7 @@ func registerExecuteCypherTool(server *mcp.Server, r *http.Request) {
 		queryCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 
-		session := config.Neo4jSession(queryCtx)
+		session := a.neo4jSession(queryCtx)
 		defer session.Close(queryCtx)
 
 		result, err := session.Run(queryCtx, query, nil)
@@ -378,7 +367,7 @@ type GetSchemaOutput struct {
 	Environment string `json:"environment"`
 }
 
-func registerGetSchemaTool(server *mcp.Server, r *http.Request) {
+func (a *API) registerGetSchemaTool(server *mcp.Server, r *http.Request) {
 	// Capture env and IP from original request for use in handler
 	env := EnvFromContext(r.Context())
 	ip := GetIPFromRequest(r)
@@ -397,7 +386,7 @@ func registerGetSchemaTool(server *mcp.Server, r *http.Request) {
 		// Transfer env to handler context (r.Context() may be canceled in streamable HTTP)
 		ctx = ContextWithEnv(ctx, env)
 
-		schemaFetcher := NewDBSchemaFetcher()
+		schemaFetcher := a.NewDBSchemaFetcher()
 		schema, err := schemaFetcher.FetchSchema(ctx)
 		if err != nil {
 			return nil, GetSchemaOutput{}, fmt.Errorf("failed to fetch schema: %w", err)
@@ -411,7 +400,7 @@ func registerGetSchemaTool(server *mcp.Server, r *http.Request) {
 }
 
 // registerSchemaResource registers the dynamic schema as an MCP resource.
-func registerSchemaResource(server *mcp.Server, r *http.Request) {
+func (a *API) registerSchemaResource(server *mcp.Server, r *http.Request) {
 	// Capture env and IP from original request for use in handler
 	env := EnvFromContext(r.Context())
 	ip := GetIPFromRequest(r)
@@ -430,7 +419,7 @@ func registerSchemaResource(server *mcp.Server, r *http.Request) {
 		// Transfer env to handler context (r.Context() may be canceled in streamable HTTP)
 		ctx = ContextWithEnv(ctx, env)
 
-		schemaFetcher := NewDBSchemaFetcher()
+		schemaFetcher := a.NewDBSchemaFetcher()
 		schema, err := schemaFetcher.FetchSchema(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch schema: %w", err)

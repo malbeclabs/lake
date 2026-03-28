@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
-	"github.com/malbeclabs/lake/api/config"
+	
 )
 
 // WorkflowStep represents a single step in the workflow execution timeline.
@@ -101,13 +101,13 @@ type WorkflowCheckpoint struct {
 }
 
 // CreateWorkflowRun creates a new workflow run in the database.
-func CreateWorkflowRun(ctx context.Context, sessionID uuid.UUID, question string, env ...string) (*WorkflowRun, error) {
+func (a *API) CreateWorkflowRun(ctx context.Context, sessionID uuid.UUID, question string, env ...string) (*WorkflowRun, error) {
 	workflowEnv := "mainnet-beta"
 	if len(env) > 0 && env[0] != "" {
 		workflowEnv = env[0]
 	}
 	var run WorkflowRun
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		INSERT INTO workflow_runs (session_id, user_question, env)
 		VALUES ($1, $2, $3)
 		RETURNING id, session_id, status, user_question, iteration, messages, thinking_steps,
@@ -126,7 +126,7 @@ func CreateWorkflowRun(ctx context.Context, sessionID uuid.UUID, question string
 }
 
 // UpdateWorkflowCheckpoint updates the checkpoint state of a workflow run.
-func UpdateWorkflowCheckpoint(ctx context.Context, id uuid.UUID, checkpoint *WorkflowCheckpoint) error {
+func (a *API) UpdateWorkflowCheckpoint(ctx context.Context, id uuid.UUID, checkpoint *WorkflowCheckpoint) error {
 	messagesJSON, err := json.Marshal(checkpoint.Messages)
 	if err != nil {
 		return fmt.Errorf("failed to marshal messages: %w", err)
@@ -144,7 +144,7 @@ func UpdateWorkflowCheckpoint(ctx context.Context, id uuid.UUID, checkpoint *Wor
 		return fmt.Errorf("failed to marshal steps: %w", err)
 	}
 
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = a.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET iteration = $2, messages = $3, thinking_steps = $4, executed_queries = $5, steps = $6,
 		    llm_calls = $7, input_tokens = $8, output_tokens = $9, updated_at = NOW()
@@ -158,7 +158,7 @@ func UpdateWorkflowCheckpoint(ctx context.Context, id uuid.UUID, checkpoint *Wor
 }
 
 // CompleteWorkflowRun marks a workflow as completed with the final answer.
-func CompleteWorkflowRun(ctx context.Context, id uuid.UUID, answer string, finalCheckpoint *WorkflowCheckpoint) error {
+func (a *API) CompleteWorkflowRun(ctx context.Context, id uuid.UUID, answer string, finalCheckpoint *WorkflowCheckpoint) error {
 	messagesJSON, err := json.Marshal(finalCheckpoint.Messages)
 	if err != nil {
 		return fmt.Errorf("failed to marshal messages: %w", err)
@@ -176,7 +176,7 @@ func CompleteWorkflowRun(ctx context.Context, id uuid.UUID, answer string, final
 		return fmt.Errorf("failed to marshal steps: %w", err)
 	}
 
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = a.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET status = 'completed', final_answer = $2, completed_at = NOW(), updated_at = NOW(),
 		    iteration = $3, messages = $4, thinking_steps = $5, executed_queries = $6, steps = $7,
@@ -191,8 +191,8 @@ func CompleteWorkflowRun(ctx context.Context, id uuid.UUID, answer string, final
 }
 
 // FailWorkflowRun marks a workflow as failed with an error message.
-func FailWorkflowRun(ctx context.Context, id uuid.UUID, errMsg string) error {
-	_, err := config.PgPool.Exec(ctx, `
+func (a *API) FailWorkflowRun(ctx context.Context, id uuid.UUID, errMsg string) error {
+	_, err := a.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET status = 'failed', error = $2, completed_at = NOW(), updated_at = NOW()
 		WHERE id = $1
@@ -204,8 +204,8 @@ func FailWorkflowRun(ctx context.Context, id uuid.UUID, errMsg string) error {
 }
 
 // CancelWorkflowRun marks a workflow as cancelled.
-func CancelWorkflowRun(ctx context.Context, id uuid.UUID) error {
-	_, err := config.PgPool.Exec(ctx, `
+func (a *API) CancelWorkflowRun(ctx context.Context, id uuid.UUID) error {
+	_, err := a.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET status = 'cancelled', completed_at = NOW(), updated_at = NOW()
 		WHERE id = $1
@@ -217,9 +217,9 @@ func CancelWorkflowRun(ctx context.Context, id uuid.UUID) error {
 }
 
 // GetWorkflowRun retrieves a workflow run by ID.
-func GetWorkflowRun(ctx context.Context, id uuid.UUID) (*WorkflowRun, error) {
+func (a *API) GetWorkflowRun(ctx context.Context, id uuid.UUID) (*WorkflowRun, error) {
 	var run WorkflowRun
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
 		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
@@ -242,9 +242,9 @@ func GetWorkflowRun(ctx context.Context, id uuid.UUID) (*WorkflowRun, error) {
 
 // GetSessionEnv returns the environment from the most recent workflow run for a session.
 // Returns empty string if no workflow runs exist for the session.
-func GetSessionEnv(ctx context.Context, sessionID uuid.UUID) (string, error) {
+func (a *API) GetSessionEnv(ctx context.Context, sessionID uuid.UUID) (string, error) {
 	var env string
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		SELECT env FROM workflow_runs
 		WHERE session_id = $1
 		ORDER BY started_at DESC
@@ -268,9 +268,9 @@ func GetSessionEnv(ctx context.Context, sessionID uuid.UUID) (string, error) {
 //
 // The stale check uses updated_at to detect if the claiming server is still making progress.
 // Returns nil if no workflow is available to claim.
-func ClaimIncompleteWorkflow(ctx context.Context, serverID string, staleTimeout time.Duration) (*WorkflowRun, error) {
+func (a *API) ClaimIncompleteWorkflow(ctx context.Context, serverID string, staleTimeout time.Duration) (*WorkflowRun, error) {
 	var run WorkflowRun
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		UPDATE workflow_runs
 		SET claimed_by = $1, claimed_at = NOW(), updated_at = NOW()
 		WHERE id = (
@@ -304,8 +304,8 @@ func ClaimIncompleteWorkflow(ctx context.Context, serverID string, staleTimeout 
 
 // GetIncompleteWorkflows returns all workflows with status='running'.
 // Note: For distributed resumption, use ClaimIncompleteWorkflow instead.
-func GetIncompleteWorkflows(ctx context.Context) ([]WorkflowRun, error) {
-	rows, err := config.PgPool.Query(ctx, `
+func (a *API) GetIncompleteWorkflows(ctx context.Context) ([]WorkflowRun, error) {
+	rows, err := a.PgPool.Query(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
 		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
@@ -338,9 +338,9 @@ func GetIncompleteWorkflows(ctx context.Context) ([]WorkflowRun, error) {
 }
 
 // GetRunningWorkflowForSession returns the currently running workflow for a session, if any.
-func GetRunningWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*WorkflowRun, error) {
+func (a *API) GetRunningWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*WorkflowRun, error) {
 	var run WorkflowRun
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
 		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
@@ -364,9 +364,9 @@ func GetRunningWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*Wo
 }
 
 // GetLatestWorkflowForSession returns the most recent workflow for a session, regardless of status.
-func GetLatestWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*WorkflowRun, error) {
+func (a *API) GetLatestWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*WorkflowRun, error) {
 	var run WorkflowRun
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		SELECT id, session_id, status, user_question, iteration, messages, thinking_steps,
 		       executed_queries, steps, final_answer, llm_calls, input_tokens, output_tokens,
 		       started_at, updated_at, completed_at, claimed_by, claimed_at, env, error
@@ -394,7 +394,7 @@ func GetLatestWorkflowForSession(ctx context.Context, sessionID uuid.UUID) (*Wor
 // GetWorkflowForSession handles GET /api/sessions/{id}/workflow
 // Returns the most recent workflow for a session (running, completed, or failed).
 // Use ?status=running to get only running workflows (legacy behavior).
-func GetWorkflowForSession(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetWorkflowForSession(w http.ResponseWriter, r *http.Request) {
 	sessionIDStr := chi.URLParam(r, "id")
 	sessionID, err := uuid.Parse(sessionIDStr)
 	if err != nil {
@@ -406,9 +406,9 @@ func GetWorkflowForSession(w http.ResponseWriter, r *http.Request) {
 
 	// Check for legacy behavior (only running workflows)
 	if r.URL.Query().Get("status") == "running" {
-		run, err = GetRunningWorkflowForSession(r.Context(), sessionID)
+		run, err = a.GetRunningWorkflowForSession(r.Context(), sessionID)
 	} else {
-		run, err = GetLatestWorkflowForSession(r.Context(), sessionID)
+		run, err = a.GetLatestWorkflowForSession(r.Context(), sessionID)
 	}
 
 	if err != nil {
@@ -426,7 +426,7 @@ func GetWorkflowForSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetWorkflow handles GET /api/workflows/{id}
-func GetWorkflow(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -434,7 +434,7 @@ func GetWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := GetWorkflowRun(r.Context(), id)
+	run, err := a.GetWorkflowRun(r.Context(), id)
 	if err != nil {
 		http.Error(w, internalError("Failed to get workflow", err), http.StatusInternalServerError)
 		return
@@ -462,7 +462,7 @@ type WorkflowStreamResponse struct {
 
 // StreamWorkflow handles GET /api/workflows/{id}/stream
 // This enables reconnection to running workflows or replaying completed ones.
-func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
+func (a *API) StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -470,7 +470,7 @@ func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := GetWorkflowRun(r.Context(), id)
+	run, err := a.GetWorkflowRun(r.Context(), id)
 	if err != nil {
 		http.Error(w, internalError("Failed to get workflow", err), http.StatusInternalServerError)
 		return
@@ -635,10 +635,10 @@ func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 
 	case "running":
 		// Workflow is still running - subscribe to live events from the Manager
-		sub := Manager.Subscribe(id)
+		sub := a.Manager.Subscribe(id)
 		if sub == nil {
 			// Workflow finished between DB check and subscribe - re-fetch status
-			run, err := GetWorkflowRun(r.Context(), id)
+			run, err := a.GetWorkflowRun(r.Context(), id)
 			if err != nil || run == nil {
 				sendEvent("error", map[string]string{"error": "Workflow not found"})
 				return
@@ -676,7 +676,7 @@ func StreamWorkflow(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		defer Manager.Unsubscribe(id, sub)
+		defer a.Manager.Unsubscribe(id, sub)
 
 		sendEvent("live", map[string]string{"message": "Workflow is running"})
 		slog.Info("StreamWorkflow: sent live event, entering event loop", "workflow_id", id)

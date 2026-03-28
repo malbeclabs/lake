@@ -24,7 +24,7 @@ func postWhatIfRemoval(t *testing.T, req handlers.WhatIfRemovalRequest) handlers
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/topology/whatif-removal", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	handlers.PostWhatIfRemoval(rr, httpReq)
+	testAPI.PostWhatIfRemoval(rr, httpReq)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -76,6 +76,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_AffectedPath(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
 		Devices: []string{"dev-b"},
@@ -135,6 +136,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_NotAffected(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
 		Devices: []string{"dev-b"},
@@ -174,6 +176,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_DisconnectedLeaf(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
 		Devices: []string{"dev-b"},
@@ -261,6 +264,7 @@ func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
 		Links: []string{"link-bc"},
@@ -358,6 +362,7 @@ func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
 		return err
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
 		Links: []string{"link-bc"},
@@ -382,6 +387,7 @@ func TestPostWhatIfRemoval_DeviceNotFound(t *testing.T) {
 		return nil // empty graph
 	}
 	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
+	testAPI.Neo4jClient = config.Neo4jClient
 
 	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
 		Devices: []string{"nonexistent-device"},
@@ -403,7 +409,7 @@ func TestPostWhatIfRemoval_EmptyRequest(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/topology/whatif-removal", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	handlers.PostWhatIfRemoval(rr, req)
+	testAPI.PostWhatIfRemoval(rr, req)
 
 	var response handlers.WhatIfRemovalResponse
 	err = json.NewDecoder(rr.Body).Decode(&response)

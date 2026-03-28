@@ -29,7 +29,7 @@ type DeviceListItem struct {
 	PeakOutBps      float64 `json:"peak_out_bps"`
 }
 
-func GetDevices(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -39,7 +39,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 	// Get total count
 	countQuery := `SELECT count(*) FROM dz_devices_current`
 	var total uint64
-	if err := envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
 		slog.Error("devices count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -100,7 +100,7 @@ func GetDevices(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -185,7 +185,7 @@ type DeviceDetail struct {
 	Interfaces      []DeviceInterface `json:"interfaces"`
 }
 
-func GetDevice(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -278,7 +278,7 @@ func GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	var device DeviceDetail
 	var interfacesJSON string
-	err := envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
 		&device.PK,
 		&device.Code,
 		&device.Status,

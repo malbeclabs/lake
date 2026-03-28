@@ -103,17 +103,17 @@ type TopologyResponse struct {
 	Error      string      `json:"error,omitempty"`
 }
 
-func GetTopology(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetTopology(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	response, err := fetchTopologyData(ctx)
+	response, err := a.fetchTopologyData(ctx)
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
 		var retryCancel context.CancelFunc
 		ctx, retryCancel = context.WithTimeout(r.Context(), 10*time.Second)
 		defer retryCancel()
-		response, err = fetchTopologyData(ctx)
+		response, err = a.fetchTopologyData(ctx)
 	}
 
 	if err != nil {
@@ -142,7 +142,7 @@ func GetTopology(w http.ResponseWriter, r *http.Request) {
 }
 
 // fetchTopologyData performs the actual topology data fetch from the database.
-func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
+func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 	start := time.Now()
 
 	var metros []Metro
@@ -160,7 +160,7 @@ func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 			FROM dz_metros_current
 			WHERE latitude IS NOT NULL AND longitude IS NOT NULL
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -216,7 +216,7 @@ func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
 			WHERE d.status = 'activated'
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -298,7 +298,7 @@ func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 			) traffic ON l.pk = traffic.link_pk
 			WHERE l.status = 'activated'
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -381,7 +381,7 @@ func fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 			WHERE geo.latitude IS NOT NULL
 				AND geo.longitude IS NOT NULL
 		`
-		rows, err := envDB(ctx).Query(ctx, query)
+		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
 			return err
 		}
@@ -434,7 +434,7 @@ type TrafficResponse struct {
 	Error      string                      `json:"error,omitempty"`
 }
 
-func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -538,7 +538,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 				ORDER BY min(event_ts)
 			`, bucketExpr, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
 
-			points = scanTrafficPoints(ctx, query, pk)
+			points = a.scanTrafficPoints(ctx, query, pk)
 		}
 
 		// Per-interface breakdown
@@ -560,7 +560,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 				ORDER BY min(event_ts), intf_key
 			`, bucketExpr, intfExpr, avgInExpr, avgOutExpr, peakInExpr, peakOutExpr, timeFilter, whereColumn)
 
-			response.Interfaces = scanInterfaceTrafficPoints(ctx, intfQuery, pk)
+			response.Interfaces = a.scanInterfaceTrafficPoints(ctx, intfQuery, pk)
 		}
 	} else {
 		// Rollup path
@@ -616,7 +616,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 				ORDER BY time_bucket
 			`, bucketExpr, avgInCol, avgOutCol, rollupAggFunc, peakInCol, rollupAggFunc, peakOutCol, timeFilter, whereColumn)
 
-			points = scanTrafficPoints(ctx, query, pk)
+			points = a.scanTrafficPoints(ctx, query, pk)
 		}
 
 		// Per-interface breakdown
@@ -637,7 +637,7 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 				ORDER BY time_bucket, intf_key
 			`, bucketExpr, intfExpr, avgInCol, avgOutCol, rollupAggFunc, peakInCol, rollupAggFunc, peakOutCol, timeFilter, whereColumn)
 
-			response.Interfaces = scanInterfaceTrafficPoints(ctx, intfQuery, pk)
+			response.Interfaces = a.scanInterfaceTrafficPoints(ctx, intfQuery, pk)
 		}
 	}
 
@@ -654,8 +654,8 @@ func GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 }
 
 // scanTrafficPoints executes a query and scans aggregated traffic data points.
-func scanTrafficPoints(ctx context.Context, query, pk string) []TrafficDataPoint {
-	rows, err := envDB(ctx).Query(ctx, query, pk)
+func (a *API) scanTrafficPoints(ctx context.Context, query, pk string) []TrafficDataPoint {
+	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
 		slog.Error("traffic query error", "error", err)
 		return nil
@@ -688,8 +688,8 @@ func scanTrafficPoints(ctx context.Context, query, pk string) []TrafficDataPoint
 }
 
 // scanInterfaceTrafficPoints executes a query and scans per-interface traffic data points.
-func scanInterfaceTrafficPoints(ctx context.Context, query, pk string) []InterfaceTrafficDataPoint {
-	rows, err := envDB(ctx).Query(ctx, query, pk)
+func (a *API) scanInterfaceTrafficPoints(ctx context.Context, query, pk string) []InterfaceTrafficDataPoint {
+	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
 		slog.Error("interface traffic query error", "error", err)
 		return nil
@@ -722,8 +722,8 @@ func scanInterfaceTrafficPoints(ctx context.Context, query, pk string) []Interfa
 }
 
 // scanLatencyPoints executes a query and scans latency data points.
-func scanLatencyPoints(ctx context.Context, query string, args ...any) []LinkLatencyDataPoint {
-	rows, err := envDB(ctx).Query(ctx, query, args...)
+func (a *API) scanLatencyPoints(ctx context.Context, query string, args ...any) []LinkLatencyDataPoint {
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	if err != nil {
 		slog.Error("latency query error", "error", err)
 		return nil
@@ -793,7 +793,7 @@ type LinkLatencyResponse struct {
 	Error  string                 `json:"error,omitempty"`
 }
 
-func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
@@ -917,7 +917,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			topoHeaderJoin, displayBucketExpr,
 			timeFilter, displayBucketExpr, displayBucketExpr)
 
-		points = scanLatencyPoints(ctx, query, pk, pk)
+		points = a.scanLatencyPoints(ctx, query, pk, pk)
 	} else {
 		// Rollup path — read from link_rollup_5m
 		var aggPrefix string
@@ -973,7 +973,7 @@ func GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			rollupAggFunc, aggPrefix, // jitter Z→A
 			timeFilter)
 
-		points = scanLatencyPoints(ctx, query, pk)
+		points = a.scanLatencyPoints(ctx, query, pk)
 	}
 
 	duration := time.Since(start)
@@ -1020,10 +1020,10 @@ type LatencyComparisonResponse struct {
 	} `json:"summary"`
 }
 
-func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	// Try cache first (cache only holds mainnet data)
 	if isMainnet(r.Context()) {
-		if data, err := ReadPageCache(r.Context(), "latency_comparison"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "latency_comparison"); err == nil {
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(data)
@@ -1066,7 +1066,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 		ORDER BY c.origin_metro, c.target_metro
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1148,7 +1148,7 @@ func GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 
 // FetchLatencyComparisonData fetches DZ vs Internet latency comparison data.
 // Used by both the handler and the cache.
-func FetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse, error) {
+func (a *API) FetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse, error) {
 	start := time.Now()
 
 	query := `
@@ -1179,7 +1179,7 @@ func FetchLatencyComparisonData(ctx context.Context) (*LatencyComparisonResponse
 		ORDER BY c.origin_metro, c.target_metro
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query)
+	rows, err := a.envDB(ctx).Query(ctx, query)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -1270,7 +1270,7 @@ type LatencyHistoryResponse struct {
 }
 
 // GetLatencyHistory returns time-series latency data for a specific metro pair
-func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	originCode := chi.URLParam(r, "origin")
 	targetCode := chi.URLParam(r, "target")
 
@@ -1356,7 +1356,7 @@ func GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 		ORDER BY tb.bucket ASC
 	`
 
-	rows, err := envDB(ctx).Query(ctx, query, metro1, metro2)
+	rows, err := a.envDB(ctx).Query(ctx, query, metro1, metro2)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 

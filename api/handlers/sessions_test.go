@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
-	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,7 +52,7 @@ func withChiURLParams(r *http.Request, params map[string]string) *http.Request {
 }
 
 func TestCreateSession_Authenticated(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -72,7 +71,7 @@ func TestCreateSession_Authenticated(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.CreateSession(rr, req)
+	testAPI.CreateSession(rr, req)
 
 	assert.Equal(t, http.StatusCreated, rr.Code)
 
@@ -88,7 +87,7 @@ func TestCreateSession_Authenticated(t *testing.T) {
 }
 
 func TestCreateSession_Anonymous(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 
 	sessionID := uuid.New()
 	anonymousID := "anon_" + uuid.New().String()[:8]
@@ -104,7 +103,7 @@ func TestCreateSession_Anonymous(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.CreateSession(rr, req)
+	testAPI.CreateSession(rr, req)
 
 	assert.Equal(t, http.StatusCreated, rr.Code)
 
@@ -119,7 +118,7 @@ func TestCreateSession_Anonymous(t *testing.T) {
 }
 
 func TestCreateSession_NoAuth(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 
 	sessionID := uuid.New()
 	reqBody := handlers.CreateSessionRequestWithOwner{
@@ -134,13 +133,13 @@ func TestCreateSession_NoAuth(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	handlers.CreateSession(rr, req)
+	testAPI.CreateSession(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
 func TestCreateSession_InvalidType(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -158,13 +157,13 @@ func TestCreateSession_InvalidType(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.CreateSession(rr, req)
+	testAPI.CreateSession(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestGetSession_Owner(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -182,7 +181,7 @@ func TestGetSession_Owner(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.GetSession(rr, req)
+	testAPI.GetSession(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -193,7 +192,7 @@ func TestGetSession_Owner(t *testing.T) {
 }
 
 func TestGetSession_NotFound(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -203,13 +202,13 @@ func TestGetSession_NotFound(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.GetSession(rr, req)
+	testAPI.GetSession(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 func TestGetSession_Forbidden(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	owner := createTestAccount(t, ctx)
@@ -229,14 +228,14 @@ func TestGetSession_Forbidden(t *testing.T) {
 	req = withAccount(req, otherUser)
 
 	rr := httptest.NewRecorder()
-	handlers.GetSession(rr, req)
+	testAPI.GetSession(rr, req)
 
 	// Should return 404 (not 403) to avoid leaking existence
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 func TestUpdateSession(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -262,7 +261,7 @@ func TestUpdateSession(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.UpdateSession(rr, req)
+	testAPI.UpdateSession(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -273,7 +272,7 @@ func TestUpdateSession(t *testing.T) {
 }
 
 func TestDeleteSession(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -291,7 +290,7 @@ func TestDeleteSession(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.DeleteSession(rr, req)
+	testAPI.DeleteSession(rr, req)
 
 	assert.Equal(t, http.StatusNoContent, rr.Code)
 
@@ -303,7 +302,7 @@ func TestDeleteSession(t *testing.T) {
 }
 
 func TestListSessions_Pagination(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -322,7 +321,7 @@ func TestListSessions_Pagination(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.ListSessions(rr, req)
+	testAPI.ListSessions(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -338,7 +337,7 @@ func TestListSessions_Pagination(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr = httptest.NewRecorder()
-	handlers.ListSessions(rr, req)
+	testAPI.ListSessions(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -349,7 +348,7 @@ func TestListSessions_Pagination(t *testing.T) {
 }
 
 func TestListSessions_TypeFilter(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -372,7 +371,7 @@ func TestListSessions_TypeFilter(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.ListSessions(rr, req)
+	testAPI.ListSessions(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -386,7 +385,7 @@ func TestListSessions_TypeFilter(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr = httptest.NewRecorder()
-	handlers.ListSessions(rr, req)
+	testAPI.ListSessions(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -396,7 +395,7 @@ func TestListSessions_TypeFilter(t *testing.T) {
 }
 
 func TestBatchGetSessions(t *testing.T) {
-	apitesting.SetupTestDB(t, testPgDB)
+	setupTestPg(t)
 	ctx := t.Context()
 
 	account := createTestAccount(t, ctx)
@@ -423,7 +422,7 @@ func TestBatchGetSessions(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	handlers.BatchGetSessions(rr, req)
+	testAPI.BatchGetSessions(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

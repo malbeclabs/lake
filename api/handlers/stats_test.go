@@ -20,7 +20,7 @@ func TestGetStats_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetStats(rr, req)
+	testAPI.GetStats(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -88,7 +88,7 @@ func TestGetStats_WithData(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetStats(rr, req)
+	testAPI.GetStats(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -112,7 +112,7 @@ func TestGetStats_ResponseHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetStats(rr, req)
+	testAPI.GetStats(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -159,7 +159,7 @@ func TestGetStats_ValidatorsWithStake(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/stats", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetStats(rr, req)
+	testAPI.GetStats(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

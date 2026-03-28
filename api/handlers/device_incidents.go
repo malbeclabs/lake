@@ -324,9 +324,9 @@ func isDefaultDeviceIncidentsRequest(r *http.Request) bool {
 }
 
 // GetDeviceIncidents returns incidents for devices with active and drained views
-func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 	if isMainnet(r.Context()) && isDefaultDeviceIncidentsRequest(r) {
-		if data, err := ReadPageCache(r.Context(), "device_incidents"); err == nil {
+		if data, err := a.readPageCache(r.Context(), "device_incidents"); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -379,16 +379,16 @@ func GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 		IncludeLinkIntfs:  r.URL.Query().Get("link_interfaces") == "true",
 	}
 
-	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, envDB(ctx), params)
+	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
 		slog.Error("failed to fetch device incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch device incidents: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	enrichDeviceIncidentsWithInterfacesRollup(ctx, envDB(ctx), allIncidents)
+	enrichDeviceIncidentsWithInterfacesRollup(ctx, a.envDB(ctx), allIncidents)
 
-	response := buildDeviceIncidentsResponse(ctx, envDB(ctx), allIncidents, filters)
+	response := buildDeviceIncidentsResponse(ctx, a.envDB(ctx), allIncidents, filters)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
@@ -463,7 +463,7 @@ func buildDeviceIncidentsResponse(ctx context.Context, conn driver.Conn, allInci
 }
 
 // GetDeviceIncidentsCSV returns device incidents as a CSV download
-func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
+func (a *API) GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
 		timeRange = "24h"
@@ -508,13 +508,13 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 		IncludeLinkIntfs:  r.URL.Query().Get("link_interfaces") == "true",
 	}
 
-	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, envDB(ctx), params)
+	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to fetch device incidents: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	enrichDeviceIncidentsWithInterfacesRollup(ctx, envDB(ctx), allIncidents)
+	enrichDeviceIncidentsWithInterfacesRollup(ctx, a.envDB(ctx), allIncidents)
 
 	sort.Slice(allIncidents, func(i, j int) bool {
 		return allIncidents[i].StartedAt > allIncidents[j].StartedAt
@@ -553,7 +553,7 @@ func GetDeviceIncidentsCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 // FetchDefaultDeviceIncidentsData fetches device incidents data with default parameters for caching.
-func FetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsResponse {
+func (a *API) FetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsResponse {
 	params := incidentQueryParams{
 		Duration:          24 * time.Hour,
 		BucketInterval:    bucketIntervalForDuration(24 * time.Hour),
@@ -566,14 +566,14 @@ func FetchDefaultDeviceIncidentsData(ctx context.Context) *DeviceIncidentsRespon
 		TypeFilter:        "all",
 	}
 
-	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, envDB(ctx), params)
+	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
 		slog.Info("cache: device incidents rollup fetch unsuccessful", "detail", err)
 		return nil
 	}
 
-	enrichDeviceIncidentsWithInterfacesRollup(ctx, envDB(ctx), allIncidents)
+	enrichDeviceIncidentsWithInterfacesRollup(ctx, a.envDB(ctx), allIncidents)
 
-	resp := buildDeviceIncidentsResponse(ctx, envDB(ctx), allIncidents, nil)
+	resp := buildDeviceIncidentsResponse(ctx, a.envDB(ctx), allIncidents, nil)
 	return &resp
 }

@@ -57,7 +57,7 @@ func TestGetMetros_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -76,7 +76,7 @@ func TestGetMetros_ReturnsAllMetros(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -100,7 +100,7 @@ func TestGetMetros_IncludesDeviceCounts(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -128,7 +128,7 @@ func TestGetMetros_IncludesUserCounts(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -157,7 +157,7 @@ func TestGetMetros_Pagination(t *testing.T) {
 	// First page
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -172,7 +172,7 @@ func TestGetMetros_Pagination(t *testing.T) {
 	// Second page
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/metros?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
@@ -189,7 +189,7 @@ func TestGetMetros_IncludesCoordinates(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetMetros(rr, req)
+	testAPI.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -222,7 +222,7 @@ func TestGetMetro_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMetro(rr, req)
+	testAPI.GetMetro(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
@@ -237,7 +237,7 @@ func TestGetMetro_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMetro(rr, req)
+	testAPI.GetMetro(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
@@ -254,7 +254,7 @@ func TestGetMetro_ReturnsDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	handlers.GetMetro(rr, req)
+	testAPI.GetMetro(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

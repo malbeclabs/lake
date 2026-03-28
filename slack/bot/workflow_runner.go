@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 )
 
@@ -38,11 +37,12 @@ type ChatRunner interface {
 // in-process, without going through HTTP.
 type WorkflowRunner struct {
 	log *slog.Logger
+	api *handlers.API
 }
 
 // NewWorkflowRunner creates a new workflow runner.
-func NewWorkflowRunner(log *slog.Logger) *WorkflowRunner {
-	return &WorkflowRunner{log: log}
+func NewWorkflowRunner(log *slog.Logger, api *handlers.API) *WorkflowRunner {
+	return &WorkflowRunner{log: log, api: api}
 }
 
 // ChatStream runs the agent workflow directly and streams progress via the callback.
@@ -70,8 +70,8 @@ func (r *WorkflowRunner) ChatStream(
 
 	// Create workflow components
 	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
-	querier := handlers.NewDBQuerier()
-	schemaFetcher := handlers.NewDBSchemaFetcher()
+	querier := r.api.NewDBQuerier()
+	schemaFetcher := r.api.NewDBSchemaFetcher()
 
 	// Create workflow config
 	cfg := &workflow.Config{
@@ -85,12 +85,12 @@ func (r *WorkflowRunner) ChatStream(
 	}
 
 	// Add env context so agent knows about other databases for cross-querying
-	cfg.EnvContext = handlers.BuildEnvContext(handlers.EnvMainnet)
+	cfg.EnvContext = handlers.BuildEnvContext(handlers.EnvMainnet, r.api.Database)
 
 	// Add Neo4j support if available
-	if config.Neo4jClient != nil {
-		cfg.GraphQuerier = handlers.NewNeo4jQuerier()
-		cfg.GraphSchemaFetcher = handlers.NewNeo4jSchemaFetcher()
+	if r.api.Neo4jClient != nil {
+		cfg.GraphQuerier = r.api.NewNeo4jQuerier()
+		cfg.GraphSchemaFetcher = r.api.NewNeo4jSchemaFetcher()
 	}
 
 	// Create workflow

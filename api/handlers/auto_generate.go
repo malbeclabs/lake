@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/malbeclabs/lake/api/config"
+	
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -22,7 +22,7 @@ type AutoGenerateRequest struct {
 
 // AutoGenerateStream handles auto-detection of query mode and streams the generation.
 // It first classifies the question as SQL or Cypher, then streams the appropriate query generation.
-func AutoGenerateStream(w http.ResponseWriter, r *http.Request) {
+func (a *API) AutoGenerateStream(w http.ResponseWriter, r *http.Request) {
 	var req AutoGenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -60,7 +60,7 @@ func AutoGenerateStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if Neo4j is available - if not, default to SQL
-	neo4jAvailable := config.Neo4jClient != nil
+	neo4jAvailable := a.Neo4jClient != nil
 
 	// Classify the question
 	var mode string
@@ -82,9 +82,9 @@ func AutoGenerateStream(w http.ResponseWriter, r *http.Request) {
 
 	// Now delegate to the appropriate generator based on mode
 	if mode == "cypher" {
-		streamCypherGeneration(r.Context(), req, sendEvent)
+		a.streamCypherGeneration(r.Context(), req, sendEvent)
 	} else {
-		streamSQLGeneration(r.Context(), req, sendEvent)
+		a.streamSQLGeneration(r.Context(), req, sendEvent)
 	}
 }
 
@@ -146,9 +146,9 @@ Respond with ONLY one word: either "sql" or "cypher"`
 }
 
 // streamSQLGeneration handles the SQL generation portion of auto-generate.
-func streamSQLGeneration(ctx context.Context, req AutoGenerateRequest, sendEvent func(string, string)) {
+func (a *API) streamSQLGeneration(ctx context.Context, req AutoGenerateRequest, sendEvent func(string, string)) {
 	// Fetch schema using shared DBSchemaFetcher
-	schemaFetcher := NewDBSchemaFetcher()
+	schemaFetcher := a.NewDBSchemaFetcher()
 	schema, err := schemaFetcher.FetchSchema(ctx)
 	if err != nil {
 		sendEvent("error", internalError("Failed to fetch schema", err))
@@ -195,7 +195,7 @@ func streamSQLGeneration(ctx context.Context, req AutoGenerateRequest, sendEvent
 
 		// Validate with EXPLAIN
 		sendEvent("status", `{"status":"validating"}`)
-		validationErr := validateQuery(sql)
+		validationErr := a.validateQuery(sql)
 		if validationErr == "" {
 			// Query is valid
 			sendEvent("done", fmt.Sprintf(`{"sql":"%s","provider":"anthropic","attempts":%d}`, escapeJSON(sql), attempts))
@@ -213,15 +213,15 @@ func streamSQLGeneration(ctx context.Context, req AutoGenerateRequest, sendEvent
 }
 
 // streamCypherGeneration handles the Cypher generation portion of auto-generate.
-func streamCypherGeneration(ctx context.Context, req AutoGenerateRequest, sendEvent func(string, string)) {
+func (a *API) streamCypherGeneration(ctx context.Context, req AutoGenerateRequest, sendEvent func(string, string)) {
 	// Check if Neo4j is available
-	if config.Neo4jClient == nil {
+	if a.Neo4jClient == nil {
 		sendEvent("error", "Neo4j is not available")
 		return
 	}
 
 	// Fetch Neo4j schema
-	schemaFetcher := NewNeo4jSchemaFetcher()
+	schemaFetcher := a.NewNeo4jSchemaFetcher()
 	schema, err := schemaFetcher.FetchSchema(ctx)
 	if err != nil {
 		sendEvent("error", internalError("Failed to fetch Neo4j schema", err))
@@ -268,7 +268,7 @@ func streamCypherGeneration(ctx context.Context, req AutoGenerateRequest, sendEv
 
 		// Validate with EXPLAIN
 		sendEvent("status", `{"status":"validating"}`)
-		validationErr := validateCypherQuery(ctx, cypher)
+		validationErr := a.validateCypherQuery(ctx, cypher)
 		if validationErr == "" {
 			// Query is valid
 			sendEvent("done", fmt.Sprintf(`{"sql":"%s","provider":"anthropic","attempts":%d}`, escapeJSON(cypher), attempts))

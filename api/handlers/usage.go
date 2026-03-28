@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -95,7 +94,7 @@ func IsPremiumWalletUser(account *Account) bool {
 
 // CheckQuota checks if the user/IP has remaining quota
 // Returns remaining questions (nil = unlimited), and any error
-func CheckQuota(ctx context.Context, account *Account, ip string) (*int, error) {
+func (a *API) CheckQuota(ctx context.Context, account *Account, ip string) (*int, error) {
 	// Check kill switch first - blocks everyone
 	if IsKillSwitchEnabled() {
 		slog.Warn("Kill switch is enabled, blocking request", "ip", ip)
@@ -119,7 +118,7 @@ func CheckQuota(ctx context.Context, account *Account, ip string) (*int, error) 
 	// Check global limit (soft block - only affects non-domain users)
 	globalLimit := GetGlobalDailyLimit()
 	if globalLimit > 0 && !isDomainUser {
-		globalUsage, err := GetGlobalUsageToday(ctx)
+		globalUsage, err := a.GetGlobalUsageToday(ctx)
 		if err != nil {
 			slog.Error("Failed to check global usage", "error", err)
 			// Don't block on error, just log
@@ -144,7 +143,7 @@ func CheckQuota(ctx context.Context, account *Account, ip string) (*int, error) 
 		limit = &premiumLimit
 		slog.Info("CheckQuota: premium wallet user", "limit", premiumLimit)
 	} else {
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT daily_question_limit FROM usage_limits
 			WHERE account_type IS NOT DISTINCT FROM $1
 		`, accountType).Scan(&limit)
@@ -169,12 +168,12 @@ func CheckQuota(ctx context.Context, account *Account, ip string) (*int, error) 
 	// Get current usage for today
 	var questionCount int
 	if accountID != nil {
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT COALESCE(question_count, 0) FROM usage_daily
 			WHERE account_id = $1 AND date = CURRENT_DATE
 		`, accountID).Scan(&questionCount)
 	} else {
-		err = config.PgPool.QueryRow(ctx, `
+		err = a.PgPool.QueryRow(ctx, `
 			SELECT COALESCE(question_count, 0) FROM usage_daily
 			WHERE account_id IS NULL AND ip_address = $1 AND date = CURRENT_DATE
 		`, ip).Scan(&questionCount)
@@ -192,9 +191,9 @@ func CheckQuota(ctx context.Context, account *Account, ip string) (*int, error) 
 }
 
 // GetGlobalUsageToday returns the total questions asked today across all users
-func GetGlobalUsageToday(ctx context.Context) (int, error) {
+func (a *API) GetGlobalUsageToday(ctx context.Context) (int, error) {
 	var total int
-	err := config.PgPool.QueryRow(ctx, `
+	err := a.PgPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(question_count), 0) FROM usage_daily
 		WHERE date = CURRENT_DATE
 	`).Scan(&total)
@@ -205,13 +204,13 @@ func GetGlobalUsageToday(ctx context.Context) (int, error) {
 }
 
 // checkAndAlertGlobalUsage checks if global usage has crossed thresholds and logs warnings
-func checkAndAlertGlobalUsage(ctx context.Context) {
+func (a *API) checkAndAlertGlobalUsage(ctx context.Context) {
 	limit := GetGlobalDailyLimit()
 	if limit <= 0 {
 		return // unlimited, no alerts needed
 	}
 
-	total, err := GetGlobalUsageToday(ctx)
+	total, err := a.GetGlobalUsageToday(ctx)
 	if err != nil {
 		slog.Error("Failed to get global usage for alerting", "error", err)
 		return
@@ -251,7 +250,7 @@ func checkAndAlertGlobalUsage(ctx context.Context) {
 }
 
 // RecordUsage records usage for a question/workflow
-func RecordUsage(ctx context.Context, account *Account, ip string, usage UsageRecord) error {
+func (a *API) RecordUsage(ctx context.Context, account *Account, ip string, usage UsageRecord) error {
 	// Determine account type for metrics
 	accountType := "anonymous"
 	if account != nil {
@@ -260,7 +259,7 @@ func RecordUsage(ctx context.Context, account *Account, ip string, usage UsageRe
 
 	if account != nil {
 		// Authenticated user - use account_id
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := a.PgPool.Exec(ctx, `
 			INSERT INTO usage_daily (account_id, date, question_count, input_tokens, output_tokens)
 			VALUES ($1, CURRENT_DATE, $2, $3, $4)
 			ON CONFLICT (account_id, date) DO UPDATE SET
@@ -274,7 +273,7 @@ func RecordUsage(ctx context.Context, account *Account, ip string, usage UsageRe
 		}
 	} else {
 		// Anonymous user - use IP address
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := a.PgPool.Exec(ctx, `
 			INSERT INTO usage_daily (ip_address, date, question_count, input_tokens, output_tokens)
 			VALUES ($1::inet, CURRENT_DATE, $2, $3, $4)
 			ON CONFLICT (ip_address, date) WHERE account_id IS NULL DO UPDATE SET
@@ -299,23 +298,23 @@ func RecordUsage(ctx context.Context, account *Account, ip string, usage UsageRe
 	}
 
 	// Check global usage thresholds
-	checkAndAlertGlobalUsage(ctx)
+	a.checkAndAlertGlobalUsage(ctx)
 
 	return nil
 }
 
 // IncrementQuestionCount is a convenience function to increment just the question count
-func IncrementQuestionCount(ctx context.Context, account *Account, ip string) error {
-	return RecordUsage(ctx, account, ip, UsageRecord{QuestionCount: 1})
+func (a *API) IncrementQuestionCount(ctx context.Context, account *Account, ip string) error {
+	return a.RecordUsage(ctx, account, ip, UsageRecord{QuestionCount: 1})
 }
 
 // GetUsageToday returns today's usage for an account or IP
-func GetUsageToday(ctx context.Context, account *Account, ip string) (*UsageRecord, error) {
+func (a *API) GetUsageToday(ctx context.Context, account *Account, ip string) (*UsageRecord, error) {
 	var questionCount int
 	var inputTokens, outputTokens int64
 
 	if account != nil {
-		err := config.PgPool.QueryRow(ctx, `
+		err := a.PgPool.QueryRow(ctx, `
 			SELECT COALESCE(question_count, 0), COALESCE(input_tokens, 0), COALESCE(output_tokens, 0)
 			FROM usage_daily
 			WHERE account_id = $1 AND date = CURRENT_DATE
@@ -325,7 +324,7 @@ func GetUsageToday(ctx context.Context, account *Account, ip string) (*UsageReco
 			return &UsageRecord{}, nil
 		}
 	} else {
-		err := config.PgPool.QueryRow(ctx, `
+		err := a.PgPool.QueryRow(ctx, `
 			SELECT COALESCE(question_count, 0), COALESCE(input_tokens, 0), COALESCE(output_tokens, 0)
 			FROM usage_daily
 			WHERE account_id IS NULL AND ip_address = $1 AND date = CURRENT_DATE
@@ -344,44 +343,44 @@ func GetUsageToday(ctx context.Context, account *Account, ip string) (*UsageReco
 }
 
 // CleanupExpiredSessions removes expired auth sessions
-func CleanupExpiredSessions(ctx context.Context) error {
-	_, err := config.PgPool.Exec(ctx, `
+func (a *API) CleanupExpiredSessions(ctx context.Context) error {
+	_, err := a.PgPool.Exec(ctx, `
 		DELETE FROM auth_sessions WHERE expires_at < NOW()
 	`)
 	return err
 }
 
 // CleanupExpiredNonces removes expired auth nonces
-func CleanupExpiredNonces(ctx context.Context) error {
-	_, err := config.PgPool.Exec(ctx, `
+func (a *API) CleanupExpiredNonces(ctx context.Context) error {
+	_, err := a.PgPool.Exec(ctx, `
 		DELETE FROM auth_nonces WHERE expires_at < NOW()
 	`)
 	return err
 }
 
 // CleanupOldUsageData removes usage data older than 90 days
-func CleanupOldUsageData(ctx context.Context) error {
-	_, err := config.PgPool.Exec(ctx, `
+func (a *API) CleanupOldUsageData(ctx context.Context) error {
+	_, err := a.PgPool.Exec(ctx, `
 		DELETE FROM usage_daily WHERE date < CURRENT_DATE - INTERVAL '90 days'
 	`)
 	return err
 }
 
 // RunCleanupTasks runs all cleanup tasks (call periodically)
-func RunCleanupTasks(ctx context.Context) {
-	if err := CleanupExpiredSessions(ctx); err != nil {
+func (a *API) RunCleanupTasks(ctx context.Context) {
+	if err := a.CleanupExpiredSessions(ctx); err != nil {
 		slog.Error("Failed to cleanup expired sessions", "error", err)
 	}
-	if err := CleanupExpiredNonces(ctx); err != nil {
+	if err := a.CleanupExpiredNonces(ctx); err != nil {
 		slog.Error("Failed to cleanup expired nonces", "error", err)
 	}
-	if err := CleanupOldUsageData(ctx); err != nil {
+	if err := a.CleanupOldUsageData(ctx); err != nil {
 		slog.Error("Failed to cleanup old usage data", "error", err)
 	}
 }
 
 // StartCleanupWorker starts a background worker that periodically cleans up expired data
-func StartCleanupWorker(ctx context.Context) {
+func (a *API) StartCleanupWorker(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Hour)
 	go func() {
 		for {
@@ -390,19 +389,19 @@ func StartCleanupWorker(ctx context.Context) {
 				ticker.Stop()
 				return
 			case <-ticker.C:
-				RunCleanupTasks(ctx)
+				a.RunCleanupTasks(ctx)
 			}
 		}
 	}()
 }
 
 // InitUsageMetrics initializes usage metrics on startup
-func InitUsageMetrics(ctx context.Context) {
+func (a *API) InitUsageMetrics(ctx context.Context) {
 	limit := GetGlobalDailyLimit()
 	metrics.SetUsageGlobalLimit(limit)
 
 	// Set initial daily gauge from database
-	total, err := GetGlobalUsageToday(ctx)
+	total, err := a.GetGlobalUsageToday(ctx)
 	if err != nil {
 		slog.Error("Failed to get initial global usage", "error", err)
 		return
@@ -425,7 +424,7 @@ func InitUsageMetrics(ctx context.Context) {
 }
 
 // StartDailyResetWorker starts a worker that resets daily metrics at midnight UTC
-func StartDailyResetWorker(ctx context.Context) {
+func (a *API) StartDailyResetWorker(ctx context.Context) {
 	go func() {
 		for {
 			// Calculate time until next midnight UTC

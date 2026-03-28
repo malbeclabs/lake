@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )
 
@@ -24,7 +23,7 @@ type CypherQueryResponse struct {
 }
 
 // ExecuteCypher executes a Cypher query against Neo4j and returns formatted results.
-func ExecuteCypher(w http.ResponseWriter, r *http.Request) {
+func (a *API) ExecuteCypher(w http.ResponseWriter, r *http.Request) {
 	var req CypherQueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -37,7 +36,7 @@ func ExecuteCypher(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if Neo4j is available
-	if config.Neo4jClient == nil {
+	if a.Neo4jClient == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(CypherQueryResponse{
 			Error: "Neo4j is not available",
@@ -50,7 +49,7 @@ func ExecuteCypher(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	session := config.Neo4jSession(ctx)
+	session := a.neo4jSession(ctx)
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.Transaction) (any, error) {

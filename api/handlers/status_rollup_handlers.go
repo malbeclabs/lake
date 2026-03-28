@@ -13,9 +13,9 @@ import (
 
 // fetchLinkHistoryFromRollup performs the link history data fetch using rollup tables.
 // filters is optional server-side search filtering.
-func fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
+func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*LinkHistoryResponse, error) {
 	start := time.Now()
-	db := envDB(ctx)
+	db := a.envDB(ctx)
 
 	params := parseBucketParams(timeRange, requestedBuckets)
 	params.UseRaw = isRawSource(ctx)
@@ -389,9 +389,9 @@ func fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, requested
 }
 
 // fetchDeviceHistoryFromRollup performs the device history data fetch using rollup tables.
-func fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
+func (a *API) fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string, requestedBuckets int, filters ...statusFilter) (*DeviceHistoryResponse, error) {
 	start := time.Now()
-	db := envDB(ctx)
+	db := a.envDB(ctx)
 
 	params := parseBucketParams(timeRange, requestedBuckets)
 	params.UseRaw = isRawSource(ctx)
@@ -617,8 +617,8 @@ func fetchDeviceHistoryFromRollup(ctx context.Context, timeRange string, request
 }
 
 // fetchInterfaceIssuesFromRollup returns interface issues using rollup tables.
-func fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) {
-	db := envDB(ctx)
+func (a *API) fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.Duration) ([]InterfaceIssue, error) {
+	db := a.envDB(ctx)
 	hours := int(duration.Hours())
 	if hours < 1 {
 		hours = 1
@@ -683,8 +683,8 @@ func fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.Duration)
 }
 
 // fetchDeviceInterfaceHistoryFromRollup returns per-interface history for a device using rollup tables.
-func fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {
-	db := envDB(ctx)
+func (a *API) fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*DeviceInterfaceHistoryResponse, error) {
+	db := a.envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
 	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
@@ -778,8 +778,8 @@ func fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, devicePK string,
 }
 
 // fetchSingleLinkHistoryFromRollup returns the history for a single link using rollup tables.
-func fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
-	db := envDB(ctx)
+func (a *API) fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
+	db := a.envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
 	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
@@ -958,8 +958,8 @@ func fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRa
 }
 
 // fetchSingleDeviceHistoryFromRollup returns the history for a single device using rollup tables.
-func fetchSingleDeviceHistoryFromRollup(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) {
-	db := envDB(ctx)
+func (a *API) fetchSingleDeviceHistoryFromRollup(ctx context.Context, devicePK string, timeRange string, requestedBuckets int) (*SingleDeviceHistoryResponse, error) {
+	db := a.envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
 	params.UseRaw = isRawSource(ctx)
 	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute

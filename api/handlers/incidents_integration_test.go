@@ -180,7 +180,7 @@ func TestGetLinkIncidents_EmptyState(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=1h", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -215,7 +215,7 @@ func TestGetLinkIncidents_PacketLoss(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -257,7 +257,7 @@ func TestGetLinkIncidents_Errors(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=errors&errors_threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -298,7 +298,7 @@ func TestGetLinkIncidents_ISISDown(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=isis_down&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -335,7 +335,7 @@ func TestGetLinkIncidents_TypeFilter(t *testing.T) {
 	// When filtering for packet_loss only, should NOT return errors
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -363,7 +363,7 @@ func TestGetLinkIncidents_DrainedLinksView(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=24h", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -403,7 +403,7 @@ func TestGetLinkIncidents_OngoingStartedBeforeWindow(t *testing.T) {
 	// The lookback is duration+24h=48h, so started_at will be ~48h ago (not the true 72h start).
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=24h&type=packet_loss&threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rr, req)
+	testAPI.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -435,7 +435,7 @@ func TestGetLinkIncidentsCSV(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links/csv?range=1h", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetLinkIncidentsCSV(rr, req)
+	testAPI.GetLinkIncidentsCSV(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "text/csv")
@@ -453,7 +453,7 @@ func TestGetDeviceIncidents_EmptyState(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=1h", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDeviceIncidents(rr, req)
+	testAPI.GetDeviceIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -482,7 +482,7 @@ func TestGetDeviceIncidents_Errors(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=6h&type=errors&errors_threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDeviceIncidents(rr, req)
+	testAPI.GetDeviceIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -518,7 +518,7 @@ func TestGetDeviceIncidents_ISISOverload(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=6h&type=isis_overload&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	handlers.GetDeviceIncidents(rr, req)
+	testAPI.GetDeviceIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -594,7 +594,7 @@ func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 	// Query rollup path
 	reqRollup := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5", nil)
 	rrRollup := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rrRollup, reqRollup)
+	testAPI.GetLinkIncidents(rrRollup, reqRollup)
 	require.Equal(t, http.StatusOK, rrRollup.Code)
 
 	var rollupResp handlers.LinkIncidentsResponse
@@ -603,7 +603,7 @@ func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 	// Query raw path
 	reqRaw := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5&source=raw", nil)
 	rrRaw := httptest.NewRecorder()
-	handlers.GetLinkIncidents(rrRaw, reqRaw)
+	testAPI.GetLinkIncidents(rrRaw, reqRaw)
 	require.Equal(t, http.StatusOK, rrRaw.Code)
 
 	var rawResp handlers.LinkIncidentsResponse

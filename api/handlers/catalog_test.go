@@ -31,7 +31,7 @@ func TestGetCatalog(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetCatalog(rr, req)
+	testAPI.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -79,7 +79,7 @@ func TestGetCatalog_ExcludesStaging(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetCatalog(rr, req)
+	testAPI.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -128,7 +128,7 @@ func TestGetCatalog_IdentifiesViews(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetCatalog(rr, req)
+	testAPI.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -172,7 +172,7 @@ func TestGetCatalog_ColumnsOrdered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetCatalog(rr, req)
+	testAPI.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -203,7 +203,7 @@ func TestGetCatalog_EmptyDatabase(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	handlers.GetCatalog(rr, req)
+	testAPI.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
-	"github.com/malbeclabs/lake/api/config"
+	
 )
 
 // WorkflowEvent represents a progress event from a running workflow.
@@ -81,17 +81,21 @@ func (rw *runningWorkflow) closeAll() {
 
 // WorkflowManager manages background workflow execution.
 type WorkflowManager struct {
+	api       *API
 	mu        sync.RWMutex
 	running   map[uuid.UUID]*runningWorkflow // workflowID -> running workflow
 	bySession map[uuid.UUID]uuid.UUID        // sessionID -> workflowID
 	serverID  string                         // Unique identifier for this server instance
 }
 
-// Global workflow manager instance
-var Manager = &WorkflowManager{
-	running:   make(map[uuid.UUID]*runningWorkflow),
-	bySession: make(map[uuid.UUID]uuid.UUID),
-	serverID:  uuid.NewString(), // Generate unique ID on startup
+// NewWorkflowManager creates a new WorkflowManager bound to the given API.
+func NewWorkflowManager(api *API) *WorkflowManager {
+	return &WorkflowManager{
+		api:       api,
+		running:   make(map[uuid.UUID]*runningWorkflow),
+		bySession: make(map[uuid.UUID]uuid.UUID),
+		serverID:  uuid.NewString(),
+	}
 }
 
 // SessionChatMessage represents a message in session content, matching the web's ChatMessage format.
@@ -171,13 +175,13 @@ func (s WorkflowStep) toClientFormat() ClientProcessingStep {
 }
 
 // updateSessionContent updates the session's content field with the given messages.
-func updateSessionContent(ctx context.Context, sessionID uuid.UUID, messages []SessionChatMessage) error {
+func (m *WorkflowManager) updateSessionContent(ctx context.Context, sessionID uuid.UUID, messages []SessionChatMessage) error {
 	contentJSON, err := json.Marshal(messages)
 	if err != nil {
 		return fmt.Errorf("failed to marshal session content: %w", err)
 	}
 
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = m.api.PgPool.Exec(ctx, `
 		UPDATE sessions SET content = $2, updated_at = NOW()
 		WHERE id = $1
 	`, sessionID, contentJSON)
@@ -188,9 +192,9 @@ func updateSessionContent(ctx context.Context, sessionID uuid.UUID, messages []S
 }
 
 // getSessionMessages fetches existing messages from a session.
-func getSessionMessages(ctx context.Context, sessionID uuid.UUID) ([]SessionChatMessage, error) {
+func (m *WorkflowManager) getSessionMessages(ctx context.Context, sessionID uuid.UUID) ([]SessionChatMessage, error) {
 	var contentJSON json.RawMessage
-	err := config.PgPool.QueryRow(ctx, `
+	err := m.api.PgPool.QueryRow(ctx, `
 		SELECT content FROM sessions WHERE id = $1
 	`, sessionID).Scan(&contentJSON)
 	if err != nil {
@@ -313,12 +317,12 @@ func (m *WorkflowManager) StartWorkflow(
 	}
 
 	// Ensure session exists (auto-create if needed for workflow persistence)
-	if err := ensureSessionExists(ctx, sessionID); err != nil {
+	if err := m.ensureSessionExists(ctx, sessionID); err != nil {
 		return uuid.Nil, fmt.Errorf("failed to ensure session exists: %w", err)
 	}
 
 	// Fetch existing messages from the session to preserve history
-	existingMessages, err := getSessionMessages(ctx, sessionID)
+	existingMessages, err := m.getSessionMessages(ctx, sessionID)
 	if err != nil {
 		// If we can't fetch messages, start with empty (new session)
 		slog.Warn("Failed to fetch existing session messages, starting fresh", "session_id", sessionID, "error", err)
@@ -326,7 +330,7 @@ func (m *WorkflowManager) StartWorkflow(
 	}
 
 	// Create workflow run in database
-	run, err := CreateWorkflowRun(ctx, sessionID, question, string(workflowEnv))
+	run, err := m.api.CreateWorkflowRun(ctx, sessionID, question, string(workflowEnv))
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("failed to create workflow: %w", err)
 	}
@@ -334,7 +338,7 @@ func (m *WorkflowManager) StartWorkflow(
 	// Initialize session content with user message and streaming assistant message
 	// Appends to existing messages to preserve conversation history
 	initialMessages := buildSessionMessages(existingMessages, run.ID, question, string(workflowEnv), "", "streaming", nil, nil, nil)
-	if err := updateSessionContent(ctx, sessionID, initialMessages); err != nil {
+	if err := m.updateSessionContent(ctx, sessionID, initialMessages); err != nil {
 		slog.Warn("Failed to initialize session content", "session_id", sessionID, "error", err)
 	}
 
@@ -460,8 +464,8 @@ func (m *WorkflowManager) runWorkflow(
 
 	// Create workflow components
 	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
-	querier := NewDBQuerier()
-	schemaFetcher := NewDBSchemaFetcher()
+	querier := m.api.NewDBQuerier()
+	schemaFetcher := m.api.NewDBSchemaFetcher()
 
 	// Create workflow config
 	cfg := &workflow.Config{
@@ -479,13 +483,13 @@ func (m *WorkflowManager) runWorkflow(
 	}
 
 	// Add Neo4j support if available (mainnet only)
-	if config.Neo4jClient != nil && rw.Env == EnvMainnet {
-		cfg.GraphQuerier = NewNeo4jQuerier()
-		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
+	if m.api.Neo4jClient != nil && rw.Env == EnvMainnet {
+		cfg.GraphQuerier = m.api.NewNeo4jQuerier()
+		cfg.GraphSchemaFetcher = m.api.NewNeo4jSchemaFetcher()
 	}
 
 	// Add env context to agent
-	cfg.EnvContext = BuildEnvContext(rw.Env)
+	cfg.EnvContext = m.api.buildEnvContext(rw.Env)
 
 	// Create workflow
 	wf, err := v3.New(cfg)
@@ -705,13 +709,13 @@ func (m *WorkflowManager) runWorkflow(
 			InputTokens:     state.Metrics.InputTokens,
 			OutputTokens:    state.Metrics.OutputTokens,
 		}
-		if err := UpdateWorkflowCheckpoint(ctx, rw.ID, checkpoint); err != nil {
+		if err := m.api.UpdateWorkflowCheckpoint(ctx, rw.ID, checkpoint); err != nil {
 			return err
 		}
 
 		// Also update session content with current progress (preserving existing messages)
 		sessionMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, question, string(rw.Env), "", "streaming", steps, state.ExecutedQueries, nil)
-		if err := updateSessionContent(ctx, rw.SessionID, sessionMessages); err != nil {
+		if err := m.updateSessionContent(ctx, rw.SessionID, sessionMessages); err != nil {
 			slog.Warn("Failed to update session content at checkpoint", "session_id", rw.SessionID, "error", err)
 		}
 		return nil
@@ -725,7 +729,7 @@ func (m *WorkflowManager) runWorkflow(
 		if ctx.Err() != nil {
 			// Context was cancelled
 			slog.Info("Background workflow cancelled", "workflow_id", rw.ID)
-			_ = CancelWorkflowRun(context.Background(), rw.ID)
+			_ = m.api.CancelWorkflowRun(context.Background(), rw.ID)
 			rw.broadcast(WorkflowEvent{
 				Type: "error",
 				Data: map[string]string{"error": "Workflow was cancelled"},
@@ -753,13 +757,13 @@ func (m *WorkflowManager) runWorkflow(
 		InputTokens:     lastInputTokens,
 		OutputTokens:    lastOutputTokens,
 	}
-	if err := CompleteWorkflowRun(context.Background(), rw.ID, result.Answer, finalCheckpoint); err != nil {
+	if err := m.api.CompleteWorkflowRun(context.Background(), rw.ID, result.Answer, finalCheckpoint); err != nil {
 		slog.Warn("Failed to mark workflow as completed", "workflow_id", rw.ID, "error", err)
 	}
 
 	// Update session content with final answer and status 'complete' (preserving existing messages)
 	finalMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, question, string(rw.Env), result.Answer, "complete", finalSteps, result.ExecutedQueries, result.FollowUpQuestions)
-	if err := updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
+	if err := m.updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
 		slog.Warn("Failed to update session content on completion", "session_id", rw.SessionID, "error", err)
 	}
 
@@ -788,7 +792,7 @@ func (m *WorkflowManager) failWorkflow(ctx context.Context, rw *runningWorkflow,
 		Type: "error",
 		Data: map[string]string{"error": errMsg},
 	})
-	_ = FailWorkflowRun(context.Background(), rw.ID, errMsg)
+	_ = m.api.FailWorkflowRun(context.Background(), rw.ID, errMsg)
 }
 
 // ResumeWorkflowBackground resumes an incomplete workflow in the background.
@@ -824,7 +828,7 @@ func (m *WorkflowManager) ResumeWorkflowBackground(run *WorkflowRun) error {
 
 	// Fetch existing session messages to preserve history
 	ctx := context.Background()
-	existingMessages, err := getSessionMessages(ctx, run.SessionID)
+	existingMessages, err := m.getSessionMessages(ctx, run.SessionID)
 	if err != nil {
 		// If we can't fetch messages, start with empty
 		slog.Warn("Failed to fetch existing session messages for resume, starting fresh", "session_id", run.SessionID, "error", err)
@@ -889,8 +893,8 @@ func (m *WorkflowManager) resumeWorkflow(
 
 	// Create workflow components
 	llm := workflow.NewAnthropicLLMClient(anthropic.ModelClaudeHaiku4_5, 4096)
-	querier := NewDBQuerier()
-	schemaFetcher := NewDBSchemaFetcher()
+	querier := m.api.NewDBQuerier()
+	schemaFetcher := m.api.NewDBSchemaFetcher()
 
 	// Create workflow config
 	cfg := &workflow.Config{
@@ -908,13 +912,13 @@ func (m *WorkflowManager) resumeWorkflow(
 	}
 
 	// Add Neo4j support if available (mainnet only)
-	if config.Neo4jClient != nil && rw.Env == EnvMainnet {
-		cfg.GraphQuerier = NewNeo4jQuerier()
-		cfg.GraphSchemaFetcher = NewNeo4jSchemaFetcher()
+	if m.api.Neo4jClient != nil && rw.Env == EnvMainnet {
+		cfg.GraphQuerier = m.api.NewNeo4jQuerier()
+		cfg.GraphSchemaFetcher = m.api.NewNeo4jSchemaFetcher()
 	}
 
 	// Add env context to agent
-	cfg.EnvContext = BuildEnvContext(rw.Env)
+	cfg.EnvContext = m.api.buildEnvContext(rw.Env)
 
 	// Create workflow
 	wf, err := v3.New(cfg)
@@ -1134,13 +1138,13 @@ func (m *WorkflowManager) resumeWorkflow(
 			InputTokens:     state.Metrics.InputTokens,
 			OutputTokens:    state.Metrics.OutputTokens,
 		}
-		if err := UpdateWorkflowCheckpoint(ctx, rw.ID, wfCheckpoint); err != nil {
+		if err := m.api.UpdateWorkflowCheckpoint(ctx, rw.ID, wfCheckpoint); err != nil {
 			return err
 		}
 
 		// Also update session content with current progress (preserving existing messages)
 		sessionMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, rw.Question, string(rw.Env), "", "streaming", steps, state.ExecutedQueries, nil)
-		if err := updateSessionContent(ctx, rw.SessionID, sessionMessages); err != nil {
+		if err := m.updateSessionContent(ctx, rw.SessionID, sessionMessages); err != nil {
 			slog.Warn("Failed to update session content at checkpoint", "session_id", rw.SessionID, "error", err)
 		}
 		return nil
@@ -1153,7 +1157,7 @@ func (m *WorkflowManager) resumeWorkflow(
 	if err != nil {
 		if ctx.Err() != nil {
 			slog.Info("Resume workflow cancelled", "workflow_id", rw.ID)
-			_ = CancelWorkflowRun(context.Background(), rw.ID)
+			_ = m.api.CancelWorkflowRun(context.Background(), rw.ID)
 		} else {
 			slog.Error("Resume workflow failed", "workflow_id", rw.ID, "error", err)
 			m.failWorkflow(ctx, rw, err.Error())
@@ -1183,13 +1187,13 @@ func (m *WorkflowManager) resumeWorkflow(
 		InputTokens:     lastInputTokens,
 		OutputTokens:    lastOutputTokens,
 	}
-	if err := CompleteWorkflowRun(context.Background(), rw.ID, result.Answer, finalCheckpoint); err != nil {
+	if err := m.api.CompleteWorkflowRun(context.Background(), rw.ID, result.Answer, finalCheckpoint); err != nil {
 		slog.Warn("Failed to mark resumed workflow as completed", "workflow_id", rw.ID, "error", err)
 	}
 
 	// Update session content with final answer and status 'complete' (preserving existing messages)
 	finalMessages := buildSessionMessages(rw.ExistingMessages, rw.ID, rw.Question, string(rw.Env), result.Answer, "complete", finalSteps, result.ExecutedQueries, result.FollowUpQuestions)
-	if err := updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
+	if err := m.updateSessionContent(context.Background(), rw.SessionID, finalMessages); err != nil {
 		slog.Warn("Failed to update session content on completion", "session_id", rw.SessionID, "error", err)
 	}
 
@@ -1216,7 +1220,7 @@ func (m *WorkflowManager) ResumeIncompleteWorkflows() {
 	claimedCount := 0
 	for {
 		// Atomically claim one workflow at a time
-		run, err := ClaimIncompleteWorkflow(ctx, m.serverID, staleTimeout)
+		run, err := m.api.ClaimIncompleteWorkflow(ctx, m.serverID, staleTimeout)
 		if err != nil {
 			slog.Error("Failed to claim workflow", "error", err)
 			break
@@ -1235,7 +1239,7 @@ func (m *WorkflowManager) ResumeIncompleteWorkflows() {
 		if err := m.ResumeWorkflowBackground(run); err != nil {
 			slog.Error("Failed to resume workflow", "workflow_id", run.ID, "error", err)
 			// Mark as failed so we don't keep trying
-			_ = FailWorkflowRun(ctx, run.ID, fmt.Sprintf("Failed to resume: %v", err))
+			_ = m.api.FailWorkflowRun(ctx, run.ID, fmt.Sprintf("Failed to resume: %v", err))
 		}
 	}
 
@@ -1255,11 +1259,11 @@ func truncateLog(s string, n int) string {
 
 // ensureSessionExists creates a session if it doesn't already exist.
 // This allows workflows to be created even if the frontend hasn't persisted the session yet.
-func ensureSessionExists(ctx context.Context, sessionID uuid.UUID) error {
+func (m *WorkflowManager) ensureSessionExists(ctx context.Context, sessionID uuid.UUID) error {
 	slog.Info("ensureSessionExists called", "session_id", sessionID)
 
 	// Use INSERT ... ON CONFLICT DO NOTHING to avoid race conditions
-	result, err := config.PgPool.Exec(ctx, `
+	result, err := m.api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Untitled', '[]')
 		ON CONFLICT (id) DO NOTHING
