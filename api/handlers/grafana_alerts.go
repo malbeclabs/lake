@@ -102,10 +102,17 @@ func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID s
 		color = "#2EB67D" // green for resolved
 	}
 
+	// Use the first alert's generatorURL as the title link.
+	var titleLink string
+	if len(payload.Alerts) > 0 {
+		titleLink = payload.Alerts[0].GeneratorURL
+	}
+
 	attachment := slack.Attachment{
-		Color:    color,
-		Title:    payload.Title,
-		Text:     strings.Join(sections, "\n\n"),
+		Color:     color,
+		Title:     payload.Title,
+		TitleLink: titleLink,
+		Text:      strings.Join(sections, "\n\n"),
 		MarkdownIn: []string{"text"},
 	}
 
