@@ -45,7 +45,7 @@ cluster_exists() {
 }
 
 # Default ports that Tilt will forward
-DEFAULT_PORTS=(5432 8123 9100 7474 7687 7233 8233 8080 3010 5173)
+DEFAULT_PORTS=(5432 8123 9100 7474 7687 7233 8233 8080 3010 5173 10350)
 
 # Check if a port is in use
 port_in_use() {
@@ -214,31 +214,39 @@ cmd_up() {
     check_prereqs
     ensure_env
     ensure_geoip
+
+    # Detect port conflicts before creating the cluster, so we don't
+    # mistake our own Tilt port-forwards for external conflicts.
+    local offset=0
+    if cluster_exists; then
+        # Cluster already running — Tilt will reclaim its existing port-forwards.
+        offset=0
+    else
+        offset=$(detect_port_offset)
+    fi
+
     ensure_cluster
     sync_secrets
-
-    # Detect port conflicts and pick an offset
-    local offset
-    offset=$(detect_port_offset)
     export LAKE_PORT_OFFSET="$offset"
 
     if [ "$offset" -ne 0 ]; then
         warn "Default ports are in use — shifting all ports by +$offset"
-        echo ""
-        echo "  web:         http://localhost:$((5173 + offset))"
-        echo "  api:         http://localhost:$((8080 + offset))"
-        echo "  clickhouse:  localhost:$((8123 + offset)) (HTTP), localhost:$((9100 + offset)) (TCP)"
-        echo "  postgres:    localhost:$((5432 + offset))"
-        echo "  neo4j:       localhost:$((7474 + offset)) (browser), localhost:$((7687 + offset)) (bolt)"
-        echo "  temporal-ui: http://localhost:$((8233 + offset))"
-        echo ""
     fi
+    echo ""
+    echo "  web:         http://localhost:$((5173 + offset))"
+    echo "  api:         http://localhost:$((8080 + offset))"
+    echo "  clickhouse:  localhost:$((8123 + offset)) (HTTP), localhost:$((9100 + offset)) (TCP)"
+    echo "  postgres:    localhost:$((5432 + offset))"
+    echo "  neo4j:       localhost:$((7474 + offset)) (browser), localhost:$((7687 + offset)) (bolt)"
+    echo "  temporal-ui: http://localhost:$((8233 + offset))"
+    echo "  tilt:        http://localhost:$((10350 + offset))"
+    echo ""
 
     export LAKE_CLUSTER_NAME="$CLUSTER_NAME"
 
     info "Starting Tilt (cluster: $CLUSTER_NAME)..."
     cd "$LAKE_ROOT"
-    exec tilt up
+    exec tilt up --port "$((10350 + offset))"
 }
 
 cmd_down() {
