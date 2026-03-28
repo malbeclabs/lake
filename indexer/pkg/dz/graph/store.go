@@ -258,10 +258,16 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
-			mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
+			mapping, found, ambiguous := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
 			if !found {
 				unmatchedNeighbors++
 				continue
+			}
+			if ambiguous {
+				s.log.Error("graph: duplicate tunnel_net IP with no hostname override, attribution may be wrong",
+					"hostname", lsp.Hostname,
+					"neighbor_addr", neighbor.NeighborAddr,
+					"link", mapping.linkCode)
 			}
 
 			// Update Link with IS-IS metric
@@ -326,8 +332,9 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (*
 	}
 
 	maps := &tunnelMaps{
-		primary:    make(map[string]tunnelMapping),
-		byLinkCode: make(map[string]tunnelMapping),
+		primary:      make(map[string]tunnelMapping),
+		byLinkCode:   make(map[string]tunnelMapping),
+		duplicateIPs: make(map[string]bool),
 	}
 
 	for result.Next(ctx) {
@@ -380,6 +387,8 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (*
 		maps.byLinkCode[linkCodeStr+":"+ip2] = mappingZ
 
 		if existing, ok := maps.primary[ip1]; ok {
+			maps.duplicateIPs[ip1] = true
+			maps.duplicateIPs[ip2] = true
 			s.log.Warn("graph: duplicate tunnel_net IP, using hostname overrides for disambiguation",
 				"ip", ip1,
 				"tunnel_net", tunnelNetStr,
@@ -828,13 +837,19 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
 			// Try to find the Link via neighbor_addr (with hostname override for duplicates)
-			mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
+			mapping, found, ambiguous := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
 			if !found {
 				unmatchedNeighbors++
 				s.log.Debug("graph: unmatched IS-IS neighbor",
 					"neighbor_addr", neighbor.NeighborAddr,
 					"neighbor_system_id", neighbor.SystemID)
 				continue
+			}
+			if ambiguous {
+				s.log.Error("graph: duplicate tunnel_net IP with no hostname override, attribution may be wrong",
+					"hostname", lsp.Hostname,
+					"neighbor_addr", neighbor.NeighborAddr,
+					"link", mapping.linkCode)
 			}
 
 			// Update Link with IS-IS metric
@@ -890,22 +905,26 @@ type tunnelMaps struct {
 	// byLinkCode maps "linkCode:ip" → tunnelMapping for duplicate tunnel nets,
 	// allowing hostname-based disambiguation via duplicateTunnelHostnameToLinkCodes.
 	byLinkCode map[string]tunnelMapping
+	// duplicateIPs tracks IPs that belong to more than one link's tunnel_net.
+	duplicateIPs map[string]bool
 }
 
 // resolve looks up the correct tunnelMapping for a given hostname and neighbor IP.
 // It checks hostname-based overrides for duplicate tunnel nets first, then falls back
-// to the primary tunnel map.
-func (t *tunnelMaps) resolve(hostname, neighborAddr string) (tunnelMapping, bool) {
+// to the primary tunnel map. Returns an additional boolean indicating whether the
+// result is an unresolved duplicate (hostname not in the override map).
+func (t *tunnelMaps) resolve(hostname, neighborAddr string) (tunnelMapping, bool, bool) {
 	// TODO: Remove this override logic once duplicate tunnel_net values are fixed.
 	if linkCodes, ok := duplicateTunnelHostnameToLinkCodes[hostname]; ok {
 		for _, code := range linkCodes {
 			if m, found := t.byLinkCode[code+":"+neighborAddr]; found {
-				return m, true
+				return m, true, false
 			}
 		}
 	}
 	m, found := t.primary[neighborAddr]
-	return m, found
+	ambiguous := found && t.duplicateIPs[neighborAddr]
+	return m, found, ambiguous
 }
 
 // buildTunnelMap queries Links from Neo4j and builds a map from IP addresses to tunnel mappings.
@@ -927,8 +946,9 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (*tun
 	}
 
 	maps := &tunnelMaps{
-		primary:    make(map[string]tunnelMapping),
-		byLinkCode: make(map[string]tunnelMapping),
+		primary:      make(map[string]tunnelMapping),
+		byLinkCode:   make(map[string]tunnelMapping),
+		duplicateIPs: make(map[string]bool),
 	}
 
 	for result.Next(ctx) {
@@ -984,6 +1004,8 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (*tun
 
 		// For the primary map, first link (by pk sort) wins on duplicate IPs
 		if existing, ok := maps.primary[ip1]; ok {
+			maps.duplicateIPs[ip1] = true
+			maps.duplicateIPs[ip2] = true
 			s.log.Warn("graph: duplicate tunnel_net IP, using hostname overrides for disambiguation",
 				"ip", ip1,
 				"tunnel_net", tunnelNetStr,
@@ -1089,7 +1111,7 @@ func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tMap
 	devicePKBySystemID := make(map[string]string)
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
-			if mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
+			if mapping, found, _ := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
 				devicePKBySystemID[lsp.SystemID] = mapping.localPK
 			}
 		}
@@ -1110,7 +1132,7 @@ func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tMap
 				AdjSIDs:          isis.AdjSIDsToJSON(neighbor.AdjSIDs),
 			}
 			// Enrich with device_pk and link_pk if we have a tunnel match
-			if mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
+			if mapping, found, _ := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
 				adj.DevicePK = mapping.localPK
 				adj.LinkPK = mapping.linkPK
 			}
