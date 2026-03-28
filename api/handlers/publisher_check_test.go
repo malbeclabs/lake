@@ -265,7 +265,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(800), resp.Epoch)
-	assert.Len(t, resp.Publishers, 3) // 2 publishing + 1 connected-not-publishing
+	assert.Len(t, resp.Publishers, 2) // only publishers with actual shred stats
 
 	// First publisher (highest stake, 50B lamports) — publishing leader + retransmit
 	pub1 := resp.Publishers[0]
@@ -291,21 +291,7 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	assert.Equal(t, "", pub2.ValidatorName)
 	assert.Equal(t, uint64(1), pub2.TotalSlots)
 
-	// Third publisher (5B lamports) — connected but NOT publishing
-	pub3 := resp.Publishers[2]
-	assert.Equal(t, "10.0.0.3", pub3.PublisherIP)
-	assert.Equal(t, "dzuser3", pub3.DZUserPubkey)
-	assert.True(t, pub3.MulticastConnected)
-	assert.False(t, pub3.PublishingLeaderShreds)
-	assert.False(t, pub3.PublishingRetransmitted)
-	assert.Equal(t, uint64(0), pub3.TotalSlots)
-	assert.Equal(t, uint64(0), pub3.LeaderSlots)
-	assert.Equal(t, uint64(0), pub3.TotalUniqueShreds)
-	assert.Equal(t, "AMS", pub3.DZMetroCode)
-	assert.Equal(t, "Validator 3", pub3.ValidatorName)
-	assert.Equal(t, "Agave", pub3.ValidatorClient)
-	assert.Equal(t, "2.1.0", pub3.ValidatorVersion)
-	assert.True(t, pub3.ValidatorVersionOk)
+	// dzuser3 is connected but has no shred stats — excluded by INNER JOIN
 }
 
 func TestGetPublisherCheck_FilterByIP(t *testing.T) {
@@ -359,7 +345,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	var resp handlers.PublisherCheckResponse
 	err := json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	assert.Len(t, resp.Publishers, 3)
+	assert.Len(t, resp.Publishers, 2)
 
 	// epochs=1 should also work (single epoch)
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?epochs=1", nil)
@@ -369,7 +355,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	assert.Len(t, resp.Publishers, 3)
+	assert.Len(t, resp.Publishers, 2)
 
 	// Invalid epochs param should use default
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?epochs=abc", nil)
@@ -379,7 +365,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	err = json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	assert.Len(t, resp.Publishers, 3)
+	assert.Len(t, resp.Publishers, 2)
 }
 
 // TestGetPublisherCheck_MultiHost verifies that slot counts are not inflated
