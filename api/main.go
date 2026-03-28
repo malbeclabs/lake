@@ -638,6 +638,9 @@ func main() {
 	r.Handle("/api/mcp", mcpHandler)
 	r.Handle("/api/mcp/*", mcpHandler)
 
+	// Grafana alert enrichment webhook (no auth required)
+	r.Post("/api/webhooks/grafana-alerts", handlers.HandleGrafanaAlerts)
+
 	// Serve static files from the web dist directory
 	webDir := os.Getenv("WEB_DIST_DIR")
 	if webDir == "" {
