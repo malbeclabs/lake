@@ -247,18 +247,18 @@ func (s *Store) SyncWithISIS(ctx context.Context, lsps []isis.LSP) error {
 // syncISISInTx creates ISIS relationships within an existing transaction.
 func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []isis.LSP) error {
 	// Build tunnel map from the newly created links
-	tunnelMap, err := s.buildTunnelMapInTx(ctx, tx)
+	tMaps, err := s.buildTunnelMapInTx(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("failed to build tunnel map: %w", err)
 	}
-	s.log.Debug("graph: built tunnel map", "mappings", len(tunnelMap))
+	s.log.Debug("graph: built tunnel map", "primary_mappings", len(tMaps.primary), "by_link_code_mappings", len(tMaps.byLinkCode))
 
 	now := time.Now()
 	var adjacenciesCreated, linksUpdated, devicesUpdated, unmatchedNeighbors int
 
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
-			mapping, found := tunnelMap[neighbor.NeighborAddr]
+			mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
 			if !found {
 				unmatchedNeighbors++
 				continue
@@ -301,7 +301,7 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 		"unmatched_neighbors", unmatchedNeighbors)
 
 	// Write ISIS data to ClickHouse
-	if err := s.writeISISToClickHouse(ctx, lsps, tunnelMap); err != nil {
+	if err := s.writeISISToClickHouse(ctx, lsps, tMaps); err != nil {
 		s.log.Warn("graph: failed to write ISIS data to ClickHouse", "error", err)
 	}
 
@@ -309,7 +309,7 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 }
 
 // buildTunnelMapInTx queries Links within a transaction.
-func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (map[string]tunnelMapping, error) {
+func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (*tunnelMaps, error) {
 	cypher := `
 		MATCH (link:Link)
 		WHERE link.tunnel_net IS NOT NULL AND link.tunnel_net <> ''
@@ -325,7 +325,10 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 		return nil, fmt.Errorf("failed to query links: %w", err)
 	}
 
-	tunnelMap := make(map[string]tunnelMapping)
+	maps := &tunnelMaps{
+		primary:    make(map[string]tunnelMapping),
+		byLinkCode: make(map[string]tunnelMapping),
+	}
 
 	for result.Next(ctx) {
 		record := result.Record()
@@ -356,37 +359,44 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (m
 			continue
 		}
 
-		// Skip duplicate tunnel_net IPs — first link (by pk sort) wins
-		if existing, ok := tunnelMap[ip1]; ok {
-			s.log.Warn("graph: duplicate tunnel_net IP, skipping",
-				"ip", ip1,
-				"tunnel_net", tunnelNetStr,
-				"link", linkCodeStr,
-				"existing_link", existing.linkPK)
-			continue
-		}
-
-		tunnelMap[ip1] = tunnelMapping{
+		mappingA := tunnelMapping{
 			linkPK:     linkPKStr,
+			linkCode:   linkCodeStr,
 			neighborPK: sideAPKStr,
 			localPK:    sideZPKStr,
 			bandwidth:  bandwidthInt,
 			isDrained:  isDrainedBool,
 		}
-		tunnelMap[ip2] = tunnelMapping{
+		mappingZ := tunnelMapping{
 			linkPK:     linkPKStr,
+			linkCode:   linkCodeStr,
 			neighborPK: sideZPKStr,
 			localPK:    sideAPKStr,
 			bandwidth:  bandwidthInt,
 			isDrained:  isDrainedBool,
 		}
+
+		maps.byLinkCode[linkCodeStr+":"+ip1] = mappingA
+		maps.byLinkCode[linkCodeStr+":"+ip2] = mappingZ
+
+		if existing, ok := maps.primary[ip1]; ok {
+			s.log.Warn("graph: duplicate tunnel_net IP, using hostname overrides for disambiguation",
+				"ip", ip1,
+				"tunnel_net", tunnelNetStr,
+				"link", linkCodeStr,
+				"existing_link", existing.linkCode)
+			continue
+		}
+
+		maps.primary[ip1] = mappingA
+		maps.primary[ip2] = mappingZ
 	}
 
 	if err := result.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating results: %w", err)
 	}
 
-	return tunnelMap, nil
+	return maps, nil
 }
 
 // updateLinkISISInTx updates a Link node with IS-IS metric data within a transaction.
@@ -745,10 +755,51 @@ func batchCreateUsers(ctx context.Context, tx neo4j.Transaction, users []dzsvc.U
 // tunnelMapping maps a tunnel IP address to Link and Device information.
 type tunnelMapping struct {
 	linkPK     string // Link primary key
+	linkCode   string // Link code (e.g. "dz-fra-01:dzd-fra-01")
 	neighborPK string // Device PK of the neighbor (device with this IP)
 	localPK    string // Device PK of the other side
 	bandwidth  int64  // Link bandwidth in bps
 	isDrained  bool   // Whether the link is drained (status is soft-drained or hard-drained)
+}
+
+// TODO: Remove this once the duplicate tunnel_net values are fixed in the network
+// configuration. Currently 6 tunnel nets are each assigned to 2 different links.
+// This map disambiguates ISIS hostnames to the correct link code. Hostnames that
+// appear in multiple duplicate tunnel nets (e.g. dz-lax-sw01, AU1C-NSWP-DZ01) are
+// listed once per link — the lookup uses hostname+IP to resolve the correct entry.
+var duplicateTunnelHostnameToLinkCodes = map[string][]string{
+	// 172.16.0.212/31 — dz-fra-01:dzd-fra-01 vs lax001-dz002:tyo002-dz002
+	"frankfurt":  {"dz-fra-01:dzd-fra-01"},
+	"dzd-fra-01": {"dz-fra-01:dzd-fra-01", "dzd-fra-01:dzd-tok-01"},
+	"la2-dz002":  {"lax001-dz002:tyo002-dz002"},
+	"ty2-dz002":  {"lax001-dz002:tyo002-dz002"},
+
+	// 172.16.0.40/31 — dz100a-lax1-tsw:dz-lax-sw01 vs tyo001-dz002:sin001-dz002
+	"dz100a.lax1.teraswitch.com": {"dz100a-lax1-tsw:dz-lax-sw01"},
+	"dz-lax-sw01":                {"dz100a-lax1-tsw:dz-lax-sw01", "dz-slc-sw01:dz-lax-sw01"},
+	"cc1t-dz002":                 {"tyo001-dz002:sin001-dz002"},
+	"sg1t1-dz002":                {"tyo001-dz002:sin001-dz002"},
+
+	// 172.16.1.132/31 — au1c-dz01:la2r-dz01 vs dub001-dz001:dgt-dzd-dub-db2
+	"AU1C-NSWP-DZ01":  {"au1c-dz01:la2r-dz01", "au1c-dz01:dz-ch2-sw01"},
+	"LA2R-NSWP-DZ01":  {"au1c-dz01:la2r-dz01"},
+	"DGT-DZD-DUB-DB2": {"dub001-dz001:dgt-dzd-dub-db2"},
+	"dub2t1-dz001":    {"dub001-dz001:dgt-dzd-dub-db2"},
+
+	// 172.16.1.230/31 — dz100a-sea1-tsw:dz115a-tyo2-tsw vs allnodes-fra1:dz-fr5-sw01
+	"dz100a.sea1.teraswitch.com": {"dz100a-sea1-tsw:dz115a-tyo2-tsw"},
+	"dz115a.tyo2.teraswitch.com": {"dz100a-sea1-tsw:dz115a-tyo2-tsw"},
+	"DZ-FR5-SW01":                {"allnodes-fra1:dz-fr5-sw01"},
+	"dz-1":                       {"allnodes-fra1:dz-fr5-sw01"},
+
+	// 172.16.1.234/31 — dzd-fra-01:dzd-tok-01 vs dz100a-sgp1-tsw:dz100a-fra2-tsw
+	"dzd-tok-01":                 {"dzd-fra-01:dzd-tok-01"},
+	"dz100a.fra2.teraswitch.com": {"dz100a-sgp1-tsw:dz100a-fra2-tsw"},
+	"dz100a.sgp1.teraswitch.com": {"dz100a-sgp1-tsw:dz100a-fra2-tsw"},
+
+	// 172.16.1.32/31 — dz-slc-sw01:dz-lax-sw01 vs au1c-dz01:dz-ch2-sw01
+	"dz-slc-sw01": {"dz-slc-sw01:dz-lax-sw01"},
+	"DZ-CH2-SW01": {"au1c-dz01:dz-ch2-sw01"},
 }
 
 // SyncISIS updates the Neo4j graph with IS-IS adjacency data.
@@ -764,11 +815,11 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 	defer session.Close(ctx)
 
 	// Step 1: Query all Links with their tunnel_net and side device PKs
-	tunnelMap, err := s.buildTunnelMap(ctx, session)
+	tMaps, err := s.buildTunnelMap(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to build tunnel map: %w", err)
 	}
-	s.log.Debug("graph: built tunnel map", "mappings", len(tunnelMap))
+	s.log.Debug("graph: built tunnel map", "primary_mappings", len(tMaps.primary), "by_link_code_mappings", len(tMaps.byLinkCode))
 
 	now := time.Now()
 	var adjacenciesCreated, linksUpdated, devicesUpdated, unmatchedNeighbors int
@@ -776,8 +827,8 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 	// Step 2: Process each LSP
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
-			// Try to find the Link via neighbor_addr
-			mapping, found := tunnelMap[neighbor.NeighborAddr]
+			// Try to find the Link via neighbor_addr (with hostname override for duplicates)
+			mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
 			if !found {
 				unmatchedNeighbors++
 				s.log.Debug("graph: unmatched IS-IS neighbor",
@@ -825,16 +876,41 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 		"unmatched_neighbors", unmatchedNeighbors)
 
 	// Write ISIS data to ClickHouse
-	if err := s.writeISISToClickHouse(ctx, lsps, tunnelMap); err != nil {
+	if err := s.writeISISToClickHouse(ctx, lsps, tMaps); err != nil {
 		s.log.Warn("graph: failed to write ISIS data to ClickHouse", "error", err)
 	}
 
 	return nil
 }
 
+// tunnelMaps holds the primary tunnel map and an override map for duplicate tunnel nets.
+type tunnelMaps struct {
+	// primary maps tunnel IP → tunnelMapping (first link wins for duplicates)
+	primary map[string]tunnelMapping
+	// byLinkCode maps "linkCode:ip" → tunnelMapping for duplicate tunnel nets,
+	// allowing hostname-based disambiguation via duplicateTunnelHostnameToLinkCodes.
+	byLinkCode map[string]tunnelMapping
+}
+
+// resolve looks up the correct tunnelMapping for a given hostname and neighbor IP.
+// It checks hostname-based overrides for duplicate tunnel nets first, then falls back
+// to the primary tunnel map.
+func (t *tunnelMaps) resolve(hostname, neighborAddr string) (tunnelMapping, bool) {
+	// TODO: Remove this override logic once duplicate tunnel_net values are fixed.
+	if linkCodes, ok := duplicateTunnelHostnameToLinkCodes[hostname]; ok {
+		for _, code := range linkCodes {
+			if m, found := t.byLinkCode[code+":"+neighborAddr]; found {
+				return m, true
+			}
+		}
+	}
+	m, found := t.primary[neighborAddr]
+	return m, found
+}
+
 // buildTunnelMap queries Links from Neo4j and builds a map from IP addresses to tunnel mappings.
 // For each /31 tunnel_net, both IPs are mapped: one points to side_a as neighbor, one to side_z.
-func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[string]tunnelMapping, error) {
+func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (*tunnelMaps, error) {
 	cypher := `
 		MATCH (link:Link)
 		WHERE link.tunnel_net IS NOT NULL AND link.tunnel_net <> ''
@@ -850,7 +926,10 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 		return nil, fmt.Errorf("failed to query links: %w", err)
 	}
 
-	tunnelMap := make(map[string]tunnelMapping)
+	maps := &tunnelMaps{
+		primary:    make(map[string]tunnelMapping),
+		byLinkCode: make(map[string]tunnelMapping),
+	}
 
 	for result.Next(ctx) {
 		record := result.Record()
@@ -882,37 +961,46 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (map[
 			continue
 		}
 
-		// Skip duplicate tunnel_net IPs — first link (by pk sort) wins
-		if existing, ok := tunnelMap[ip1]; ok {
-			s.log.Warn("graph: duplicate tunnel_net IP, skipping",
-				"ip", ip1,
-				"tunnel_net", tunnelNetStr,
-				"link", linkCodeStr,
-				"existing_link", existing.linkPK)
-			continue
-		}
-
-		tunnelMap[ip1] = tunnelMapping{
+		mappingA := tunnelMapping{
 			linkPK:     linkPKStr,
+			linkCode:   linkCodeStr,
 			neighborPK: sideAPKStr,
 			localPK:    sideZPKStr,
 			bandwidth:  bandwidthInt,
 			isDrained:  isDrainedBool,
 		}
-		tunnelMap[ip2] = tunnelMapping{
+		mappingZ := tunnelMapping{
 			linkPK:     linkPKStr,
+			linkCode:   linkCodeStr,
 			neighborPK: sideZPKStr,
 			localPK:    sideAPKStr,
 			bandwidth:  bandwidthInt,
 			isDrained:  isDrainedBool,
 		}
+
+		// Always store in the byLinkCode map for override lookups
+		maps.byLinkCode[linkCodeStr+":"+ip1] = mappingA
+		maps.byLinkCode[linkCodeStr+":"+ip2] = mappingZ
+
+		// For the primary map, first link (by pk sort) wins on duplicate IPs
+		if existing, ok := maps.primary[ip1]; ok {
+			s.log.Warn("graph: duplicate tunnel_net IP, using hostname overrides for disambiguation",
+				"ip", ip1,
+				"tunnel_net", tunnelNetStr,
+				"link", linkCodeStr,
+				"existing_link", existing.linkCode)
+			continue
+		}
+
+		maps.primary[ip1] = mappingA
+		maps.primary[ip2] = mappingZ
 	}
 
 	if err := result.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating results: %w", err)
 	}
 
-	return tunnelMap, nil
+	return maps, nil
 }
 
 // updateLinkISIS updates a Link node with IS-IS metric data.
@@ -988,7 +1076,7 @@ func (s *Store) createISISAdjacent(ctx context.Context, session neo4j.Session, f
 // writeISISToClickHouse builds ISIS adjacency and device slices from LSPs and writes them to ClickHouse.
 // All adjacencies are included (matched and unmatched). device_pk and link_pk are enrichment columns
 // populated via tunnel net correlation when possible, empty when not.
-func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tunnelMap map[string]tunnelMapping) error {
+func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tMaps *tunnelMaps) error {
 	isisStore, err := isis.NewStore(isis.StoreConfig{
 		Logger:     s.log,
 		ClickHouse: s.cfg.ClickHouse,
@@ -1001,7 +1089,7 @@ func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tunn
 	devicePKBySystemID := make(map[string]string)
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
-			if mapping, found := tunnelMap[neighbor.NeighborAddr]; found {
+			if mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
 				devicePKBySystemID[lsp.SystemID] = mapping.localPK
 			}
 		}
@@ -1022,7 +1110,7 @@ func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tunn
 				AdjSIDs:          isis.AdjSIDsToJSON(neighbor.AdjSIDs),
 			}
 			// Enrich with device_pk and link_pk if we have a tunnel match
-			if mapping, found := tunnelMap[neighbor.NeighborAddr]; found {
+			if mapping, found := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
 				adj.DevicePK = mapping.localPK
 				adj.LinkPK = mapping.linkPK
 			}
