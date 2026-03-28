@@ -45,14 +45,6 @@ See [indexer/README.md](indexer/README.md) for architecture details.
 
 Slack bot that provides a chat interface for data queries. Users can ask questions in Slack and receive answers powered by the agent workflow.
 
-### dev/controlcenter/
-
-Web dashboard for managing all platform services locally. Provides start/stop controls, real-time log streaming with filtering, and a log activity histogram. Replaces running services manually in separate terminals.
-
-- Runs at http://localhost:5174 (one port above the data app)
-- Use `--bind 0.0.0.0` for network access — automatically enables HTTPS for the web service
-- Bind address is mirrored to the web dev server automatically
-
 ### admin/
 
 CLI tool for maintenance operations:
@@ -89,7 +81,43 @@ MaxMind     ───────────────►    │
 
 ## Development
 
-### Local Setup
+### Local Setup (k3d + Tilt)
+
+The recommended local dev environment uses k3d (lightweight k8s) and Tilt for orchestration with live-reload.
+
+**Prerequisites:** docker, k3d, tilt, kubectl
+
+```bash
+brew install k3d tilt-dev/tap/tilt kubectl
+```
+
+**Start the environment:**
+
+```bash
+./scripts/k8s.sh up
+```
+
+This will:
+- Create a k3d cluster with an isolated kubeconfig
+- Download GeoIP databases
+- Sync secrets from `.env` into the cluster
+- Start all services via Tilt (ClickHouse, PostgreSQL, Neo4j, Temporal, API, Indexer, Web)
+- Set up remote proxy tables if `REMOTE_CH_*` vars are configured
+
+The web app will be at http://localhost:5173, API at http://localhost:8080. If those ports conflict, the script auto-detects and shifts all ports (e.g., +100).
+
+**Other commands:**
+
+```bash
+./scripts/k8s.sh status         # Show cluster and pod status
+./scripts/k8s.sh down           # Destroy cluster
+./scripts/k8s.sh list           # List all lake clusters
+./scripts/k8s.sh up feature-x   # Run an isolated cluster for a feature branch
+```
+
+### Local Setup (without k8s)
+
+Alternatively, run services directly on the host with Docker for infrastructure:
 
 Run the setup script to get started:
 
@@ -126,25 +154,6 @@ VITE_HTTPS=1 bun dev --host 0.0.0.0
 
 The web app will be at http://localhost:5173, API at http://localhost:8080.
 
-### Using the Control Center
-
-Instead of managing services in separate terminals, you can use the control center dashboard:
-
-```bash
-# Build (only needed once or after changes)
-cd dev/controlcenter/ui && bun install && bun run build && cd ..
-go build -o bin/controlcenter ./cmd/controlcenter/
-cd ../..
-
-# Run (always from the lake root)
-./dev/controlcenter/bin/controlcenter
-
-# For network access (enables HTTPS on the web service automatically)
-./dev/controlcenter/bin/controlcenter --bind 0.0.0.0
-```
-
-The control center will be at http://localhost:5174.
-
 ### Testing with Real Data (Remote Tables)
 
 For testing the UI with real production data without running the full indexer, you can set up proxy tables that forward queries from your local ClickHouse to a remote ClickHouse Cloud instance.
@@ -174,7 +183,7 @@ Options:
 - `--remote-clickhouse-database` / `REMOTE_CH_DATABASE` — remote database to discover from (default: `lake`)
 - `--force` — overwrite existing non-proxy tables
 
-To add proxies for additional external tables, add entries to `externalRemoteTables` in `admin/internal/admin/setup_remote_tables.go`.
+To add proxies for additional external tables, add entries to `externalRemoteTables` in `admin/remotetables/setup.go`.
 
 ### Testing with Seed Data
 
