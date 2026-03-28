@@ -40,6 +40,17 @@ KUBECONFIG=.tmp/k8s/lake-snormore.kubeconfig kubectl -n lake-dev ...
 
 Services run in the `lake-dev` namespace. Tilt port-forwards them to localhost (with automatic offset if ports conflict).
 
+### ClickHouse Databases (Local vs Remote)
+
+The local ClickHouse has two databases:
+
+- **`default`** — local data written by the local indexer. This is what the API queries when running locally (without `--use-remote`).
+- **`lake`** — remote proxy tables (`remoteSecure()`) pointing to production ClickHouse Cloud. Created by the indexer's `--setup-remote-tables` flag.
+
+Both databases have the same table names. When querying local data (e.g., via the local MCP at `localhost:8080/api/mcp`), the API reads from `default`. The `lake` database is only used when the API runs with `--use-remote` or when querying prod data directly.
+
+The cloud-hosted MCP (`claude_ai_DoubleZero`) always queries production. To verify local indexer changes, use the local `doublezero` MCP (which hits the local API on `localhost:8080`).
+
 ## Commands
 
 ```bash
