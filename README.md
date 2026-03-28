@@ -167,15 +167,17 @@ Proxy tables are created in a separate `lake` database to keep them isolated fro
    REMOTE_CH_PASSWORD=your-password
    ```
 
-2. Run the setup command:
+2. Pass `--setup-remote-tables` when starting the indexer:
    ```bash
-   go run ./admin/cmd/admin/ --clickhouse-addr localhost:9100 --setup-remote-tables
+   go run ./indexer/cmd/indexer/ --verbose --migrations-enable --setup-remote-tables
    ```
 
 3. Point the API server at the remote database:
    ```bash
    go run ./api/main.go --use-remote
    ```
+
+   Alternatively, use the admin CLI directly: `go run ./admin/cmd/admin/ --clickhouse-addr localhost:9100 --setup-remote-tables`
 
 The command discovers all tables in the remote `lake` database and creates local proxies in a `lake` database, plus proxies for external service tables (e.g., shredder).
 
