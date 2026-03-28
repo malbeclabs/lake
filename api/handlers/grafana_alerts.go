@@ -139,14 +139,7 @@ func formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
 	bandwidth := l["bandwidth"]
 	metro := l["metro"]
 
-	e := enrichLink(ctx, linkPK, alert.Labels["alertname"], alert.Status)
-
-	// For resolved alerts, use Grafana's startsAt for duration since the
-	// ClickHouse data will already show the recovered state.
-	if alert.Status == "resolved" && !alert.StartsAt.IsZero() {
-		e.StartedAt = alert.StartsAt.UTC().Format("Jan 02 15:04 UTC")
-		e.Duration = fmtDuration(time.Since(alert.StartsAt))
-	}
+	e := enrichLink(ctx, linkPK, alert)
 
 	linkURL := fmt.Sprintf("https://data.malbeclabs.com/dz/links/%s", linkPK)
 
@@ -171,13 +164,14 @@ type linkEnrichment struct {
 	StartedAt  string
 }
 
-func enrichLink(ctx context.Context, linkPK, alertName, alertStatus string) linkEnrichment {
+func enrichLink(ctx context.Context, linkPK string, alert grafanaAlert) linkEnrichment {
 	db := config.DB
 	if db == nil {
 		return linkEnrichment{Duration: "-", StartedAt: "-"}
 	}
 
 	var e linkEnrichment
+	alertName := alert.Labels["alertname"]
 
 	alertCond := "greatest(r.a_loss_pct, r.z_loss_pct) > 10 OR r.isis_down" // link down
 	okCond := "NOT (greatest(a_loss_pct, z_loss_pct) > 10 OR isis_down)"
@@ -186,29 +180,43 @@ func enrichLink(ctx context.Context, linkPK, alertName, alertStatus string) link
 		okCond = "greatest(a_loss_pct, z_loss_pct) <= 1"
 	}
 
-	// For firing alerts, filter by the alert condition to get the latest alerting row.
-	// For resolved alerts, get the latest row regardless (shows current healthy state).
-	condFilter := fmt.Sprintf("AND (%s)", alertCond)
-	if alertStatus == "resolved" {
-		condFilter = ""
+	if alert.Status == "resolved" && !alert.StartsAt.IsZero() {
+		// Resolved: look at the data around when the alert originally fired
+		// to show what the incident looked like, not the current recovered state.
+		row := db.QueryRow(ctx, fmt.Sprintf(`
+			SELECT r.a_loss_pct, r.z_loss_pct, greatest(r.a_loss_pct, r.z_loss_pct), r.isis_down
+			FROM lake.link_rollup_5m r FINAL
+			WHERE r.link_pk = ?
+			  AND r.bucket_ts >= ? - INTERVAL 10 MINUTE
+			  AND r.bucket_ts <= ? + INTERVAL 10 MINUTE
+			  AND NOT r.provisioning
+			  AND (%s)
+			ORDER BY r.bucket_ts ASC
+			LIMIT 1`, alertCond), linkPK, alert.StartsAt, alert.StartsAt)
+		if err := row.Scan(&e.ALossPct, &e.ZLossPct, &e.MaxLossPct, &e.IsisDown); err != nil {
+			slog.Warn("grafana webhook: resolved link rollup query failed", "error", err, "link_pk", linkPK)
+		}
+		e.StartedAt = alert.StartsAt.UTC().Format("Jan 02 15:04 UTC")
+		e.Duration = fmtDuration(time.Since(alert.StartsAt))
+	} else {
+		// Firing: get the latest alerting row.
+		row := db.QueryRow(ctx, fmt.Sprintf(`
+			SELECT r.a_loss_pct, r.z_loss_pct, greatest(r.a_loss_pct, r.z_loss_pct), r.isis_down
+			FROM lake.link_rollup_5m r FINAL
+			WHERE r.link_pk = ?
+			  AND r.bucket_ts >= now() - INTERVAL 20 MINUTE
+			  AND NOT r.provisioning
+			  AND (%s)
+			ORDER BY r.bucket_ts DESC
+			LIMIT 1`, alertCond), linkPK)
+		if err := row.Scan(&e.ALossPct, &e.ZLossPct, &e.MaxLossPct, &e.IsisDown); err != nil {
+			slog.Warn("grafana webhook: link rollup query failed", "error", err, "link_pk", linkPK)
+			return linkEnrichment{Duration: "-", StartedAt: "-"}
+		}
+		e.Duration, e.StartedAt = queryDuration(ctx,
+			"lake.link_rollup_5m", "link_pk", linkPK,
+			"AND NOT provisioning AND "+okCond)
 	}
-
-	row := db.QueryRow(ctx, fmt.Sprintf(`
-		SELECT r.a_loss_pct, r.z_loss_pct, greatest(r.a_loss_pct, r.z_loss_pct), r.isis_down
-		FROM lake.link_rollup_5m r FINAL
-		WHERE r.link_pk = ?
-		  AND r.bucket_ts >= now() - INTERVAL 20 MINUTE
-		  AND NOT r.provisioning
-		  %s
-		ORDER BY r.bucket_ts DESC
-		LIMIT 1`, condFilter), linkPK)
-	if err := row.Scan(&e.ALossPct, &e.ZLossPct, &e.MaxLossPct, &e.IsisDown); err != nil {
-		slog.Warn("grafana webhook: link rollup query failed", "error", err, "link_pk", linkPK)
-		return linkEnrichment{Duration: "-", StartedAt: "-"}
-	}
-	e.Duration, e.StartedAt = queryDuration(ctx,
-		"lake.link_rollup_5m", "link_pk", linkPK,
-		"AND NOT provisioning AND "+okCond)
 
 	return e
 }
