@@ -85,9 +85,9 @@ func HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 }
 
 func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID string) error {
-	botToken := os.Getenv("SLACK_BOT_TOKEN")
+	botToken := os.Getenv("GRAFANA_SLACK_BOT_TOKEN")
 	if botToken == "" {
-		return fmt.Errorf("SLACK_BOT_TOKEN not configured")
+		return fmt.Errorf("GRAFANA_SLACK_BOT_TOKEN not configured")
 	}
 	api := slack.New(botToken)
 
