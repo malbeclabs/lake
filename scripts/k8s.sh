@@ -268,11 +268,28 @@ cmd_down() {
     fi
 
     if [ "${CLEAN:-}" = "true" ]; then
+        if [ "${YES:-}" != "true" ]; then
+            warn "This will delete cluster '$CLUSTER_NAME' and ALL data (volumes, PVCs)."
+            printf "Are you sure? [y/N] "
+            read -r confirm
+            if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                info "Aborted."
+                return
+            fi
+        fi
         info "Deleting cluster '$CLUSTER_NAME' (including all data)..."
         k3d cluster delete "$CLUSTER_NAME"
         rm -f "$KUBECONFIG_DIR/$CLUSTER_NAME.kubeconfig"
         info "Cluster deleted."
     else
+        if [ "${YES:-}" != "true" ]; then
+            printf "Stop cluster '$CLUSTER_NAME'? [y/N] "
+            read -r confirm
+            if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                info "Aborted."
+                return
+            fi
+        fi
         info "Stopping cluster '$CLUSTER_NAME' (data preserved)..."
         k3d cluster stop "$CLUSTER_NAME"
         info "Cluster stopped. Run 'up' to restart, or 'down --clean' to delete."
@@ -325,14 +342,16 @@ shift || true
 
 # Parse remaining args: flags (--clean) and positional (name)
 CLEAN=false
+YES=false
 NAME_ARG=""
 for arg in "$@"; do
     case "$arg" in
         --clean) CLEAN=true ;;
+        -y|--yes) YES=true ;;
         *)       NAME_ARG="$arg" ;;
     esac
 done
-export CLEAN
+export CLEAN YES
 
 CLUSTER_NAME="$(resolve_cluster_name "$NAME_ARG")"
 use_isolated_kubeconfig
@@ -343,13 +362,14 @@ case "$ACTION" in
     status) cmd_status ;;
     list)   cmd_list ;;
     *)
-        echo "Usage: $0 {up|down|status|list} [name] [--clean]"
+        echo "Usage: $0 {up|down|status|list} [name] [--clean] [-y|--yes]"
         echo ""
-        echo "  up [name]        Create cluster and start Tilt"
-        echo "  down [name]      Stop cluster (preserves data)"
-        echo "  down --clean     Delete cluster and all data"
-        echo "  status [name]    Show cluster and pod status"
-        echo "  list             List all lake clusters"
+        echo "  up [name]           Create cluster and start Tilt"
+        echo "  down [name]         Stop cluster (preserves data)"
+        echo "  down --clean        Delete cluster and all data"
+        echo "  down -y|--yes       Skip confirmation prompt"
+        echo "  status [name]       Show cluster and pod status"
+        echo "  list                List all lake clusters"
         echo ""
         echo "  [name] is optional — lets you run multiple clusters:"
         echo "    $0 up              # lake-${USER:-dev}"
