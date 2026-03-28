@@ -141,6 +141,13 @@ func formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
 
 	e := enrichLink(ctx, linkPK, alert.Labels["alertname"], alert.Status)
 
+	// For resolved alerts, use Grafana's startsAt for duration since the
+	// ClickHouse data will already show the recovered state.
+	if alert.Status == "resolved" && !alert.StartsAt.IsZero() {
+		e.StartedAt = alert.StartsAt.UTC().Format("Jan 02 15:04 UTC")
+		e.Duration = fmtDuration(time.Since(alert.StartsAt))
+	}
+
 	linkURL := fmt.Sprintf("https://data.malbeclabs.com/dz/links/%s", linkPK)
 
 	isis := "IS-IS UP"
