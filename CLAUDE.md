@@ -20,6 +20,25 @@ The agent is the core feature - it lets users ask questions like "which validato
 
 Do NOT manage the `api` or `web` services. The user runs these separately and will restart them as needed.
 
+## Local K8s Environment
+
+The project has a local k3d + Tilt dev environment managed by `scripts/k8s.sh`:
+
+```bash
+./scripts/k8s.sh up        # Create cluster and start Tilt
+./scripts/k8s.sh down      # Destroy cluster
+./scripts/k8s.sh status    # Show cluster and pod status
+./scripts/k8s.sh list      # List all lake clusters
+```
+
+The cluster name follows the pattern `lake-$USER` (e.g., `lake-snormore`). Kubeconfig is isolated at `.tmp/k8s/<cluster-name>.kubeconfig` — use it with:
+
+```bash
+KUBECONFIG=.tmp/k8s/lake-snormore.kubeconfig kubectl -n lake-dev ...
+```
+
+Services run in the `lake-dev` namespace. Tilt port-forwards them to localhost (with automatic offset if ports conflict).
+
 ## Commands
 
 ```bash
