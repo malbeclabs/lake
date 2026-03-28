@@ -139,7 +139,7 @@ func formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
 	bandwidth := l["bandwidth"]
 	metro := l["metro"]
 
-	e := enrichLink(ctx, linkPK, alert.Labels["alertname"])
+	e := enrichLink(ctx, linkPK, alert.Labels["alertname"], alert.Status)
 
 	linkURL := fmt.Sprintf("https://data.malbeclabs.com/dz/links/%s", linkPK)
 
@@ -164,7 +164,7 @@ type linkEnrichment struct {
 	StartedAt  string
 }
 
-func enrichLink(ctx context.Context, linkPK, alertName string) linkEnrichment {
+func enrichLink(ctx context.Context, linkPK, alertName, alertStatus string) linkEnrichment {
 	db := config.DB
 	if db == nil {
 		return linkEnrichment{Duration: "-", StartedAt: "-"}
@@ -172,13 +172,18 @@ func enrichLink(ctx context.Context, linkPK, alertName string) linkEnrichment {
 
 	var e linkEnrichment
 
-	// Filter for the alerting condition so we get the latest *alerting* row,
-	// not a recovered row that happens to be newer.
 	alertCond := "greatest(r.a_loss_pct, r.z_loss_pct) > 10 OR r.isis_down" // link down
 	okCond := "NOT (greatest(a_loss_pct, z_loss_pct) > 10 OR isis_down)"
 	if strings.Contains(alertName, "Degraded") {
 		alertCond = "greatest(r.a_loss_pct, r.z_loss_pct) > 1 AND greatest(r.a_loss_pct, r.z_loss_pct) < 50 AND NOT r.isis_down"
 		okCond = "greatest(a_loss_pct, z_loss_pct) <= 1"
+	}
+
+	// For firing alerts, filter by the alert condition to get the latest alerting row.
+	// For resolved alerts, get the latest row regardless (shows current healthy state).
+	condFilter := fmt.Sprintf("AND (%s)", alertCond)
+	if alertStatus == "resolved" {
+		condFilter = ""
 	}
 
 	row := db.QueryRow(ctx, fmt.Sprintf(`
@@ -187,9 +192,9 @@ func enrichLink(ctx context.Context, linkPK, alertName string) linkEnrichment {
 		WHERE r.link_pk = ?
 		  AND r.bucket_ts >= now() - INTERVAL 20 MINUTE
 		  AND NOT r.provisioning
-		  AND (%s)
+		  %s
 		ORDER BY r.bucket_ts DESC
-		LIMIT 1`, alertCond), linkPK)
+		LIMIT 1`, condFilter), linkPK)
 	if err := row.Scan(&e.ALossPct, &e.ZLossPct, &e.MaxLossPct, &e.IsisDown); err != nil {
 		slog.Warn("grafana webhook: link rollup query failed", "error", err, "link_pk", linkPK)
 		return linkEnrichment{Duration: "-", StartedAt: "-"}
