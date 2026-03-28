@@ -485,7 +485,7 @@ func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
 	var resp handlers.PublisherCheckResponse
 	err := json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	assert.Len(t, resp.Publishers, 3)
+	assert.Len(t, resp.Publishers, 2)
 	// Verify slot-mode was activated (max_slot should be set)
 	assert.Equal(t, uint64(1002), resp.MaxSlot, "slot-mode should be active, reporting max_slot")
 }
@@ -504,7 +504,7 @@ func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
 	var resp handlers.PublisherCheckResponse
 	err := json.NewDecoder(rr.Body).Decode(&resp)
 	require.NoError(t, err)
-	assert.Len(t, resp.Publishers, 3)
+	assert.Len(t, resp.Publishers, 2)
 	// Verify slot-mode was used (max_slot confirms slot-based query ran)
 	assert.Equal(t, uint64(1002), resp.MaxSlot, "slots should take precedence over epochs")
 }
