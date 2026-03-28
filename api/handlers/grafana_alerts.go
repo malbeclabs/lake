@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/malbeclabs/lake/api/config"
+	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/slack-go/slack"
 )
 
@@ -67,20 +68,26 @@ func HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Respond immediately so Grafana doesn't time out.
-	w.WriteHeader(http.StatusOK)
+	start := time.Now()
+	alertName := payload.GroupLabels["alertname"]
 
-	go postEnrichedAlerts(payload, channelID)
+	if err := postEnrichedAlerts(r.Context(), payload, channelID); err != nil {
+		slog.Error("grafana webhook: failed to post", "error", err, "channel", channelID)
+		metrics.GrafanaWebhookTotal.WithLabelValues("error", alertName).Inc()
+		metrics.GrafanaWebhookDuration.Observe(time.Since(start).Seconds())
+		http.Error(w, "failed to post to slack", http.StatusInternalServerError)
+		return
+	}
+
+	metrics.GrafanaWebhookTotal.WithLabelValues("success", alertName).Inc()
+	metrics.GrafanaWebhookDuration.Observe(time.Since(start).Seconds())
+	w.WriteHeader(http.StatusOK)
 }
 
-func postEnrichedAlerts(payload grafanaWebhook, channelID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID string) error {
 	botToken := os.Getenv("SLACK_BOT_TOKEN")
 	if botToken == "" {
-		slog.Error("grafana webhook: SLACK_BOT_TOKEN not configured")
-		return
+		return fmt.Errorf("SLACK_BOT_TOKEN not configured")
 	}
 	api := slack.New(botToken)
 
@@ -106,9 +113,7 @@ func postEnrichedAlerts(payload grafanaWebhook, channelID string) {
 		slack.MsgOptionAttachments(attachment),
 		slack.MsgOptionDisableLinkUnfurl(),
 	)
-	if err != nil {
-		slog.Error("grafana webhook: slack post failed", "error", err, "channel", channelID)
-	}
+	return err
 }
 
 // enrichAndFormat dispatches to an alert-type-specific formatter, falling back

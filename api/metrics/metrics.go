@@ -191,6 +191,23 @@ var (
 			Help: "Current utilization of global daily limit (0-1, or 0 if unlimited)",
 		},
 	)
+
+	// Grafana webhook metrics
+	GrafanaWebhookTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_lake_api_grafana_webhook_total",
+			Help: "Total number of Grafana alert webhooks processed",
+		},
+		[]string{"status", "alertname"}, // status: "success", "error"
+	)
+
+	GrafanaWebhookDuration = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "doublezero_lake_api_grafana_webhook_duration_seconds",
+			Help:    "Duration of Grafana webhook processing (enrichment + Slack post)",
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 10), // 10ms to ~10s
+		},
+	)
 )
 
 // Middleware returns a chi middleware that records HTTP metrics.
