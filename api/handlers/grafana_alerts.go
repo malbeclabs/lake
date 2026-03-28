@@ -37,17 +37,6 @@ type grafanaAlert struct {
 	Fingerprint  string            `json:"fingerprint"`
 }
 
-// Enrichment data fetched from ClickHouse.
-
-type linkEnrichment struct {
-	ALossPct   float64
-	ZLossPct   float64
-	MaxLossPct float64
-	IsisDown   bool
-	Duration   string
-	StartedAt  string
-}
-
 // HandleGrafanaAlerts receives a Grafana webhook, enriches alerts with
 // live ClickHouse data, and posts a formatted message to Slack.
 //
@@ -91,7 +80,6 @@ func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID s
 	}
 	api := slack.New(botToken)
 
-	// Build a message section for each alert in the group.
 	var sections []string
 	for _, alert := range payload.Alerts {
 		sections = append(sections, enrichAndFormat(ctx, alert))
@@ -102,17 +90,16 @@ func postEnrichedAlerts(ctx context.Context, payload grafanaWebhook, channelID s
 		color = "#2EB67D" // green for resolved
 	}
 
-	// Use the first alert's generatorURL as the title link.
 	var titleLink string
 	if len(payload.Alerts) > 0 {
 		titleLink = payload.Alerts[0].GeneratorURL
 	}
 
 	attachment := slack.Attachment{
-		Color:     color,
-		Title:     payload.Title,
-		TitleLink: titleLink,
-		Text:      strings.Join(sections, "\n\n"),
+		Color:      color,
+		Title:      payload.Title,
+		TitleLink:  titleLink,
+		Text:       strings.Join(sections, "\n\n"),
 		MarkdownIn: []string{"text"},
 	}
 
@@ -130,6 +117,12 @@ func enrichAndFormat(ctx context.Context, alert grafanaAlert) string {
 	switch {
 	case strings.Contains(name, "Link Down"), strings.Contains(name, "Link Degraded"):
 		return formatLinkAlert(ctx, alert)
+	case strings.Contains(name, "Link Interface"):
+		return formatLinkIntfAlert(ctx, alert)
+	case strings.Contains(name, "Device Interface"):
+		return formatDeviceIntfAlert(ctx, alert)
+	case strings.Contains(name, "Device Not Reporting"):
+		return formatDeviceNotReportingAlert(ctx, alert)
 	default:
 		return formatGenericAlert(alert)
 	}
@@ -159,13 +152,16 @@ func formatLinkAlert(ctx context.Context, alert grafanaAlert) string {
 	desc := fmt.Sprintf("%s · %s · %s · %s · %s", contributor, linkType, bandwidth, metro, isis)
 	loss := fmt.Sprintf("Loss: %.1f%% A→Z / %.1f%% Z→A (max %.1f%%)", e.ALossPct, e.ZLossPct, e.MaxLossPct)
 
-	var footerParts []string
-	footerParts = append(footerParts, "<https://data.malbeclabs.com/status/links|Dashboard>")
-	if runbook := alert.Annotations["runbook_url"]; runbook != "" {
-		footerParts = append(footerParts, fmt.Sprintf("<%s|Runbook>", runbook))
-	}
+	return joinLines(summary, desc, loss, footerLine(alert, "https://data.malbeclabs.com/status/links"))
+}
 
-	return strings.Join([]string{summary, desc, loss, strings.Join(footerParts, " · ")}, "\n")
+type linkEnrichment struct {
+	ALossPct   float64
+	ZLossPct   float64
+	MaxLossPct float64
+	IsisDown   bool
+	Duration   string
+	StartedAt  string
 }
 
 func enrichLink(ctx context.Context, linkPK, alertName string) linkEnrichment {
@@ -176,7 +172,6 @@ func enrichLink(ctx context.Context, linkPK, alertName string) linkEnrichment {
 
 	var e linkEnrichment
 
-	// Current rollup values.
 	row := db.QueryRow(ctx, `
 		SELECT r.a_loss_pct, r.z_loss_pct, greatest(r.a_loss_pct, r.z_loss_pct), r.isis_down
 		FROM lake.link_rollup_5m r FINAL
@@ -190,29 +185,168 @@ func enrichLink(ctx context.Context, linkPK, alertName string) linkEnrichment {
 		return linkEnrichment{Duration: "-", StartedAt: "-"}
 	}
 
-	// Duration — find last healthy bucket in the past 7 days.
-	okCond := "NOT (greatest(a_loss_pct, z_loss_pct) > 10 OR isis_down)" // link down
+	okCond := "NOT (greatest(a_loss_pct, z_loss_pct) > 10 OR isis_down)"
 	if strings.Contains(alertName, "Degraded") {
-		okCond = "greatest(a_loss_pct, z_loss_pct) <= 1" // link degraded
+		okCond = "greatest(a_loss_pct, z_loss_pct) <= 1"
 	}
-
-	var lastOK time.Time
-	row = db.QueryRow(ctx, fmt.Sprintf(`
-		SELECT max(bucket_ts)
-		FROM lake.link_rollup_5m FINAL
-		WHERE link_pk = ?
-		  AND bucket_ts >= now() - INTERVAL 7 DAY
-		  AND NOT provisioning
-		  AND %s`, okCond), linkPK)
-	if err := row.Scan(&lastOK); err != nil || lastOK.IsZero() {
-		e.Duration = ">7d"
-		e.StartedAt = time.Now().Add(-7 * 24 * time.Hour).UTC().Format("Jan 02 15:04 UTC")
-	} else {
-		e.Duration = fmtDuration(time.Since(lastOK))
-		e.StartedAt = lastOK.UTC().Format("Jan 02 15:04 UTC")
-	}
+	e.Duration, e.StartedAt = queryDuration(ctx,
+		"lake.link_rollup_5m", "link_pk", linkPK,
+		"AND NOT provisioning AND "+okCond)
 
 	return e
+}
+
+// --- Link Interface (carrier/discards/errors) ---
+
+func formatLinkIntfAlert(ctx context.Context, alert grafanaAlert) string {
+	l := alert.Labels
+	linkPK := l["link_pk"]
+	linkPKShort := l["link_pk_short"]
+	linkSide := l["link_side"]
+	intf := l["intf"]
+	contributor := l["contributor_code"]
+	metro := l["metro"]
+
+	metricCol, okCond := intfMetricInfo(alert.Labels["alertname"])
+	e := enrichIntf(ctx, "link_pk", linkPK, intf, metricCol, okCond)
+
+	linkURL := fmt.Sprintf("https://data.malbeclabs.com/dz/links/%s", linkPK)
+
+	summary := fmt.Sprintf("*Link <%s|%s> · side %s %s · %s · %s ago*",
+		linkURL, linkPKShort, linkSide, intf, e.StartedAt, e.Duration)
+	desc := fmt.Sprintf("%s · %s · total: %d", contributor, metro, e.MetricTotal)
+	if e.AffectedBuckets > 0 {
+		desc = fmt.Sprintf("%s · %s\n%d/6 buckets (30m) · total: %d",
+			contributor, metro, e.AffectedBuckets, e.MetricTotal)
+	}
+
+	return joinLines(summary, desc, footerLine(alert, "https://data.malbeclabs.com/status/links"))
+}
+
+// --- Device Interface (carrier/discards/errors) ---
+
+func formatDeviceIntfAlert(ctx context.Context, alert grafanaAlert) string {
+	l := alert.Labels
+	devicePK := l["device_pk"]
+	devicePKShort := l["device_pk_short"]
+	intf := l["intf"]
+	contributor := l["contributor_code"]
+	metro := l["metro"]
+
+	metricCol, okCond := intfMetricInfo(alert.Labels["alertname"])
+	e := enrichIntf(ctx, "device_pk", devicePK, intf, metricCol, okCond)
+
+	deviceURL := fmt.Sprintf("https://data.malbeclabs.com/dz/devices/%s", devicePK)
+
+	summary := fmt.Sprintf("*Device <%s|%s> · %s · %s · %s ago*",
+		deviceURL, devicePKShort, intf, e.StartedAt, e.Duration)
+	desc := fmt.Sprintf("%s · %s · total: %d", contributor, metro, e.MetricTotal)
+	if e.AffectedBuckets > 0 {
+		desc = fmt.Sprintf("%s · %s\n%d/6 buckets (30m) · total: %d",
+			contributor, metro, e.AffectedBuckets, e.MetricTotal)
+	}
+
+	return joinLines(summary, desc, footerLine(alert, "https://data.malbeclabs.com/status/devices"))
+}
+
+// Shared enrichment for device/link interface alerts.
+
+type intfEnrichment struct {
+	MetricTotal     uint64
+	AffectedBuckets int
+	Duration        string
+	StartedAt       string
+}
+
+// intfMetricInfo returns the ClickHouse expression for the metric column
+// and the "OK" condition for duration computation, based on the alert name.
+func intfMetricInfo(alertName string) (metricExpr string, okCond string) {
+	switch {
+	case strings.Contains(alertName, "Carrier"):
+		return "carrier_transitions", "carrier_transitions = 0"
+	case strings.Contains(alertName, "Discards"):
+		return "(in_discards + out_discards)", "(in_discards + out_discards) = 0"
+	default: // Errors
+		return "(in_errors + out_errors + in_fcs_errors)", "(in_errors + out_errors + in_fcs_errors) = 0"
+	}
+}
+
+func enrichIntf(ctx context.Context, pkCol, pkVal, intf, metricExpr, okCond string) intfEnrichment {
+	db := config.DB
+	if db == nil {
+		return intfEnrichment{Duration: "-", StartedAt: "-"}
+	}
+
+	var e intfEnrichment
+
+	// Latest metric total.
+	row := db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT %s
+		FROM lake.device_interface_rollup_5m FINAL
+		WHERE %s = ? AND intf = ?
+		  AND bucket_ts >= now() - INTERVAL 20 MINUTE
+		ORDER BY bucket_ts DESC
+		LIMIT 1`, metricExpr, pkCol), pkVal, intf)
+	if err := row.Scan(&e.MetricTotal); err != nil {
+		slog.Warn("grafana webhook: intf rollup query failed", "error", err, pkCol, pkVal, "intf", intf)
+		return intfEnrichment{Duration: "-", StartedAt: "-"}
+	}
+
+	// Affected buckets in the last 30 minutes (for sustained alerts).
+	row = db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT count()
+		FROM lake.device_interface_rollup_5m FINAL
+		WHERE %s = ? AND intf = ?
+		  AND bucket_ts >= now() - INTERVAL 30 MINUTE
+		  AND %s > 0`, pkCol, metricExpr), pkVal, intf)
+	if err := row.Scan(&e.AffectedBuckets); err != nil {
+		e.AffectedBuckets = 0
+	}
+
+	// Duration since last clean bucket.
+	e.Duration, e.StartedAt = queryDuration(ctx,
+		"lake.device_interface_rollup_5m", pkCol, pkVal,
+		fmt.Sprintf("AND intf = '%s' AND %s", intf, okCond))
+
+	return e
+}
+
+// --- Device Not Reporting ---
+
+func formatDeviceNotReportingAlert(ctx context.Context, alert grafanaAlert) string {
+	l := alert.Labels
+	devicePK := l["device_pk"]
+	devicePKShort := l["device_pk_short"]
+	contributor := l["contributor_code"]
+	deviceType := l["device_type"]
+	metro := l["metro_code"]
+
+	lastReport, duration := enrichDeviceNotReporting(ctx, devicePK)
+
+	deviceURL := fmt.Sprintf("https://data.malbeclabs.com/dz/devices/%s", devicePK)
+
+	summary := fmt.Sprintf("*Device <%s|%s> · %s · %s ago*", deviceURL, devicePKShort, lastReport, duration)
+	desc := fmt.Sprintf("%s · %s · %s", contributor, deviceType, metro)
+
+	return joinLines(summary, desc, footerLine(alert, "https://data.malbeclabs.com/status/devices"))
+}
+
+func enrichDeviceNotReporting(ctx context.Context, devicePK string) (lastReport, duration string) {
+	db := config.DB
+	if db == nil {
+		return "-", "-"
+	}
+
+	var lastTS time.Time
+	row := db.QueryRow(ctx, `
+		SELECT max(written_at)
+		FROM lake.fact_dz_device_link_latency_sample_header
+		WHERE origin_device_pk = ?
+		  AND written_at >= now() - INTERVAL 1 HOUR`, devicePK)
+	if err := row.Scan(&lastTS); err != nil || lastTS.IsZero() {
+		return ">1h ago", ">1h"
+	}
+	return lastTS.UTC().Format("Jan 02 15:04 UTC"), fmtDuration(time.Since(lastTS))
 }
 
 // --- Generic fallback ---
@@ -226,7 +360,6 @@ func formatGenericAlert(alert grafanaAlert) string {
 		lines = append(lines, d)
 	}
 	if u := alert.Annotations["runbook_url"]; u != "" {
-		// Only add if not already referenced in description.
 		if !strings.Contains(strings.Join(lines, ""), "Runbook") {
 			lines = append(lines, fmt.Sprintf("<%s|Runbook>", u))
 		}
@@ -235,6 +368,39 @@ func formatGenericAlert(alert grafanaAlert) string {
 }
 
 // --- Helpers ---
+
+// queryDuration finds the last bucket matching the OK condition in the past 7 days
+// and returns a human-readable duration and start timestamp.
+func queryDuration(ctx context.Context, table, pkCol, pkVal, extraCond string) (duration, startedAt string) {
+	db := config.DB
+	if db == nil {
+		return "-", "-"
+	}
+	var lastOK time.Time
+	row := db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT max(bucket_ts)
+		FROM %s FINAL
+		WHERE %s = ?
+		  AND bucket_ts >= now() - INTERVAL 7 DAY
+		  %s`, table, pkCol, extraCond), pkVal)
+	if err := row.Scan(&lastOK); err != nil || lastOK.IsZero() {
+		return ">7d", time.Now().Add(-7 * 24 * time.Hour).UTC().Format("Jan 02 15:04 UTC")
+	}
+	return fmtDuration(time.Since(lastOK)), lastOK.UTC().Format("Jan 02 15:04 UTC")
+}
+
+// footerLine builds the Dashboard · Runbook footer.
+func footerLine(alert grafanaAlert, dashboardURL string) string {
+	parts := []string{fmt.Sprintf("<%s|Dashboard>", dashboardURL)}
+	if u := alert.Annotations["runbook_url"]; u != "" {
+		parts = append(parts, fmt.Sprintf("<%s|Runbook>", u))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func joinLines(lines ...string) string {
+	return strings.Join(lines, "\n")
+}
 
 func fmtDuration(d time.Duration) string {
 	s := int(math.Round(d.Seconds()))
