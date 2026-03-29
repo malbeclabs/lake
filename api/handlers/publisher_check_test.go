@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/malbeclabs/lake/api/handlers"
@@ -187,37 +188,39 @@ func insertPublisherCheckTestData(t *testing.T, api *handlers.API) {
 func insertBulkShredStats(t *testing.T, api *handlers.API, dzUserPubkey string, publisherIP string, epoch, startSlot uint64, leaderSlots, retransmitSlots int) {
 	t.Helper()
 	ctx := t.Context()
+	table := fmt.Sprintf("`%s`.publisher_shred_stats", api.ShredderDB)
+
+	// Build a single INSERT with multiple VALUES rows to avoid 3500+ round trips.
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`INSERT INTO %s
+		(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
+		 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
+		 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
+		 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
+		VALUES `, table))
+
 	slot := startSlot
-	for range leaderSlots {
-		err := api.DB.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
-				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
-				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
-				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-				 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
-			VALUES
-				(now(), now(), 'shredder-1', ?, '', '',
-				 '', 0, ?, '', '',
-				 ?, ?, 100, 64, 32, 32, 31, false, 0, 0, true)
-		`, publisherIP, dzUserPubkey, epoch, slot)
-		require.NoError(t, err)
+	first := true
+	writeRow := func(isLeader bool) {
+		if !first {
+			sb.WriteString(", ")
+		}
+		first = false
+		sb.WriteString(fmt.Sprintf(
+			"(now(), now(), 'shredder-1', '%s', '', '', '', 0, '%s', '', '', %d, %d, 100, 64, 32, 32, 31, false, 0, 0, %t)",
+			publisherIP, dzUserPubkey, epoch, slot, isLeader))
 		slot++
+	}
+
+	for range leaderSlots {
+		writeRow(true)
 	}
 	for range retransmitSlots {
-		err := api.DB.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
-				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
-				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
-				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
-				 max_data_index, needs_repair, first_seen_ns, last_seen_ns, is_scheduled_leader)
-			VALUES
-				(now(), now(), 'shredder-1', ?, '', '',
-				 '', 0, ?, '', '',
-				 ?, ?, 100, 64, 32, 32, 31, false, 0, 0, false)
-		`, publisherIP, dzUserPubkey, epoch, slot)
-		require.NoError(t, err)
-		slot++
+		writeRow(false)
 	}
+
+	err := api.DB.Exec(ctx, sb.String())
+	require.NoError(t, err)
 }
 
 func TestGetPublisherCheck_Empty(t *testing.T) {
