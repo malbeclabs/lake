@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +18,7 @@ func insertMulticastTestData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert metros
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
@@ -29,7 +28,7 @@ func insertMulticastTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
@@ -40,7 +39,7 @@ func insertMulticastTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert multicast group
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -50,7 +49,7 @@ func insertMulticastTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert multicast users: one publisher, one subscriber
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id, publishers, subscribers)
@@ -200,7 +199,7 @@ func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert rollup data for both tunnels (recent, within 15 min)
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO device_interface_rollup_5m
 			(bucket_ts, device_pk, intf, user_tunnel_id, ingested_at, avg_in_bps, avg_out_bps, avg_in_pps, avg_out_pps)
 		VALUES
@@ -290,7 +289,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 
 	// The publisher user has client_ip='10.0.0.1'
 	// Insert gossip node mapping: node pubkey -> gossip_ip = client_ip
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_gossip_nodes_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
 		VALUES
@@ -299,7 +298,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert leader schedule: slots include 100 (current), 90 (past), 110 (future)
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_leader_schedule_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, node_pubkey, epoch, slots, slot_count)
 		VALUES
@@ -308,7 +307,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert vote activity with cluster_slot=100 (matches a leader slot)
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO fact_solana_vote_account_activity (event_ts, cluster_slot) VALUES
 		(now(), 100)
 	`)
@@ -366,7 +365,7 @@ func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert traffic counter data for both tunnels (recent, within 1 hour)
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO fact_dz_device_interface_counters
 			(event_ts, device_pk, user_tunnel_id, in_octets_delta, out_octets_delta, delta_duration)
 		VALUES
@@ -446,7 +445,7 @@ func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert gossip node mapping
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_gossip_nodes_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
 		VALUES
@@ -455,7 +454,7 @@ func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert leader schedule: slots 80, 90, 110 — current slot 100 is NOT in the list
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_leader_schedule_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, node_pubkey, epoch, slots, slot_count)
 		VALUES
@@ -464,7 +463,7 @@ func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert vote activity with cluster_slot=100
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO fact_solana_vote_account_activity (event_ts, cluster_slot) VALUES
 		(now(), 100)
 	`)
@@ -503,7 +502,7 @@ func TestGetMulticastGroupMembers_ValidatorEnrichment(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert gossip node for publisher
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_gossip_nodes_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
 		VALUES
@@ -512,7 +511,7 @@ func TestGetMulticastGroupMembers_ValidatorEnrichment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert vote account for the gossip node
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_vote_accounts_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)

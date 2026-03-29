@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -17,7 +16,7 @@ func setupSearchTables(t *testing.T) {
 	ctx := t.Context()
 
 	// Create metros table
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_metros_current (
 			pk String,
 			code String,
@@ -27,7 +26,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create devices table
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_devices_current (
 			pk String,
 			code String,
@@ -39,7 +38,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create links table
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_links_current (
 			pk String,
 			code String,
@@ -50,7 +49,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create contributors table
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_contributors_current (
 			pk String,
 			code String,
@@ -60,7 +59,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create users table
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_users_current (
 			pk String,
 			kind String,
@@ -72,7 +71,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create validators table
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS solana_vote_accounts_current (
 			vote_pubkey String,
 			node_pubkey String,
@@ -83,7 +82,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create gossip nodes table
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS solana_gossip_nodes_current (
 			pubkey String,
 			version Nullable(String),
@@ -97,7 +96,7 @@ func insertSearchTestData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert metros
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_metros_current (pk, code, name) VALUES
 		('metro-nyc', 'NYC', 'New York'),
 		('metro-lax', 'LAX', 'Los Angeles'),
@@ -106,7 +105,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_devices_current (pk, code, device_type, metro_pk, public_ip) VALUES
 		('dev-1', 'NYC-CORE-01', 'router', 'metro-nyc', '10.0.0.1'),
 		('dev-2', 'NYC-EDGE-01', 'switch', 'metro-nyc', '10.0.0.2'),
@@ -115,7 +114,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert links
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, side_a_pk, side_z_pk) VALUES
 		('link-1', 'NYC-LAX-001', 'dev-1', 'dev-3'),
 		('link-2', 'NYC-CHI-001', 'dev-1', 'dev-2')
@@ -123,7 +122,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert contributors
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_contributors_current (pk, code, name) VALUES
 		('contrib-1', 'ACME', 'Acme Corporation'),
 		('contrib-2', 'GLOBEX', 'Globex Inc')
@@ -131,7 +130,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert validators
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports, epoch_vote_account) VALUES
 		('validator1pubkey1234567890abcdefghijk', 'node1pubkey', 1000000000000, 'true'),
 		('validator2pubkey1234567890abcdefghijk', 'node2pubkey', 500000000000, 'true')
@@ -139,7 +138,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert gossip nodes
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO solana_gossip_nodes_current (pubkey, version, gossip_ip) VALUES
 		('gossip1pubkey1234567890abcdefghijklm', '1.18.0', '192.168.1.1'),
 		('gossip2pubkey1234567890abcdefghijklm', '1.17.0', '192.168.1.2')

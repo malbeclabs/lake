@@ -19,9 +19,9 @@ func createShredderTables(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
 	db := "`" + config.GetShredderDB() + "`"
-	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
+	err := testAPI.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
 	require.NoError(t, err)
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.slot_feed_races (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3) DEFAULT now(),
@@ -40,7 +40,7 @@ func createShredderTables(t *testing.T) {
 		ORDER BY (node_id, slot, feed, loser_feed)
 	`, db))
 	require.NoError(t, err)
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3) DEFAULT now(),
@@ -82,7 +82,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 	const slot2 = 200 // non-DZ slot
 
 	// Create metros: SLC and FRA
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, code, name, latitude, longitude)
@@ -95,7 +95,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mark slot1 as a DZ-leader slot via publisher_shred_stats
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.publisher_shred_stats
 			(event_ts, host, publisher_ip, client_ip, node_pubkey, vote_pubkey,
 			 activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -112,7 +112,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
 	// slot1: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds (DZ-leader slot)
 	// slot2: only turbine + jito (no DZ) — tests completeness calculation
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
 			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
 		VALUES
@@ -131,7 +131,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 
 	// Insert lead-time rows (loser_feed != '') — pairwise: winner vs specific loser
 	// For slot1 on slc-qa-bm1: dz beat turbine and jito
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
 			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, lead_time_p50_ms, lead_time_p95_ms)
 		VALUES

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +18,7 @@ func TestCreateWorkflowRun(t *testing.T) {
 
 	// Create a session first (required for foreign key)
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -44,7 +43,7 @@ func TestUpdateWorkflowCheckpoint(t *testing.T) {
 
 	// Create session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -80,7 +79,7 @@ func TestCompleteWorkflowRun(t *testing.T) {
 
 	// Create session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -116,7 +115,7 @@ func TestFailWorkflowRun(t *testing.T) {
 
 	// Create session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -144,7 +143,7 @@ func TestCancelWorkflowRun(t *testing.T) {
 
 	// Create session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -179,7 +178,7 @@ func TestGetRunningWorkflowForSession(t *testing.T) {
 
 	// Create session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -217,7 +216,7 @@ func TestGetLatestWorkflowForSession(t *testing.T) {
 
 	// Create session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -245,13 +244,13 @@ func TestGetIncompleteWorkflows(t *testing.T) {
 	ctx := t.Context()
 
 	// Clean up any existing workflows from other tests
-	_, err := config.PgPool.Exec(ctx, "DELETE FROM workflow_runs")
+	_, err := testAPI.PgPool.Exec(ctx, "DELETE FROM workflow_runs")
 	require.NoError(t, err)
 
 	// Create sessions and workflows
 	for i := 0; i < 3; i++ {
 		sessionID := uuid.New()
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := testAPI.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, name, content)
 			VALUES ($1, 'chat', 'Test Session', '[]')
 		`, sessionID)
@@ -278,7 +277,7 @@ func TestGetWorkflow_HTTPHandler(t *testing.T) {
 
 	// Create session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -332,7 +331,7 @@ func TestGetWorkflowForSession_HTTPHandler(t *testing.T) {
 
 	// Create session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -362,7 +361,7 @@ func TestGetWorkflowForSession_NoWorkflow(t *testing.T) {
 
 	// Create session without workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -384,7 +383,7 @@ func TestGetWorkflowForSession_RunningOnly(t *testing.T) {
 
 	// Create session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)

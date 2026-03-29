@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -21,7 +20,7 @@ func seedValidatorData(t *testing.T) {
 	ctx := t.Context()
 
 	// Vote account
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_solana_vote_accounts_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_solana_vote_accounts_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
 		VALUES
@@ -29,7 +28,7 @@ func seedValidatorData(t *testing.T) {
 		 'vote1', 100, 'node1', 1000000000000, 'true', 5)`))
 
 	// Gossip node
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_solana_gossip_nodes_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_solana_gossip_nodes_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
 		VALUES
@@ -37,13 +36,13 @@ func seedValidatorData(t *testing.T) {
 		 'node1', 100, '1.2.3.4', 8001, '', 0, '2.0.0')`))
 
 	// Block production fact with recent data
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_solana_block_production
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_solana_block_production
 		(epoch, event_ts, ingested_at, leader_identity_pubkey, leader_slots_assigned_cum, blocks_produced_cum)
 		VALUES
 		(100, now() - INTERVAL 30 MINUTE, now(), 'node1', 100, 95)`))
 
 	// GeoIP record
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_geoip_records_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_geoip_records_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 ip, asn, asn_org, city, region, country, latitude, longitude)
 		VALUES

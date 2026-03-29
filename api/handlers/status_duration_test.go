@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,7 +12,7 @@ import (
 func setupIssueDurationTables(t *testing.T) {
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_links_current (
 			pk String,
 			code String,
@@ -32,7 +31,7 @@ func setupIssueDurationTables(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS fact_dz_device_link_latency (
 			event_ts DateTime,
 			link_pk String,
@@ -102,7 +101,7 @@ func insertLatencySamples(t *testing.T, linkPK string, bucketStart time.Time, n 
 			rtt = 5000
 			loss = 0
 		}
-		err := config.DB.Exec(ctx,
+		err := testAPI.DB.Exec(ctx,
 			`INSERT INTO fact_dz_device_link_latency (event_ts, link_pk, rtt_us, loss) VALUES (?, ?, ?, ?)`,
 			ts, linkPK, rtt, loss)
 		require.NoError(t, err)
@@ -112,7 +111,7 @@ func insertLatencySamples(t *testing.T, linkPK string, bucketStart time.Time, n 
 func queryIssueStart(t *testing.T, linkCode string) (time.Time, bool) {
 	t.Helper()
 	ctx := t.Context()
-	rows, err := config.DB.Query(ctx, issueStartQuery,
+	rows, err := testAPI.DB.Query(ctx, issueStartQuery,
 		[]string{linkCode}, lossThreshold, lossThreshold, lossThreshold, lossThreshold)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -132,7 +131,7 @@ func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -182,7 +181,7 @@ func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -223,7 +222,7 @@ func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -266,7 +265,7 @@ func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -296,7 +295,7 @@ func TestIssueDuration_NoIssueReturnsNoResults(t *testing.T) {
 	setupIssueDurationTables(t)
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/malbeclabs/lake/api/config"
+
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -352,7 +353,7 @@ func TestMCPHandler_ExecuteSQL_EmptyResults(t *testing.T) {
 
 	// Create a simple test table
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_mcp_table (id Int32, name String) ENGINE = Memory`)
+	err := testAPI.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_mcp_table (id Int32, name String) ENGINE = Memory`)
 	require.NoError(t, err)
 
 	handler, sessionID := mcpSession(t)
@@ -397,9 +398,9 @@ func TestMCPHandler_ExecuteSQL_WithData(t *testing.T) {
 	apitesting.SetSequentialFallback(t)
 
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_mcp_data (id Int32, name String) ENGINE = Memory`)
+	err := testAPI.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_mcp_data (id Int32, name String) ENGINE = Memory`)
 	require.NoError(t, err)
-	err = config.DB.Exec(ctx, `INSERT INTO test_mcp_data VALUES (1, 'alice'), (2, 'bob')`)
+	err = testAPI.DB.Exec(ctx, `INSERT INTO test_mcp_data VALUES (1, 'alice'), (2, 'bob')`)
 	require.NoError(t, err)
 
 	handler, sessionID := mcpSession(t)
@@ -537,7 +538,7 @@ func TestMCPHandler_GetSchema(t *testing.T) {
 
 	// Create a test table so schema has something to return
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_schema_table (id Int32) ENGINE = Memory`)
+	err := testAPI.DB.Exec(ctx, `CREATE TABLE IF NOT EXISTS test_schema_table (id Int32) ENGINE = Memory`)
 	require.NoError(t, err)
 
 	handler, sessionID := mcpSession(t)

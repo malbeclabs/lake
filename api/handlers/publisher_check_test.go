@@ -19,9 +19,9 @@ import (
 func createPublisherShredStatsTable(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.GetShredderDB()))
+	err := testAPI.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.GetShredderDB()))
 	require.NoError(t, err)
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3),
@@ -58,7 +58,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	createPublisherShredStatsTable(t)
 
 	// Create the bebop multicast group
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -69,7 +69,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create devices and metros
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
@@ -81,7 +81,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, code, name, latitude, longitude)
@@ -97,7 +97,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	// - dzuser1: publishing (has shred stats), on ams1
 	// - dzuser2: publishing (has shred stats), on nyc1
 	// - dzuser3: connected but NOT publishing (no shred stats), on ams1
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
@@ -112,7 +112,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Gossip nodes: map client IPs to node pubkeys
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_gossip_nodes_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
@@ -127,7 +127,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Vote accounts: map node pubkeys to vote pubkeys and stake
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_vote_accounts_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
@@ -142,7 +142,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validators.app: client name/version lookup by vote account
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_validatorsapp_validators_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 account, name, vote_account, software_version, software_client, software_client_id,
@@ -164,7 +164,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Shred stats: only dzuser1 and dzuser2 are publishing (dzuser3 is NOT)
-	err = config.DB.Exec(ctx, fmt.Sprintf(`
+	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -190,7 +190,7 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 	ctx := t.Context()
 	slot := startSlot
 	for range leaderSlots {
-		err := config.DB.Exec(ctx, fmt.Sprintf(`
+		err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -205,7 +205,7 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 		slot++
 	}
 	for range retransmitSlots {
-		err := config.DB.Exec(ctx, fmt.Sprintf(`
+		err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
 			INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -228,7 +228,7 @@ func TestGetPublisherCheck_Empty(t *testing.T) {
 
 	// Create bebop group but no users
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -393,7 +393,7 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 
 	// Insert duplicate rows from a second shredder host for dzuser1's slots.
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, fmt.Sprintf(`
+	err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -455,7 +455,7 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 
 	// Insert an old slot (slot 1) that should be excluded when querying last 500 slots
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, fmt.Sprintf(`
+	err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -549,7 +549,7 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 	ctx := t.Context()
 
 	// Create bebop group
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -560,7 +560,7 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create four publishers to test each threshold scenario
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)

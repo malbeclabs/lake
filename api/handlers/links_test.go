@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +18,7 @@ func insertLinksTestData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert metros
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name, latitude, longitude) VALUES
 		('metro-nyc', now(), now(), generateUUIDv4(), 0, 1, 'metro-nyc', 'NYC', 'New York', 0, 0),
@@ -28,7 +27,7 @@ func insertLinksTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, metro_pk, public_ip, contributor_pk, max_users) VALUES
 		('dev-nyc-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-nyc-1', 'NYC-CORE-01', 'up', 'router', 'metro-nyc', '10.0.0.1', '', 0),
@@ -38,7 +37,7 @@ func insertLinksTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert contributors
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'CONTRIB1', 'Contributor One')
@@ -46,7 +45,7 @@ func insertLinksTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert links
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, link_type, bandwidth_bps, side_a_pk, side_z_pk, contributor_pk, committed_rtt_ns, tunnel_net, side_a_iface_name, side_z_iface_name, committed_jitter_ns, isis_delay_override_ns) VALUES
 		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'NYC-LAX-001', 'up', 'backbone', 10000000000, 'dev-nyc-1', 'dev-lax-1', 'contrib-1', 3000000, '', '', '', 0, 0),
@@ -244,13 +243,13 @@ func setupLinkHealthData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert link rollup data (recent bucket so links are not "dark")
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples, z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples) VALUES
 		(now() - INTERVAL 5 MINUTE, 'link-1', now(), 1500.0, 2000.0, 0.0, 100, 1500.0, 2000.0, 0.0, 100),
 		(now() - INTERVAL 5 MINUTE, 'link-2', now(), 500.0, 800.0, 0.05, 100, 500.0, 800.0, 0.05, 100)
 	`)
 	require.NoError(t, err)
-	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
+	require.NoError(t, testAPI.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
 }
 
 func TestGetLinkHealth_Empty(t *testing.T) {
@@ -356,13 +355,13 @@ func TestGetLinkHealth_IsDownForcesCritical(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert rollup data: link-1 healthy, link-2 is_down (100% loss)
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples, z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples) VALUES
 		(now() - INTERVAL 5 MINUTE, 'link-1', now(), 1500.0, 2000.0, 0.0, 100, 1500.0, 2000.0, 0.0, 100),
 		(now() - INTERVAL 5 MINUTE, 'link-2', now(), 500.0, 800.0, 100.0, 100, 500.0, 800.0, 100.0, 100)
 	`)
 	require.NoError(t, err)
-	require.NoError(t, config.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
+	require.NoError(t, testAPI.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()

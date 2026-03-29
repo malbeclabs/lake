@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/api/config"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -129,11 +129,9 @@ func TestExecuteCypher_InvalidRequestBody(t *testing.T) {
 
 func TestExecuteCypher_NoNeo4j(t *testing.T) {
 	// Don't set up Neo4j - test graceful fallback
-	oldClient := config.Neo4jClient
-	config.Neo4jClient = nil
+	oldClient := testAPI.Neo4jClient
 	testAPI.Neo4jClient = nil
-	oldAPIClient := testAPI.Neo4jClient
-	defer func() { config.Neo4jClient = oldClient; testAPI.Neo4jClient = oldAPIClient }()
+	defer func() { testAPI.Neo4jClient = oldClient }()
 
 	reqBody := handlers.CypherQueryRequest{
 		Query: "MATCH (n) RETURN n",

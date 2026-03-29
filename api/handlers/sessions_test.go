@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +26,7 @@ func createTestAccount(t *testing.T, ctx context.Context) *handlers.Account {
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
 	account.WalletAddress = &walletAddr
 
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, $2, $3, $4)
 	`, account.ID, account.AccountType, account.WalletAddress, account.IsActive)
@@ -170,7 +169,7 @@ func TestGetSession_Owner(t *testing.T) {
 
 	// Create a session directly in DB
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content, account_id)
 		VALUES ($1, 'chat', 'Test Session', '[]', $2)
 	`, sessionID, account.ID)
@@ -216,7 +215,7 @@ func TestGetSession_Forbidden(t *testing.T) {
 
 	// Create a session owned by owner
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content, account_id)
 		VALUES ($1, 'chat', 'Test Session', '[]', $2)
 	`, sessionID, owner.ID)
@@ -242,7 +241,7 @@ func TestUpdateSession(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content, account_id)
 		VALUES ($1, 'chat', 'Original Name', '[]', $2)
 	`, sessionID, account.ID)
@@ -279,7 +278,7 @@ func TestDeleteSession(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content, account_id)
 		VALUES ($1, 'chat', 'Test Session', '[]', $2)
 	`, sessionID, account.ID)
@@ -296,7 +295,7 @@ func TestDeleteSession(t *testing.T) {
 
 	// Verify session is deleted
 	var count int
-	err = config.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE id = $1", sessionID).Scan(&count)
+	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE id = $1", sessionID).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -309,7 +308,7 @@ func TestListSessions_Pagination(t *testing.T) {
 
 	// Create 5 sessions
 	for i := 0; i < 5; i++ {
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := testAPI.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, name, content, account_id)
 			VALUES ($1, 'chat', $2, '[]', $3)
 		`, uuid.New(), "Session "+string(rune('A'+i)), account.ID)
@@ -354,13 +353,13 @@ func TestListSessions_TypeFilter(t *testing.T) {
 	account := createTestAccount(t, ctx)
 
 	// Create chat and query sessions
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, content, account_id)
 		VALUES ($1, 'chat', '[]', $2)
 	`, uuid.New(), account.ID)
 	require.NoError(t, err)
 
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, content, account_id)
 		VALUES ($1, 'query', '[]', $2)
 	`, uuid.New(), account.ID)
@@ -404,7 +403,7 @@ func TestBatchGetSessions(t *testing.T) {
 	ids := make([]uuid.UUID, 3)
 	for i := 0; i < 3; i++ {
 		ids[i] = uuid.New()
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := testAPI.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, content, account_id)
 			VALUES ($1, 'chat', '[]', $2)
 		`, ids[i], account.ID)

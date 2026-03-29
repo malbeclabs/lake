@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
+	"github.com/malbeclabs/lake/api/config"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +20,7 @@ func TestGetMetroConnectivity_FiltersMetrosWithoutMaxUsers(t *testing.T) {
 
 	// Insert devices into dim_dz_devices_history - NYC has max_users > 0, LAX does not
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -69,7 +69,7 @@ func TestGetMetroConnectivity_IncludesMetrosWithMaxUsers(t *testing.T) {
 
 	// Insert devices - both metros have max_users > 0
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -122,7 +122,7 @@ func TestGetMetroConnectivity_Empty(t *testing.T) {
 
 	// No devices with max_users > 0
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users

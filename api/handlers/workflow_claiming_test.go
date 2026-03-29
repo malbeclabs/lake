@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +16,7 @@ func TestClaimIncompleteWorkflow_SingleWorkflow(t *testing.T) {
 
 	// Create a session first (required for foreign key)
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -44,7 +43,7 @@ func TestClaimIncompleteWorkflow_AlreadyClaimed(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -74,7 +73,7 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -91,7 +90,7 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 	require.NotNil(t, claimed1)
 
 	// Simulate stale claim by backdating claimed_at and updated_at
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET claimed_at = NOW() - INTERVAL '10 minutes',
 		    updated_at = NOW() - INTERVAL '10 minutes'
@@ -114,7 +113,7 @@ func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -131,7 +130,7 @@ func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
 	require.NotNil(t, claimed1)
 
 	// Backdate claimed_at but keep updated_at recent (simulates active progress)
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET claimed_at = NOW() - INTERVAL '10 minutes',
 		    updated_at = NOW()
@@ -152,7 +151,7 @@ func TestClaimIncompleteWorkflow_CompletedNotClaimable(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -178,7 +177,7 @@ func TestClaimIncompleteWorkflow_FailedNotClaimable(t *testing.T) {
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
@@ -206,7 +205,7 @@ func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
 	var workflowIDs []uuid.UUID
 	for i := 0; i < 3; i++ {
 		sessionID := uuid.New()
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := testAPI.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, name, content)
 			VALUES ($1, 'chat', 'Test Session', '[]')
 		`, sessionID)
@@ -244,7 +243,7 @@ func TestClaimIncompleteWorkflow_ConcurrentClaims(t *testing.T) {
 
 	// Create a session and workflow
 	sessionID := uuid.New()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)

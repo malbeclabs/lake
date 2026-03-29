@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -21,26 +20,26 @@ import (
 func seedDashboardData(t *testing.T) {
 	ctx := t.Context()
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt'),
 		('metro-2', now(), now(), generateUUIDv4(), 0, 2, 'metro-2', 'AMS', 'Amsterdam')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp'),
 		('contrib-2', now(), now(), generateUUIDv4(), 0, 2, 'contrib-2', 'BETA', 'Beta Inc')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
 		VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0),
 		('dev-2', now(), now(), generateUUIDv4(), 0, 2, 'dev-2', 'active', 'router', 'ROUTER-AMS-1', '', 'contrib-2', 'metro-2', 0)`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
 		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
@@ -52,7 +51,7 @@ func seedDashboardData(t *testing.T) {
 	// Device 1: Port-Channel1000 on 100Gbps WAN link — 3 rollup buckets
 	// Device 2: Ethernet1/1 on 10Gbps PNI link — 3 rollup buckets
 	// Rates pre-computed from original raw deltas: rate = octets_delta * 8 / delta_duration
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -100,7 +99,7 @@ func seedDashboardData(t *testing.T) {
 	// Add more "normal" low-traffic buckets so spike detection works.
 	// With 10 total buckets, the P50 stays near the low value and the
 	// high bucket from the original seed becomes a spike (>2x P50).
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -123,7 +122,7 @@ func seedDashboardData(t *testing.T) {
 		CROSS JOIN numbers(7) AS n`))
 
 	// Also seed raw fact table for sub-5m bucket queries (same data as rollup)
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta)
 		VALUES
 		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 300000000000, 200000000000, 30.0, 0, 0),
@@ -387,23 +386,23 @@ func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 func seedTrafficTypeData(t *testing.T) {
 	ctx := t.Context()
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
 		VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0)`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
 		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
@@ -412,7 +411,7 @@ func seedTrafficTypeData(t *testing.T) {
 		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'active', '', '', 'contrib-1', '', '', '', '', 'WAN', 0, 0, 100000000000, 0)`))
 
 	// Users: tunnel_id 42 = ibrl kind, tunnel_id 99 = validator kind
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_users_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_users_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id)
 		VALUES
@@ -422,7 +421,7 @@ func seedTrafficTypeData(t *testing.T) {
 	// Helper for rollup column list
 	// Link interface: Ethernet1 on link-1 (3 buckets with varying traffic)
 	// Rates: 100G*8/30=26.67G, 200G*8/30=53.33G, 50G*8/30=13.33G
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -448,7 +447,7 @@ func seedTrafficTypeData(t *testing.T) {
 
 	// Tunnel interface for user 42 (ibrl): Tunnel100 (3 buckets)
 	// Rates: 50G*8/30=13.33G, 100G*8/30=26.67G, 25G*8/30=6.67G
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -474,7 +473,7 @@ func seedTrafficTypeData(t *testing.T) {
 
 	// Tunnel interface for user 99 (validator): Tunnel200 (3 buckets)
 	// Rates: 20G*8/30=5.33G, 40G*8/30=10.67G, 10G*8/30=2.67G
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -500,7 +499,7 @@ func seedTrafficTypeData(t *testing.T) {
 
 	// Other interface: Loopback0, no link_pk, no user_tunnel_id (3 buckets)
 	// Rates: 10G*8/30=2.67G, 30G*8/30=8G, 5G*8/30=1.33G
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -527,7 +526,7 @@ func seedTrafficTypeData(t *testing.T) {
 	// Add more "normal" low-traffic buckets so spike detection works.
 	// With 10 total buckets, the P50 stays near the low value and the
 	// high bucket from above becomes a spike (>2x P50).
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -554,7 +553,7 @@ func seedTrafficTypeData(t *testing.T) {
 		CROSS JOIN numbers(7) AS n`))
 
 	// Also seed raw fact table for sub-5m bucket queries
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
 		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL),
@@ -1143,25 +1142,25 @@ func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 func seedHealthData(t *testing.T) {
 	ctx := t.Context()
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt'),
 		('metro-2', now(), now(), generateUUIDv4(), 0, 2, 'metro-2', 'AMS', 'Amsterdam')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp')`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
 		VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0),
 		('dev-2', now(), now(), generateUUIDv4(), 0, 2, 'dev-2', 'active', 'router', 'ROUTER-AMS-1', '', 'contrib-1', 'metro-2', 0)`))
 
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
 		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
@@ -1172,7 +1171,7 @@ func seedHealthData(t *testing.T) {
 	// dev-1 Ethernet1: has errors and discards (link interface) — 2 rollup buckets
 	// Bucket 1: in_errors=10, out_errors=5, in_discards=3, out_discards=2, in_fcs_errors=1
 	// Bucket 2: in_errors=20, out_errors=10, carrier_transitions=2
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_errors, out_errors, in_discards, out_discards, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -1192,7 +1191,7 @@ func seedHealthData(t *testing.T) {
 		 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`))
 
 	// dev-2 Ethernet2: has carrier transitions only (no link)
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_errors, out_errors, in_discards, out_discards, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -1207,7 +1206,7 @@ func seedHealthData(t *testing.T) {
 		 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`))
 
 	// dev-1 Loopback0: zero errors (should not appear in results)
-	require.NoError(t, config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_errors, out_errors, in_discards, out_discards, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,

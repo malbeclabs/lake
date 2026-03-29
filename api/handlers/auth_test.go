@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +33,7 @@ func TestGetAuthNonce(t *testing.T) {
 	// Verify nonce is stored in database
 	ctx := context.Background()
 	var count int
-	err = config.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", response.Nonce).Scan(&count)
+	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", response.Nonce).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
@@ -44,7 +43,7 @@ func TestGetAuthNonce_CleansExpired(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert an expired nonce
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO auth_nonces (nonce, expires_at) VALUES ($1, NOW() - INTERVAL '1 hour')
 	`, "expired_nonce_123")
 	require.NoError(t, err)
@@ -58,7 +57,7 @@ func TestGetAuthNonce_CleansExpired(t *testing.T) {
 
 	// Verify expired nonce is cleaned up
 	var count int
-	err = config.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", "expired_nonce_123").Scan(&count)
+	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", "expired_nonce_123").Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -110,7 +109,7 @@ func TestPostAuthLogout(t *testing.T) {
 
 	// Create a session token
 	tokenHash := "test_token_hash_" + uuid.New().String()
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, $2, NOW() + INTERVAL '1 day')
 	`, account.ID, tokenHash)
@@ -131,7 +130,7 @@ func TestGetUsageQuota_Anonymous(t *testing.T) {
 	ctx := t.Context()
 
 	// Set up anonymous limit
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES (NULL, 5)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 5
@@ -162,7 +161,7 @@ func TestGetUsageQuota_Authenticated(t *testing.T) {
 	account := createTestAccount(t, ctx)
 
 	// Set up wallet limit
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES ('wallet', 20)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 20
@@ -191,7 +190,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 	// Create account
 	accountID := uuid.New()
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, 'wallet', $2, true)
 	`, accountID, walletAddr)
@@ -209,7 +208,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 	// and test the retrieval logic
 	realTokenHash := "0a4d55a8d778e5022fab701977c5d840bbc486d0" // This won't match, so let's skip actual token validation
 
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, $2, NOW() + INTERVAL '1 day')
 	`, accountID, realTokenHash)
@@ -233,14 +232,14 @@ func TestGetAccountByToken_Expired(t *testing.T) {
 	// Create account
 	accountID := uuid.New()
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, 'wallet', $2, true)
 	`, accountID, walletAddr)
 	require.NoError(t, err)
 
 	// Create expired session
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, 'expired_session_hash', NOW() - INTERVAL '1 day')
 	`, accountID)
@@ -259,14 +258,14 @@ func TestGetAccountByToken_InactiveAccount(t *testing.T) {
 	// Create inactive account
 	accountID := uuid.New()
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, 'wallet', $2, false)
 	`, accountID, walletAddr)
 	require.NoError(t, err)
 
 	// Create valid session for inactive account
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, 'inactive_account_hash', NOW() + INTERVAL '1 day')
 	`, accountID)
@@ -285,7 +284,7 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 	account := createTestAccount(t, ctx)
 
 	// Set up wallet limit
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES ('wallet', 10)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 10
@@ -293,7 +292,7 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	// Record some usage
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_daily (account_id, date, question_count)
 		VALUES ($1, CURRENT_DATE, 3)
 	`, account.ID)
@@ -331,7 +330,7 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 	ctx := t.Context()
 
 	// Set up anonymous limit
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES (NULL, 5)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 5
@@ -341,7 +340,7 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 	testIP := "192.168.1.100"
 
 	// Record some usage for this IP
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_daily (ip_address, date, question_count)
 		VALUES ($1, CURRENT_DATE, 2)
 	`, testIP)
@@ -363,7 +362,7 @@ func TestMigrateAnonymousSessions(t *testing.T) {
 
 	// Create anonymous sessions
 	for i := 0; i < 3; i++ {
-		_, err := config.PgPool.Exec(ctx, `
+		_, err := testAPI.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, content, anonymous_id)
 			VALUES ($1, 'chat', '[]', $2)
 		`, uuid.New(), anonymousID)
@@ -372,13 +371,13 @@ func TestMigrateAnonymousSessions(t *testing.T) {
 
 	// Verify anonymous sessions exist
 	var anonCount int
-	err := config.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
+	err := testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
 	require.NoError(t, err)
 	assert.Equal(t, 3, anonCount)
 
 	// The migrateAnonymousSessions function is internal, but we can test the effect
 	// by creating a session with anonymous_id then updating it to have account_id
-	_, err = config.PgPool.Exec(ctx, `
+	_, err = testAPI.PgPool.Exec(ctx, `
 		UPDATE sessions
 		SET account_id = $1, anonymous_id = NULL
 		WHERE anonymous_id = $2 AND account_id IS NULL
@@ -387,12 +386,12 @@ func TestMigrateAnonymousSessions(t *testing.T) {
 
 	// Verify sessions are now owned by account
 	var accountCount int
-	err = config.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE account_id = $1", account.ID).Scan(&accountCount)
+	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE account_id = $1", account.ID).Scan(&accountCount)
 	require.NoError(t, err)
 	assert.Equal(t, 3, accountCount)
 
 	// Verify anonymous_id is cleared
-	err = config.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
+	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
 	require.NoError(t, err)
 	assert.Equal(t, 0, anonCount)
 }
@@ -461,7 +460,7 @@ func TestNextMidnightUTC(t *testing.T) {
 	ctx := t.Context()
 
 	// Set up anonymous limit
-	_, err := config.PgPool.Exec(ctx, `
+	_, err := testAPI.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES (NULL, 5)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 5

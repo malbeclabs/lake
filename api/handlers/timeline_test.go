@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -1199,13 +1198,13 @@ func tsFormat(ts time.Time) string {
 }
 
 func insertVoteAccountHistory(t *testing.T, votePubkey, nodePubkey string, stake int64, ts time.Time) {
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', %d, 'true', 0)`,
 		votePubkey, tsFormat(ts), tsFormat(ts), uuid.New().String(), votePubkey, nodePubkey, stake)))
 }
 
 func insertGossipNodeHistory(t *testing.T, pubkey, gossipIP string, ts time.Time) {
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', 0, '', 0, '')`,
 		pubkey, tsFormat(ts), tsFormat(ts), uuid.New().String(), pubkey, gossipIP)))
 }
@@ -1214,7 +1213,7 @@ func insertGossipNodeHistory(t *testing.T, pubkey, gossipIP string, ts time.Time
 // far-future timestamp so it appears as the "current" row via the view.
 func insertCurrentVoteAccount(t *testing.T, votePubkey, nodePubkey string, stake int64) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', %d, 'true', 0)`,
 		votePubkey, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), votePubkey, nodePubkey, stake)))
 }
@@ -1223,7 +1222,7 @@ func insertCurrentVoteAccount(t *testing.T, votePubkey, nodePubkey string, stake
 // far-future timestamp so it appears as the "current" row via the view.
 func insertCurrentGossipNode(t *testing.T, pubkey, gossipIP string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', 0, '', 0, '')`,
 		pubkey, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pubkey, gossipIP)))
 }
@@ -1233,7 +1232,7 @@ func insertCurrentGossipNode(t *testing.T, pubkey, gossipIP string) {
 // The deleteTS should be within the query range to ensure queryVoteAccountChanges
 // properly detects the validator as "left".
 func deleteCurrentVoteAccount(t *testing.T, votePubkey string, deleteTS time.Time) {
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage) VALUES ('%s', '%s', '%s', '%s', 1, 0, '%s', 0, '', 0, '', 0)`,
 		votePubkey, tsFormat(deleteTS), tsFormat(deleteTS), uuid.New().String(), votePubkey)))
 }
@@ -1241,7 +1240,7 @@ func deleteCurrentVoteAccount(t *testing.T, votePubkey string, deleteTS time.Tim
 // deleteCurrentGossipNode inserts a deleted row into the history table at the
 // specified timestamp so the view excludes this entity.
 func deleteCurrentGossipNode(t *testing.T, pubkey string, deleteTS time.Time) {
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version) VALUES ('%s', '%s', '%s', '%s', 1, 0, '%s', 0, '', 0, '', 0, '')`,
 		pubkey, tsFormat(deleteTS), tsFormat(deleteTS), uuid.New().String(), pubkey)))
 }
@@ -1249,14 +1248,14 @@ func deleteCurrentGossipNode(t *testing.T, pubkey string, deleteTS time.Time) {
 func insertDZUserHistory(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
 	// Use unique attrs_hash per row so the timeline query detects attribute changes
 	attrsHash := uint64(ts.UnixMilli())
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, %d, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
 		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
 func insertDZUserHistoryDeleted(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
 	attrsHash := uint64(ts.UnixMilli())
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 1, %d, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
 		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
@@ -1266,7 +1265,7 @@ func insertDZUserHistoryDeleted(t *testing.T, pk, entityID, ownerPubkey, dzIP, d
 func insertDZUserCurrent(t *testing.T, pk, dzIP, status, ownerPubkey, devicePK string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
@@ -1276,7 +1275,7 @@ func insertDZUserCurrent(t *testing.T, pk, dzIP, status, ownerPubkey, devicePK s
 func insertDZContributorCurrent(t *testing.T, pk, code string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_contributors_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s')`,
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, code, code)))
 }
@@ -1286,7 +1285,7 @@ func insertDZContributorCurrent(t *testing.T, pk, code string) {
 func insertDZDeviceCurrent(t *testing.T, pk, code, contributorPK, metroPK string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
-	require.NoError(t, config.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 'active', '', '%s', '', '%s', '%s', 0)`,
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, code, contributorPK, metroPK)))
 }
@@ -2270,10 +2269,10 @@ func TestMinStakePct_NonValidatorPassThrough(t *testing.T) {
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Insert a device event via dim_dz_devices_history
-	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('dev-entity-1', '%s', '%s', '%s', 0, 1, 'dev-1', 'pending', 'router', 'DEV-001', '10.0.0.1', '', '', 0)`,
 		tsFormat(t1), tsFormat(t1), uuid.New().String())))
-	require.NoError(t, config.DB.Exec(ctx, fmt.Sprintf(
+	require.NoError(t, testAPI.DB.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('dev-entity-1', '%s', '%s', '%s', 0, 2, 'dev-1', 'activated', 'router', 'DEV-001', '10.0.0.1', '', '', 0)`,
 		tsFormat(t2), tsFormat(t2), uuid.New().String())))
 

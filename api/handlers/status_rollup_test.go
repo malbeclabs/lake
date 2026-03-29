@@ -14,7 +14,7 @@ import (
 func seedLinkRollup(t *testing.T, bucketTS time.Time, linkPK string, aAvg, zAvg, aLoss, zLoss float64, aSamples, zSamples uint32, status string, provisioning, isisDown bool) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `INSERT INTO link_rollup_5m (
+	err := testAPI.DB.Exec(ctx, `INSERT INTO link_rollup_5m (
 		bucket_ts, link_pk, ingested_at,
 		a_avg_rtt_us, a_min_rtt_us, a_p50_rtt_us, a_p90_rtt_us, a_p95_rtt_us, a_p99_rtt_us, a_max_rtt_us, a_loss_pct, a_samples,
 		z_avg_rtt_us, z_min_rtt_us, z_p50_rtt_us, z_p90_rtt_us, z_p95_rtt_us, z_p99_rtt_us, z_max_rtt_us, z_loss_pct, z_samples,
@@ -31,7 +31,7 @@ func seedLinkRollup(t *testing.T, bucketTS time.Time, linkPK string, aAvg, zAvg,
 func seedInterfaceRollup(t *testing.T, bucketTS time.Time, devicePK, intf, linkPK, linkSide string, inErrors, outErrors uint64, avgInBps float64, status string) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (
+	err := testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (
 		bucket_ts, device_pk, intf, ingested_at,
 		link_pk, link_side,
 		in_errors, out_errors, in_fcs_errors, in_discards, out_discards, carrier_transitions,
@@ -61,7 +61,7 @@ func seedLinkMetadata(t *testing.T, pk, code, linkType, contributorPK, sideAPK, 
 func seedLinkMetadataAt(t *testing.T, pk, code, linkType, contributorPK, sideAPK, sideZPK string, bandwidthBps, committedRttNs int64, status string, snapshotTS time.Time) {
 	t.Helper()
 	ctx := t.Context()
-	err := config.DB.Exec(ctx, `INSERT INTO dim_dz_links_history (
+	err := testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history (
 		entity_id, snapshot_ts, ingested_at, op_id, is_deleted,
 		pk, code, link_type, status, contributor_pk, side_a_pk, side_z_pk,
 		bandwidth_bps, committed_rtt_ns
@@ -77,7 +77,7 @@ func seedDeviceMetadata(t *testing.T, pk, code, deviceType, contributorPK, metro
 	t.Helper()
 	ctx := t.Context()
 	now := time.Now()
-	err := config.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history (
+	err := testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history (
 		entity_id, snapshot_ts, ingested_at, op_id, is_deleted,
 		pk, code, device_type, status, contributor_pk, metro_pk, max_users
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
@@ -90,7 +90,7 @@ func seedDeviceMetadata(t *testing.T, pk, code, deviceType, contributorPK, metro
 func seedMetro(t *testing.T, pk, code string) {
 	t.Helper()
 	now := time.Now()
-	err := config.DB.Exec(t.Context(), `INSERT INTO dim_dz_metros_history (
+	err := testAPI.DB.Exec(t.Context(), `INSERT INTO dim_dz_metros_history (
 		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, code
 	) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		pk, now, now, "00000000-0000-0000-0000-000000000003", uint8(0), pk, code,
@@ -101,7 +101,7 @@ func seedMetro(t *testing.T, pk, code string) {
 func seedContributor(t *testing.T, pk, code string) {
 	t.Helper()
 	now := time.Now()
-	err := config.DB.Exec(t.Context(), `INSERT INTO dim_dz_contributors_history (
+	err := testAPI.DB.Exec(t.Context(), `INSERT INTO dim_dz_contributors_history (
 		entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, code
 	) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		pk, now, now, "00000000-0000-0000-0000-000000000004", uint8(0), pk, code,
@@ -324,12 +324,12 @@ func TestLinkRollupVsRaw(t *testing.T) {
 	for i := range 20 {
 		ts := bucketTS.Add(time.Duration(i) * 10 * time.Second)
 		// Direction A: dev-a → dev-z, RTT 100-290us
-		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
 			(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			ts, ts, int64(1), int32(i), "dev-a", "dev-z", "link-1", int64(100+i*10), false))
 		// Direction Z: dev-z → dev-a, RTT 200-390us
-		require.NoError(t, config.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
 			(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 			ts, ts, int64(1), int32(20+i), "dev-z", "dev-a", "link-1", int64(200+i*10), false))

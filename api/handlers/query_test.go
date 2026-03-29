@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -23,7 +22,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 	ctx := t.Context()
 
 	// Create a test table
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS test_query_select (
 			id UInt64,
 			name String
@@ -32,7 +31,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert test data
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO test_query_select (id, name) VALUES (1, 'Alice'), (2, 'Bob')
 	`)
 	require.NoError(t, err)
@@ -321,7 +320,7 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 	ctx := t.Context()
 
 	// Create a test table with various types
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS test_json_safe (
 			id UInt64,
 			value Float64,
@@ -332,7 +331,7 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert test data
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO test_json_safe (id, value, ip, created)
 		VALUES (1, 3.14, '192.168.1.1', '2024-01-15 10:30:00')
 	`)
@@ -370,7 +369,7 @@ func TestExecuteQuery_EmptyResult(t *testing.T) {
 	ctx := t.Context()
 
 	// Create an empty table
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS test_empty (
 			id UInt64
 		) ENGINE = Memory

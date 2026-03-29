@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -18,7 +17,7 @@ import (
 func insertUserTestData(t *testing.T) {
 	ctx := t.Context()
 
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
@@ -26,7 +25,7 @@ func insertUserTestData(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_contributors_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
@@ -34,7 +33,7 @@ func insertUserTestData(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
@@ -43,7 +42,7 @@ func insertUserTestData(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id)
@@ -121,7 +120,7 @@ func TestGetUser_IsValidatorTrueWhenMatched(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert gossip node matching user's client_ip
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_gossip_nodes_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
 		VALUES
@@ -130,7 +129,7 @@ func TestGetUser_IsValidatorTrueWhenMatched(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert vote account matching the gossip node
-	err = config.DB.Exec(ctx, `
+	err = testAPI.DB.Exec(ctx, `
 		INSERT INTO dim_solana_vote_accounts_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
@@ -182,7 +181,7 @@ func TestGetUserTraffic_ReturnsData(t *testing.T) {
 	ctx := t.Context()
 
 	// Insert traffic counters for tunnel 501
-	err := config.DB.Exec(ctx, `
+	err := testAPI.DB.Exec(ctx, `
 		INSERT INTO fact_dz_device_interface_counters
 			(event_ts, device_pk, user_tunnel_id, in_octets_delta, out_octets_delta, in_pkts_delta, out_pkts_delta, delta_duration)
 		VALUES

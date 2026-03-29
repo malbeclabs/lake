@@ -41,7 +41,7 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 		"devnet":       "lake_devnet",
 		"testnet":      "lake_testnet",
 	}
-	config.SetDatabase("lake_mainnet")
+	testAPI.Database = "lake_mainnet"
 	// Sync testAPI with the new config
 	origAPIEnvDatabases := testAPI.EnvDatabases
 	origAPIDatabase := testAPI.Database
@@ -163,12 +163,12 @@ func TestRequireNeo4jMiddleware(t *testing.T) {
 
 	t.Run("returns 503 when Neo4jClient is nil", func(t *testing.T) {
 		t.Parallel()
-		origClient := config.Neo4jClient
+		origClient := testAPI.Neo4jClient
 		origAPIClient := testAPI.Neo4jClient
-		config.Neo4jClient = nil
+		testAPI.Neo4jClient = nil
 		testAPI.Neo4jClient = nil
 		t.Cleanup(func() {
-			config.Neo4jClient = origClient
+			testAPI.Neo4jClient = origClient
 			testAPI.Neo4jClient = origAPIClient
 		})
 
