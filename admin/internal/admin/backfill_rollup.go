@@ -17,6 +17,7 @@ type BackfillRollupConfig struct {
 	EndTime        time.Time
 	ChunkInterval  time.Duration
 	SourceDatabase string // if set, read source data from this database (e.g. remote proxy tables)
+	Network        string // DZ environment (e.g. "mainnet-beta", "testnet", "devnet")
 }
 
 // BackfillRollup starts the BackfillRollupWorkflow on Temporal.
@@ -54,7 +55,7 @@ func BackfillRollup(log *slog.Logger, cfg BackfillRollupConfig) error {
 	workflowID := fmt.Sprintf("rollup-backfill-%d", time.Now().Unix())
 	run, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
 		ID:        workflowID,
-		TaskQueue: rollup.TaskQueueForNetwork(""),
+		TaskQueue: rollup.TaskQueueForNetwork(cfg.Network),
 	}, rollup.BackfillRollupWorkflow, input)
 	if err != nil {
 		return fmt.Errorf("start backfill workflow: %w", err)

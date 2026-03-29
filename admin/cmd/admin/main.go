@@ -464,6 +464,7 @@ func run() error {
 			EndTime:        endTime,
 			ChunkInterval:  *chunkIntervalFlag,
 			SourceDatabase: *sourceDatabaseFlag,
+			Network:        *dzEnvFlag,
 		})
 	}
 
