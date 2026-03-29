@@ -41,27 +41,6 @@ type API struct {
 
 	// OnSlackInstallationChange is called when a Slack installation changes.
 	OnSlackInstallationChange func(teamID string)
-
-	// DatabaseFunc, if set, overrides Database with a dynamic lookup.
-	// Used in tests where the per-test database name is resolved via proxy.
-	DatabaseFunc    func() string
-	ShredderDBFunc  func() string
-}
-
-// database returns the current database name, using DatabaseFunc if set.
-func (a *API) database() string {
-	if a.DatabaseFunc != nil {
-		return a.DatabaseFunc()
-	}
-	return a.Database
-}
-
-// shredderDB returns the current shredder database name.
-func (a *API) shredderDB() string {
-	if a.ShredderDBFunc != nil {
-		return a.ShredderDBFunc()
-	}
-	return a.ShredderDB
 }
 
 // envDB returns the ClickHouse connection for the environment in the context.
@@ -79,12 +58,12 @@ func (a *API) DatabaseForEnvFromContext(ctx context.Context) string {
 	if db, ok := a.EnvDatabases[string(env)]; ok {
 		return db
 	}
-	return a.database()
+	return a.Database
 }
 
 // buildEnvContext returns the agent system prompt context for the given environment.
 func (a *API) buildEnvContext(env DZEnv) string {
-	return BuildEnvContext(env, a.database())
+	return BuildEnvContext(env, a.Database)
 }
 
 // neo4jSession creates a new Neo4j session.

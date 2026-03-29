@@ -4,15 +4,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func setupIssueDurationTables(t *testing.T) {
+func setupIssueDurationTables(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_links_current (
 			pk String,
 			code String,
@@ -31,7 +32,7 @@ func setupIssueDurationTables(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS fact_dz_device_link_latency (
 			event_ts DateTime,
 			link_pk String,
@@ -87,7 +88,7 @@ const lossThreshold = 1.0
 
 // insertLatencySamples inserts n latency samples in a 5-minute bucket starting at bucketStart.
 // If lossy is true, all samples have loss=1; otherwise loss=0 with normal RTT.
-func insertLatencySamples(t *testing.T, linkPK string, bucketStart time.Time, n int, lossy bool) {
+func insertLatencySamples(t *testing.T, api *handlers.API, linkPK string, bucketStart time.Time, n int, lossy bool) {
 	t.Helper()
 	ctx := t.Context()
 	for i := range n {
@@ -101,17 +102,17 @@ func insertLatencySamples(t *testing.T, linkPK string, bucketStart time.Time, n 
 			rtt = 5000
 			loss = 0
 		}
-		err := testAPI.DB.Exec(ctx,
+		err := api.DB.Exec(ctx,
 			`INSERT INTO fact_dz_device_link_latency (event_ts, link_pk, rtt_us, loss) VALUES (?, ?, ?, ?)`,
 			ts, linkPK, rtt, loss)
 		require.NoError(t, err)
 	}
 }
 
-func queryIssueStart(t *testing.T, linkCode string) (time.Time, bool) {
+func queryIssueStart(t *testing.T, api *handlers.API, linkCode string) (time.Time, bool) {
 	t.Helper()
 	ctx := t.Context()
-	rows, err := testAPI.DB.Query(ctx, issueStartQuery,
+	rows, err := api.DB.Query(ctx, issueStartQuery,
 		[]string{linkCode}, lossThreshold, lossThreshold, lossThreshold, lossThreshold)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -126,12 +127,11 @@ func queryIssueStart(t *testing.T, linkCode string) (time.Time, bool) {
 }
 
 func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupIssueDurationTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupIssueDurationTables(t, api)
 	ctx := t.Context()
 
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -152,20 +152,20 @@ func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
 	// T-5m:  lossy
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 
-	insertLatencySamples(t, "link-1", now.Add(-60*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-55*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-50*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-45*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-40*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-35*time.Minute), 5, false) // healthy (brief)
-	insertLatencySamples(t, "link-1", now.Add(-30*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-25*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-20*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-15*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-10*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-5*time.Minute), 5, true)   // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-60*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-55*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-50*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-45*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-40*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-35*time.Minute), 5, false) // healthy (brief)
+	insertLatencySamples(t, api, "link-1", now.Add(-30*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-25*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-20*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-15*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-10*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-5*time.Minute), 5, true)   // lossy
 
-	issueStart, found := queryIssueStart(t, "NYC-LAX-001")
+	issueStart, found := queryIssueStart(t, api, "NYC-LAX-001")
 	require.True(t, found, "should find an issue")
 
 	// The last sustained healthy period (3 consecutive healthy buckets) ends at T-50m.
@@ -176,12 +176,11 @@ func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
 }
 
 func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupIssueDurationTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupIssueDurationTables(t, api)
 	ctx := t.Context()
 
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -198,16 +197,16 @@ func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
 	// T-25m: lossy
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 
-	insertLatencySamples(t, "link-1", now.Add(-60*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-55*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-50*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-45*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-40*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-35*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-30*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-25*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-60*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-55*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-50*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-45*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-40*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-35*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-30*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-25*time.Minute), 5, true)  // lossy
 
-	issueStart, found := queryIssueStart(t, "NYC-LAX-001")
+	issueStart, found := queryIssueStart(t, api, "NYC-LAX-001")
 	require.True(t, found, "should find an issue")
 
 	// Last sustained healthy ends at T-40m, issue starts at T-40m + 5min = T-35m
@@ -217,12 +216,11 @@ func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
 }
 
 func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupIssueDurationTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupIssueDurationTables(t, api)
 	ctx := t.Context()
 
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -239,16 +237,16 @@ func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
 	// T-25m: lossy
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 
-	insertLatencySamples(t, "link-1", now.Add(-60*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-55*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-50*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-45*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-40*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-35*time.Minute), 5, false) // healthy
-	insertLatencySamples(t, "link-1", now.Add(-30*time.Minute), 5, true)  // lossy
-	insertLatencySamples(t, "link-1", now.Add(-25*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-60*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-55*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-50*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-45*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-40*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-35*time.Minute), 5, false) // healthy
+	insertLatencySamples(t, api, "link-1", now.Add(-30*time.Minute), 5, true)  // lossy
+	insertLatencySamples(t, api, "link-1", now.Add(-25*time.Minute), 5, true)  // lossy
 
-	issueStart, found := queryIssueStart(t, "NYC-LAX-001")
+	issueStart, found := queryIssueStart(t, api, "NYC-LAX-001")
 	require.True(t, found, "should find an issue")
 
 	// Only 2 consecutive healthy buckets at T-40m and T-35m — not enough to reset.
@@ -260,12 +258,11 @@ func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
 }
 
 func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupIssueDurationTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupIssueDurationTables(t, api)
 	ctx := t.Context()
 
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -274,13 +271,13 @@ func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
 	// All buckets are lossy — no healthy period at all
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 
-	insertLatencySamples(t, "link-1", now.Add(-30*time.Minute), 5, true)
-	insertLatencySamples(t, "link-1", now.Add(-25*time.Minute), 5, true)
-	insertLatencySamples(t, "link-1", now.Add(-20*time.Minute), 5, true)
-	insertLatencySamples(t, "link-1", now.Add(-15*time.Minute), 5, true)
-	insertLatencySamples(t, "link-1", now.Add(-10*time.Minute), 5, true)
+	insertLatencySamples(t, api, "link-1", now.Add(-30*time.Minute), 5, true)
+	insertLatencySamples(t, api, "link-1", now.Add(-25*time.Minute), 5, true)
+	insertLatencySamples(t, api, "link-1", now.Add(-20*time.Minute), 5, true)
+	insertLatencySamples(t, api, "link-1", now.Add(-15*time.Minute), 5, true)
+	insertLatencySamples(t, api, "link-1", now.Add(-10*time.Minute), 5, true)
 
-	issueStart, found := queryIssueStart(t, "NYC-LAX-001")
+	issueStart, found := queryIssueStart(t, api, "NYC-LAX-001")
 	require.True(t, found, "should find an issue")
 
 	// Falls back to earliest issue bucket
@@ -290,12 +287,11 @@ func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
 }
 
 func TestIssueDuration_NoIssueReturnsNoResults(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupIssueDurationTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupIssueDurationTables(t, api)
 	ctx := t.Context()
 
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, status, link_type) VALUES
 		('link-1', 'NYC-LAX-001', 'activated', 'WAN')
 	`)
@@ -304,11 +300,11 @@ func TestIssueDuration_NoIssueReturnsNoResults(t *testing.T) {
 	// All buckets healthy
 	now := time.Now().UTC().Truncate(5 * time.Minute)
 
-	insertLatencySamples(t, "link-1", now.Add(-20*time.Minute), 5, false)
-	insertLatencySamples(t, "link-1", now.Add(-15*time.Minute), 5, false)
-	insertLatencySamples(t, "link-1", now.Add(-10*time.Minute), 5, false)
-	insertLatencySamples(t, "link-1", now.Add(-5*time.Minute), 5, false)
+	insertLatencySamples(t, api, "link-1", now.Add(-20*time.Minute), 5, false)
+	insertLatencySamples(t, api, "link-1", now.Add(-15*time.Minute), 5, false)
+	insertLatencySamples(t, api, "link-1", now.Add(-10*time.Minute), 5, false)
+	insertLatencySamples(t, api, "link-1", now.Add(-5*time.Minute), 5, false)
 
-	_, found := queryIssueStart(t, "NYC-LAX-001")
+	_, found := queryIssueStart(t, api, "NYC-LAX-001")
 	assert.False(t, found, "should not find any issue when all buckets are healthy")
 }

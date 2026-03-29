@@ -14,11 +14,11 @@ import (
 
 func TestGetCatalog(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPIBare(t, testChDB)
 	ctx := t.Context()
 
 	// Create test tables
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS catalog_test_table (
 			id UInt64,
 			name String,
@@ -30,7 +30,7 @@ func TestGetCatalog(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetCatalog(rr, req)
+	api.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
@@ -56,11 +56,11 @@ func TestGetCatalog(t *testing.T) {
 
 func TestGetCatalog_ExcludesStaging(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPIBare(t, testChDB)
 	ctx := t.Context()
 
 	// Create a staging table (should be excluded)
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS stg_excluded_table (
 			id UInt64
 		) ENGINE = Memory
@@ -68,7 +68,7 @@ func TestGetCatalog_ExcludesStaging(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a normal table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS normal_table (
 			id UInt64
 		) ENGINE = Memory
@@ -78,7 +78,7 @@ func TestGetCatalog_ExcludesStaging(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetCatalog(rr, req)
+	api.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -104,11 +104,11 @@ func TestGetCatalog_ExcludesStaging(t *testing.T) {
 
 func TestGetCatalog_IdentifiesViews(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPIBare(t, testChDB)
 	ctx := t.Context()
 
 	// Create a base table
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS catalog_view_base (
 			id UInt64,
 			value Float64
@@ -117,7 +117,7 @@ func TestGetCatalog_IdentifiesViews(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a view
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE VIEW IF NOT EXISTS catalog_test_view AS
 		SELECT id, value * 2 as doubled_value
 		FROM catalog_view_base
@@ -127,7 +127,7 @@ func TestGetCatalog_IdentifiesViews(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetCatalog(rr, req)
+	api.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -154,11 +154,11 @@ func TestGetCatalog_IdentifiesViews(t *testing.T) {
 
 func TestGetCatalog_ColumnsOrdered(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPIBare(t, testChDB)
 	ctx := t.Context()
 
 	// Create a table with multiple columns
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS catalog_column_order (
 			first_col UInt64,
 			second_col String,
@@ -171,7 +171,7 @@ func TestGetCatalog_ColumnsOrdered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetCatalog(rr, req)
+	api.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -195,14 +195,14 @@ func TestGetCatalog_ColumnsOrdered(t *testing.T) {
 
 func TestGetCatalog_EmptyDatabase(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPIBare(t, testChDB)
 
 	// Don't create any tables - test with empty database
 
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetCatalog(rr, req)
+	api.GetCatalog(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

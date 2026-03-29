@@ -139,7 +139,7 @@ type DBSchemaFetcher struct {
 
 // NewDBSchemaFetcher creates a new DBSchemaFetcher.
 func (a *API) NewDBSchemaFetcher() *DBSchemaFetcher {
-	return &DBSchemaFetcher{db: a.DB, database: a.database()}
+	return &DBSchemaFetcher{db: a.DB, database: a.Database}
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.

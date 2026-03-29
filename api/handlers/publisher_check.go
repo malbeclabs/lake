@@ -161,7 +161,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 	// Multicast group PK for edge-solana-shreds (formerly "bebop").
 	const shredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
 
-	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.shredderDB())
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.ShredderDB)
 
 	var perSlotWhere string
 	var args []any

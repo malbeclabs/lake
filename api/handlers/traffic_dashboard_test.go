@@ -17,29 +17,29 @@ import (
 // seedDashboardData inserts dimension and rollup data for testing dashboard queries.
 // Two devices in different metros with different link types, each with 3 recent 5-minute buckets.
 // Uses _history tables (SCD2 pattern) since the schema comes from migrations.
-func seedDashboardData(t *testing.T) {
+func seedDashboardData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt'),
 		('metro-2', now(), now(), generateUUIDv4(), 0, 2, 'metro-2', 'AMS', 'Amsterdam')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp'),
 		('contrib-2', now(), now(), generateUUIDv4(), 0, 2, 'contrib-2', 'BETA', 'Beta Inc')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
 		VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0),
 		('dev-2', now(), now(), generateUUIDv4(), 0, 2, 'dev-2', 'active', 'router', 'ROUTER-AMS-1', '', 'contrib-2', 'metro-2', 0)`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
 		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
@@ -51,7 +51,7 @@ func seedDashboardData(t *testing.T) {
 	// Device 1: Port-Channel1000 on 100Gbps WAN link — 3 rollup buckets
 	// Device 2: Ethernet1/1 on 10Gbps PNI link — 3 rollup buckets
 	// Rates pre-computed from original raw deltas: rate = octets_delta * 8 / delta_duration
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -99,7 +99,7 @@ func seedDashboardData(t *testing.T) {
 	// Add more "normal" low-traffic buckets so spike detection works.
 	// With 10 total buckets, the P50 stays near the low value and the
 	// high bucket from the original seed becomes a spike (>2x P50).
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -122,7 +122,7 @@ func seedDashboardData(t *testing.T) {
 		CROSS JOIN numbers(7) AS n`))
 
 	// Also seed raw fact table for sub-5m bucket queries (same data as rollup)
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta)
 		VALUES
 		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Port-Channel1000', 'link-1', 300000000000, 200000000000, 30.0, 0, 0),
@@ -137,8 +137,8 @@ func seedDashboardData(t *testing.T) {
 
 func TestTrafficDashboardStress(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name    string
@@ -156,11 +156,10 @@ func TestTrafficDashboardStress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardStress(rr, req)
+			api.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -188,12 +187,12 @@ func TestTrafficDashboardStress(t *testing.T) {
 
 func TestTrafficDashboardStress_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardStress(rr, req)
+	api.GetTrafficDashboardStress(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -206,8 +205,8 @@ func TestTrafficDashboardStress_Empty(t *testing.T) {
 
 func TestTrafficDashboardTop(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -231,11 +230,10 @@ func TestTrafficDashboardTop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardTop(rr, req)
+			api.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -252,12 +250,12 @@ func TestTrafficDashboardTop(t *testing.T) {
 
 func TestTrafficDashboardTop_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardTop(rr, req)
+	api.GetTrafficDashboardTop(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -268,8 +266,8 @@ func TestTrafficDashboardTop_Empty(t *testing.T) {
 
 func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -283,11 +281,10 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardTop(rr, req)
+			api.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -299,8 +296,8 @@ func TestTrafficDashboardTop_WithDimensionFilters(t *testing.T) {
 
 func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name      string
@@ -317,11 +314,10 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardTop(rr, req)
+			api.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -334,8 +330,8 @@ func TestTrafficDashboardTop_WithIntfFilter(t *testing.T) {
 
 func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -348,11 +344,10 @@ func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardStress(rr, req)
+			api.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -364,13 +359,13 @@ func TestTrafficDashboardStress_WithIntfFilter(t *testing.T) {
 
 func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h&intf=Port-Channel1000", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardBurstiness(rr, req)
+	api.GetTrafficDashboardBurstiness(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -383,26 +378,26 @@ func TestTrafficDashboardBurstiness_WithIntfFilter(t *testing.T) {
 // seedTrafficTypeData inserts data with different traffic types: link, tunnel, and other.
 // Multiple rollup buckets per interface to produce meaningful percentile spreads for burstiness.
 // Uses _history tables (SCD2 pattern) since the schema comes from migrations.
-func seedTrafficTypeData(t *testing.T) {
+func seedTrafficTypeData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
 		VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0)`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
 		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
@@ -411,7 +406,7 @@ func seedTrafficTypeData(t *testing.T) {
 		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'active', '', '', 'contrib-1', '', '', '', '', 'WAN', 0, 0, 100000000000, 0)`))
 
 	// Users: tunnel_id 42 = ibrl kind, tunnel_id 99 = validator kind
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_users_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_users_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id)
 		VALUES
@@ -421,7 +416,7 @@ func seedTrafficTypeData(t *testing.T) {
 	// Helper for rollup column list
 	// Link interface: Ethernet1 on link-1 (3 buckets with varying traffic)
 	// Rates: 100G*8/30=26.67G, 200G*8/30=53.33G, 50G*8/30=13.33G
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -447,7 +442,7 @@ func seedTrafficTypeData(t *testing.T) {
 
 	// Tunnel interface for user 42 (ibrl): Tunnel100 (3 buckets)
 	// Rates: 50G*8/30=13.33G, 100G*8/30=26.67G, 25G*8/30=6.67G
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -473,7 +468,7 @@ func seedTrafficTypeData(t *testing.T) {
 
 	// Tunnel interface for user 99 (validator): Tunnel200 (3 buckets)
 	// Rates: 20G*8/30=5.33G, 40G*8/30=10.67G, 10G*8/30=2.67G
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -499,7 +494,7 @@ func seedTrafficTypeData(t *testing.T) {
 
 	// Other interface: Loopback0, no link_pk, no user_tunnel_id (3 buckets)
 	// Rates: 10G*8/30=2.67G, 30G*8/30=8G, 5G*8/30=1.33G
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -526,7 +521,7 @@ func seedTrafficTypeData(t *testing.T) {
 	// Add more "normal" low-traffic buckets so spike detection works.
 	// With 10 total buckets, the P50 stays near the low value and the
 	// high bucket from above becomes a spike (>2x P50).
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_discards, out_discards, in_errors, out_errors, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -553,7 +548,7 @@ func seedTrafficTypeData(t *testing.T) {
 		CROSS JOIN numbers(7) AS n`))
 
 	// Also seed raw fact table for sub-5m bucket queries
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters
 		(event_ts, ingested_at, device_pk, intf, link_pk, in_octets_delta, out_octets_delta, delta_duration, in_discards_delta, out_discards_delta, user_tunnel_id)
 		VALUES
 		(now() - INTERVAL 30 MINUTE, now(), 'dev-1', 'Ethernet1', 'link-1', 100000000000, 50000000000, 30.0, 0, 0, NULL),
@@ -572,8 +567,8 @@ func seedTrafficTypeData(t *testing.T) {
 
 func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	tests := []struct {
 		name      string
@@ -609,11 +604,10 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardTop(rr, req)
+			api.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -631,8 +625,8 @@ func TestTrafficDashboardTop_WithTrafficType(t *testing.T) {
 
 func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	tests := []struct {
 		name  string
@@ -646,11 +640,10 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardStress(rr, req)
+			api.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -662,8 +655,8 @@ func TestTrafficDashboardStress_WithTrafficType(t *testing.T) {
 
 func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	tests := []struct {
 		name      string
@@ -699,11 +692,10 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardBurstiness(rr, req)
+			api.GetTrafficDashboardBurstiness(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -729,8 +721,8 @@ func TestTrafficDashboardBurstiness_WithTrafficType(t *testing.T) {
 
 func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	tests := []struct {
 		name  string
@@ -744,11 +736,10 @@ func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardStress(rr, req)
+			api.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -760,8 +751,8 @@ func TestTrafficDashboardStress_WithUserKind(t *testing.T) {
 
 func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	tests := []struct {
 		name      string
@@ -792,11 +783,10 @@ func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/top"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardTop(rr, req)
+			api.GetTrafficDashboardTop(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -818,8 +808,8 @@ func TestTrafficDashboardTop_WithUserKind(t *testing.T) {
 
 func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	tests := []struct {
 		name      string
@@ -845,11 +835,10 @@ func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardBurstiness(rr, req)
+			api.GetTrafficDashboardBurstiness(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -867,15 +856,15 @@ func TestTrafficDashboardBurstiness_WithUserKind(t *testing.T) {
 
 func TestTrafficDashboardHealth_WithUserKind(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedTrafficTypeData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedTrafficTypeData(t, api)
 
 	// Health endpoint should succeed with user_kind filter (even if no events match,
 	// the query must not error out due to column resolution)
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=tunnel&user_kind=ibrl", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardHealth(rr, req)
+	api.GetTrafficDashboardHealth(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -887,8 +876,8 @@ func TestTrafficDashboardHealth_WithUserKind(t *testing.T) {
 
 func TestTrafficDashboardDrilldown(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// Use dynamic timestamps that cover the seeded data (now-30m to now)
 	now := time.Now()
@@ -908,11 +897,10 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardDrilldown(rr, req)
+			api.GetTrafficDashboardDrilldown(rr, req)
 
 			require.Equal(t, tt.status, rr.Code, "body: %s", rr.Body.String())
 
@@ -928,12 +916,12 @@ func TestTrafficDashboardDrilldown(t *testing.T) {
 
 func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown?time_range=1h&device_pk=nonexistent", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardDrilldown(rr, req)
+	api.GetTrafficDashboardDrilldown(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -946,8 +934,8 @@ func TestTrafficDashboardDrilldown_Empty(t *testing.T) {
 
 func TestTrafficDashboardBurstiness(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -964,11 +952,10 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardBurstiness(rr, req)
+			api.GetTrafficDashboardBurstiness(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -986,8 +973,8 @@ func TestTrafficDashboardBurstiness(t *testing.T) {
 
 func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name      string
@@ -1044,11 +1031,10 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetFieldValues(rr, req)
+			api.GetFieldValues(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1066,8 +1052,8 @@ func TestFieldValues_ScopedByDashboardFilters(t *testing.T) {
 
 func TestFieldValues_WithTimeRange(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name      string
@@ -1099,11 +1085,10 @@ func TestFieldValues_WithTimeRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/field-values"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetFieldValues(rr, req)
+			api.GetFieldValues(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1121,12 +1106,12 @@ func TestFieldValues_WithTimeRange(t *testing.T) {
 
 func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardBurstiness(rr, req)
+	api.GetTrafficDashboardBurstiness(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1139,28 +1124,28 @@ func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 
 // seedHealthData inserts data with nonzero error/discard/carrier values for health testing.
 // Uses _history tables (SCD2 pattern) since the schema comes from migrations.
-func seedHealthData(t *testing.T) {
+func seedHealthData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('metro-1', now(), now(), generateUUIDv4(), 0, 1, 'metro-1', 'FRA', 'Frankfurt'),
 		('metro-2', now(), now(), generateUUIDv4(), 0, 2, 'metro-2', 'AMS', 'Amsterdam')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name)
 		VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'ACME', 'Acme Corp')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
 		VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'active', 'router', 'ROUTER-FRA-1', '', 'contrib-1', 'metro-1', 0),
 		('dev-2', now(), now(), generateUUIDv4(), 0, 2, 'dev-2', 'active', 'router', 'ROUTER-AMS-1', '', 'contrib-1', 'metro-2', 0)`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pk, status, code, tunnel_net, contributor_pk, side_a_pk, side_z_pk,
 		 side_a_iface_name, side_z_iface_name, link_type, committed_rtt_ns,
@@ -1171,7 +1156,7 @@ func seedHealthData(t *testing.T) {
 	// dev-1 Ethernet1: has errors and discards (link interface) — 2 rollup buckets
 	// Bucket 1: in_errors=10, out_errors=5, in_discards=3, out_discards=2, in_fcs_errors=1
 	// Bucket 2: in_errors=20, out_errors=10, carrier_transitions=2
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_errors, out_errors, in_discards, out_discards, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -1191,7 +1176,7 @@ func seedHealthData(t *testing.T) {
 		 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`))
 
 	// dev-2 Ethernet2: has carrier transitions only (no link)
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_errors, out_errors, in_discards, out_discards, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -1206,7 +1191,7 @@ func seedHealthData(t *testing.T) {
 		 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`))
 
 	// dev-1 Loopback0: zero errors (should not appear in results)
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m
 		(bucket_ts, device_pk, intf, ingested_at, link_pk, link_side, user_tunnel_id, user_pk,
 		 in_errors, out_errors, in_discards, out_discards, in_fcs_errors, carrier_transitions,
 		 avg_in_bps, min_in_bps, p50_in_bps, p90_in_bps, p95_in_bps, p99_in_bps, max_in_bps,
@@ -1223,15 +1208,14 @@ func seedHealthData(t *testing.T) {
 
 func TestTrafficDashboardHealth(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedHealthData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedHealthData(t, api)
 
 	t.Run("default", func(t *testing.T) {
-		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
 		rr := httptest.NewRecorder()
 
-		testAPI.GetTrafficDashboardHealth(rr, req)
+		api.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1246,11 +1230,10 @@ func TestTrafficDashboardHealth(t *testing.T) {
 	})
 
 	t.Run("sort_total_errors", func(t *testing.T) {
-		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_errors&dir=desc", nil)
 		rr := httptest.NewRecorder()
 
-		testAPI.GetTrafficDashboardHealth(rr, req)
+		api.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1262,11 +1245,10 @@ func TestTrafficDashboardHealth(t *testing.T) {
 	})
 
 	t.Run("sort_total_carrier_transitions", func(t *testing.T) {
-		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&sort=total_carrier_transitions&dir=desc", nil)
 		rr := httptest.NewRecorder()
 
-		testAPI.GetTrafficDashboardHealth(rr, req)
+		api.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1278,11 +1260,10 @@ func TestTrafficDashboardHealth(t *testing.T) {
 	})
 
 	t.Run("intf_type_link_only", func(t *testing.T) {
-		apitesting.BindTest(t)
 		req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h&intf_type=link", nil)
 		rr := httptest.NewRecorder()
 
-		testAPI.GetTrafficDashboardHealth(rr, req)
+		api.GetTrafficDashboardHealth(rr, req)
 
 		require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1296,12 +1277,12 @@ func TestTrafficDashboardHealth(t *testing.T) {
 
 func TestTrafficDashboardHealth_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/health?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficDashboardHealth(rr, req)
+	api.GetTrafficDashboardHealth(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code)
 
@@ -1314,14 +1295,14 @@ func TestTrafficDashboardHealth_Empty(t *testing.T) {
 
 func TestGetTrafficData_RawPath(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// time_range=1h → 10s bucket → raw fact table
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=1h&agg=max", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficData(rr, req)
+	api.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1334,14 +1315,14 @@ func TestGetTrafficData_RawPath(t *testing.T) {
 
 func TestGetTrafficData_RollupPath(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// time_range=12h → 10m bucket → rollup table
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=12h&agg=max", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficData(rr, req)
+	api.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1354,14 +1335,14 @@ func TestGetTrafficData_RollupPath(t *testing.T) {
 
 func TestGetTrafficData_ExplicitBucket_Raw(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// Explicit 30s bucket → raw fact table
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=3h&bucket=30+SECOND", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficData(rr, req)
+	api.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1372,14 +1353,14 @@ func TestGetTrafficData_ExplicitBucket_Raw(t *testing.T) {
 
 func TestGetTrafficData_ExplicitBucket_Rollup(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// Explicit 30m bucket → rollup table
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/data?time_range=3h&bucket=30+MINUTE", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetTrafficData(rr, req)
+	api.GetTrafficData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1390,8 +1371,8 @@ func TestGetTrafficData_ExplicitBucket_Rollup(t *testing.T) {
 
 func TestGetTrafficData_Packets(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -1403,11 +1384,10 @@ func TestGetTrafficData_Packets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficData(rr, req)
+			api.GetTrafficData(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1419,8 +1399,8 @@ func TestGetTrafficData_Packets(t *testing.T) {
 
 func TestGetTrafficData_AvgAgg(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -1432,11 +1412,10 @@ func TestGetTrafficData_AvgAgg(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/data"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficData(rr, req)
+			api.GetTrafficData(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1450,14 +1429,14 @@ func TestGetTrafficData_AvgAgg(t *testing.T) {
 
 func TestGetDiscardsData_RawPath(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// time_range=1h → raw fact table
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/discards?time_range=1h", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetDiscardsData(rr, req)
+	api.GetDiscardsData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1467,14 +1446,14 @@ func TestGetDiscardsData_RawPath(t *testing.T) {
 
 func TestGetDiscardsData_RollupPath(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	// time_range=12h → rollup table
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/discards?time_range=12h", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetDiscardsData(rr, req)
+	api.GetDiscardsData(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1486,8 +1465,8 @@ func TestGetDiscardsData_RollupPath(t *testing.T) {
 
 func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -1505,11 +1484,10 @@ func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/stress"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardStress(rr, req)
+			api.GetTrafficDashboardStress(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -1524,8 +1502,8 @@ func TestTrafficDashboardStress_RawVsRollup(t *testing.T) {
 
 func TestTrafficDashboardDrilldown_RawVsRollup(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedDashboardData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
 
 	tests := []struct {
 		name  string
@@ -1539,11 +1517,10 @@ func TestTrafficDashboardDrilldown_RawVsRollup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/drilldown"+tt.query, nil)
 			rr := httptest.NewRecorder()
 
-			testAPI.GetTrafficDashboardDrilldown(rr, req)
+			api.GetTrafficDashboardDrilldown(rr, req)
 
 			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 

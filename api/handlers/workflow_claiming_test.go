@@ -6,30 +6,31 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/handlers"
+	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestClaimIncompleteWorkflow_SingleWorkflow(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session first (required for foreign key)
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
 	// Create a workflow run
-	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 	require.NotNil(t, run)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed, err := api.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.Equal(t, run.ID, claimed.ID)
@@ -38,59 +39,59 @@ func TestClaimIncompleteWorkflow_SingleWorkflow(t *testing.T) {
 }
 
 func TestClaimIncompleteWorkflow_AlreadyClaimed(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
 	// Create a workflow run
-	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed1, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed1, err := api.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed1)
 	assert.Equal(t, run.ID, claimed1.ID)
 
 	// Server 2 tries to claim - should get nothing (workflow already claimed)
 	server2ID := "server-2"
-	claimed2, err := testAPI.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
+	claimed2, err := api.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed2, "second server should not be able to claim already-claimed workflow")
 }
 
 func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
 	// Create a workflow run
-	_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	_, err = api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed1, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed1, err := api.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed1)
 
 	// Simulate stale claim by backdating claimed_at and updated_at
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET claimed_at = NOW() - INTERVAL '10 minutes',
 		    updated_at = NOW() - INTERVAL '10 minutes'
@@ -100,7 +101,7 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 
 	// Server 2 should now be able to steal the workflow (stale claim)
 	server2ID := "server-2"
-	claimed2, err := testAPI.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
+	claimed2, err := api.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed2, "second server should steal stale-claimed workflow")
 	assert.Equal(t, claimed1.ID, claimed2.ID)
@@ -108,29 +109,29 @@ func TestClaimIncompleteWorkflow_StaleClaim(t *testing.T) {
 }
 
 func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
 	// Create a workflow run
-	_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	_, err = api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Server 1 claims the workflow
 	server1ID := "server-1"
-	claimed1, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+	claimed1, err := api.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, claimed1)
 
 	// Backdate claimed_at but keep updated_at recent (simulates active progress)
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		UPDATE workflow_runs
 		SET claimed_at = NOW() - INTERVAL '10 minutes',
 		    updated_at = NOW()
@@ -140,78 +141,78 @@ func TestClaimIncompleteWorkflow_ActiveClaimWithProgress(t *testing.T) {
 
 	// Server 2 should NOT be able to steal (updated_at is recent)
 	server2ID := "server-2"
-	claimed2, err := testAPI.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
+	claimed2, err := api.ClaimIncompleteWorkflow(ctx, server2ID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed2, "second server should not steal workflow with recent progress")
 }
 
 func TestClaimIncompleteWorkflow_CompletedNotClaimable(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
 	// Create and immediately complete a workflow
-	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
-	err = testAPI.CompleteWorkflowRun(ctx, run.ID, "test answer", &handlers.WorkflowCheckpoint{})
+	err = api.CompleteWorkflowRun(ctx, run.ID, "test answer", &handlers.WorkflowCheckpoint{})
 	require.NoError(t, err)
 
 	// Try to claim - should get nothing (workflow is completed)
 	serverID := "server-1"
-	claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
+	claimed, err := api.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed, "completed workflow should not be claimable")
 }
 
 func TestClaimIncompleteWorkflow_FailedNotClaimable(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
 	// Create and immediately fail a workflow
-	run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	run, err := api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
-	err = testAPI.FailWorkflowRun(ctx, run.ID, "test error")
+	err = api.FailWorkflowRun(ctx, run.ID, "test error")
 	require.NoError(t, err)
 
 	// Try to claim - should get nothing (workflow is failed)
 	serverID := "server-1"
-	claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
+	claimed, err := api.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
 	require.NoError(t, err)
 	assert.Nil(t, claimed, "failed workflow should not be claimable")
 }
 
 func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create sessions and workflows
 	var workflowIDs []uuid.UUID
 	for i := 0; i < 3; i++ {
 		sessionID := uuid.New()
-		_, err := testAPI.PgPool.Exec(ctx, `
+		_, err := api.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, name, content)
 			VALUES ($1, 'chat', 'Test Session', '[]')
 		`, sessionID)
 		require.NoError(t, err)
 
-		run, err := testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+		run, err := api.CreateWorkflowRun(ctx, sessionID, "test question")
 		require.NoError(t, err)
 		workflowIDs = append(workflowIDs, run.ID)
 
@@ -223,7 +224,7 @@ func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
 	server1ID := "server-1"
 	var claimedByServer1 []uuid.UUID
 	for {
-		claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
+		claimed, err := api.ClaimIncompleteWorkflow(ctx, server1ID, 5*time.Minute)
 		require.NoError(t, err)
 		if claimed == nil {
 			break
@@ -238,18 +239,18 @@ func TestClaimIncompleteWorkflow_MultipleWorkflows(t *testing.T) {
 }
 
 func TestClaimIncompleteWorkflow_ConcurrentClaims(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create a session and workflow
 	sessionID := uuid.New()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO sessions (id, type, name, content)
 		VALUES ($1, 'chat', 'Test Session', '[]')
 	`, sessionID)
 	require.NoError(t, err)
 
-	_, err = testAPI.CreateWorkflowRun(ctx, sessionID, "test question")
+	_, err = api.CreateWorkflowRun(ctx, sessionID, "test question")
 	require.NoError(t, err)
 
 	// Simulate concurrent claims from multiple servers
@@ -259,7 +260,7 @@ func TestClaimIncompleteWorkflow_ConcurrentClaims(t *testing.T) {
 	for i := 0; i < numServers; i++ {
 		go func(serverNum int) {
 			serverID := uuid.NewString()
-			claimed, err := testAPI.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
+			claimed, err := api.ClaimIncompleteWorkflow(ctx, serverID, 5*time.Minute)
 			if err != nil {
 				t.Logf("server %d error: %v", serverNum, err)
 			}

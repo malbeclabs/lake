@@ -16,11 +16,11 @@ import (
 
 // seedValidatorData inserts minimal dimension and fact data for validator queries.
 // Uses _history tables (SCD2 pattern) since the schema comes from migrations.
-func seedValidatorData(t *testing.T) {
+func seedValidatorData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Vote account
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_solana_vote_accounts_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_solana_vote_accounts_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
 		VALUES
@@ -28,7 +28,7 @@ func seedValidatorData(t *testing.T) {
 		 'vote1', 100, 'node1', 1000000000000, 'true', 5)`))
 
 	// Gossip node
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_solana_gossip_nodes_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_solana_gossip_nodes_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
 		VALUES
@@ -36,13 +36,13 @@ func seedValidatorData(t *testing.T) {
 		 'node1', 100, '1.2.3.4', 8001, '', 0, '2.0.0')`))
 
 	// Block production fact with recent data
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_solana_block_production
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_solana_block_production
 		(epoch, event_ts, ingested_at, leader_identity_pubkey, leader_slots_assigned_cum, blocks_produced_cum)
 		VALUES
 		(100, now() - INTERVAL 30 MINUTE, now(), 'node1', 100, 95)`))
 
 	// GeoIP record
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dim_geoip_records_history
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dim_geoip_records_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 		 ip, asn, asn_org, city, region, country, latitude, longitude)
 		VALUES
@@ -52,13 +52,13 @@ func seedValidatorData(t *testing.T) {
 
 func TestGetValidators(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedValidatorData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedValidatorData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetValidators(rr, req)
+	api.GetValidators(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -78,12 +78,12 @@ func TestGetValidators(t *testing.T) {
 
 func TestGetValidators_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetValidators(rr, req)
+	api.GetValidators(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -95,8 +95,8 @@ func TestGetValidators_Empty(t *testing.T) {
 
 func TestGetValidator(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	seedValidatorData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedValidatorData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators/vote1", nil)
 	rctx := chi.NewRouteContext()
@@ -105,7 +105,7 @@ func TestGetValidator(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 
-	testAPI.GetValidator(rr, req)
+	api.GetValidator(rr, req)
 
 	require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
 
@@ -121,7 +121,7 @@ func TestGetValidator(t *testing.T) {
 
 func TestGetValidator_NotFound(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/validators/nonexistent", nil)
 	rctx := chi.NewRouteContext()
@@ -130,7 +130,7 @@ func TestGetValidator_NotFound(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 
-	testAPI.GetValidator(rr, req)
+	api.GetValidator(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }

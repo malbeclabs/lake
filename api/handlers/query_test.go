@@ -18,11 +18,11 @@ import (
 
 func TestExecuteQuery_Select(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
 	// Create a test table
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS test_query_select (
 			id UInt64,
 			name String
@@ -31,7 +31,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert test data
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO test_query_select (id, name) VALUES (1, 'Alice'), (2, 'Bob')
 	`)
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -61,7 +61,7 @@ func TestExecuteQuery_Select(t *testing.T) {
 
 func TestExecuteQuery_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
 		Query: "",
@@ -72,14 +72,14 @@ func TestExecuteQuery_Empty(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestExecuteQuery_WhitespaceOnly(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
 		Query: "   \t\n  ",
@@ -90,14 +90,14 @@ func TestExecuteQuery_WhitespaceOnly(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestExecuteQuery_InvalidSQL(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
 		Query: "SELECTERINO * FROMONO nonexistent",
@@ -108,7 +108,7 @@ func TestExecuteQuery_InvalidSQL(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	// Should return 200 OK with error in response body
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -121,20 +121,20 @@ func TestExecuteQuery_InvalidSQL(t *testing.T) {
 
 func TestExecuteQuery_InvalidRequestBody(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", bytes.NewReader([]byte("not json")))
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestExecuteQuery_TrimsTrailingSemicolon(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
 		Query: "SELECT 1;",
@@ -145,7 +145,7 @@ func TestExecuteQuery_TrimsTrailingSemicolon(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -316,11 +316,11 @@ func toJSONSafeWrapper(v any) any {
 
 func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
 	// Create a test table with various types
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS test_json_safe (
 			id UInt64,
 			value Float64,
@@ -331,7 +331,7 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert test data
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO test_json_safe (id, value, ip, created)
 		VALUES (1, 3.14, '192.168.1.1', '2024-01-15 10:30:00')
 	`)
@@ -347,7 +347,7 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -365,11 +365,11 @@ func TestExecuteQuery_JSONSafeConversion(t *testing.T) {
 
 func TestExecuteQuery_EmptyResult(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
 	// Create an empty table
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS test_empty (
 			id UInt64
 		) ENGINE = Memory
@@ -386,7 +386,7 @@ func TestExecuteQuery_EmptyResult(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	testAPI.ExecuteQuery(rr, req)
+	api.ExecuteQuery(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

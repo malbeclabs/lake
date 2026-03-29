@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func insertDevicesTestData(t *testing.T) {
+func insertDevicesTestData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Insert contributors
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'CONTRIB1', 'Contributor One')
@@ -26,7 +26,7 @@ func insertDevicesTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert metros
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name, latitude, longitude) VALUES
 		('metro-nyc', now(), now(), generateUUIDv4(), 0, 1, 'metro-nyc', 'NYC', 'New York', 40.7128, -74.0060),
@@ -35,7 +35,7 @@ func insertDevicesTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, contributor_pk, metro_pk, public_ip, max_users) VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'NYC-CORE-01', 'up', 'router', 'contrib-1', 'metro-nyc', '10.0.0.1', 100),
@@ -45,7 +45,7 @@ func insertDevicesTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert users
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip, tunnel_id) VALUES
 		('user-1', now(), now(), generateUUIDv4(), 0, 1, 'user-1', 'activated', 'dev-1', 'validator', 'pubkey1', '192.168.1.1', '192.168.1.1', 0),
@@ -58,11 +58,11 @@ func insertDevicesTestData(t *testing.T) {
 
 func TestGetDevices_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -75,13 +75,13 @@ func TestGetDevices_Empty(t *testing.T) {
 
 func TestGetDevices_ReturnsAllDevices(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -94,13 +94,13 @@ func TestGetDevices_ReturnsAllDevices(t *testing.T) {
 
 func TestGetDevices_IncludesMetroInfo(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -124,13 +124,13 @@ func TestGetDevices_IncludesMetroInfo(t *testing.T) {
 
 func TestGetDevices_IncludesUserCounts(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -152,14 +152,14 @@ func TestGetDevices_IncludesUserCounts(t *testing.T) {
 
 func TestGetDevices_Pagination(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	// First page
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -174,7 +174,7 @@ func TestGetDevices_Pagination(t *testing.T) {
 	// Second page
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/devices?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
@@ -185,13 +185,13 @@ func TestGetDevices_Pagination(t *testing.T) {
 
 func TestGetDevices_OrderedByCode(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDevices(rr, req)
+	api.GetDevices(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -207,9 +207,9 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 
 func TestGetDevice_NotFound(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/nonexistent", nil)
 	rctx := chi.NewRouteContext()
@@ -217,14 +217,14 @@ func TestGetDevice_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetDevice(rr, req)
+	api.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 func TestGetDevice_MissingPK(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/", nil)
 	rctx := chi.NewRouteContext()
@@ -232,16 +232,16 @@ func TestGetDevice_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetDevice(rr, req)
+	api.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestGetDevice_ReturnsDetails(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-1", nil)
 	rctx := chi.NewRouteContext()
@@ -249,7 +249,7 @@ func TestGetDevice_ReturnsDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetDevice(rr, req)
+	api.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -271,9 +271,9 @@ func TestGetDevice_ReturnsDetails(t *testing.T) {
 
 func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-1", nil)
 	rctx := chi.NewRouteContext()
@@ -281,7 +281,7 @@ func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetDevice(rr, req)
+	api.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -295,9 +295,9 @@ func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 
 func TestGetDevice_HandlesNullContributor(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertDevicesTestData(t)
+	insertDevicesTestData(t, api)
 
 	// dev-2 has no contributor
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-2", nil)
@@ -306,7 +306,7 @@ func TestGetDevice_HandlesNullContributor(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetDevice(rr, req)
+	api.GetDevice(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

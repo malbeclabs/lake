@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func insertMetrosTestData(t *testing.T) {
+func insertMetrosTestData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Insert metros
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name, latitude, longitude) VALUES
 		('metro-nyc', now(), now(), generateUUIDv4(), 0, 1, 'metro-nyc', 'NYC', 'New York', 40.7128, -74.0060),
@@ -28,7 +28,7 @@ func insertMetrosTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, metro_pk, public_ip, contributor_pk, max_users) VALUES
 		('dev-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-1', 'NYC-CORE-01', 'up', 'router', 'metro-nyc', '10.0.0.1', '', 0),
@@ -39,7 +39,7 @@ func insertMetrosTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert users
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_pk, kind, owner_pubkey, client_ip, dz_ip, tunnel_id) VALUES
 		('user-1', now(), now(), generateUUIDv4(), 0, 1, 'user-1', 'activated', 'dev-1', 'validator', 'pubkey1', '192.168.1.1', '192.168.1.1', 0),
@@ -52,11 +52,11 @@ func insertMetrosTestData(t *testing.T) {
 
 func TestGetMetros_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -69,13 +69,13 @@ func TestGetMetros_Empty(t *testing.T) {
 
 func TestGetMetros_ReturnsAllMetros(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -93,13 +93,13 @@ func TestGetMetros_ReturnsAllMetros(t *testing.T) {
 
 func TestGetMetros_IncludesDeviceCounts(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -121,13 +121,13 @@ func TestGetMetros_IncludesDeviceCounts(t *testing.T) {
 
 func TestGetMetros_IncludesUserCounts(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -149,14 +149,14 @@ func TestGetMetros_IncludesUserCounts(t *testing.T) {
 
 func TestGetMetros_Pagination(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	// First page
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -171,7 +171,7 @@ func TestGetMetros_Pagination(t *testing.T) {
 	// Second page
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/metros?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
@@ -182,13 +182,13 @@ func TestGetMetros_Pagination(t *testing.T) {
 
 func TestGetMetros_IncludesCoordinates(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetros(rr, req)
+	api.GetMetros(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -211,9 +211,9 @@ func TestGetMetros_IncludesCoordinates(t *testing.T) {
 
 func TestGetMetro_NotFound(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros/nonexistent", nil)
 	rctx := chi.NewRouteContext()
@@ -221,14 +221,14 @@ func TestGetMetro_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetMetro(rr, req)
+	api.GetMetro(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 func TestGetMetro_MissingPK(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros/", nil)
 	rctx := chi.NewRouteContext()
@@ -236,16 +236,16 @@ func TestGetMetro_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetMetro(rr, req)
+	api.GetMetro(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestGetMetro_ReturnsDetails(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertMetrosTestData(t)
+	insertMetrosTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/metros/metro-nyc", nil)
 	rctx := chi.NewRouteContext()
@@ -253,7 +253,7 @@ func TestGetMetro_ReturnsDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetMetro(rr, req)
+	api.GetMetro(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

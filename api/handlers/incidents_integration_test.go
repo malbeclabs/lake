@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupRollupTables(t *testing.T) {
+func setupRollupTables(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	for _, ddl := range []string{
@@ -72,11 +72,11 @@ func setupRollupTables(t *testing.T) {
 			isis_unreachable Bool DEFAULT false
 		) ENGINE = ReplacingMergeTree(ingested_at) ORDER BY (bucket_ts, device_pk, intf)`,
 	} {
-		require.NoError(t, testAPI.DB.Exec(ctx, ddl))
+		require.NoError(t, api.DB.Exec(ctx, ddl))
 	}
 }
 
-func setupIncidentViews(t *testing.T) {
+func setupIncidentViews(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	linkViewDDL := `CREATE OR REPLACE VIEW link_incidents_v AS
@@ -160,26 +160,26 @@ LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 LEFT JOIN dz_contributors_current cc ON d.contributor_pk = cc.pk
 ORDER BY c.started_at DESC`
 
-	require.NoError(t, testAPI.DB.Exec(ctx, linkViewDDL))
-	require.NoError(t, testAPI.DB.Exec(ctx, deviceViewDDL))
+	require.NoError(t, api.DB.Exec(ctx, linkViewDDL))
+	require.NoError(t, api.DB.Exec(ctx, deviceViewDDL))
 }
 
-func insertBaseMetadata(t *testing.T) {
+func insertBaseMetadata(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_metros_current (pk, code, name) VALUES ('metro-nyc', 'NYC', 'New York'), ('metro-lax', 'LAX', 'Los Angeles')`))
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_devices_current (pk, code, device_type, metro_pk, contributor_pk, status) VALUES ('dev-nyc-1', 'NYC-CORE-01', 'router', 'metro-nyc', 'contrib-1', 'activated'), ('dev-lax-1', 'LAX-CORE-01', 'router', 'metro-lax', 'contrib-1', 'activated')`))
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_contributors_current (pk, code, name) VALUES ('contrib-1', 'CONTRIB1', 'Contributor One')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_metros_current (pk, code, name) VALUES ('metro-nyc', 'NYC', 'New York'), ('metro-lax', 'LAX', 'Los Angeles')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_devices_current (pk, code, device_type, metro_pk, contributor_pk, status) VALUES ('dev-nyc-1', 'NYC-CORE-01', 'router', 'metro-nyc', 'contrib-1', 'activated'), ('dev-lax-1', 'LAX-CORE-01', 'router', 'metro-lax', 'contrib-1', 'activated')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_contributors_current (pk, code, name) VALUES ('contrib-1', 'CONTRIB1', 'Contributor One')`))
 }
 
 func TestGetLinkIncidents_EmptyState(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=1h", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -193,28 +193,28 @@ func TestGetLinkIncidents_EmptyState(t *testing.T) {
 
 func TestGetLinkIncidents_PacketLoss(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
 	// Insert 8 consecutive 5-min buckets with high packet loss (40 min total, meets 30m default)
 	now := time.Now().UTC()
 	baseTime := now.Add(-2 * time.Hour)
 	for i := range 8 {
 		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 25.0, 15.0, 100, 100)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 25.0, 15.0, 100, 100)`, ts))
 	}
 	// Healthy buckets before and after
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 0, 0, 100, 100)`, baseTime.Add(-5*time.Minute)))
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 0, 0, 100, 100)`, baseTime.Add(40*time.Minute)))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 0, 0, 100, 100)`, baseTime.Add(-5*time.Minute)))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 0, 0, 100, 100)`, baseTime.Add(40*time.Minute)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -238,25 +238,25 @@ func TestGetLinkIncidents_PacketLoss(t *testing.T) {
 
 func TestGetLinkIncidents_Errors(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
 	// Insert 8 consecutive 5-min error buckets via device_interface_rollup_5m
 	now := time.Now().UTC()
 	baseTime := now.Add(-2 * time.Hour)
 	for i := range 8 {
 		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, in_errors, out_errors) VALUES ($1, 'dev-nyc-1', 'eth0', 'link-1', now(), 15, 5)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, in_errors, out_errors) VALUES ($1, 'dev-nyc-1', 'eth0', 'link-1', now(), 15, 5)`, ts))
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=errors&errors_threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -279,25 +279,25 @@ func TestGetLinkIncidents_Errors(t *testing.T) {
 
 func TestGetLinkIncidents_ISISDown(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
 	// Insert 8 consecutive isis_down=true buckets
 	now := time.Now().UTC()
 	baseTime := now.Add(-2 * time.Hour)
 	for i := range 8 {
 		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples, isis_down) VALUES ($1, 'link-1', now(), 0, 0, 100, 100, true)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples, isis_down) VALUES ($1, 'link-1', now(), 0, 0, 100, 100, true)`, ts))
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=isis_down&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -315,26 +315,26 @@ func TestGetLinkIncidents_ISISDown(t *testing.T) {
 
 func TestGetLinkIncidents_TypeFilter(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
 	// Insert error data
 	now := time.Now().UTC()
 	baseTime := now.Add(-2 * time.Hour)
 	for i := range 8 {
 		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, in_errors, out_errors) VALUES ($1, 'dev-nyc-1', 'eth0', 'link-1', now(), 20, 0)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, in_errors, out_errors) VALUES ($1, 'dev-nyc-1', 'eth0', 'link-1', now(), 20, 0)`, ts))
 	}
 
 	// When filtering for packet_loss only, should NOT return errors
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -348,21 +348,21 @@ func TestGetLinkIncidents_TypeFilter(t *testing.T) {
 
 func TestGetLinkIncidents_DrainedLinksView(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
 	now := time.Now().UTC()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1'), ('link-2', 'NYC-LAX-002', 'soft-drained', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1'), ('link-2', 'NYC-LAX-002', 'soft-drained', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_link_status_changes (link_pk, link_code, previous_status, new_status, changed_ts, side_a_metro, side_z_metro) VALUES ('link-2', 'NYC-LAX-002', 'activated', 'soft-drained', $1, 'NYC', 'LAX')`, now.Add(-6*time.Hour)))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_link_status_changes (link_pk, link_code, previous_status, new_status, changed_ts, side_a_metro, side_z_metro) VALUES ('link-2', 'NYC-LAX-002', 'activated', 'soft-drained', $1, 'NYC', 'LAX')`, now.Add(-6*time.Hour)))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=24h", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -383,26 +383,26 @@ func TestGetLinkIncidents_DrainedLinksView(t *testing.T) {
 
 func TestGetLinkIncidents_OngoingStartedBeforeWindow(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
 	// Insert packet loss starting 3 days ago and continuing until now (ongoing)
 	now := time.Now().UTC()
 	start := now.Add(-72 * time.Hour)
 	for ts := start; ts.Before(now); ts = ts.Add(5 * time.Minute) {
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 50.0, 0, 100, 100)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_loss_pct, z_loss_pct, a_samples, z_samples) VALUES ($1, 'link-1', now(), 50.0, 0, 100, 100)`, ts))
 	}
 
 	// Query with 24h window — incident started 3 days ago but is ongoing, should still show.
 	// The lookback is duration+24h=48h, so started_at will be ~48h ago (not the true 72h start).
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=24h&type=packet_loss&threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rr, req)
+	api.GetLinkIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -424,17 +424,17 @@ func TestGetLinkIncidents_OngoingStartedBeforeWindow(t *testing.T) {
 
 func TestGetLinkIncidentsCSV(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
-	require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
+	require.NoError(t, api.DB.Exec(ctx, `INSERT INTO dz_links_current (pk, code, status, link_type, side_a_pk, side_z_pk, contributor_pk) VALUES ('link-1', 'NYC-LAX-001', 'activated', 'WAN', 'dev-nyc-1', 'dev-lax-1', 'contrib-1')`))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/links/csv?range=1h", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkIncidentsCSV(rr, req)
+	api.GetLinkIncidentsCSV(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Header().Get("Content-Type"), "text/csv")
@@ -446,13 +446,13 @@ func TestGetLinkIncidentsCSV(t *testing.T) {
 
 func TestGetDeviceIncidents_EmptyState(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=1h", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDeviceIncidents(rr, req)
+	api.GetDeviceIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -465,10 +465,10 @@ func TestGetDeviceIncidents_EmptyState(t *testing.T) {
 
 func TestGetDeviceIncidents_Errors(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
 	// Insert device-only interface counters (link_pk='')
@@ -476,12 +476,12 @@ func TestGetDeviceIncidents_Errors(t *testing.T) {
 	baseTime := now.Add(-2 * time.Hour)
 	for i := range 8 {
 		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, in_errors, out_errors) VALUES ($1, 'dev-nyc-1', 'Loopback0', '', now(), 25, 0)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, in_errors, out_errors) VALUES ($1, 'dev-nyc-1', 'Loopback0', '', now(), 25, 0)`, ts))
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=6h&type=errors&errors_threshold=10&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDeviceIncidents(rr, req)
+	api.GetDeviceIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -502,22 +502,22 @@ func TestGetDeviceIncidents_Errors(t *testing.T) {
 
 func TestGetDeviceIncidents_ISISOverload(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouse(t, testChDB)
-	setupRollupTables(t)
-	setupIncidentViews(t)
-	insertBaseMetadata(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupRollupTables(t, api)
+	setupIncidentViews(t, api)
+	insertBaseMetadata(t, api)
 	ctx := t.Context()
 
 	now := time.Now().UTC()
 	baseTime := now.Add(-2 * time.Hour)
 	for i := range 8 {
 		ts := baseTime.Add(time.Duration(i*5) * time.Minute)
-		require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, isis_overload) VALUES ($1, 'dev-nyc-1', 'Loopback0', '', now(), true)`, ts))
+		require.NoError(t, api.DB.Exec(ctx, `INSERT INTO device_interface_rollup_5m (bucket_ts, device_pk, intf, link_pk, ingested_at, isis_overload) VALUES ($1, 'dev-nyc-1', 'Loopback0', '', now(), true)`, ts))
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/incidents/devices?range=6h&type=isis_overload&min_duration=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetDeviceIncidents(rr, req)
+	api.GetDeviceIncidents(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -537,16 +537,16 @@ func TestGetDeviceIncidents_ISISOverload(t *testing.T) {
 // then verifies both source paths detect the same packet loss incident.
 func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
 	// Seed dimension data
-	seedMetro(t, "metro-a", "NYC")
-	seedMetro(t, "metro-z", "LAX")
-	seedContributor(t, "contrib-1", "acme")
-	seedDeviceMetadata(t, "dev-a", "DEV-A", "router", "contrib-1", "metro-a", 10, "activated")
-	seedDeviceMetadata(t, "dev-z", "DEV-Z", "router", "contrib-1", "metro-z", 10, "activated")
-	seedLinkMetadataAt(t, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-z", 10_000_000_000, 500_000, "activated",
+	seedMetro(t, api, "metro-a", "NYC")
+	seedMetro(t, api, "metro-z", "LAX")
+	seedContributor(t, api, "contrib-1", "acme")
+	seedDeviceMetadata(t, api, "dev-a", "DEV-A", "router", "contrib-1", "metro-a", 10, "activated")
+	seedDeviceMetadata(t, api, "dev-z", "DEV-Z", "router", "contrib-1", "metro-z", 10, "activated")
+	seedLinkMetadataAt(t, api, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-z", 10_000_000_000, 500_000, "activated",
 		time.Now().Add(-24*time.Hour))
 
 	// Seed 8 consecutive 5-minute buckets with 100% packet loss (40 minutes)
@@ -558,32 +558,32 @@ func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 		for j := range 10 {
 			probeTS := ts.Add(time.Duration(j) * 20 * time.Second)
 			// Direction A
-			require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+			require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
 				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 				probeTS, probeTS, int64(1), int32(i*20+j), "dev-a", "dev-z", "link-1", int64(0), true))
 			// Direction Z
-			require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+			require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
 				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 				probeTS, probeTS, int64(1), int32(200+i*20+j), "dev-z", "dev-a", "link-1", int64(0), true))
 		}
 		// Corresponding rollup row
-		seedLinkRollup(t, ts, "link-1", 0, 0, 100, 100, 10, 10, "activated", false, false)
+		seedLinkRollup(t, api, ts, "link-1", 0, 0, 100, 100, 10, 10, "activated", false, false)
 	}
 	// Healthy buckets before and after
 	healthyBefore := baseTime.Add(-5 * time.Minute)
 	healthyAfter := baseTime.Add(40 * time.Minute)
-	seedLinkRollup(t, healthyBefore, "link-1", 100, 100, 0, 0, 10, 10, "activated", false, false)
-	seedLinkRollup(t, healthyAfter, "link-1", 100, 100, 0, 0, 10, 10, "activated", false, false)
+	seedLinkRollup(t, api, healthyBefore, "link-1", 100, 100, 0, 0, 10, 10, "activated", false, false)
+	seedLinkRollup(t, api, healthyAfter, "link-1", 100, 100, 0, 0, 10, 10, "activated", false, false)
 	for _, ts := range []time.Time{healthyBefore, healthyAfter} {
 		for j := range 10 {
 			probeTS := ts.Add(time.Duration(j) * 20 * time.Second)
-			require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+			require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
 				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 				probeTS, probeTS, int64(1), int32(500+j), "dev-a", "dev-z", "link-1", int64(100), false))
-			require.NoError(t, testAPI.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
+			require.NoError(t, api.DB.Exec(ctx, `INSERT INTO fact_dz_device_link_latency
 				(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 				probeTS, probeTS, int64(1), int32(600+j), "dev-z", "dev-a", "link-1", int64(100), false))
@@ -593,7 +593,7 @@ func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 	// Query rollup path
 	reqRollup := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5", nil)
 	rrRollup := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rrRollup, reqRollup)
+	api.GetLinkIncidents(rrRollup, reqRollup)
 	require.Equal(t, http.StatusOK, rrRollup.Code)
 
 	var rollupResp handlers.LinkIncidentsResponse
@@ -602,7 +602,7 @@ func TestLinkIncidentsRollupVsRaw(t *testing.T) {
 	// Query raw path
 	reqRaw := httptest.NewRequest(http.MethodGet, "/api/incidents/links?range=6h&type=packet_loss&threshold=10&min_duration=5&source=raw", nil)
 	rrRaw := httptest.NewRecorder()
-	testAPI.GetLinkIncidents(rrRaw, reqRaw)
+	api.GetLinkIncidents(rrRaw, reqRaw)
 	require.Equal(t, http.StatusOK, rrRaw.Code)
 
 	var rawResp handlers.LinkIncidentsResponse

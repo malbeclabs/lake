@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -15,13 +14,13 @@ import (
 )
 
 // createShredderTables creates the slot_feed_races and publisher_shred_stats tables in the shredder DB.
-func createShredderTables(t *testing.T) {
+func createShredderTables(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
-	db := "`" + config.GetShredderDB() + "`"
-	err := testAPI.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
+	db := "`" + api.ShredderDB + "`"
+	err := api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
 	require.NoError(t, err)
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.slot_feed_races (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3) DEFAULT now(),
@@ -40,7 +39,7 @@ func createShredderTables(t *testing.T) {
 		ORDER BY (node_id, slot, feed, loser_feed)
 	`, db))
 	require.NoError(t, err)
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3) DEFAULT now(),
@@ -72,17 +71,17 @@ func createShredderTables(t *testing.T) {
 }
 
 // insertEdgeScoreboardTestData inserts test metros and slot_feed_races data.
-func insertEdgeScoreboardTestData(t *testing.T) {
+func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
-	createShredderTables(t)
+	createShredderTables(t, api)
 
 	const epoch = 800
 	const slot1 = 100 // DZ-leader slot
 	const slot2 = 200 // non-DZ slot
 
 	// Create metros: SLC and FRA
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, code, name, latitude, longitude)
@@ -95,7 +94,7 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Mark slot1 as a DZ-leader slot via publisher_shred_stats
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.publisher_shred_stats
 			(event_ts, host, publisher_ip, client_ip, node_pubkey, vote_pubkey,
 			 activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
@@ -106,13 +105,13 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			 1000000000, 'dz-user-1', 'slc-qa-bm1', 'slc',
 			 %d, %d, 100, 80, 60, 20,
 			 79, false, 0, 1000000, true)
-	`, "`"+config.GetShredderDB()+"`", epoch, slot1))
+	`, "`"+api.ShredderDB+"`", epoch, slot1))
 	require.NoError(t, err)
 
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
 	// slot1: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds (DZ-leader slot)
 	// slot2: only turbine + jito (no DZ) — tests completeness calculation
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
 			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
 		VALUES
@@ -126,12 +125,12 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'jito',     '', 100, 10),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'turbine',  '', 100, 55),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[4]d, 'jito',     '', 100, 45)
-	`, "`"+config.GetShredderDB()+"`", epoch, slot1, slot2))
+	`, "`"+api.ShredderDB+"`", epoch, slot1, slot2))
 	require.NoError(t, err)
 
 	// Insert lead-time rows (loser_feed != '') — pairwise: winner vs specific loser
 	// For slot1 on slc-qa-bm1: dz beat turbine and jito
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		INSERT INTO %s.slot_feed_races
 			(event_ts, node_id, feed_type, epoch, slot, feed, loser_feed, lead_time_p50_ms, lead_time_p95_ms)
 		VALUES
@@ -139,18 +138,18 @@ func insertEdgeScoreboardTestData(t *testing.T) {
 			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'jito',    2.0, 4.0),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'turbine', 2.5, 5.0),
 			(now(), 'fra-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'jito',    3.0, 6.0)
-	`, "`"+config.GetShredderDB()+"`", epoch, slot1))
+	`, "`"+api.ShredderDB+"`", epoch, slot1))
 	require.NoError(t, err)
 }
 
 func TestGetEdgeScoreboard_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	createShredderTables(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	createShredderTables(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetEdgeScoreboard(rr, req)
+	api.GetEdgeScoreboard(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -163,12 +162,12 @@ func TestGetEdgeScoreboard_Empty(t *testing.T) {
 
 func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertEdgeScoreboardTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEdgeScoreboardTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetEdgeScoreboard(rr, req)
+	api.GetEdgeScoreboard(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -242,16 +241,15 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 
 func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertEdgeScoreboardTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEdgeScoreboardTestData(t, api)
 
 	windows := []string{"1h", "24h", "7d", "30d", "all"}
 	for _, w := range windows {
 		t.Run(w, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard?window="+w, nil)
 			rr := httptest.NewRecorder()
-			testAPI.GetEdgeScoreboard(rr, req)
+			api.GetEdgeScoreboard(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -265,12 +263,12 @@ func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
 
 func TestGetEdgeScoreboard_InvalidWindow(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	createShredderTables(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	createShredderTables(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/edge/scoreboard?window=bogus", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetEdgeScoreboard(rr, req)
+	api.GetEdgeScoreboard(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

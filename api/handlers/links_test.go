@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func insertLinksTestData(t *testing.T) {
+func insertLinksTestData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Insert metros
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name, latitude, longitude) VALUES
 		('metro-nyc', now(), now(), generateUUIDv4(), 0, 1, 'metro-nyc', 'NYC', 'New York', 0, 0),
@@ -27,7 +27,7 @@ func insertLinksTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, device_type, metro_pk, public_ip, contributor_pk, max_users) VALUES
 		('dev-nyc-1', now(), now(), generateUUIDv4(), 0, 1, 'dev-nyc-1', 'NYC-CORE-01', 'up', 'router', 'metro-nyc', '10.0.0.1', '', 0),
@@ -37,7 +37,7 @@ func insertLinksTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert contributors
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_contributors_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES
 		('contrib-1', now(), now(), generateUUIDv4(), 0, 1, 'contrib-1', 'CONTRIB1', 'Contributor One')
@@ -45,7 +45,7 @@ func insertLinksTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert links
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_links_history
 		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, status, link_type, bandwidth_bps, side_a_pk, side_z_pk, contributor_pk, committed_rtt_ns, tunnel_net, side_a_iface_name, side_z_iface_name, committed_jitter_ns, isis_delay_override_ns) VALUES
 		('link-1', now(), now(), generateUUIDv4(), 0, 1, 'link-1', 'NYC-LAX-001', 'up', 'backbone', 10000000000, 'dev-nyc-1', 'dev-lax-1', 'contrib-1', 3000000, '', '', '', 0, 0),
@@ -57,11 +57,11 @@ func insertLinksTestData(t *testing.T) {
 
 func TestGetLinks_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinks(rr, req)
+	api.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -74,13 +74,13 @@ func TestGetLinks_Empty(t *testing.T) {
 
 func TestGetLinks_ReturnsAllLinks(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinks(rr, req)
+	api.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -93,13 +93,13 @@ func TestGetLinks_ReturnsAllLinks(t *testing.T) {
 
 func TestGetLinks_IncludesDeviceInfo(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinks(rr, req)
+	api.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -125,14 +125,14 @@ func TestGetLinks_IncludesDeviceInfo(t *testing.T) {
 
 func TestGetLinks_Pagination(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	// First page
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links?limit=2&offset=0", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinks(rr, req)
+	api.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -147,7 +147,7 @@ func TestGetLinks_Pagination(t *testing.T) {
 	// Second page
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/links?limit=2&offset=2", nil)
 	rr = httptest.NewRecorder()
-	testAPI.GetLinks(rr, req)
+	api.GetLinks(rr, req)
 
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
@@ -158,13 +158,13 @@ func TestGetLinks_Pagination(t *testing.T) {
 
 func TestGetLinks_OrderedByCode(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinks(rr, req)
+	api.GetLinks(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -180,9 +180,9 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 
 func TestGetLink_NotFound(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/nonexistent", nil)
 	rctx := chi.NewRouteContext()
@@ -190,14 +190,14 @@ func TestGetLink_NotFound(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetLink(rr, req)
+	api.GetLink(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
 func TestGetLink_MissingPK(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/", nil)
 	rctx := chi.NewRouteContext()
@@ -205,16 +205,16 @@ func TestGetLink_MissingPK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetLink(rr, req)
+	api.GetLink(rr, req)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
 func TestGetLink_ReturnsDetails(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/link-1", nil)
 	rctx := chi.NewRouteContext()
@@ -222,7 +222,7 @@ func TestGetLink_ReturnsDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 	rr := httptest.NewRecorder()
-	testAPI.GetLink(rr, req)
+	api.GetLink(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -239,26 +239,26 @@ func TestGetLink_ReturnsDetails(t *testing.T) {
 	assert.Equal(t, "LAX-CORE-01", link.SideZCode)
 }
 
-func setupLinkHealthData(t *testing.T) {
+func setupLinkHealthData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Insert link rollup data (recent bucket so links are not "dark")
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples, z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples) VALUES
 		(now() - INTERVAL 5 MINUTE, 'link-1', now(), 1500.0, 2000.0, 0.0, 100, 1500.0, 2000.0, 0.0, 100),
 		(now() - INTERVAL 5 MINUTE, 'link-2', now(), 500.0, 800.0, 0.05, 100, 500.0, 800.0, 0.05, 100)
 	`)
 	require.NoError(t, err)
-	require.NoError(t, testAPI.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
+	require.NoError(t, api.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
 }
 
 func TestGetLinkHealth_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkHealth(rr, req)
+	api.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -271,14 +271,14 @@ func TestGetLinkHealth_Empty(t *testing.T) {
 
 func TestGetLinkHealth_ReturnsHealth(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
-	setupLinkHealthData(t)
+	insertLinksTestData(t, api)
+	setupLinkHealthData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkHealth(rr, req)
+	api.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -294,14 +294,14 @@ func TestGetLinkHealth_ReturnsHealth(t *testing.T) {
 
 func TestGetLinkHealth_CalculatesSlaStatus(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
-	setupLinkHealthData(t)
+	insertLinksTestData(t, api)
+	setupLinkHealthData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkHealth(rr, req)
+	api.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -324,14 +324,14 @@ func TestGetLinkHealth_CalculatesSlaStatus(t *testing.T) {
 
 func TestGetLinkHealth_CountsByStatus(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
-	setupLinkHealthData(t)
+	insertLinksTestData(t, api)
+	setupLinkHealthData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkHealth(rr, req)
+	api.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -348,24 +348,24 @@ func TestGetLinkHealth_CountsByStatus(t *testing.T) {
 
 func TestGetLinkHealth_IsDownForcesCritical(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
-	insertLinksTestData(t)
+	insertLinksTestData(t, api)
 
 	ctx := t.Context()
 
 	// Insert rollup data: link-1 healthy, link-2 is_down (100% loss)
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO link_rollup_5m (bucket_ts, link_pk, ingested_at, a_avg_rtt_us, a_p95_rtt_us, a_loss_pct, a_samples, z_avg_rtt_us, z_p95_rtt_us, z_loss_pct, z_samples) VALUES
 		(now() - INTERVAL 5 MINUTE, 'link-1', now(), 1500.0, 2000.0, 0.0, 100, 1500.0, 2000.0, 0.0, 100),
 		(now() - INTERVAL 5 MINUTE, 'link-2', now(), 500.0, 800.0, 100.0, 100, 500.0, 800.0, 100.0, 100)
 	`)
 	require.NoError(t, err)
-	require.NoError(t, testAPI.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
+	require.NoError(t, api.DB.Exec(ctx, `OPTIMIZE TABLE link_rollup_5m FINAL`))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/links/health", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetLinkHealth(rr, req)
+	api.GetLinkHealth(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

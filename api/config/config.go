@@ -41,28 +41,8 @@ var EnvDatabases map[string]string
 // cfg holds the parsed configuration
 var cfg CHConfig
 
-// TestDatabaseProxy holds a per-goroutine database name proxy for parallel tests.
-// When non-nil, Database() checks it before returning the global default.
-// This is set by the test infrastructure; production code leaves it nil.
-var TestDatabaseProxy interface {
-	Get() string
-}
-
-// TestShredderDBProxy holds a per-goroutine shredder database name proxy for
-// parallel tests. When non-nil, GetShredderDB() checks it before returning the
-// global default.
-var TestShredderDBProxy interface {
-	Get() string
-}
-
 // GetShredderDB returns the shredder database name.
-// In parallel tests, returns the per-goroutine override if registered.
 func GetShredderDB() string {
-	if TestShredderDBProxy != nil {
-		if name := TestShredderDBProxy.Get(); name != "" {
-			return name
-		}
-	}
 	return shredderDB
 }
 
@@ -72,17 +52,11 @@ func SetShredderDB(db string) {
 }
 
 // Database returns the configured database name.
-// In parallel tests, returns the per-goroutine override if registered.
 func Database() string {
-	if TestDatabaseProxy != nil {
-		if name := TestDatabaseProxy.Get(); name != "" {
-			return name
-		}
-	}
 	return cfg.Database
 }
 
-// SetDatabase sets the configured database name (for testing)
+// SetDatabase sets the configured database name.
 func SetDatabase(db string) {
 	cfg.Database = db
 }

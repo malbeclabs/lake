@@ -2,7 +2,6 @@ package apitesting
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,7 +14,6 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/docker/go-connections/nat"
 	"github.com/google/uuid"
-	"github.com/malbeclabs/lake/api/config"
 	chmigrations "github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/stretchr/testify/require"
 	tcch "github.com/testcontainers/testcontainers-go/modules/clickhouse"
@@ -164,98 +162,7 @@ func NewClickHouseDB(ctx context.Context, log *slog.Logger, cfg *ClickHouseDBCon
 	return db, nil
 }
 
-// SetSequentialFallback sets the sequential fallback on the ConnProxy and
-// DatabaseProxy so that sub-goroutines spawned by handlers (e.g. MCP, errgroup)
-// can resolve the test connection. Call this in non-parallel tests whose handlers
-// spawn background goroutines. The fallback is cleared on test cleanup.
-func SetSequentialFallback(t *testing.T) {
-	proxy, ok := config.DB.(*ConnProxy)
-	if !ok {
-		return
-	}
-	// Read the current test's override and promote it to the fallback.
-	if v, ok := proxy.overrides.Load(t.Name()); ok {
-		proxy.SetSequentialFallback(v.(driver.Conn))
-	}
-	if dbProxy, ok := config.TestDatabaseProxy.(*DatabaseProxy); ok {
-		if v, ok := dbProxy.overrides.Load(t.Name()); ok {
-			dbProxy.SetSequentialFallback(v.(string))
-		}
-	}
-	if shredderProxy, ok := config.TestShredderDBProxy.(*DatabaseProxy); ok {
-		if v, ok := shredderProxy.overrides.Load(t.Name()); ok {
-			shredderProxy.SetSequentialFallback(v.(string))
-		}
-	}
-	t.Cleanup(func() {
-		proxy.ClearSequentialFallback()
-		if dbProxy, ok := config.TestDatabaseProxy.(*DatabaseProxy); ok {
-			dbProxy.ClearSequentialFallback()
-		}
-		if shredderProxy, ok := config.TestShredderDBProxy.(*DatabaseProxy); ok {
-			shredderProxy.ClearSequentialFallback()
-		}
-	})
-}
 
-// registerTestConn registers the test connection and database name for the current
-// test, using the ConnProxy if available (parallel-safe) or falling back to
-// swapping the global config.DB (sequential tests).
-func registerTestConn(t *testing.T, databaseName string, testConn, adminConn driver.Conn) {
-	if proxy, ok := config.DB.(*ConnProxy); ok {
-		BindTest(t)
-		proxy.RegisterForTest(t, testConn)
-		if dbProxy, ok := config.TestDatabaseProxy.(*DatabaseProxy); ok {
-			dbProxy.RegisterForTest(t, databaseName)
-		}
-		if shredderProxy, ok := config.TestShredderDBProxy.(*DatabaseProxy); ok {
-			shredderProxy.RegisterForTest(t, databaseName)
-		}
-		t.Cleanup(func() {
-			testConn.Close()
-			_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
-			adminConn.Close()
-		})
-	} else {
-		oldDB := config.DB
-		oldDatabase := config.Database()
-		oldShredderDB := config.GetShredderDB()
-		config.DB = testConn
-		config.SetDatabase(databaseName)
-		config.SetShredderDB(databaseName)
-		t.Cleanup(func() {
-			testConn.Close()
-			_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
-			adminConn.Close()
-			config.DB = oldDB
-			config.SetDatabase(oldDatabase)
-			config.SetShredderDB(oldShredderDB)
-		})
-	}
-}
-
-// SetupTestClickHouse sets up a test database and configures config.DB.
-func SetupTestClickHouse(t *testing.T, db *ClickHouseDB) {
-	ctx := t.Context()
-
-	// Create a unique database for this test
-	randomSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
-	databaseName := fmt.Sprintf("test_%s", randomSuffix)
-
-	// Create admin connection
-	adminConn, err := createClickHouseConn(ctx, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password)
-	require.NoError(t, err, "failed to create ClickHouse admin connection")
-
-	// Create test database
-	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
-	require.NoError(t, err, "failed to create test database")
-
-	// Create test connection
-	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
-	require.NoError(t, err, "failed to create ClickHouse test connection")
-
-	registerTestConn(t, databaseName, testConn, adminConn)
-}
 
 // createClickHouseConn creates a ClickHouse connection.
 func createClickHouseConn(ctx context.Context, addr, database, username, password string) (driver.Conn, error) {
@@ -321,27 +228,51 @@ func (db *ClickHouseDB) ensureTemplateDB(ctx context.Context) (string, error) {
 	return db.templateDB, db.templateErr
 }
 
-// SetupTestClickHouseWithMigrations sets up a test database with full schema migrations.
-// Migrations run once per container into a template database; each test clones from it.
-func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
+// SetupClickHouseForTest creates a per-test ClickHouse database and returns
+// the direct connection and database name. No proxy registration.
+func SetupClickHouseForTest(t *testing.T, db *ClickHouseDB) (driver.Conn, string) {
+	t.Helper()
+	ctx := t.Context()
+
+	randomSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
+	databaseName := fmt.Sprintf("test_%s", randomSuffix)
+
+	adminConn, err := createClickHouseConn(ctx, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password)
+	require.NoError(t, err, "failed to create ClickHouse admin connection")
+
+	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
+	require.NoError(t, err, "failed to create test database")
+
+	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
+	require.NoError(t, err, "failed to create ClickHouse test connection")
+
+	t.Cleanup(func() {
+		_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+		_ = testConn.Close()
+		_ = adminConn.Close()
+	})
+
+	return testConn, databaseName
+}
+
+// SetupClickHouseWithMigrationsForTest creates a per-test ClickHouse database
+// with full schema migrations and returns the direct connection and database name.
+func SetupClickHouseWithMigrationsForTest(t *testing.T, db *ClickHouseDB) (driver.Conn, string) {
+	t.Helper()
 	ctx := t.Context()
 
 	templateDB, err := db.ensureTemplateDB(ctx)
 	require.NoError(t, err, "failed to ensure template database")
 
-	// Create a unique database for this test
 	randomSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
 	databaseName := fmt.Sprintf("test_%s", randomSuffix)
 
-	// Create admin connection
 	adminConn, err := createClickHouseConn(ctx, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create ClickHouse admin connection")
 
-	// Create test database
 	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
 	require.NoError(t, err, "failed to create test database")
 
-	// Clone tables and views from template
 	rows, err := adminConn.Query(ctx, "SELECT name, engine_full, create_table_query FROM system.tables WHERE database = $1", templateDB)
 	require.NoError(t, err, "failed to list template tables")
 	defer rows.Close()
@@ -352,7 +283,6 @@ func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
 		if name == "goose_db_version" {
 			continue
 		}
-		// Replace the database name in the CREATE statement
 		cloneQuery := strings.Replace(createQuery, fmt.Sprintf("%s.", templateDB), fmt.Sprintf("%s.", databaseName), -1)
 		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE TABLE %s", templateDB), fmt.Sprintf("CREATE TABLE %s", databaseName), 1)
 		cloneQuery = strings.Replace(cloneQuery, fmt.Sprintf("CREATE VIEW %s", templateDB), fmt.Sprintf("CREATE VIEW %s", databaseName), 1)
@@ -361,71 +291,14 @@ func SetupTestClickHouseWithMigrations(t *testing.T, db *ClickHouseDB) {
 		require.NoError(t, err, "failed to clone table %s: query=%s", name, cloneQuery)
 	}
 
-	// Create test connection
 	testConn, err := createClickHouseConn(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create ClickHouse test connection")
 
-	registerTestConn(t, databaseName, testConn, adminConn)
-}
+	t.Cleanup(func() {
+		_ = adminConn.Exec(context.Background(), fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+		_ = testConn.Close()
+		_ = adminConn.Close()
+	})
 
-// SetupTestClickHouseWithSecure sets up a test database with TLS support.
-func SetupTestClickHouseWithSecure(t *testing.T, db *ClickHouseDB, secure bool) {
-	ctx := t.Context()
-
-	// Create a unique database for this test
-	randomSuffix := strings.ReplaceAll(uuid.New().String(), "-", "")
-	databaseName := fmt.Sprintf("test_%s", randomSuffix)
-
-	// Create admin connection
-	adminConn, err := createClickHouseConnWithTLS(ctx, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password, secure)
-	require.NoError(t, err, "failed to create ClickHouse admin connection")
-
-	// Create test database
-	err = adminConn.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
-	require.NoError(t, err, "failed to create test database")
-
-	// Create test connection
-	testConn, err := createClickHouseConnWithTLS(ctx, db.addr, databaseName, db.cfg.Username, db.cfg.Password, secure)
-	require.NoError(t, err, "failed to create ClickHouse test connection")
-
-	registerTestConn(t, databaseName, testConn, adminConn)
-}
-
-// createClickHouseConnWithTLS creates a ClickHouse connection with optional TLS.
-func createClickHouseConnWithTLS(ctx context.Context, addr, database, username, password string, secure bool) (driver.Conn, error) {
-	opts := &clickhouse.Options{
-		Addr: []string{addr},
-		Auth: clickhouse.Auth{
-			Database: database,
-			Username: username,
-			Password: password,
-		},
-		DialTimeout:     5 * time.Second,
-		MaxOpenConns:    10,
-		MaxIdleConns:    5,
-		ConnMaxLifetime: time.Hour,
-	}
-
-	if secure {
-		opts.TLS = &tls.Config{}
-	}
-
-	conn, err := clickhouse.Open(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open ClickHouse connection: %w", err)
-	}
-
-	// Test the connection with retries
-	for attempt := 1; attempt <= 3; attempt++ {
-		if err := conn.Ping(ctx); err != nil {
-			if attempt < 3 {
-				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-				continue
-			}
-			return nil, fmt.Errorf("failed to ping ClickHouse after retries: %w", err)
-		}
-		break
-	}
-
-	return conn, nil
+	return testConn, databaseName
 }

@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/config"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/malbeclabs/lake/api/handlers"
+	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,26 +33,19 @@ func TestEnvFromContext(t *testing.T) {
 }
 
 func TestDatabaseForEnvFromContext(t *testing.T) {
-	// Not parallel: modifies global config.EnvDatabases
+	t.Parallel()
+	api := &handlers.API{
+		EnvDBs:       map[string]driver.Conn{},
+		EnvDatabases: map[string]string{},
+	}
 
 	// Set up env databases for the test
-	origEnvDatabases := config.EnvDatabases
-	config.EnvDatabases = map[string]string{
+	api.EnvDatabases = map[string]string{
 		"mainnet-beta": "lake_mainnet",
 		"devnet":       "lake_devnet",
 		"testnet":      "lake_testnet",
 	}
-	testAPI.Database = "lake_mainnet"
-	// Sync testAPI with the new config
-	origAPIEnvDatabases := testAPI.EnvDatabases
-	origAPIDatabase := testAPI.Database
-	testAPI.EnvDatabases = config.EnvDatabases
-	testAPI.Database = "lake_mainnet"
-	t.Cleanup(func() {
-		config.EnvDatabases = origEnvDatabases
-		testAPI.EnvDatabases = origAPIEnvDatabases
-		testAPI.Database = origAPIDatabase
-	})
+	api.Database = "lake_mainnet"
 
 	tests := []struct {
 		name     string
@@ -66,7 +60,7 @@ func TestDatabaseForEnvFromContext(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := handlers.ContextWithEnv(context.Background(), tt.env)
-			assert.Equal(t, tt.expected, testAPI.DatabaseForEnvFromContext(ctx))
+			assert.Equal(t, tt.expected, api.DatabaseForEnvFromContext(ctx))
 		})
 	}
 }
@@ -143,11 +137,12 @@ func TestEnvMiddleware(t *testing.T) {
 
 func TestRequireNeo4jMiddleware(t *testing.T) {
 	t.Parallel()
+	api := &handlers.API{Neo4jClient: apitesting.SetupNeo4jForTest(t, testNeo4jDB)}
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := testAPI.RequireNeo4jMiddleware(inner)
+	handler := api.RequireNeo4jMiddleware(inner)
 
 	t.Run("returns 503 for non-mainnet", func(t *testing.T) {
 		t.Parallel()
@@ -163,20 +158,14 @@ func TestRequireNeo4jMiddleware(t *testing.T) {
 
 	t.Run("returns 503 when Neo4jClient is nil", func(t *testing.T) {
 		t.Parallel()
-		origClient := testAPI.Neo4jClient
-		origAPIClient := testAPI.Neo4jClient
-		testAPI.Neo4jClient = nil
-		testAPI.Neo4jClient = nil
-		t.Cleanup(func() {
-			testAPI.Neo4jClient = origClient
-			testAPI.Neo4jClient = origAPIClient
-		})
+		nilAPI := &handlers.API{}
+		nilHandler := nilAPI.RequireNeo4jMiddleware(inner)
 
 		req := httptest.NewRequest("GET", "/test", nil)
 		ctx := handlers.ContextWithEnv(req.Context(), handlers.EnvMainnet)
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, req)
+		nilHandler.ServeHTTP(rr, req)
 
 		assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
 	})

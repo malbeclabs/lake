@@ -18,41 +18,40 @@ import (
 )
 
 func TestDZStakeAttribution_Disconnect(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ IP
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "", "")
 
 	// Current tables (for total stake computation)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
 	// node-stay is always on DZ with gossip IP 1.2.3.4
-	insertCurrentGossipNode(t, "node-stay", "1.2.3.4")
+	insertCurrentGossipNode(t, api, "node-stay", "1.2.3.4")
 
 	// T1: validator A on DZ (gossip IP 1.2.3.4), validator stay also on DZ
 	for _, v := range []struct{ vote, node, ip string }{
 		{"vote-A", "node-A", "1.2.3.4"},
 		{"vote-stay", "node-stay", "1.2.3.4"},
 	} {
-		insertVoteAccountHistory(t, v.vote, v.node, 100_000_000_000_000, t1)
-		insertGossipNodeHistory(t, v.node, v.ip, t1)
+		insertVoteAccountHistory(t, api, v.vote, v.node, 100_000_000_000_000, t1)
+		insertGossipNodeHistory(t, api, v.node, v.ip, t1)
 	}
 
 	// T2: validator A gossip IP changed to non-DZ, validator stay still on DZ
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "5.5.5.5", t2)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-stay", "1.2.3.4", t2)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "5.5.5.5", t2)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-stay", "1.2.3.4", t2)
 
 	// Query the timeline
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -83,27 +82,26 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 }
 
 func TestDZStakeAttribution_Connect(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "", "")
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "", "")
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
 
 	// T1: validator B NOT on DZ
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t1)
 
 	// T2: validator B now on DZ
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "1.2.3.4", t2)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "1.2.3.4", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -129,27 +127,26 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 }
 
 func TestDZStakeAttribution_StakeChange(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "", "")
-	insertCurrentVoteAccount(t, "vote-C", "node-C", 80_000_000_000_000)
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "", "")
+	insertCurrentVoteAccount(t, api, "vote-C", "node-C", 80_000_000_000_000)
 
 	// T1: validator C on DZ, 100k SOL
-	insertVoteAccountHistory(t, "vote-C", "node-C", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-C", "1.2.3.4", t1)
+	insertVoteAccountHistory(t, api, "vote-C", "node-C", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-C", "1.2.3.4", t1)
 
 	// T2: validator C on DZ, 80k SOL (decreased)
-	insertVoteAccountHistory(t, "vote-C", "node-C", 80_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-C", "1.2.3.4", t2)
+	insertVoteAccountHistory(t, api, "vote-C", "node-C", 80_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-C", "1.2.3.4", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -178,29 +175,28 @@ func TestDZStakeAttribution_StakeChange(t *testing.T) {
 }
 
 func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "", "")
-	insertCurrentVoteAccount(t, "vote-D", "node-D", 50_000_000_000_000)
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "", "")
+	insertCurrentVoteAccount(t, api, "vote-D", "node-D", 50_000_000_000_000)
 
 	// T1: validator D on DZ, 50k SOL
-	insertVoteAccountHistory(t, "vote-D", "node-D", 50_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-D", "1.2.3.4", t1)
+	insertVoteAccountHistory(t, api, "vote-D", "node-D", 50_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-D", "1.2.3.4", t1)
 
 	// T2: validator D not in vote accounts (left Solana) - no rows inserted for T2
 	// But we need at least one row at T2 so the snapshot exists for the DZ total calculation
 	// Add a different validator at T2 so the snapshot exists
-	insertVoteAccountHistory(t, "vote-other", "node-other", 1_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-other", "9.9.9.9", t2)
+	insertVoteAccountHistory(t, api, "vote-other", "node-other", 1_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-other", "9.9.9.9", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -220,25 +216,24 @@ func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
 }
 
 func TestDZStakeAttribution_NoChange(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "", "")
-	insertCurrentVoteAccount(t, "vote-E", "node-E", 100_000_000_000_000)
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "", "")
+	insertCurrentVoteAccount(t, api, "vote-E", "node-E", 100_000_000_000_000)
 
 	// T1 and T2: same validator, same stake, same DZ status - no change
 	for _, ts := range []time.Time{t1, t2} {
-		insertVoteAccountHistory(t, "vote-E", "node-E", 100_000_000_000_000, ts)
-		insertGossipNodeHistory(t, "node-E", "1.2.3.4", ts)
+		insertVoteAccountHistory(t, api, "vote-E", "node-E", 100_000_000_000_000, ts)
+		insertGossipNodeHistory(t, api, "node-E", "1.2.3.4", ts)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -256,34 +251,33 @@ func TestDZStakeAttribution_NoChange(t *testing.T) {
 // (from queryVoteAccountChanges) get dz_total_stake_share_pct populated
 // via queryDZTotalBySnapshot.
 func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ IP
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "", "")
 
 	// Current tables: validator X (on DZ) and validator Y (not on DZ)
-	insertCurrentVoteAccount(t, "vote-X", "node-X", 100_000_000_000_000)
-	insertCurrentVoteAccount(t, "vote-Y", "node-Y", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-X", "1.2.3.4")
-	insertCurrentGossipNode(t, "node-Y", "9.9.9.9")
+	insertCurrentVoteAccount(t, api, "vote-X", "node-X", 100_000_000_000_000)
+	insertCurrentVoteAccount(t, api, "vote-Y", "node-Y", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-X", "1.2.3.4")
+	insertCurrentGossipNode(t, api, "node-Y", "9.9.9.9")
 
 	// History: validator X exists at both timestamps (on DZ), validator Y only appears at T2 (joined)
 	for _, ts := range []time.Time{t1, t2} {
-		insertVoteAccountHistory(t, "vote-X", "node-X", 100_000_000_000_000, ts)
-		insertGossipNodeHistory(t, "node-X", "1.2.3.4", ts)
+		insertVoteAccountHistory(t, api, "vote-X", "node-X", 100_000_000_000_000, ts)
+		insertGossipNodeHistory(t, api, "node-X", "1.2.3.4", ts)
 	}
 	// Y appears only at T2 (joined event)
-	insertVoteAccountHistory(t, "vote-Y", "node-Y", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-Y", "9.9.9.9", t2)
+	insertVoteAccountHistory(t, api, "vote-Y", "node-Y", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-Y", "9.9.9.9", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -324,8 +318,7 @@ func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
 // days. This is the scenario that was broken in production: the total drifted from
 // ~39% down to ~36% because the old dedup removed legitimate events.
 func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	// 4 timestamps over 3 days — each transition changes DZ composition
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -334,61 +327,61 @@ func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
 	t4 := time.Date(2025, 1, 4, 0, 0, 0, 0, time.UTC)
 
 	dzIP := "1.2.3.4"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// Two validators: A (always on DZ, 100k SOL) and B (joins DZ at t2, changes stake at t3, leaves at t4)
 	// Total network stake: A(100k) + B(50k) + rest(850k) = 1M SOL
 
 	// Current tables reflect final state (t4): A on DZ, B NOT on DZ
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", dzIP)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 80_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9") // B left DZ at t4
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 820_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", dzIP)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 80_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9") // B left DZ at t4
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 820_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	// T1: A on DZ (100k), B NOT on DZ (50k)
 	// DZ total = 100k / 1M = 10%
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", dzIP, t1)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 850_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t1)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 850_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t1)
 
 	// T2: A on DZ (100k), B JOINS DZ (50k)
 	// DZ total = 150k / 1M = 15%
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", dzIP, t2)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", dzIP, t2) // joins DZ
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 850_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t2)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", dzIP, t2) // joins DZ
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 850_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t2)
 
 	// T3: A on DZ (100k), B on DZ, stake increased to 80k
 	// DZ total = 180k / 1M = 18%
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t3)
-	insertGossipNodeHistory(t, "node-A", dzIP, t3)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 80_000_000_000_000, t3)
-	insertGossipNodeHistory(t, "node-B", dzIP, t3)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 820_000_000_000_000, t3)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t3)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t3)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t3)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 80_000_000_000_000, t3)
+	insertGossipNodeHistory(t, api, "node-B", dzIP, t3)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 820_000_000_000_000, t3)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t3)
 
 	// T4: A on DZ (100k), B LEAVES DZ (80k)
 	// DZ total = 100k / 1M = 10%
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t4)
-	insertGossipNodeHistory(t, "node-A", dzIP, t4)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 80_000_000_000_000, t4)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t4) // leaves DZ
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 820_000_000_000_000, t4)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t4)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t4)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t4)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 80_000_000_000_000, t4)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t4) // leaves DZ
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 820_000_000_000_000, t4)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t4)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
 		"/api/timeline?start=%s&end=%s&category=state_change&limit=500",
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t4.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -441,46 +434,45 @@ func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
 // TestDZTotalBackfillWalk_StableTotal tests that when no attribution events exist
 // (DZ composition doesn't change), all events show the same DZ total.
 func TestDZTotalBackfillWalk_StableTotal(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC)
 	t3 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
 
 	dzIP := "1.2.3.4"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// Validator A always on DZ, same stake at all timestamps
 	for _, ts := range []time.Time{t1, t2, t3} {
-		insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, ts)
-		insertGossipNodeHistory(t, "node-A", dzIP, ts)
-		insertVoteAccountHistory(t, "vote-rest", "node-rest", 100_000_000_000_000, ts)
-		insertGossipNodeHistory(t, "node-rest", "8.8.8.8", ts)
+		insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, ts)
+		insertGossipNodeHistory(t, api, "node-A", dzIP, ts)
+		insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 100_000_000_000_000, ts)
+		insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", ts)
 	}
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", dzIP)
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", dzIP)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	// Validator B joins Solana at t2 (NOT on DZ) — generates a non-attribution event
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9")
 
 	// Validator C joins Solana at t3 (NOT on DZ)
-	insertVoteAccountHistory(t, "vote-C", "node-C", 30_000_000_000_000, t3)
-	insertGossipNodeHistory(t, "node-C", "7.7.7.7", t3)
-	insertCurrentVoteAccount(t, "vote-C", "node-C", 30_000_000_000_000)
-	insertCurrentGossipNode(t, "node-C", "7.7.7.7")
+	insertVoteAccountHistory(t, api, "vote-C", "node-C", 30_000_000_000_000, t3)
+	insertGossipNodeHistory(t, api, "node-C", "7.7.7.7", t3)
+	insertCurrentVoteAccount(t, api, "vote-C", "node-C", 30_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-C", "7.7.7.7")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
 		"/api/timeline?start=%s&end=%s&category=state_change&limit=500",
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t3.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -514,41 +506,40 @@ func TestDZTotalBackfillWalk_StableTotal(t *testing.T) {
 // This was a bug: the old dedup keyed on (vote_pubkey, event_type) globally,
 // removing legitimate stake change events at different times.
 func TestDedup_SameValidatorDifferentTimestamps(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
 	t3 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)
 
 	dzIP := "1.2.3.4"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// Validator A on DZ with changing stake across 3 snapshots
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", dzIP, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 120_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", dzIP, t2)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 80_000_000_000_000, t3)
-	insertGossipNodeHistory(t, "node-A", dzIP, t3)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 120_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t2)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 80_000_000_000_000, t3)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t3)
 
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 80_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", dzIP)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 80_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", dzIP)
 
 	// Need another validator so total stake > 0
 	for _, ts := range []time.Time{t1, t2, t3} {
-		insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, ts)
-		insertGossipNodeHistory(t, "node-rest", "8.8.8.8", ts)
+		insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 900_000_000_000_000, ts)
+		insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", ts)
 	}
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 920_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 920_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
 		"/api/timeline?start=%s&end=%s&category=state_change&limit=500",
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t3.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -578,8 +569,7 @@ func TestDedup_SameValidatorDifferentTimestamps(t *testing.T) {
 // for a validator that joins DZ, changes stake, and leaves DZ. Asserts exact
 // event types, ordering, field values, and DZ total consistency.
 func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 3, 1, 6, 0, 0, 0, time.UTC)
@@ -587,7 +577,7 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 	t4 := time.Date(2025, 3, 1, 18, 0, 0, 0, time.UTC)
 
 	dzIP := "10.0.0.1"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// "rest" validator provides background stake (always off DZ, stable)
 	// "base" validator always on DZ
@@ -600,12 +590,12 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 	// Total = 1M SOL at t1-t3, 1.05M at t4 (slight variation)
 
 	// Current tables (final state: base on DZ, target off DZ)
-	insertCurrentVoteAccount(t, "vote-base", "node-base", baseStake)
-	insertCurrentGossipNode(t, "node-base", dzIP)
-	insertCurrentVoteAccount(t, "vote-target", "node-target", targetStake2)
-	insertCurrentGossipNode(t, "node-target", "9.9.9.9")
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", restStake)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertCurrentVoteAccount(t, api, "vote-base", "node-base", baseStake)
+	insertCurrentGossipNode(t, api, "node-base", dzIP)
+	insertCurrentVoteAccount(t, api, "vote-target", "node-target", targetStake2)
+	insertCurrentGossipNode(t, api, "node-target", "9.9.9.9")
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", restStake)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	// T1: base on DZ (200k), target off DZ (100k), rest (700k)
 	for _, v := range []struct {
@@ -617,40 +607,40 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 		{"vote-target", "node-target", targetStake1, "9.9.9.9"},
 		{"vote-rest", "node-rest", restStake, "8.8.8.8"},
 	} {
-		insertVoteAccountHistory(t, v.vote, v.node, v.stake, t1)
-		insertGossipNodeHistory(t, v.node, v.ip, t1)
+		insertVoteAccountHistory(t, api, v.vote, v.node, v.stake, t1)
+		insertGossipNodeHistory(t, api, v.node, v.ip, t1)
 	}
 
 	// T2: target joins DZ
-	insertVoteAccountHistory(t, "vote-base", "node-base", baseStake, t2)
-	insertGossipNodeHistory(t, "node-base", dzIP, t2)
-	insertVoteAccountHistory(t, "vote-target", "node-target", targetStake1, t2)
-	insertGossipNodeHistory(t, "node-target", dzIP, t2) // joins DZ
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", restStake, t2)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
+	insertVoteAccountHistory(t, api, "vote-base", "node-base", baseStake, t2)
+	insertGossipNodeHistory(t, api, "node-base", dzIP, t2)
+	insertVoteAccountHistory(t, api, "vote-target", "node-target", targetStake1, t2)
+	insertGossipNodeHistory(t, api, "node-target", dzIP, t2) // joins DZ
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", restStake, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t2)
 
 	// T3: target stake increases while on DZ
-	insertVoteAccountHistory(t, "vote-base", "node-base", baseStake, t3)
-	insertGossipNodeHistory(t, "node-base", dzIP, t3)
-	insertVoteAccountHistory(t, "vote-target", "node-target", targetStake2, t3)
-	insertGossipNodeHistory(t, "node-target", dzIP, t3) // still on DZ, more stake
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", restStake, t3)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t3)
+	insertVoteAccountHistory(t, api, "vote-base", "node-base", baseStake, t3)
+	insertGossipNodeHistory(t, api, "node-base", dzIP, t3)
+	insertVoteAccountHistory(t, api, "vote-target", "node-target", targetStake2, t3)
+	insertGossipNodeHistory(t, api, "node-target", dzIP, t3) // still on DZ, more stake
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", restStake, t3)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t3)
 
 	// T4: target leaves DZ
-	insertVoteAccountHistory(t, "vote-base", "node-base", baseStake, t4)
-	insertGossipNodeHistory(t, "node-base", dzIP, t4)
-	insertVoteAccountHistory(t, "vote-target", "node-target", targetStake2, t4)
-	insertGossipNodeHistory(t, "node-target", "9.9.9.9", t4) // leaves DZ
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", restStake, t4)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t4)
+	insertVoteAccountHistory(t, api, "vote-base", "node-base", baseStake, t4)
+	insertGossipNodeHistory(t, api, "node-base", dzIP, t4)
+	insertVoteAccountHistory(t, api, "vote-target", "node-target", targetStake2, t4)
+	insertGossipNodeHistory(t, api, "node-target", "9.9.9.9", t4) // leaves DZ
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", restStake, t4)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t4)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
 		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=500",
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t4.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -748,34 +738,33 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 // TestTimeline_FullResponse_DZFilter tests that the dz_filter=on_dz parameter
 // correctly filters events to only DZ-related validators.
 func TestTimeline_FullResponse_DZFilter(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 4, 1, 6, 0, 0, 0, time.UTC)
 
 	dzIP := "10.0.0.1"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "owner-1", "device-1")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "owner-1", "device-1")
 
 	// Validator A: on DZ, joins at t2
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", dzIP, t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", dzIP)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", dzIP)
 
 	// Validator B: NOT on DZ, joins at t2
-	insertVoteAccountHistory(t, "vote-B", "node-B", 200_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 200_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9")
 
 	// Background validator at t1
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 700_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 700_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 700_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 700_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 700_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t2)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 700_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	// Without DZ filter: both A and B should appear
 	reqAll := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
@@ -783,7 +772,7 @@ func TestTimeline_FullResponse_DZFilter(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rrAll := httptest.NewRecorder()
-	testAPI.GetTimeline(rrAll, reqAll)
+	api.GetTimeline(rrAll, reqAll)
 	require.Equal(t, http.StatusOK, rrAll.Code)
 
 	var respAll handlers.TimelineResponse
@@ -808,7 +797,7 @@ func TestTimeline_FullResponse_DZFilter(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rrDZ := httptest.NewRecorder()
-	testAPI.GetTimeline(rrDZ, reqDZ)
+	api.GetTimeline(rrDZ, reqDZ)
 	require.Equal(t, http.StatusOK, rrDZ.Code)
 
 	var respDZ handlers.TimelineResponse
@@ -843,34 +832,33 @@ func TestTimeline_FullResponse_DZFilter(t *testing.T) {
 // TestTimeline_FullResponse_MinStakeFilter tests that min_stake_pct correctly
 // excludes low-stake validators from results.
 func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 5, 1, 6, 0, 0, 0, time.UTC)
 
 	dzIP := "10.0.0.1"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// Validator big: 5% of total stake (50k / 1M)
-	insertVoteAccountHistory(t, "vote-big", "node-big", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-big", dzIP, t2)
-	insertCurrentVoteAccount(t, "vote-big", "node-big", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-big", dzIP)
+	insertVoteAccountHistory(t, api, "vote-big", "node-big", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-big", dzIP, t2)
+	insertCurrentVoteAccount(t, api, "vote-big", "node-big", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-big", dzIP)
 
 	// Validator small: 0.1% of total stake (1k / 1M)
-	insertVoteAccountHistory(t, "vote-small", "node-small", 1_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-small", dzIP, t2)
-	insertCurrentVoteAccount(t, "vote-small", "node-small", 1_000_000_000_000)
-	insertCurrentGossipNode(t, "node-small", dzIP)
+	insertVoteAccountHistory(t, api, "vote-small", "node-small", 1_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-small", dzIP, t2)
+	insertCurrentVoteAccount(t, api, "vote-small", "node-small", 1_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-small", dzIP)
 
 	// Background to make total ~1M
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 949_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 949_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 949_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 949_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 949_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t2)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 949_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	// min_stake_pct=1 should exclude vote-small (0.1%) but include vote-big (5%)
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
@@ -878,7 +866,7 @@ func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -904,12 +892,11 @@ func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
 
 // TestTimeline_FullResponse_Pagination tests that limit and offset work correctly.
 func TestTimeline_FullResponse_Pagination(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	dzIP := "10.0.0.1"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// Create 5 validators that join at different times
 	baseTime := t1
@@ -917,16 +904,16 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		ts := baseTime.Add(time.Duration(i) * time.Hour)
 		vote := fmt.Sprintf("vote-%d", i)
 		node := fmt.Sprintf("node-%d", i)
-		insertVoteAccountHistory(t, vote, node, int64((i+1)*10_000_000_000_000), ts)
-		insertGossipNodeHistory(t, node, dzIP, ts)
-		insertCurrentVoteAccount(t, vote, node, int64((i+1)*10_000_000_000_000))
-		insertCurrentGossipNode(t, node, dzIP)
+		insertVoteAccountHistory(t, api, vote, node, int64((i+1)*10_000_000_000_000), ts)
+		insertGossipNodeHistory(t, api, node, dzIP, ts)
+		insertCurrentVoteAccount(t, api, vote, node, int64((i+1)*10_000_000_000_000))
+		insertCurrentGossipNode(t, api, node, dzIP)
 	}
 	// Background stake
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 900_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 900_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 900_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t1)
 
 	endTime := baseTime.Add(5 * time.Hour)
 
@@ -936,7 +923,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		endTime.Format(time.RFC3339)), nil)
 	rrAll := httptest.NewRecorder()
-	testAPI.GetTimeline(rrAll, reqAll)
+	api.GetTimeline(rrAll, reqAll)
 	require.Equal(t, http.StatusOK, rrAll.Code)
 
 	var respAll handlers.TimelineResponse
@@ -953,7 +940,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		endTime.Format(time.RFC3339)), nil)
 	rr1 := httptest.NewRecorder()
-	testAPI.GetTimeline(rr1, req1)
+	api.GetTimeline(rr1, req1)
 	require.Equal(t, http.StatusOK, rr1.Code)
 
 	var resp1 handlers.TimelineResponse
@@ -969,7 +956,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		endTime.Format(time.RFC3339)), nil)
 	rr2 := httptest.NewRecorder()
-	testAPI.GetTimeline(rr2, req2)
+	api.GetTimeline(rr2, req2)
 	require.Equal(t, http.StatusOK, rr2.Code)
 
 	var resp2 handlers.TimelineResponse
@@ -997,37 +984,36 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 // TestTimeline_FullResponse_EventFields tests that all required fields are
 // present and correctly typed on validator events.
 func TestTimeline_FullResponse_EventFields(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 7, 1, 6, 0, 0, 0, time.UTC)
 
 	dzIP := "10.0.0.1"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "owner-pub-1", "device-pk-1")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "owner-pub-1", "device-pk-1")
 
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", "9.9.9.9", t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", dzIP, t2) // joins DZ at t2
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", dzIP, t2) // joins DZ at t2
 
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", dzIP)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", dzIP)
 
 	// Background
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 900_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "8.8.8.8", t2)
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 900_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 900_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 900_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", t2)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 900_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
 		"/api/timeline?start=%s&end=%s&category=state_change&entity_type=validator&limit=500",
 		t1.Add(-time.Minute).Format(time.RFC3339),
 		t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1089,41 +1075,40 @@ func TestTimeline_FullResponse_EventFields(t *testing.T) {
 // TestTimeline_FullResponse_ActionFilter tests the action filter with exact
 // expected outputs for added/removed/changed actions.
 func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 8, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 8, 1, 6, 0, 0, 0, time.UTC)
 	t3 := time.Date(2025, 8, 1, 12, 0, 0, 0, time.UTC)
 
 	dzIP := "10.0.0.1"
-	insertDZUserCurrent(t, "dz-user-1", dzIP, "activated", "", "")
+	insertDZUserCurrent(t, api, "dz-user-1", dzIP, "activated", "", "")
 
 	// Validator A: joins DZ at t2 (action=added)
-	insertVoteAccountHistory(t, "vote-joiner", "node-joiner", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-joiner", "9.9.9.9", t1)
-	insertVoteAccountHistory(t, "vote-joiner", "node-joiner", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-joiner", dzIP, t2)
-	insertCurrentVoteAccount(t, "vote-joiner", "node-joiner", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-joiner", dzIP)
+	insertVoteAccountHistory(t, api, "vote-joiner", "node-joiner", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-joiner", "9.9.9.9", t1)
+	insertVoteAccountHistory(t, api, "vote-joiner", "node-joiner", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-joiner", dzIP, t2)
+	insertCurrentVoteAccount(t, api, "vote-joiner", "node-joiner", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-joiner", dzIP)
 
 	// Validator B: leaves DZ at t3 (action=removed)
-	insertVoteAccountHistory(t, "vote-leaver", "node-leaver", 80_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-leaver", dzIP, t1)
-	insertVoteAccountHistory(t, "vote-leaver", "node-leaver", 80_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-leaver", dzIP, t2)
-	insertVoteAccountHistory(t, "vote-leaver", "node-leaver", 80_000_000_000_000, t3)
-	insertGossipNodeHistory(t, "node-leaver", "9.9.9.9", t3)
-	insertCurrentVoteAccount(t, "vote-leaver", "node-leaver", 80_000_000_000_000)
-	insertCurrentGossipNode(t, "node-leaver", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-leaver", "node-leaver", 80_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-leaver", dzIP, t1)
+	insertVoteAccountHistory(t, api, "vote-leaver", "node-leaver", 80_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-leaver", dzIP, t2)
+	insertVoteAccountHistory(t, api, "vote-leaver", "node-leaver", 80_000_000_000_000, t3)
+	insertGossipNodeHistory(t, api, "node-leaver", "9.9.9.9", t3)
+	insertCurrentVoteAccount(t, api, "vote-leaver", "node-leaver", 80_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-leaver", "9.9.9.9")
 
 	// Background
 	for _, ts := range []time.Time{t1, t2, t3} {
-		insertVoteAccountHistory(t, "vote-rest", "node-rest", 820_000_000_000_000, ts)
-		insertGossipNodeHistory(t, "node-rest", "8.8.8.8", ts)
+		insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 820_000_000_000_000, ts)
+		insertGossipNodeHistory(t, api, "node-rest", "8.8.8.8", ts)
 	}
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 820_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "8.8.8.8")
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 820_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "8.8.8.8")
 
 	timeRange := fmt.Sprintf("start=%s&end=%s",
 		t1.Add(-time.Minute).Format(time.RFC3339),
@@ -1133,7 +1118,7 @@ func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
 	reqAdded := httptest.NewRequest(http.MethodGet,
 		"/api/timeline?"+timeRange+"&category=state_change&entity_type=validator&action=added&limit=500", nil)
 	rrAdded := httptest.NewRecorder()
-	testAPI.GetTimeline(rrAdded, reqAdded)
+	api.GetTimeline(rrAdded, reqAdded)
 	require.Equal(t, http.StatusOK, rrAdded.Code)
 
 	var respAdded handlers.TimelineResponse
@@ -1149,7 +1134,7 @@ func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
 	reqRemoved := httptest.NewRequest(http.MethodGet,
 		"/api/timeline?"+timeRange+"&category=state_change&entity_type=validator&action=removed&limit=500", nil)
 	rrRemoved := httptest.NewRecorder()
-	testAPI.GetTimeline(rrRemoved, reqRemoved)
+	api.GetTimeline(rrRemoved, reqRemoved)
 	require.Equal(t, http.StatusOK, rrRemoved.Code)
 
 	var respRemoved handlers.TimelineResponse
@@ -1197,32 +1182,32 @@ func tsFormat(ts time.Time) string {
 	return ts.Format("2006-01-02 15:04:05.000")
 }
 
-func insertVoteAccountHistory(t *testing.T, votePubkey, nodePubkey string, stake int64, ts time.Time) {
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+func insertVoteAccountHistory(t *testing.T, api *handlers.API, votePubkey, nodePubkey string, stake int64, ts time.Time) {
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', %d, 'true', 0)`,
 		votePubkey, tsFormat(ts), tsFormat(ts), uuid.New().String(), votePubkey, nodePubkey, stake)))
 }
 
-func insertGossipNodeHistory(t *testing.T, pubkey, gossipIP string, ts time.Time) {
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+func insertGossipNodeHistory(t *testing.T, api *handlers.API, pubkey, gossipIP string, ts time.Time) {
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', 0, '', 0, '')`,
 		pubkey, tsFormat(ts), tsFormat(ts), uuid.New().String(), pubkey, gossipIP)))
 }
 
 // insertCurrentVoteAccount inserts a vote account into the history table with a
 // far-future timestamp so it appears as the "current" row via the view.
-func insertCurrentVoteAccount(t *testing.T, votePubkey, nodePubkey string, stake int64) {
+func insertCurrentVoteAccount(t *testing.T, api *handlers.API, votePubkey, nodePubkey string, stake int64) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', %d, 'true', 0)`,
 		votePubkey, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), votePubkey, nodePubkey, stake)))
 }
 
 // insertCurrentGossipNode inserts a gossip node into the history table with a
 // far-future timestamp so it appears as the "current" row via the view.
-func insertCurrentGossipNode(t *testing.T, pubkey, gossipIP string) {
+func insertCurrentGossipNode(t *testing.T, api *handlers.API, pubkey, gossipIP string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 0, '%s', 0, '', 0, '')`,
 		pubkey, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pubkey, gossipIP)))
 }
@@ -1231,61 +1216,61 @@ func insertCurrentGossipNode(t *testing.T, pubkey, gossipIP string) {
 // specified timestamp so the view excludes this entity (simulating "not in current").
 // The deleteTS should be within the query range to ensure queryVoteAccountChanges
 // properly detects the validator as "left".
-func deleteCurrentVoteAccount(t *testing.T, votePubkey string, deleteTS time.Time) {
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+func deleteCurrentVoteAccount(t *testing.T, api *handlers.API, votePubkey string, deleteTS time.Time) {
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_vote_accounts_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage) VALUES ('%s', '%s', '%s', '%s', 1, 0, '%s', 0, '', 0, '', 0)`,
 		votePubkey, tsFormat(deleteTS), tsFormat(deleteTS), uuid.New().String(), votePubkey)))
 }
 
 // deleteCurrentGossipNode inserts a deleted row into the history table at the
 // specified timestamp so the view excludes this entity.
-func deleteCurrentGossipNode(t *testing.T, pubkey string, deleteTS time.Time) {
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+func deleteCurrentGossipNode(t *testing.T, api *handlers.API, pubkey string, deleteTS time.Time) {
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_solana_gossip_nodes_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version) VALUES ('%s', '%s', '%s', '%s', 1, 0, '%s', 0, '', 0, '', 0, '')`,
 		pubkey, tsFormat(deleteTS), tsFormat(deleteTS), uuid.New().String(), pubkey)))
 }
 
-func insertDZUserHistory(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
+func insertDZUserHistory(t *testing.T, api *handlers.API, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
 	// Use unique attrs_hash per row so the timeline query detects attribute changes
 	attrsHash := uint64(ts.UnixMilli())
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, %d, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
 		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
-func insertDZUserHistoryDeleted(t *testing.T, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
+func insertDZUserHistoryDeleted(t *testing.T, api *handlers.API, pk, entityID, ownerPubkey, dzIP, devicePK, status string, ts time.Time) {
 	attrsHash := uint64(ts.UnixMilli())
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 1, %d, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
 		entityID, tsFormat(ts), tsFormat(ts), uuid.New().String(), attrsHash, pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
 // insertDZUserCurrent inserts a DZ user into the history table with a
 // far-future timestamp so it appears as the "current" row via the view.
-func insertDZUserCurrent(t *testing.T, pk, dzIP, status, ownerPubkey, devicePK string) {
+func insertDZUserCurrent(t *testing.T, api *handlers.API, pk, dzIP, status, ownerPubkey, devicePK string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_users_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tunnel_id) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s', '', '%s', '%s', '%s', 0)`,
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, ownerPubkey, status, dzIP, dzIP, devicePK)))
 }
 
 // insertDZContributorCurrent inserts a contributor into the history table with a
 // far-future timestamp so it appears as the "current" row via the view.
-func insertDZContributorCurrent(t *testing.T, pk, code string) {
+func insertDZContributorCurrent(t *testing.T, api *handlers.API, pk, code string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_contributors_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, code, name) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', '%s', '%s')`,
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, code, code)))
 }
 
 // insertDZDeviceCurrent inserts a device into the history table with a
 // far-future timestamp so it appears as the "current" row via the view.
-func insertDZDeviceCurrent(t *testing.T, pk, code, contributorPK, metroPK string) {
+func insertDZDeviceCurrent(t *testing.T, api *handlers.API, pk, code, contributorPK, metroPK string) {
 	futureTS := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	entityID := fmt.Sprintf("entity-%s", pk)
-	require.NoError(t, testAPI.DB.Exec(t.Context(), fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(t.Context(), fmt.Sprintf(
 		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('%s', '%s', '%s', '%s', 0, 0, '%s', 'active', '', '%s', '', '%s', '%s', 0)`,
 		entityID, tsFormat(futureTS), tsFormat(futureTS), uuid.New().String(), pk, code, contributorPK, metroPK)))
 }
@@ -1309,8 +1294,7 @@ func getDetails(t *testing.T, event handlers.TimelineEvent) map[string]any {
 // --- queryVoteAccountChanges tests ---
 
 func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t0 := time.Date(2025, 5, 31, 22, 0, 0, 0, time.UTC) // before query range
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1318,24 +1302,24 @@ func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
 
 	// vote-A in history but NOT in current = left
 	// First appearance before query range so it doesn't also show as "joined"
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t0)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	deleteCurrentVoteAccount(t, "vote-A", t2)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t0)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t0)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	deleteCurrentVoteAccount(t, api, "vote-A", t2)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t0)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
 
 	// Need another validator in current so total_stake > 0
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t0)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t0)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t1)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t0)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t0)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t1)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1350,43 +1334,42 @@ func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
 }
 
 func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-A: in history at t1, NOT in current = left
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
-	deleteCurrentVoteAccount(t, "vote-A", t2)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
+	deleteCurrentVoteAccount(t, api, "vote-A", t2)
 
 	// vote-B: first appears at t2, IS in current = joined
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "10.0.0.3", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "10.0.0.3")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.3", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "10.0.0.3")
 
 	// Keep a stable validator in current for total_stake
 	// First appearance must be BEFORE query range so it's not counted as "joined"
 	t0 := t1.Add(-2 * time.Hour)
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t0)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t0)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t1)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t2)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t0)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t0)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t1)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t2)
 
 	// vote-A also needs first appearance before query range so only its "left" shows
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t0)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t0)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t0)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t0)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1418,31 +1401,30 @@ func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
 }
 
 func TestVoteAccountChanges_DZMetadata(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user with IP 1.2.3.4
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
 
 	// vote-A joins, node on DZ IP
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
 
 	// vote-B joins, node NOT on DZ
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1477,29 +1459,28 @@ func TestVoteAccountChanges_DZMetadata(t *testing.T) {
 // --- queryGossipNetworkChanges tests ---
 
 func TestGossipNetworkChanges_ValidatorOffline(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// node-A in gossip history with vote account, but NOT in current gossip
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	deleteCurrentGossipNode(t, "node-A", t2)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	deleteCurrentGossipNode(t, api, "node-A", t2)
 	// But need vote account in current for stake lookup
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
 
 	// Another node stays online so queries don't break
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t1)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t1)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t1)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t1)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1513,27 +1494,26 @@ func TestGossipNetworkChanges_ValidatorOffline(t *testing.T) {
 }
 
 func TestGossipNetworkChanges_GossipNodeOffline(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// node-B in gossip history but NO vote account anywhere
-	insertGossipNodeHistory(t, "node-B", "10.0.0.5", t1)
-	deleteCurrentGossipNode(t, "node-B", t2)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.5", t1)
+	deleteCurrentGossipNode(t, api, "node-B", t2)
 	// node-B NOT in current gossip, no vote accounts for node-B
 
 	// Need at least one validator in current for total stake
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t1)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t1)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t1)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t1)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1551,24 +1531,23 @@ func TestGossipNetworkChanges_GossipNodeOffline(t *testing.T) {
 // --- queryStakeChanges tests ---
 
 func TestStakeChanges_Increase(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-A: 100k SOL at t1, 115k SOL at t2 (+15k, above 10k threshold)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 115_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 115_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "10.0.0.1")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 115_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 115_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "10.0.0.1")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1582,24 +1561,23 @@ func TestStakeChanges_Increase(t *testing.T) {
 }
 
 func TestStakeChanges_Decrease(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-B: 200k SOL at t1, 180k SOL at t2 (-20k)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 200_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 180_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "10.0.0.2", t1)
-	insertGossipNodeHistory(t, "node-B", "10.0.0.2", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 180_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 200_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 180_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.2", t1)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.2", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 180_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "10.0.0.2")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1613,24 +1591,23 @@ func TestStakeChanges_Decrease(t *testing.T) {
 }
 
 func TestStakeChanges_BelowThreshold(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-C: 100k SOL at t1, 103k SOL at t2 (+3k = 3%, below both thresholds)
-	insertVoteAccountHistory(t, "vote-C", "node-C", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-C", "node-C", 103_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-C", "10.0.0.3", t1)
-	insertGossipNodeHistory(t, "node-C", "10.0.0.3", t2)
-	insertCurrentVoteAccount(t, "vote-C", "node-C", 103_000_000_000_000)
-	insertCurrentGossipNode(t, "node-C", "10.0.0.3")
+	insertVoteAccountHistory(t, api, "vote-C", "node-C", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-C", "node-C", 103_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-C", "10.0.0.3", t1)
+	insertGossipNodeHistory(t, api, "node-C", "10.0.0.3", t2)
+	insertCurrentVoteAccount(t, api, "vote-C", "node-C", 103_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-C", "10.0.0.3")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1643,24 +1620,23 @@ func TestStakeChanges_BelowThreshold(t *testing.T) {
 }
 
 func TestStakeChanges_PercentageThreshold(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-D: 100k SOL at t1, 106k SOL at t2 (+6k = 6%, above 5% but below 10k SOL)
-	insertVoteAccountHistory(t, "vote-D", "node-D", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-D", "node-D", 106_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-D", "10.0.0.4", t1)
-	insertGossipNodeHistory(t, "node-D", "10.0.0.4", t2)
-	insertCurrentVoteAccount(t, "vote-D", "node-D", 106_000_000_000_000)
-	insertCurrentGossipNode(t, "node-D", "10.0.0.4")
+	insertVoteAccountHistory(t, api, "vote-D", "node-D", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-D", "node-D", 106_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-D", "10.0.0.4", t1)
+	insertGossipNodeHistory(t, api, "node-D", "10.0.0.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-D", "node-D", 106_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-D", "10.0.0.4")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1671,27 +1647,26 @@ func TestStakeChanges_PercentageThreshold(t *testing.T) {
 }
 
 func TestStakeChanges_OnDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
 
 	// vote-A on DZ, stake increase
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 115_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t1)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 115_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 115_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 115_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1703,29 +1678,28 @@ func TestStakeChanges_OnDZ(t *testing.T) {
 }
 
 func TestStakeChanges_OnDZ_ContributorEnrichment(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Set up the full enrichment chain: contributor → device → user → gossip node
-	insertDZContributorCurrent(t, "contrib-1", "CONTRIB-A")
-	insertDZDeviceCurrent(t, "device-1", "DEV-A", "contrib-1", "metro-1")
-	insertDZUserCurrent(t, "user-1", "1.2.3.4", "activated", "ownerAAA", "device-1")
+	insertDZContributorCurrent(t, api, "contrib-1", "CONTRIB-A")
+	insertDZDeviceCurrent(t, api, "device-1", "DEV-A", "contrib-1", "metro-1")
+	insertDZUserCurrent(t, api, "user-1", "1.2.3.4", "activated", "ownerAAA", "device-1")
 
 	// Validator with stake increase, gossip IP matches DZ user
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 115_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t1)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 115_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 115_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 115_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1743,29 +1717,28 @@ func TestStakeChanges_OnDZ_ContributorEnrichment(t *testing.T) {
 // --- queryValidatorEvents tests ---
 
 func TestValidatorEvents_JoinedDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user: status pending at t1, activated at t2
-	insertDZUserHistory(t, "user-A", "entity-A", "ownerAAA", "1.2.3.4", "device-A", "pending", t1)
-	insertDZUserHistory(t, "user-A", "entity-A", "ownerAAA", "1.2.3.4", "device-A", "activated", t2)
-	insertDZUserCurrent(t, "user-A", "1.2.3.4", "activated", "ownerAAA", "device-A")
+	insertDZUserHistory(t, api, "user-A", "entity-A", "ownerAAA", "1.2.3.4", "device-A", "pending", t1)
+	insertDZUserHistory(t, api, "user-A", "entity-A", "ownerAAA", "1.2.3.4", "device-A", "activated", t2)
+	insertDZUserCurrent(t, api, "user-A", "1.2.3.4", "activated", "ownerAAA", "device-A")
 
 	// Gossip node matching DZ IP with vote account (validator)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t1)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1786,29 +1759,28 @@ func TestValidatorEvents_JoinedDZ(t *testing.T) {
 }
 
 func TestValidatorEvents_LeftDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user: activated at t1, deactivated at t2
-	insertDZUserHistory(t, "user-B", "entity-B", "ownerBBB", "1.2.3.5", "device-B", "activated", t1)
-	insertDZUserHistory(t, "user-B", "entity-B", "ownerBBB", "1.2.3.5", "device-B", "deactivated", t2)
-	insertDZUserCurrent(t, "user-B", "1.2.3.5", "deactivated", "ownerBBB", "device-B")
+	insertDZUserHistory(t, api, "user-B", "entity-B", "ownerBBB", "1.2.3.5", "device-B", "activated", t1)
+	insertDZUserHistory(t, api, "user-B", "entity-B", "ownerBBB", "1.2.3.5", "device-B", "deactivated", t2)
+	insertDZUserCurrent(t, api, "user-B", "1.2.3.5", "deactivated", "ownerBBB", "device-B")
 
 	// Gossip node with vote account
-	insertGossipNodeHistory(t, "node-B", "1.2.3.5", t1)
-	insertGossipNodeHistory(t, "node-B", "1.2.3.5", t2)
-	insertCurrentGossipNode(t, "node-B", "1.2.3.5")
-	insertVoteAccountHistory(t, "vote-B", "node-B", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 100_000_000_000_000, t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 100_000_000_000_000)
+	insertGossipNodeHistory(t, api, "node-B", "1.2.3.5", t1)
+	insertGossipNodeHistory(t, api, "node-B", "1.2.3.5", t2)
+	insertCurrentGossipNode(t, api, "node-B", "1.2.3.5")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 100_000_000_000_000, t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 100_000_000_000_000)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1828,28 +1800,27 @@ func TestValidatorEvents_LeftDZ(t *testing.T) {
 }
 
 func TestValidatorEvents_LeftDZ_DeletedWhileActivated(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user: activated at t1, then deleted (is_deleted=1) at t2 while still "activated"
-	insertDZUserHistory(t, "user-DEL", "entity-DEL", "ownerDEL", "1.2.3.50", "device-DEL", "activated", t1)
-	insertDZUserHistoryDeleted(t, "user-DEL", "entity-DEL", "ownerDEL", "1.2.3.50", "device-DEL", "activated", t2)
+	insertDZUserHistory(t, api, "user-DEL", "entity-DEL", "ownerDEL", "1.2.3.50", "device-DEL", "activated", t1)
+	insertDZUserHistoryDeleted(t, api, "user-DEL", "entity-DEL", "ownerDEL", "1.2.3.50", "device-DEL", "activated", t2)
 
 	// Gossip node with vote account
-	insertGossipNodeHistory(t, "node-DEL", "1.2.3.50", t1)
-	insertGossipNodeHistory(t, "node-DEL", "1.2.3.50", t2)
-	insertCurrentGossipNode(t, "node-DEL", "1.2.3.50")
-	insertVoteAccountHistory(t, "vote-DEL", "node-DEL", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-DEL", "node-DEL", 100_000_000_000_000, t2)
-	insertCurrentVoteAccount(t, "vote-DEL", "node-DEL", 100_000_000_000_000)
+	insertGossipNodeHistory(t, api, "node-DEL", "1.2.3.50", t1)
+	insertGossipNodeHistory(t, api, "node-DEL", "1.2.3.50", t2)
+	insertCurrentGossipNode(t, api, "node-DEL", "1.2.3.50")
+	insertVoteAccountHistory(t, api, "vote-DEL", "node-DEL", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-DEL", "node-DEL", 100_000_000_000_000, t2)
+	insertCurrentVoteAccount(t, api, "vote-DEL", "node-DEL", 100_000_000_000_000)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1869,30 +1840,29 @@ func TestValidatorEvents_LeftDZ_DeletedWhileActivated(t *testing.T) {
 }
 
 func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user: pending -> activated
-	insertDZUserHistory(t, "user-C", "entity-C", "ownerCCC", "1.2.3.6", "device-C", "pending", t1)
-	insertDZUserHistory(t, "user-C", "entity-C", "ownerCCC", "1.2.3.6", "device-C", "activated", t2)
-	insertDZUserCurrent(t, "user-C", "1.2.3.6", "activated", "ownerCCC", "device-C")
+	insertDZUserHistory(t, api, "user-C", "entity-C", "ownerCCC", "1.2.3.6", "device-C", "pending", t1)
+	insertDZUserHistory(t, api, "user-C", "entity-C", "ownerCCC", "1.2.3.6", "device-C", "activated", t2)
+	insertDZUserCurrent(t, api, "user-C", "1.2.3.6", "activated", "ownerCCC", "device-C")
 
 	// Gossip node with NO vote account (gossip_only)
-	insertGossipNodeHistory(t, "node-C", "1.2.3.6", t1)
-	insertGossipNodeHistory(t, "node-C", "1.2.3.6", t2)
-	insertCurrentGossipNode(t, "node-C", "1.2.3.6")
+	insertGossipNodeHistory(t, api, "node-C", "1.2.3.6", t1)
+	insertGossipNodeHistory(t, api, "node-C", "1.2.3.6", t2)
+	insertCurrentGossipNode(t, api, "node-C", "1.2.3.6")
 
 	// Need at least one validator in current for total stake
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1906,30 +1876,29 @@ func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
 }
 
 func TestValidatorEvents_GossipNodeLeftDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user: activated -> deactivated
-	insertDZUserHistory(t, "user-D", "entity-D", "ownerDDD", "1.2.3.7", "device-D", "activated", t1)
-	insertDZUserHistory(t, "user-D", "entity-D", "ownerDDD", "1.2.3.7", "device-D", "deactivated", t2)
-	insertDZUserCurrent(t, "user-D", "1.2.3.7", "deactivated", "ownerDDD", "device-D")
+	insertDZUserHistory(t, api, "user-D", "entity-D", "ownerDDD", "1.2.3.7", "device-D", "activated", t1)
+	insertDZUserHistory(t, api, "user-D", "entity-D", "ownerDDD", "1.2.3.7", "device-D", "deactivated", t2)
+	insertDZUserCurrent(t, api, "user-D", "1.2.3.7", "deactivated", "ownerDDD", "device-D")
 
 	// Gossip node with NO vote account
-	insertGossipNodeHistory(t, "node-D", "1.2.3.7", t1)
-	insertGossipNodeHistory(t, "node-D", "1.2.3.7", t2)
-	insertCurrentGossipNode(t, "node-D", "1.2.3.7")
+	insertGossipNodeHistory(t, api, "node-D", "1.2.3.7", t1)
+	insertGossipNodeHistory(t, api, "node-D", "1.2.3.7", t2)
+	insertCurrentGossipNode(t, api, "node-D", "1.2.3.7")
 
 	// Need at least one validator in current
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1945,31 +1914,30 @@ func TestValidatorEvents_GossipNodeLeftDZ(t *testing.T) {
 // --- Filter tests ---
 
 func TestDZFilter_OnDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user with IP 1.2.3.4
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
 
 	// vote-A joins, on DZ
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
 
 	// vote-B joins, NOT on DZ
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=on_dz",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -1983,30 +1951,29 @@ func TestDZFilter_OnDZ(t *testing.T) {
 }
 
 func TestDZFilter_OffDZ(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
 
 	// vote-A joins, on DZ
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
 
 	// vote-B joins, NOT on DZ
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=off_dz",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2030,27 +1997,26 @@ func TestDZFilter_OffDZ(t *testing.T) {
 }
 
 func TestDZFilter_AttributionPassThrough(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
 
 	// Validator on DZ at t1, switches off DZ at t2 -> produces left_dz
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "5.5.5.5") // now off DZ
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t1)
-	insertGossipNodeHistory(t, "node-A", "5.5.5.5", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "5.5.5.5") // now off DZ
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, api, "node-A", "5.5.5.5", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=on_dz",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2061,35 +2027,34 @@ func TestDZFilter_AttributionPassThrough(t *testing.T) {
 }
 
 func TestActionFilter_Added(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-A in history at t1, NOT in current (left)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
-	deleteCurrentVoteAccount(t, "vote-A", t2)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
+	deleteCurrentVoteAccount(t, api, "vote-A", t2)
 
 	// vote-B first appears at t2 (joined)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "10.0.0.3", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "10.0.0.3")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.3", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "10.0.0.3")
 
 	// Stable validator
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t1)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t2)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t1)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=added",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2109,34 +2074,33 @@ func TestActionFilter_Added(t *testing.T) {
 }
 
 func TestActionFilter_Removed(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// vote-A in history at t1, NOT in current (left)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
-	deleteCurrentVoteAccount(t, "vote-A", t2)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
+	deleteCurrentVoteAccount(t, api, "vote-A", t2)
 
 	// vote-B first appears at t2 (joined)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "10.0.0.3", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "10.0.0.3")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.3", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "10.0.0.3")
 
-	insertCurrentVoteAccount(t, "vote-stay", "node-stay", 200_000_000_000_000)
-	insertCurrentGossipNode(t, "node-stay", "10.0.0.2")
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-stay", "node-stay", 200_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t1)
-	insertGossipNodeHistory(t, "node-stay", "10.0.0.2", t2)
+	insertCurrentVoteAccount(t, api, "vote-stay", "node-stay", 200_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-stay", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-stay", "node-stay", 200_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t1)
+	insertGossipNodeHistory(t, api, "node-stay", "10.0.0.2", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=removed",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2152,25 +2116,24 @@ func TestActionFilter_Removed(t *testing.T) {
 }
 
 func TestActionFilter_Changed(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Set up a DZ stake_changed event via attribution (validator on DZ with stake change)
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 80_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 80_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t1)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "")
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 80_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 80_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=changed",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2188,24 +2151,23 @@ func TestActionFilter_Changed(t *testing.T) {
 }
 
 func TestActionFilter_AlertingIncludesStakeIncrease(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Stake increase above threshold
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 115_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t1)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 115_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "10.0.0.1")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 115_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t1)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 115_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "10.0.0.1")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&action=alerting",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2216,37 +2178,36 @@ func TestActionFilter_AlertingIncludesStakeIncrease(t *testing.T) {
 }
 
 func TestMinStakePct_FiltersValidators(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Total stake in current: 1M SOL = 1_000_000 * 1e9 = 1_000_000_000_000_000
 	// Validator A: 100k SOL (10%)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "10.0.0.1")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "10.0.0.1")
 
 	// Validator B: 10k SOL (1%)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 10_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "10.0.0.2", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 10_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 10_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "10.0.0.2", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 10_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "10.0.0.2")
 
 	// Remaining stake to make total = 1M SOL: 890k SOL
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 890_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "10.0.0.99")
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 890_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 890_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "10.0.0.99", t1)
-	insertGossipNodeHistory(t, "node-rest", "10.0.0.99", t2)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 890_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "10.0.0.99")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 890_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 890_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "10.0.0.99", t1)
+	insertGossipNodeHistory(t, api, "node-rest", "10.0.0.99", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&min_stake_pct=5",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2261,39 +2222,38 @@ func TestMinStakePct_FiltersValidators(t *testing.T) {
 }
 
 func TestMinStakePct_NonValidatorPassThrough(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Insert a device event via dim_dz_devices_history
-	require.NoError(t, testAPI.DB.Exec(ctx, fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('dev-entity-1', '%s', '%s', '%s', 0, 1, 'dev-1', 'pending', 'router', 'DEV-001', '10.0.0.1', '', '', 0)`,
 		tsFormat(t1), tsFormat(t1), uuid.New().String())))
-	require.NoError(t, testAPI.DB.Exec(ctx, fmt.Sprintf(
+	require.NoError(t, api.DB.Exec(ctx, fmt.Sprintf(
 		`INSERT INTO dim_dz_devices_history (entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash, pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users) VALUES ('dev-entity-1', '%s', '%s', '%s', 0, 2, 'dev-1', 'activated', 'router', 'DEV-001', '10.0.0.1', '', '', 0)`,
 		tsFormat(t2), tsFormat(t2), uuid.New().String())))
 
 	// Small validator (1% stake)
-	insertCurrentVoteAccount(t, "vote-small", "node-small", 10_000_000_000_000)
-	insertCurrentGossipNode(t, "node-small", "10.0.0.3")
-	insertVoteAccountHistory(t, "vote-small", "node-small", 10_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-small", "10.0.0.3", t2)
+	insertCurrentVoteAccount(t, api, "vote-small", "node-small", 10_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-small", "10.0.0.3")
+	insertVoteAccountHistory(t, api, "vote-small", "node-small", 10_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-small", "10.0.0.3", t2)
 
 	// Remaining for total 1M SOL
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 990_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "10.0.0.99")
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 990_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 990_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "10.0.0.99", t1)
-	insertGossipNodeHistory(t, "node-rest", "10.0.0.99", t2)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 990_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "10.0.0.99")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 990_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 990_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "10.0.0.99", t1)
+	insertGossipNodeHistory(t, api, "node-rest", "10.0.0.99", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&min_stake_pct=5",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2313,33 +2273,32 @@ func TestMinStakePct_NonValidatorPassThrough(t *testing.T) {
 // --- Integration / edge case tests ---
 
 func TestDZTotal_OnAllEventTypes(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
 
 	// DZ validator (on DZ): exists at both t1 and t2
-	insertVoteAccountHistory(t, "vote-dz", "node-dz", 100_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-dz", "node-dz", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-dz", "1.2.3.4", t1)
-	insertGossipNodeHistory(t, "node-dz", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-dz", "node-dz", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-dz", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-dz", "node-dz", 100_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-dz", "node-dz", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-dz", "1.2.3.4", t1)
+	insertGossipNodeHistory(t, api, "node-dz", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-dz", "node-dz", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-dz", "1.2.3.4")
 
 	// Validator that joins at t2 (non-DZ)
-	insertVoteAccountHistory(t, "vote-new", "node-new", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-new", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-new", "node-new", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-new", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-new", "node-new", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-new", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-new", "node-new", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-new", "9.9.9.9")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2358,8 +2317,7 @@ func TestDZTotal_OnAllEventTypes(t *testing.T) {
 }
 
 func TestEdge_NoDZUsers(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
@@ -2367,15 +2325,15 @@ func TestEdge_NoDZUsers(t *testing.T) {
 	// No DZ users at all
 
 	// Validator joins
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.1", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "10.0.0.1")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.1", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "10.0.0.1")
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse
@@ -2387,79 +2345,77 @@ func TestEdge_NoDZUsers(t *testing.T) {
 }
 
 func TestEdge_ZeroStake(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// Validator with 0 stake
-	insertVoteAccountHistory(t, "vote-zero", "node-zero", 0, t1)
-	insertGossipNodeHistory(t, "node-zero", "10.0.0.1", t1)
-	insertCurrentVoteAccount(t, "vote-zero", "node-zero", 0)
-	insertCurrentGossipNode(t, "node-zero", "10.0.0.1")
+	insertVoteAccountHistory(t, api, "vote-zero", "node-zero", 0, t1)
+	insertGossipNodeHistory(t, api, "node-zero", "10.0.0.1", t1)
+	insertCurrentVoteAccount(t, api, "vote-zero", "node-zero", 0)
+	insertCurrentGossipNode(t, api, "node-zero", "10.0.0.1")
 
 	// Need another validator with stake so total > 0
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "10.0.0.2")
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-A", "10.0.0.2", t1)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "10.0.0.2")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-A", "10.0.0.2", t1)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	// Should not crash
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
 func TestCombinedFilters(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2025, 6, 1, 1, 0, 0, 0, time.UTC)
 
 	// DZ user
-	insertDZUserCurrent(t, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
+	insertDZUserCurrent(t, api, "dz-user-1", "1.2.3.4", "activated", "ownerAAA", "device-A")
 
 	// Validator A on DZ, joins at t2, 100k SOL (10% of 1M)
-	insertVoteAccountHistory(t, "vote-A", "node-A", 100_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-A", "1.2.3.4", t2)
-	insertCurrentVoteAccount(t, "vote-A", "node-A", 100_000_000_000_000)
-	insertCurrentGossipNode(t, "node-A", "1.2.3.4")
+	insertVoteAccountHistory(t, api, "vote-A", "node-A", 100_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-A", "1.2.3.4", t2)
+	insertCurrentVoteAccount(t, api, "vote-A", "node-A", 100_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-A", "1.2.3.4")
 
 	// Validator B off DZ, joins at t2, 50k SOL (5%)
-	insertVoteAccountHistory(t, "vote-B", "node-B", 50_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-B", "9.9.9.9", t2)
-	insertCurrentVoteAccount(t, "vote-B", "node-B", 50_000_000_000_000)
-	insertCurrentGossipNode(t, "node-B", "9.9.9.9")
+	insertVoteAccountHistory(t, api, "vote-B", "node-B", 50_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-B", "9.9.9.9", t2)
+	insertCurrentVoteAccount(t, api, "vote-B", "node-B", 50_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-B", "9.9.9.9")
 
 	// Validator C on DZ, joins at t2, 10k SOL (1% - below min_stake_pct=2)
-	insertDZUserCurrent(t, "dz-user-2", "1.2.3.5", "activated", "ownerCCC", "device-C")
-	insertVoteAccountHistory(t, "vote-C", "node-C", 10_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-C", "1.2.3.5", t2)
-	insertCurrentVoteAccount(t, "vote-C", "node-C", 10_000_000_000_000)
-	insertCurrentGossipNode(t, "node-C", "1.2.3.5")
+	insertDZUserCurrent(t, api, "dz-user-2", "1.2.3.5", "activated", "ownerCCC", "device-C")
+	insertVoteAccountHistory(t, api, "vote-C", "node-C", 10_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-C", "1.2.3.5", t2)
+	insertCurrentVoteAccount(t, api, "vote-C", "node-C", 10_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-C", "1.2.3.5")
 
 	// Remaining stake to total 1M
-	insertCurrentVoteAccount(t, "vote-rest", "node-rest", 840_000_000_000_000)
-	insertCurrentGossipNode(t, "node-rest", "10.0.0.99")
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 840_000_000_000_000, t1)
-	insertVoteAccountHistory(t, "vote-rest", "node-rest", 840_000_000_000_000, t2)
-	insertGossipNodeHistory(t, "node-rest", "10.0.0.99", t1)
-	insertGossipNodeHistory(t, "node-rest", "10.0.0.99", t2)
+	insertCurrentVoteAccount(t, api, "vote-rest", "node-rest", 840_000_000_000_000)
+	insertCurrentGossipNode(t, api, "node-rest", "10.0.0.99")
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 840_000_000_000_000, t1)
+	insertVoteAccountHistory(t, api, "vote-rest", "node-rest", 840_000_000_000_000, t2)
+	insertGossipNodeHistory(t, api, "node-rest", "10.0.0.99", t1)
+	insertGossipNodeHistory(t, api, "node-rest", "10.0.0.99", t2)
 
 	// Validator D: in history at t1, NOT in current (left) - should be excluded by action=added
-	insertVoteAccountHistory(t, "vote-D", "node-D", 100_000_000_000_000, t1)
-	insertGossipNodeHistory(t, "node-D", "1.2.3.4", t1)
-	deleteCurrentVoteAccount(t, "vote-D", t2)
-	deleteCurrentGossipNode(t, "node-D", t2)
+	insertVoteAccountHistory(t, api, "vote-D", "node-D", 100_000_000_000_000, t1)
+	insertGossipNodeHistory(t, api, "node-D", "1.2.3.4", t1)
+	deleteCurrentVoteAccount(t, api, "vote-D", t2)
+	deleteCurrentGossipNode(t, api, "node-D", t2)
 
 	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/timeline?start=%s&end=%s&category=state_change&dz_filter=on_dz&action=added&min_stake_pct=2&entity_type=validator",
 		t1.Add(-time.Minute).Format(time.RFC3339), t2.Add(time.Minute).Format(time.RFC3339)), nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetTimeline(rr, req)
+	api.GetTimeline(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	var resp handlers.TimelineResponse

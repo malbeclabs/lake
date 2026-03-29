@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/malbeclabs/lake/api/handlers"
-	"github.com/malbeclabs/lake/api/config"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/assert"
@@ -16,11 +15,11 @@ import (
 )
 
 func TestGetMetroConnectivity_FiltersMetrosWithoutMaxUsers(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	// Insert devices into dim_dz_devices_history - NYC has max_users > 0, LAX does not
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -43,13 +42,11 @@ func TestGetMetroConnectivity_FiltersMetrosWithoutMaxUsers(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-connectivity", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetroConnectivity(rr, req)
+	api.GetMetroConnectivity(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -65,11 +62,11 @@ func TestGetMetroConnectivity_FiltersMetrosWithoutMaxUsers(t *testing.T) {
 }
 
 func TestGetMetroConnectivity_IncludesMetrosWithMaxUsers(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	// Insert devices - both metros have max_users > 0
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -92,13 +89,11 @@ func TestGetMetroConnectivity_IncludesMetrosWithMaxUsers(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-connectivity", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetroConnectivity(rr, req)
+	api.GetMetroConnectivity(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -118,11 +113,11 @@ func TestGetMetroConnectivity_IncludesMetrosWithMaxUsers(t *testing.T) {
 }
 
 func TestGetMetroConnectivity_Empty(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	// No devices with max_users > 0
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -140,13 +135,11 @@ func TestGetMetroConnectivity_Empty(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/topology/metro-connectivity", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetMetroConnectivity(rr, req)
+	api.GetMetroConnectivity(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
@@ -16,12 +15,12 @@ import (
 
 // createPublisherShredStatsTable creates the publisher_shred_stats table
 // in the configured shredder database (normally created by shredder migrations, not lake migrations).
-func createPublisherShredStatsTable(t *testing.T) {
+func createPublisherShredStatsTable(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", config.GetShredderDB()))
+	err := api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", api.ShredderDB))
 	require.NoError(t, err)
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.publisher_shred_stats (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3),
@@ -48,17 +47,17 @@ func createPublisherShredStatsTable(t *testing.T) {
 		) ENGINE = ReplacingMergeTree(ingested_at)
 		PARTITION BY toYYYYMM(event_ts)
 		ORDER BY (host, slot, publisher_ip)
-	`, "`"+config.GetShredderDB()+"`"))
+	`, "`"+api.ShredderDB+"`"))
 	require.NoError(t, err)
 }
 
-func insertPublisherCheckTestData(t *testing.T) {
+func insertPublisherCheckTestData(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
-	createPublisherShredStatsTable(t)
+	createPublisherShredStatsTable(t, api)
 
 	// Create the bebop multicast group
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -69,7 +68,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create devices and metros
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users)
@@ -81,7 +80,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_metros_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, code, name, latitude, longitude)
@@ -97,7 +96,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	// - dzuser1: publishing (has shred stats), on ams1
 	// - dzuser2: publishing (has shred stats), on nyc1
 	// - dzuser3: connected but NOT publishing (no shred stats), on ams1
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
@@ -112,7 +111,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Gossip nodes: map client IPs to node pubkeys
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_solana_gossip_nodes_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pubkey, epoch, gossip_ip, gossip_port, tpuquic_ip, tpuquic_port, version)
@@ -127,7 +126,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Vote accounts: map node pubkeys to vote pubkeys and stake
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_solana_vote_accounts_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 vote_pubkey, epoch, node_pubkey, activated_stake_lamports, epoch_vote_account, commission_percentage)
@@ -142,7 +141,7 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validators.app: client name/version lookup by vote account
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_validatorsapp_validators_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 account, name, vote_account, software_version, software_client, software_client_id,
@@ -164,8 +163,8 @@ func insertPublisherCheckTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Shred stats: only dzuser1 and dzuser2 are publishing (dzuser3 is NOT)
-	err = testAPI.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
+	err = api.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -185,13 +184,13 @@ func insertPublisherCheckTestData(t *testing.T) {
 }
 
 // insertBulkShredStats inserts N leader slots and M retransmit slots for a publisher.
-func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string, epoch, startSlot uint64, leaderSlots, retransmitSlots int) {
+func insertBulkShredStats(t *testing.T, api *handlers.API, dzUserPubkey string, publisherIP string, epoch, startSlot uint64, leaderSlots, retransmitSlots int) {
 	t.Helper()
 	ctx := t.Context()
 	slot := startSlot
 	for range leaderSlots {
-		err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
+		err := api.DB.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
 				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -205,8 +204,8 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 		slot++
 	}
 	for range retransmitSlots {
-		err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
-			INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
+		err := api.DB.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
 				(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 				 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 				 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -223,12 +222,12 @@ func insertBulkShredStats(t *testing.T, dzUserPubkey string, publisherIP string,
 
 func TestGetPublisherCheck_Empty(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	createPublisherShredStatsTable(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	createPublisherShredStatsTable(t, api)
 
 	// Create bebop group but no users
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -240,7 +239,7 @@ func TestGetPublisherCheck_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -252,12 +251,12 @@ func TestGetPublisherCheck_Empty(t *testing.T) {
 
 func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -310,12 +309,12 @@ func TestGetPublisherCheck_AllPublishers(t *testing.T) {
 
 func TestGetPublisherCheck_FilterByIP(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=10.0.0.1", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -328,12 +327,12 @@ func TestGetPublisherCheck_FilterByIP(t *testing.T) {
 
 func TestGetPublisherCheck_FilterByClientIP(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=203.0.113.2", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -346,13 +345,13 @@ func TestGetPublisherCheck_FilterByClientIP(t *testing.T) {
 
 func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	// Default (epochs=2) should work the same as before
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -364,7 +363,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	// epochs=1 should also work (single epoch)
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?epochs=1", nil)
 	rr = httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	err = json.NewDecoder(rr.Body).Decode(&resp)
@@ -374,7 +373,7 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 	// Invalid epochs param should use default
 	req = httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?epochs=abc", nil)
 	rr = httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	err = json.NewDecoder(rr.Body).Decode(&resp)
@@ -388,13 +387,13 @@ func TestGetPublisherCheck_EpochsParam(t *testing.T) {
 // shredder instance writes its own row per slot. The query must deduplicate by slot.
 func TestGetPublisherCheck_MultiHost(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	// Insert duplicate rows from a second shredder host for dzuser1's slots.
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
+	err := api.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -414,7 +413,7 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=dzuser1", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -432,12 +431,12 @@ func TestGetPublisherCheck_MultiHost(t *testing.T) {
 
 func TestGetPublisherCheck_MaxSlotInResponse(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -450,13 +449,13 @@ func TestGetPublisherCheck_MaxSlotInResponse(t *testing.T) {
 
 func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	// Insert an old slot (slot 1) that should be excluded when querying last 500 slots
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.publisher_shred_stats`, "`"+config.GetShredderDB()+"`")+`
+	err := api.DB.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s.publisher_shred_stats`, "`"+api.ShredderDB+"`")+`
 			(event_ts, ingested_at, host, publisher_ip, client_ip, node_pubkey,
 			 vote_pubkey, activated_stake, dz_user_pubkey, dz_device_code, dz_metro_code,
 			 epoch, slot, total_packets, unique_shreds, data_shreds, coding_shreds,
@@ -470,7 +469,7 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=500&q=dzuser2", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -487,12 +486,12 @@ func TestGetPublisherCheck_SlotsParam(t *testing.T) {
 
 func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=999", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -506,12 +505,12 @@ func TestGetPublisherCheck_SlotsDefault(t *testing.T) {
 
 func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?slots=500&epochs=5", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -525,12 +524,12 @@ func TestGetPublisherCheck_SlotsAndEpochsMutuallyExclusive(t *testing.T) {
 
 func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	insertPublisherCheckTestData(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertPublisherCheckTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q=dzuser1", nil)
 	rr := httptest.NewRecorder()
-	testAPI.GetPublisherCheck(rr, req)
+	api.GetPublisherCheck(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -543,13 +542,13 @@ func TestGetPublisherCheck_FilterByDZID(t *testing.T) {
 
 func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 	t.Parallel()
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	createPublisherShredStatsTable(t)
+	api := apitesting.NewTestAPI(t, testChDB)
+	createPublisherShredStatsTable(t, api)
 
 	ctx := t.Context()
 
 	// Create bebop group
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_multicast_groups_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count)
@@ -560,7 +559,7 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create four publishers to test each threshold scenario
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_users_history
 			(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, attrs_hash,
 			 pk, owner_pubkey, status, kind, client_ip, dz_ip, device_pk, tenant_pk, tunnel_id, publishers, subscribers)
@@ -577,16 +576,16 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 	require.NoError(t, err)
 
 	// Scenario 1: 10 retransmit / 100 total (10% ratio, but only 10 retransmit < 50 min)
-	insertBulkShredStats(t, "below-abs", "10.0.1.1", 800, 2000, 90, 10)
+	insertBulkShredStats(t, api, "below-abs", "10.0.1.1", 800, 2000, 90, 10)
 
 	// Scenario 2: 60 retransmit / 2000 total (3% ratio < 5% min, but 60 > 50 abs min)
-	insertBulkShredStats(t, "above-abs-below-ratio", "10.0.1.2", 800, 5000, 1940, 60)
+	insertBulkShredStats(t, api, "above-abs-below-ratio", "10.0.1.2", 800, 5000, 1940, 60)
 
 	// Scenario 3: 200 retransmit / 400 total (50% ratio, 200 > 50) — clearly flagged
-	insertBulkShredStats(t, "above-both", "10.0.1.3", 800, 8000, 200, 200)
+	insertBulkShredStats(t, api, "above-both", "10.0.1.3", 800, 8000, 200, 200)
 
 	// Scenario 4: exactly 50 retransmit / 1000 total (exactly 5%, exactly 50) — boundary, flagged
-	insertBulkShredStats(t, "boundary", "10.0.1.4", 800, 10000, 950, 50)
+	insertBulkShredStats(t, api, "boundary", "10.0.1.4", 800, 10000, 950, 50)
 
 	tests := []struct {
 		name     string
@@ -601,10 +600,9 @@ func TestGetPublisherCheck_RetransmitThreshold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			apitesting.BindTest(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/dz/publisher-check?q="+tt.dzUser, nil)
 			rr := httptest.NewRecorder()
-			testAPI.GetPublisherCheck(rr, req)
+			api.GetPublisherCheck(rr, req)
 
 			assert.Equal(t, http.StatusOK, rr.Code)
 

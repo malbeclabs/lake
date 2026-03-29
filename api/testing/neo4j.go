@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/malbeclabs/lake/api/config"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/require"
 	tcneo4j "github.com/testcontainers/testcontainers-go/modules/neo4j"
@@ -117,38 +116,33 @@ func NewNeo4jDB(ctx context.Context, log *slog.Logger, cfg *Neo4jDBConfig) (*Neo
 	return db, nil
 }
 
-// SetupTestNeo4j sets up a test Neo4j client and configures config.Neo4jClient.
-// Creates a read-only client matching the API's usage pattern.
-func SetupTestNeo4j(t *testing.T, db *Neo4jDB) {
+
+// SetupNeo4jForTest creates a read-only Neo4j client for the test.
+// Does NOT touch config.Neo4jClient.
+func SetupNeo4jForTest(t *testing.T, db *Neo4jDB) neo4j.Client {
+	t.Helper()
 	ctx := t.Context()
 
-	// Create a read-only client (matches API usage)
 	client, err := neo4j.NewReadOnlyClient(ctx, slog.Default(), db.boltURL, neo4j.DefaultDatabase, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create Neo4j client")
 
-	// Save old client and swap
-	oldClient := config.Neo4jClient
-	oldDatabase := config.Neo4jDatabase
-	config.Neo4jClient = client
-	config.Neo4jDatabase = neo4j.DefaultDatabase
-
 	t.Cleanup(func() {
 		client.Close(context.Background())
-		config.Neo4jClient = oldClient
-		config.Neo4jDatabase = oldDatabase
 	})
+
+	return client
 }
 
-// SetupTestNeo4jWithData sets up a test Neo4j client with optional data seeding.
-// Uses a read-write client for setup, then swaps to read-only for the test.
-func SetupTestNeo4jWithData(t *testing.T, db *Neo4jDB, seedFunc func(ctx context.Context, session neo4j.Session) error) {
+// SetupNeo4jWithDataForTest seeds data and returns a read-only Neo4j client.
+// Does NOT touch config.Neo4jClient.
+func SetupNeo4jWithDataForTest(t *testing.T, db *Neo4jDB, seedFunc func(ctx context.Context, session neo4j.Session) error) neo4j.Client {
+	t.Helper()
 	ctx := t.Context()
 
 	// Create a read-write client for seeding
 	rwClient, err := neo4j.NewClient(ctx, slog.Default(), db.boltURL, neo4j.DefaultDatabase, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create Neo4j read-write client")
 
-	// Clear database
 	session, err := rwClient.Session(ctx)
 	require.NoError(t, err, "failed to create Neo4j session")
 
@@ -157,7 +151,6 @@ func SetupTestNeo4jWithData(t *testing.T, db *Neo4jDB, seedFunc func(ctx context
 	_, err = result.Consume(ctx)
 	require.NoError(t, err, "failed to consume clear result")
 
-	// Run migrations (use discard logger to avoid noisy output in CI)
 	err = neo4j.RunMigrations(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), neo4j.MigrationConfig{
 		URI:      db.boltURL,
 		Database: neo4j.DefaultDatabase,
@@ -166,7 +159,6 @@ func SetupTestNeo4jWithData(t *testing.T, db *Neo4jDB, seedFunc func(ctx context
 	})
 	require.NoError(t, err, "failed to run Neo4j migrations")
 
-	// Seed data if function provided
 	if seedFunc != nil {
 		err = seedFunc(ctx, session)
 		require.NoError(t, err, "failed to seed Neo4j data")
@@ -175,21 +167,14 @@ func SetupTestNeo4jWithData(t *testing.T, db *Neo4jDB, seedFunc func(ctx context
 	session.Close(ctx)
 	rwClient.Close(ctx)
 
-	// Create a read-only client (matches API usage)
 	roClient, err := neo4j.NewReadOnlyClient(ctx, slog.Default(), db.boltURL, neo4j.DefaultDatabase, db.cfg.Username, db.cfg.Password)
 	require.NoError(t, err, "failed to create Neo4j read-only client")
 
-	// Save old client and swap
-	oldClient := config.Neo4jClient
-	oldDatabase := config.Neo4jDatabase
-	config.Neo4jClient = roClient
-	config.Neo4jDatabase = neo4j.DefaultDatabase
-
 	t.Cleanup(func() {
 		roClient.Close(context.Background())
-		config.Neo4jClient = oldClient
-		config.Neo4jDatabase = oldDatabase
 	})
+
+	return roClient
 }
 
 func isRetryableNeo4jContainerStartErr(err error) bool {

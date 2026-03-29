@@ -117,12 +117,10 @@ func NewDB(ctx context.Context, log *slog.Logger, cfg *DBConfig) (*DB, error) {
 	return db, nil
 }
 
-// SetupTestDB sets up a test database with migrations and configures config.PgPool.
-// Returns a cleanup function that should be called when done.
-func SetupTestDB(t *testing.T, db *DB) {
-	ctx := t.Context()
+// Does NOT touch config.PgPool.
+func SetupPostgresForTest(t *testing.T, db *DB) *pgxpool.Pool {
+	t.Helper()
 
-	// Run migrations
 	goose.SetBaseFS(config.EmbedMigrations)
 	sqlDB, err := sql.Open("pgx", db.connStr)
 	require.NoError(t, err, "failed to open database for migrations")
@@ -135,21 +133,7 @@ func SetupTestDB(t *testing.T, db *DB) {
 	require.NoError(t, err, "failed to run migrations")
 	sqlDB.Close()
 
-	// Create pgxpool and set config.PgPool
-	poolConfig, err := pgxpool.ParseConfig(db.connStr)
-	require.NoError(t, err, "failed to parse pool config")
-
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
-	require.NoError(t, err, "failed to create pool")
-
-	// Save old pool and restore on cleanup
-	oldPool := config.PgPool
-	config.PgPool = pool
-
-	t.Cleanup(func() {
-		pool.Close()
-		config.PgPool = oldPool
-	})
+	return NewTestPool(t, db)
 }
 
 // NewTestPool creates a new pgxpool connected to the test container.

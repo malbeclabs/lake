@@ -10,17 +10,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/api/handlers"
+	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetAuthNonce(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/nonce", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetAuthNonce(rr, req)
+	api.GetAuthNonce(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -33,17 +34,17 @@ func TestGetAuthNonce(t *testing.T) {
 	// Verify nonce is stored in database
 	ctx := context.Background()
 	var count int
-	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", response.Nonce).Scan(&count)
+	err = api.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", response.Nonce).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count)
 }
 
 func TestGetAuthNonce_CleansExpired(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Insert an expired nonce
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO auth_nonces (nonce, expires_at) VALUES ($1, NOW() - INTERVAL '1 hour')
 	`, "expired_nonce_123")
 	require.NoError(t, err)
@@ -51,28 +52,28 @@ func TestGetAuthNonce_CleansExpired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/nonce", nil)
 	rr := httptest.NewRecorder()
 
-	testAPI.GetAuthNonce(rr, req)
+	api.GetAuthNonce(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
 	// Verify expired nonce is cleaned up
 	var count int
-	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", "expired_nonce_123").Scan(&count)
+	err = api.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM auth_nonces WHERE nonce = $1", "expired_nonce_123").Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
 
 func TestGetAuthMe_Authenticated(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	account := createTestAccount(t, ctx)
+	account := createTestAccount(t, ctx, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	testAPI.GetAuthMe(rr, req)
+	api.GetAuthMe(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -84,13 +85,13 @@ func TestGetAuthMe_Authenticated(t *testing.T) {
 }
 
 func TestGetAuthMe_Anonymous(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
 	// No account in context
 
 	rr := httptest.NewRecorder()
-	testAPI.GetAuthMe(rr, req)
+	api.GetAuthMe(rr, req)
 
 	// Should still return 200 OK with null account
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -102,14 +103,14 @@ func TestGetAuthMe_Anonymous(t *testing.T) {
 }
 
 func TestPostAuthLogout(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	account := createTestAccount(t, ctx)
+	account := createTestAccount(t, ctx, api)
 
 	// Create a session token
 	tokenHash := "test_token_hash_" + uuid.New().String()
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, $2, NOW() + INTERVAL '1 day')
 	`, account.ID, tokenHash)
@@ -120,17 +121,17 @@ func TestPostAuthLogout(t *testing.T) {
 	// For testing, we just verify that a logout with no token succeeds
 
 	rr := httptest.NewRecorder()
-	testAPI.PostAuthLogout(rr, req)
+	api.PostAuthLogout(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
 func TestGetUsageQuota_Anonymous(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Set up anonymous limit
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES (NULL, 5)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 5
@@ -142,7 +143,7 @@ func TestGetUsageQuota_Anonymous(t *testing.T) {
 	// No account in context
 
 	rr := httptest.NewRecorder()
-	testAPI.GetUsageQuota(rr, req)
+	api.GetUsageQuota(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -155,13 +156,13 @@ func TestGetUsageQuota_Anonymous(t *testing.T) {
 }
 
 func TestGetUsageQuota_Authenticated(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	account := createTestAccount(t, ctx)
+	account := createTestAccount(t, ctx, api)
 
 	// Set up wallet limit
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES ('wallet', 20)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 20
@@ -172,7 +173,7 @@ func TestGetUsageQuota_Authenticated(t *testing.T) {
 	req = withAccount(req, account)
 
 	rr := httptest.NewRecorder()
-	testAPI.GetUsageQuota(rr, req)
+	api.GetUsageQuota(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -184,13 +185,13 @@ func TestGetUsageQuota_Authenticated(t *testing.T) {
 }
 
 func TestGetAccountByToken_Valid(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create account
 	accountID := uuid.New()
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, 'wallet', $2, true)
 	`, accountID, walletAddr)
@@ -208,7 +209,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 	// and test the retrieval logic
 	realTokenHash := "0a4d55a8d778e5022fab701977c5d840bbc486d0" // This won't match, so let's skip actual token validation
 
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, $2, NOW() + INTERVAL '1 day')
 	`, accountID, realTokenHash)
@@ -216,7 +217,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 
 	// Test retrieval - since we can't easily generate matching token/hash,
 	// we'll just verify the error case
-	account, err := testAPI.GetAccountByToken(ctx, "invalid_token")
+	account, err := api.GetAccountByToken(ctx, "invalid_token")
 	assert.Error(t, err)
 	assert.Nil(t, account)
 
@@ -226,65 +227,65 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 }
 
 func TestGetAccountByToken_Expired(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create account
 	accountID := uuid.New()
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, 'wallet', $2, true)
 	`, accountID, walletAddr)
 	require.NoError(t, err)
 
 	// Create expired session
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, 'expired_session_hash', NOW() - INTERVAL '1 day')
 	`, accountID)
 	require.NoError(t, err)
 
 	// Attempt to get account with expired session
-	account, err := testAPI.GetAccountByToken(ctx, "any_token")
+	account, err := api.GetAccountByToken(ctx, "any_token")
 	assert.Error(t, err)
 	assert.Nil(t, account)
 }
 
 func TestGetAccountByToken_InactiveAccount(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Create inactive account
 	accountID := uuid.New()
 	walletAddr := "test_wallet_" + uuid.New().String()[:8]
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO accounts (id, account_type, wallet_address, is_active)
 		VALUES ($1, 'wallet', $2, false)
 	`, accountID, walletAddr)
 	require.NoError(t, err)
 
 	// Create valid session for inactive account
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		INSERT INTO auth_sessions (account_id, token_hash, expires_at)
 		VALUES ($1, 'inactive_account_hash', NOW() + INTERVAL '1 day')
 	`, accountID)
 	require.NoError(t, err)
 
 	// Attempt to get inactive account
-	account, err := testAPI.GetAccountByToken(ctx, "any_token")
+	account, err := api.GetAccountByToken(ctx, "any_token")
 	assert.Error(t, err)
 	assert.Nil(t, account)
 }
 
 func TestGetQuotaForAccount_WithUsage(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	account := createTestAccount(t, ctx)
+	account := createTestAccount(t, ctx, api)
 
 	// Set up wallet limit
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES ('wallet', 10)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 10
@@ -292,13 +293,13 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	// Record some usage
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		INSERT INTO usage_daily (account_id, date, question_count)
 		VALUES ($1, CURRENT_DATE, 3)
 	`, account.ID)
 	require.NoError(t, err)
 
-	quota, err := testAPI.GetQuotaForAccount(ctx, account, "")
+	quota, err := api.GetQuotaForAccount(ctx, account, "")
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 	assert.NotNil(t, quota.Limit)
@@ -308,7 +309,7 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 }
 
 func TestGetQuotaForAccount_NoLimit(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Account with type that has no limit entry (defaults to anonymous limit)
@@ -319,18 +320,18 @@ func TestGetQuotaForAccount_NoLimit(t *testing.T) {
 	}
 
 	// Don't insert any limit for this account type
-	quota, err := testAPI.GetQuotaForAccount(ctx, account, "")
+	quota, err := api.GetQuotaForAccount(ctx, account, "")
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 	// Falls back to default limit
 }
 
 func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Set up anonymous limit
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES (NULL, 5)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 5
@@ -340,13 +341,13 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 	testIP := "192.168.1.100"
 
 	// Record some usage for this IP
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		INSERT INTO usage_daily (ip_address, date, question_count)
 		VALUES ($1, CURRENT_DATE, 2)
 	`, testIP)
 	require.NoError(t, err)
 
-	quota, err := testAPI.GetQuotaForAccount(ctx, nil, testIP)
+	quota, err := api.GetQuotaForAccount(ctx, nil, testIP)
 	require.NoError(t, err)
 	assert.NotNil(t, quota)
 	assert.NotNil(t, quota.Remaining)
@@ -354,15 +355,15 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 }
 
 func TestMigrateAnonymousSessions(t *testing.T) {
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
-	account := createTestAccount(t, ctx)
+	account := createTestAccount(t, ctx, api)
 	anonymousID := "anon_migrate_test_" + uuid.New().String()[:8]
 
 	// Create anonymous sessions
 	for i := 0; i < 3; i++ {
-		_, err := testAPI.PgPool.Exec(ctx, `
+		_, err := api.PgPool.Exec(ctx, `
 			INSERT INTO sessions (id, type, content, anonymous_id)
 			VALUES ($1, 'chat', '[]', $2)
 		`, uuid.New(), anonymousID)
@@ -371,13 +372,13 @@ func TestMigrateAnonymousSessions(t *testing.T) {
 
 	// Verify anonymous sessions exist
 	var anonCount int
-	err := testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
+	err := api.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
 	require.NoError(t, err)
 	assert.Equal(t, 3, anonCount)
 
 	// The migrateAnonymousSessions function is internal, but we can test the effect
 	// by creating a session with anonymous_id then updating it to have account_id
-	_, err = testAPI.PgPool.Exec(ctx, `
+	_, err = api.PgPool.Exec(ctx, `
 		UPDATE sessions
 		SET account_id = $1, anonymous_id = NULL
 		WHERE anonymous_id = $2 AND account_id IS NULL
@@ -386,12 +387,12 @@ func TestMigrateAnonymousSessions(t *testing.T) {
 
 	// Verify sessions are now owned by account
 	var accountCount int
-	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE account_id = $1", account.ID).Scan(&accountCount)
+	err = api.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE account_id = $1", account.ID).Scan(&accountCount)
 	require.NoError(t, err)
 	assert.Equal(t, 3, accountCount)
 
 	// Verify anonymous_id is cleared
-	err = testAPI.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
+	err = api.PgPool.QueryRow(ctx, "SELECT COUNT(*) FROM sessions WHERE anonymous_id = $1", anonymousID).Scan(&anonCount)
 	require.NoError(t, err)
 	assert.Equal(t, 0, anonCount)
 }
@@ -456,18 +457,18 @@ func TestNextMidnightUTC(t *testing.T) {
 
 	// We can't directly call nextMidnightUTC (it's unexported), but we can verify
 	// quota.ResetsAt is a valid RFC3339 timestamp representing midnight UTC
-	setupTestPg(t)
+	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
 	// Set up anonymous limit
-	_, err := testAPI.PgPool.Exec(ctx, `
+	_, err := api.PgPool.Exec(ctx, `
 		INSERT INTO usage_limits (account_type, daily_question_limit)
 		VALUES (NULL, 5)
 		ON CONFLICT (account_type) DO UPDATE SET daily_question_limit = 5
 	`)
 	require.NoError(t, err)
 
-	quota, err := testAPI.GetQuotaForAccount(ctx, nil, "127.0.0.1")
+	quota, err := api.GetQuotaForAccount(ctx, nil, "127.0.0.1")
 	require.NoError(t, err)
 
 	resetTime, err := time.Parse(time.RFC3339, quota.ResetsAt)

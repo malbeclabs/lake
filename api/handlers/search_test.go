@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupSearchTables(t *testing.T) {
+func setupSearchTables(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Create metros table
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_metros_current (
 			pk String,
 			code String,
@@ -26,7 +26,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create devices table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_devices_current (
 			pk String,
 			code String,
@@ -38,7 +38,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create links table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_links_current (
 			pk String,
 			code String,
@@ -49,7 +49,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create contributors table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_contributors_current (
 			pk String,
 			code String,
@@ -59,7 +59,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create users table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS dz_users_current (
 			pk String,
 			kind String,
@@ -71,7 +71,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create validators table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS solana_vote_accounts_current (
 			vote_pubkey String,
 			node_pubkey String,
@@ -82,7 +82,7 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create gossip nodes table
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS solana_gossip_nodes_current (
 			pubkey String,
 			version Nullable(String),
@@ -92,11 +92,11 @@ func setupSearchTables(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func insertSearchTestData(t *testing.T) {
+func insertSearchTestData(t *testing.T, api *handlers.API) {
 	ctx := t.Context()
 
 	// Insert metros
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dz_metros_current (pk, code, name) VALUES
 		('metro-nyc', 'NYC', 'New York'),
 		('metro-lax', 'LAX', 'Los Angeles'),
@@ -105,7 +105,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert devices
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dz_devices_current (pk, code, device_type, metro_pk, public_ip) VALUES
 		('dev-1', 'NYC-CORE-01', 'router', 'metro-nyc', '10.0.0.1'),
 		('dev-2', 'NYC-EDGE-01', 'switch', 'metro-nyc', '10.0.0.2'),
@@ -114,7 +114,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert links
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dz_links_current (pk, code, side_a_pk, side_z_pk) VALUES
 		('link-1', 'NYC-LAX-001', 'dev-1', 'dev-3'),
 		('link-2', 'NYC-CHI-001', 'dev-1', 'dev-2')
@@ -122,7 +122,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert contributors
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dz_contributors_current (pk, code, name) VALUES
 		('contrib-1', 'ACME', 'Acme Corporation'),
 		('contrib-2', 'GLOBEX', 'Globex Inc')
@@ -130,7 +130,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert validators
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO solana_vote_accounts_current (vote_pubkey, node_pubkey, activated_stake_lamports, epoch_vote_account) VALUES
 		('validator1pubkey1234567890abcdefghijk', 'node1pubkey', 1000000000000, 'true'),
 		('validator2pubkey1234567890abcdefghijk', 'node2pubkey', 500000000000, 'true')
@@ -138,7 +138,7 @@ func insertSearchTestData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert gossip nodes
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO solana_gossip_nodes_current (pubkey, version, gossip_ip) VALUES
 		('gossip1pubkey1234567890abcdefghijklm', '1.18.0', '192.168.1.1'),
 		('gossip2pubkey1234567890abcdefghijklm', '1.17.0', '192.168.1.2')
@@ -147,13 +147,12 @@ func insertSearchTestData(t *testing.T) {
 }
 
 func TestSearchAutocomplete_EmptyQuery(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -164,14 +163,13 @@ func TestSearchAutocomplete_EmptyQuery(t *testing.T) {
 }
 
 func TestSearchAutocomplete_ShortQuery(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
 
 	// Query too short (< 2 chars)
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=a", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -182,14 +180,13 @@ func TestSearchAutocomplete_ShortQuery(t *testing.T) {
 }
 
 func TestSearchAutocomplete_FindsDevices(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=NYC", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -222,15 +219,14 @@ func TestSearchAutocomplete_FindsDevices(t *testing.T) {
 }
 
 func TestSearchAutocomplete_DevicePrefix(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	// Search with device: prefix
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=device:CORE", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -245,14 +241,13 @@ func TestSearchAutocomplete_DevicePrefix(t *testing.T) {
 }
 
 func TestSearchAutocomplete_MetroPrefix(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=metro:New", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -272,14 +267,13 @@ func TestSearchAutocomplete_MetroPrefix(t *testing.T) {
 }
 
 func TestSearchAutocomplete_LimitParam(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=NYC&limit=2", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -290,15 +284,14 @@ func TestSearchAutocomplete_LimitParam(t *testing.T) {
 }
 
 func TestSearchAutocomplete_IPPrefix(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	// ip: prefix should search devices, users, and gossip nodes
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=ip:10.0", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -317,13 +310,12 @@ func TestSearchAutocomplete_IPPrefix(t *testing.T) {
 }
 
 func TestSearch_EmptyQuery(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -335,14 +327,13 @@ func TestSearch_EmptyQuery(t *testing.T) {
 }
 
 func TestSearch_ReturnsGroupedResults(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -368,15 +359,14 @@ func TestSearch_ReturnsGroupedResults(t *testing.T) {
 }
 
 func TestSearch_TypesFilter(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	// Filter to only devices
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -391,15 +381,14 @@ func TestSearch_TypesFilter(t *testing.T) {
 }
 
 func TestSearch_MultipleTypes(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	// Filter to devices and metros
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device,metro", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -414,14 +403,13 @@ func TestSearch_MultipleTypes(t *testing.T) {
 }
 
 func TestSearch_LimitParam(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device&limit=1", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -437,14 +425,13 @@ func TestSearch_LimitParam(t *testing.T) {
 }
 
 func TestSearch_ValidatorSearch(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=validator:validator1", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -459,14 +446,13 @@ func TestSearch_ValidatorSearch(t *testing.T) {
 }
 
 func TestSearch_ContributorSearch(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=contributor:ACME", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -481,15 +467,14 @@ func TestSearch_ContributorSearch(t *testing.T) {
 }
 
 func TestSearch_MultiTokenQuery(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	// Search for "NYC CORE" should match devices with both tokens
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC%20CORE&types=device", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -506,14 +491,13 @@ func TestSearch_MultiTokenQuery(t *testing.T) {
 }
 
 func TestSearchAutocomplete_NoResults(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search/autocomplete?q=NONEXISTENT12345", nil)
 	rr := httptest.NewRecorder()
-	testAPI.SearchAutocomplete(rr, req)
+	api.SearchAutocomplete(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -524,14 +508,13 @@ func TestSearchAutocomplete_NoResults(t *testing.T) {
 }
 
 func TestSearch_SuggestionURLFormat(t *testing.T) {
-	apitesting.SetupTestClickHouse(t, testChDB)
-	apitesting.SetSequentialFallback(t)
-	setupSearchTables(t)
-	insertSearchTestData(t)
+	api := apitesting.NewTestAPIBare(t, testChDB)
+	setupSearchTables(t, api)
+	insertSearchTestData(t, api)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/search?q=NYC&types=device,metro,link", nil)
 	rr := httptest.NewRecorder()
-	testAPI.Search(rr, req)
+	api.Search(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 

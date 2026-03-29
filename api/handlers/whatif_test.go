@@ -10,21 +10,20 @@ import (
 	"testing"
 
 	"github.com/malbeclabs/lake/api/handlers"
-	"github.com/malbeclabs/lake/api/config"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func postWhatIfRemoval(t *testing.T, req handlers.WhatIfRemovalRequest) handlers.WhatIfRemovalResponse {
+func postWhatIfRemoval(t *testing.T, api *handlers.API, req handlers.WhatIfRemovalRequest) handlers.WhatIfRemovalResponse {
 	t.Helper()
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/topology/whatif-removal", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	testAPI.PostWhatIfRemoval(rr, httpReq)
+	api.PostWhatIfRemoval(rr, httpReq)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -50,8 +49,7 @@ func postWhatIfRemoval(t *testing.T, req handlers.WhatIfRemovalRequest) handlers
 // Remove B: neighbors A(10) and C(10), throughMetric=20.
 // Alt path A-D-E-C: 50+50+50=150, so 20 <= 150 → affected, degraded.
 func TestPostWhatIfRemoval_DeviceRemoval_AffectedPath(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -75,10 +73,9 @@ func TestPostWhatIfRemoval_DeviceRemoval_AffectedPath(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
-	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
+	response := postWhatIfRemoval(t, api, handlers.WhatIfRemovalRequest{
 		Devices: []string{"dev-b"},
 	})
 
@@ -117,8 +114,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_AffectedPath(t *testing.T) {
 // Remove B: neighbors A(10) and C(10), throughMetric=20.
 // Alt path A-D-E-C: 5+5+5=15, so 20 > 15 → NOT affected (ISIS routes via D-E-C).
 func TestPostWhatIfRemoval_DeviceRemoval_NotAffected(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -135,10 +131,9 @@ func TestPostWhatIfRemoval_DeviceRemoval_NotAffected(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
-	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
+	response := postWhatIfRemoval(t, api, handlers.WhatIfRemovalRequest{
 		Devices: []string{"dev-b"},
 	})
 
@@ -160,8 +155,7 @@ func TestPostWhatIfRemoval_DeviceRemoval_NotAffected(t *testing.T) {
 //
 // Remove B: A is a leaf (only connected to B) → disconnected.
 func TestPostWhatIfRemoval_DeviceRemoval_DisconnectedLeaf(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -175,10 +169,9 @@ func TestPostWhatIfRemoval_DeviceRemoval_DisconnectedLeaf(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
-	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
+	response := postWhatIfRemoval(t, api, handlers.WhatIfRemovalRequest{
 		Devices: []string{"dev-b"},
 	})
 
@@ -208,12 +201,11 @@ func TestPostWhatIfRemoval_DeviceRemoval_DisconnectedLeaf(t *testing.T) {
 // Pair (A, E): throughMetric = 10 + 10 + 50 = 70.
 // Alt path A-B-D-E: 10+50+50=110. So 70 <= 110 → affected.
 func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	ctx := t.Context()
 	// Insert devices into ClickHouse so envDB can look them up
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -227,7 +219,7 @@ func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert the link into ClickHouse
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_links_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, code, tunnel_net, contributor_pk,
@@ -263,10 +255,9 @@ func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
-	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
+	response := postWhatIfRemoval(t, api, handlers.WhatIfRemovalRequest{
 		Links: []string{"link-bc"},
 	})
 
@@ -312,11 +303,10 @@ func TestPostWhatIfRemoval_LinkRemoval_AffectedPath(t *testing.T) {
 // Pair (A, D): throughMetric = 10 + 100 + 10 = 120. Alt A-B-E-F-D-C path?
 // Actually the alt for (A, D) avoiding B-C link: A-B-E-F-D = 10+5+5+5 = 25. 120 > 25 → NOT affected.
 func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	ctx := t.Context()
-	err := testAPI.DB.Exec(ctx, `
+	err := api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_devices_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, device_type, code, public_ip, contributor_pk, metro_pk, max_users
@@ -330,7 +320,7 @@ func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	err = testAPI.DB.Exec(ctx, `
+	err = api.DB.Exec(ctx, `
 		INSERT INTO dim_dz_links_history (
 			entity_id, snapshot_ts, ingested_at, op_id, attrs_hash, is_deleted,
 			pk, status, code, tunnel_net, contributor_pk,
@@ -361,10 +351,9 @@ func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
 		`, nil)
 		return err
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
-	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
+	response := postWhatIfRemoval(t, api, handlers.WhatIfRemovalRequest{
 		Links: []string{"link-bc"},
 	})
 
@@ -380,16 +369,14 @@ func TestPostWhatIfRemoval_LinkRemoval_NotAffected(t *testing.T) {
 // TestPostWhatIfRemoval_DeviceNotFound verifies the handler returns gracefully
 // when the device PK doesn't exist in Neo4j.
 func TestPostWhatIfRemoval_DeviceNotFound(t *testing.T) {
-	apitesting.SetupTestClickHouseWithMigrations(t, testChDB)
-	apitesting.SetSequentialFallback(t)
+	api := apitesting.NewTestAPI(t, testChDB)
 
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		return nil // empty graph
 	}
-	apitesting.SetupTestNeo4jWithData(t, testNeo4jDB, seedFunc)
-	testAPI.Neo4jClient = config.Neo4jClient
+	api.Neo4jClient = apitesting.SetupNeo4jWithDataForTest(t, testNeo4jDB, seedFunc)
 
-	response := postWhatIfRemoval(t, handlers.WhatIfRemovalRequest{
+	response := postWhatIfRemoval(t, api, handlers.WhatIfRemovalRequest{
 		Devices: []string{"nonexistent-device"},
 	})
 
@@ -404,12 +391,13 @@ func TestPostWhatIfRemoval_DeviceNotFound(t *testing.T) {
 // TestPostWhatIfRemoval_EmptyRequest verifies the handler returns an error
 // when no devices or links are specified.
 func TestPostWhatIfRemoval_EmptyRequest(t *testing.T) {
+	api := &handlers.API{}
 	body, err := json.Marshal(handlers.WhatIfRemovalRequest{})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/topology/whatif-removal", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
-	testAPI.PostWhatIfRemoval(rr, req)
+	api.PostWhatIfRemoval(rr, req)
 
 	var response handlers.WhatIfRemovalResponse
 	err = json.NewDecoder(rr.Body).Decode(&response)
