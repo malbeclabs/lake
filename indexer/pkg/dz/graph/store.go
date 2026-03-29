@@ -254,7 +254,12 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 	s.log.Debug("graph: built tunnel map", "primary_mappings", len(tMaps.primary), "by_link_code_mappings", len(tMaps.byLinkCode))
 
 	now := time.Now()
-	var adjacenciesCreated, linksUpdated, devicesUpdated, unmatchedNeighbors int
+	var unmatchedNeighbors int
+
+	// Collect all updates into batches
+	var linkUpdates []map[string]any
+	var deviceUpdates []map[string]any
+	var adjUpdates []map[string]any
 
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
@@ -270,40 +275,45 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 					"link", mapping.linkCode)
 			}
 
-			// Update Link with IS-IS metric
-			if err := updateLinkISISInTx(ctx, tx, mapping.linkPK, neighbor, now); err != nil {
-				s.log.Warn("graph: failed to update link ISIS data",
-					"link_pk", mapping.linkPK,
-					"error", err)
-				continue
-			}
-			linksUpdated++
-
-			// Update Device with IS-IS properties
-			if err := updateDeviceISISInTx(ctx, tx, mapping.localPK, lsp, now); err != nil {
-				s.log.Warn("graph: failed to update device ISIS data",
-					"device_pk", mapping.localPK,
-					"error", err)
-			} else {
-				devicesUpdated++
-			}
-
-			// Create ISIS_ADJACENT relationship
-			if err := createISISAdjacentInTx(ctx, tx, mapping.localPK, mapping.neighborPK, neighbor, mapping.bandwidth, now); err != nil {
-				s.log.Warn("graph: failed to create ISIS_ADJACENT",
-					"from", mapping.localPK,
-					"to", mapping.neighborPK,
-					"error", err)
-				continue
-			}
-			adjacenciesCreated++
+			linkUpdates = append(linkUpdates, map[string]any{
+				"pk":        mapping.linkPK,
+				"metric":    neighbor.Metric,
+				"adj_sids":  neighbor.AdjSIDs,
+				"last_sync": now.Unix(),
+			})
+			deviceUpdates = append(deviceUpdates, map[string]any{
+				"pk":        mapping.localPK,
+				"system_id": lsp.SystemID,
+				"router_id": lsp.RouterID,
+				"last_sync": now.Unix(),
+			})
+			adjUpdates = append(adjUpdates, map[string]any{
+				"from_pk":       mapping.localPK,
+				"to_pk":         mapping.neighborPK,
+				"metric":        neighbor.Metric,
+				"neighbor_addr": neighbor.NeighborAddr,
+				"adj_sids":      neighbor.AdjSIDs,
+				"last_seen":     now.Unix(),
+				"bandwidth_bps": mapping.bandwidth,
+			})
 		}
 	}
 
+	// Execute batched updates within the transaction
+	if err := batchUpdateLinksISISTx(ctx, tx, linkUpdates); err != nil {
+		return fmt.Errorf("failed to batch update links: %w", err)
+	}
+	if err := batchUpdateDevicesISISTx(ctx, tx, deviceUpdates); err != nil {
+		return fmt.Errorf("failed to batch update devices: %w", err)
+	}
+	if err := batchCreateISISAdjacentTx(ctx, tx, adjUpdates); err != nil {
+		return fmt.Errorf("failed to batch create adjacencies: %w", err)
+	}
+
 	s.log.Debug("graph: ISIS sync in transaction completed",
-		"adjacencies_created", adjacenciesCreated,
-		"links_updated", linksUpdated,
-		"devices_updated", devicesUpdated,
+		"adjacencies_created", len(adjUpdates),
+		"links_updated", len(linkUpdates),
+		"devices_updated", len(deviceUpdates),
 		"unmatched_neighbors", unmatchedNeighbors)
 
 	// Write ISIS data to ClickHouse
@@ -409,19 +419,18 @@ func (s *Store) buildTunnelMapInTx(ctx context.Context, tx neo4j.Transaction) (*
 }
 
 // updateLinkISISInTx updates a Link node with IS-IS metric data within a transaction.
-func updateLinkISISInTx(ctx context.Context, tx neo4j.Transaction, linkPK string, neighbor isis.Neighbor, timestamp time.Time) error {
+func batchUpdateLinksISISTx(ctx context.Context, tx neo4j.Transaction, updates []map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	cypher := `
-		MATCH (link:Link {pk: $pk})
-		SET link.isis_metric = $metric,
-		    link.isis_adj_sids = $adj_sids,
-		    link.isis_last_sync = $last_sync
+		UNWIND $updates AS u
+		MATCH (link:Link {pk: u.pk})
+		SET link.isis_metric = u.metric,
+		    link.isis_adj_sids = u.adj_sids,
+		    link.isis_last_sync = u.last_sync
 	`
-	res, err := tx.Run(ctx, cypher, map[string]any{
-		"pk":        linkPK,
-		"metric":    neighbor.Metric,
-		"adj_sids":  neighbor.AdjSIDs,
-		"last_sync": timestamp.Unix(),
-	})
+	res, err := tx.Run(ctx, cypher, map[string]any{"updates": updates})
 	if err != nil {
 		return err
 	}
@@ -429,20 +438,18 @@ func updateLinkISISInTx(ctx context.Context, tx neo4j.Transaction, linkPK string
 	return err
 }
 
-// updateDeviceISISInTx updates a Device node with IS-IS properties within a transaction.
-func updateDeviceISISInTx(ctx context.Context, tx neo4j.Transaction, devicePK string, lsp isis.LSP, timestamp time.Time) error {
+func batchUpdateDevicesISISTx(ctx context.Context, tx neo4j.Transaction, updates []map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	cypher := `
-		MATCH (d:Device {pk: $pk})
-		SET d.isis_system_id = $system_id,
-		    d.isis_router_id = $router_id,
-		    d.isis_last_sync = $last_sync
+		UNWIND $updates AS u
+		MATCH (d:Device {pk: u.pk})
+		SET d.isis_system_id = u.system_id,
+		    d.isis_router_id = u.router_id,
+		    d.isis_last_sync = u.last_sync
 	`
-	res, err := tx.Run(ctx, cypher, map[string]any{
-		"pk":        devicePK,
-		"system_id": lsp.SystemID,
-		"router_id": lsp.RouterID,
-		"last_sync": timestamp.Unix(),
-	})
+	res, err := tx.Run(ctx, cypher, map[string]any{"updates": updates})
 	if err != nil {
 		return err
 	}
@@ -450,27 +457,22 @@ func updateDeviceISISInTx(ctx context.Context, tx neo4j.Transaction, devicePK st
 	return err
 }
 
-// createISISAdjacentInTx creates or updates an ISIS_ADJACENT relationship within a transaction.
-func createISISAdjacentInTx(ctx context.Context, tx neo4j.Transaction, fromPK, toPK string, neighbor isis.Neighbor, bandwidth int64, timestamp time.Time) error {
+func batchCreateISISAdjacentTx(ctx context.Context, tx neo4j.Transaction, updates []map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	cypher := `
-		MATCH (d1:Device {pk: $from_pk})
-		MATCH (d2:Device {pk: $to_pk})
+		UNWIND $updates AS u
+		MATCH (d1:Device {pk: u.from_pk})
+		MATCH (d2:Device {pk: u.to_pk})
 		MERGE (d1)-[r:ISIS_ADJACENT]->(d2)
-		SET r.metric = $metric,
-		    r.neighbor_addr = $neighbor_addr,
-		    r.adj_sids = $adj_sids,
-		    r.last_seen = $last_seen,
-		    r.bandwidth_bps = $bandwidth_bps
+		SET r.metric = u.metric,
+		    r.neighbor_addr = u.neighbor_addr,
+		    r.adj_sids = u.adj_sids,
+		    r.last_seen = u.last_seen,
+		    r.bandwidth_bps = u.bandwidth_bps
 	`
-	res, err := tx.Run(ctx, cypher, map[string]any{
-		"from_pk":       fromPK,
-		"to_pk":         toPK,
-		"metric":        neighbor.Metric,
-		"neighbor_addr": neighbor.NeighborAddr,
-		"adj_sids":      neighbor.AdjSIDs,
-		"last_seen":     timestamp.Unix(),
-		"bandwidth_bps": bandwidth,
-	})
+	res, err := tx.Run(ctx, cypher, map[string]any{"updates": updates})
 	if err != nil {
 		return err
 	}
@@ -831,12 +833,15 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 	s.log.Debug("graph: built tunnel map", "primary_mappings", len(tMaps.primary), "by_link_code_mappings", len(tMaps.byLinkCode))
 
 	now := time.Now()
-	var adjacenciesCreated, linksUpdated, devicesUpdated, unmatchedNeighbors int
+	var unmatchedNeighbors int
 
-	// Step 2: Process each LSP
+	// Step 2: Collect all updates into batches
+	var linkUpdates []map[string]any
+	var deviceUpdates []map[string]any
+	var adjUpdates []map[string]any
+
 	for _, lsp := range lsps {
 		for _, neighbor := range lsp.Neighbors {
-			// Try to find the Link via neighbor_addr (with hostname override for duplicates)
 			mapping, found, ambiguous := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
 			if !found {
 				unmatchedNeighbors++
@@ -852,42 +857,46 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 					"link", mapping.linkCode)
 			}
 
-			// Update Link with IS-IS metric
-			if err := s.updateLinkISIS(ctx, session, mapping.linkPK, neighbor, now); err != nil {
-				s.log.Warn("graph: failed to update link ISIS data",
-					"link_pk", mapping.linkPK,
-					"error", err)
-				continue
-			}
-			linksUpdated++
-
-			// Update Device nodes with IS-IS properties
-			// The local device is the one advertising this LSP
-			if err := s.updateDeviceISIS(ctx, session, mapping.localPK, lsp, now); err != nil {
-				s.log.Warn("graph: failed to update local device ISIS data",
-					"device_pk", mapping.localPK,
-					"error", err)
-			} else {
-				devicesUpdated++
-			}
-
-			// Create ISIS_ADJACENT relationship with bandwidth from the link
-			if err := s.createISISAdjacent(ctx, session, mapping.localPK, mapping.neighborPK, neighbor, mapping.bandwidth, now); err != nil {
-				s.log.Warn("graph: failed to create ISIS_ADJACENT",
-					"from", mapping.localPK,
-					"to", mapping.neighborPK,
-					"error", err)
-				continue
-			}
-			adjacenciesCreated++
+			linkUpdates = append(linkUpdates, map[string]any{
+				"pk":        mapping.linkPK,
+				"metric":    neighbor.Metric,
+				"adj_sids":  neighbor.AdjSIDs,
+				"last_sync": now.Unix(),
+			})
+			deviceUpdates = append(deviceUpdates, map[string]any{
+				"pk":        mapping.localPK,
+				"system_id": lsp.SystemID,
+				"router_id": lsp.RouterID,
+				"last_sync": now.Unix(),
+			})
+			adjUpdates = append(adjUpdates, map[string]any{
+				"from_pk":       mapping.localPK,
+				"to_pk":         mapping.neighborPK,
+				"metric":        neighbor.Metric,
+				"neighbor_addr": neighbor.NeighborAddr,
+				"adj_sids":      neighbor.AdjSIDs,
+				"last_seen":     now.Unix(),
+				"bandwidth_bps": mapping.bandwidth,
+			})
 		}
+	}
+
+	// Step 3: Execute batched updates (3 queries instead of N*3)
+	if err := batchUpdateLinksISIS(ctx, session, linkUpdates); err != nil {
+		return fmt.Errorf("failed to batch update links: %w", err)
+	}
+	if err := batchUpdateDevicesISIS(ctx, session, deviceUpdates); err != nil {
+		return fmt.Errorf("failed to batch update devices: %w", err)
+	}
+	if err := batchCreateISISAdjacent(ctx, session, adjUpdates); err != nil {
+		return fmt.Errorf("failed to batch create adjacencies: %w", err)
 	}
 
 	s.log.Info("graph: ISIS sync completed",
 		"lsps", len(lsps),
-		"adjacencies_created", adjacenciesCreated,
-		"links_updated", linksUpdated,
-		"devices_updated", devicesUpdated,
+		"adjacencies_created", len(adjUpdates),
+		"links_updated", len(linkUpdates),
+		"devices_updated", len(deviceUpdates),
 		"unmatched_neighbors", unmatchedNeighbors)
 
 	// Write ISIS data to ClickHouse
@@ -1025,20 +1034,19 @@ func (s *Store) buildTunnelMap(ctx context.Context, session neo4j.Session) (*tun
 	return maps, nil
 }
 
-// updateLinkISIS updates a Link node with IS-IS metric data.
-func (s *Store) updateLinkISIS(ctx context.Context, session neo4j.Session, linkPK string, neighbor isis.Neighbor, timestamp time.Time) error {
+// batchUpdateLinksISIS updates Link nodes with IS-IS metric data in a single UNWIND query.
+func batchUpdateLinksISIS(ctx context.Context, session neo4j.Session, updates []map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	cypher := `
-		MATCH (link:Link {pk: $pk})
-		SET link.isis_metric = $metric,
-		    link.isis_adj_sids = $adj_sids,
-		    link.isis_last_sync = $last_sync
+		UNWIND $updates AS u
+		MATCH (link:Link {pk: u.pk})
+		SET link.isis_metric = u.metric,
+		    link.isis_adj_sids = u.adj_sids,
+		    link.isis_last_sync = u.last_sync
 	`
-	res, err := session.Run(ctx, cypher, map[string]any{
-		"pk":        linkPK,
-		"metric":    neighbor.Metric,
-		"adj_sids":  neighbor.AdjSIDs,
-		"last_sync": timestamp.Unix(),
-	})
+	res, err := session.Run(ctx, cypher, map[string]any{"updates": updates})
 	if err != nil {
 		return err
 	}
@@ -1046,20 +1054,19 @@ func (s *Store) updateLinkISIS(ctx context.Context, session neo4j.Session, linkP
 	return err
 }
 
-// updateDeviceISIS updates a Device node with IS-IS properties.
-func (s *Store) updateDeviceISIS(ctx context.Context, session neo4j.Session, devicePK string, lsp isis.LSP, timestamp time.Time) error {
+// batchUpdateDevicesISIS updates Device nodes with IS-IS properties in a single UNWIND query.
+func batchUpdateDevicesISIS(ctx context.Context, session neo4j.Session, updates []map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	cypher := `
-		MATCH (d:Device {pk: $pk})
-		SET d.isis_system_id = $system_id,
-		    d.isis_router_id = $router_id,
-		    d.isis_last_sync = $last_sync
+		UNWIND $updates AS u
+		MATCH (d:Device {pk: u.pk})
+		SET d.isis_system_id = u.system_id,
+		    d.isis_router_id = u.router_id,
+		    d.isis_last_sync = u.last_sync
 	`
-	res, err := session.Run(ctx, cypher, map[string]any{
-		"pk":        devicePK,
-		"system_id": lsp.SystemID,
-		"router_id": lsp.RouterID,
-		"last_sync": timestamp.Unix(),
-	})
+	res, err := session.Run(ctx, cypher, map[string]any{"updates": updates})
 	if err != nil {
 		return err
 	}
@@ -1067,27 +1074,23 @@ func (s *Store) updateDeviceISIS(ctx context.Context, session neo4j.Session, dev
 	return err
 }
 
-// createISISAdjacent creates or updates an ISIS_ADJACENT relationship between two devices.
-func (s *Store) createISISAdjacent(ctx context.Context, session neo4j.Session, fromPK, toPK string, neighbor isis.Neighbor, bandwidth int64, timestamp time.Time) error {
+// batchCreateISISAdjacent creates/updates ISIS_ADJACENT relationships in a single UNWIND query.
+func batchCreateISISAdjacent(ctx context.Context, session neo4j.Session, updates []map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
 	cypher := `
-		MATCH (d1:Device {pk: $from_pk})
-		MATCH (d2:Device {pk: $to_pk})
+		UNWIND $updates AS u
+		MATCH (d1:Device {pk: u.from_pk})
+		MATCH (d2:Device {pk: u.to_pk})
 		MERGE (d1)-[r:ISIS_ADJACENT]->(d2)
-		SET r.metric = $metric,
-		    r.neighbor_addr = $neighbor_addr,
-		    r.adj_sids = $adj_sids,
-		    r.last_seen = $last_seen,
-		    r.bandwidth_bps = $bandwidth_bps
+		SET r.metric = u.metric,
+		    r.neighbor_addr = u.neighbor_addr,
+		    r.adj_sids = u.adj_sids,
+		    r.last_seen = u.last_seen,
+		    r.bandwidth_bps = u.bandwidth_bps
 	`
-	res, err := session.Run(ctx, cypher, map[string]any{
-		"from_pk":       fromPK,
-		"to_pk":         toPK,
-		"metric":        neighbor.Metric,
-		"neighbor_addr": neighbor.NeighborAddr,
-		"adj_sids":      neighbor.AdjSIDs,
-		"last_seen":     timestamp.Unix(),
-		"bandwidth_bps": bandwidth,
-	})
+	res, err := session.Run(ctx, cypher, map[string]any{"updates": updates})
 	if err != nil {
 		return err
 	}
