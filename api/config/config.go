@@ -114,15 +114,25 @@ func Load() error {
 		shredderDB = db
 	}
 
-	// Build env -> database mapping
+	// Build env -> database mapping.
+	// Devnet and testnet databases default to lake_devnet / lake_testnet
+	// unless overridden by env vars or disabled with CLICKHOUSE_NO_DEVNET / CLICKHOUSE_NO_TESTNET.
 	EnvDatabases = map[string]string{
 		"mainnet-beta": cfg.Database,
 	}
-	if db := os.Getenv("CLICKHOUSE_DATABASE_DEVNET"); db != "" {
-		EnvDatabases["devnet"] = db
+	if os.Getenv("CLICKHOUSE_NO_DEVNET") != "true" {
+		devnetDB := os.Getenv("CLICKHOUSE_DATABASE_DEVNET")
+		if devnetDB == "" {
+			devnetDB = "lake_devnet"
+		}
+		EnvDatabases["devnet"] = devnetDB
 	}
-	if db := os.Getenv("CLICKHOUSE_DATABASE_TESTNET"); db != "" {
-		EnvDatabases["testnet"] = db
+	if os.Getenv("CLICKHOUSE_NO_TESTNET") != "true" {
+		testnetDB := os.Getenv("CLICKHOUSE_DATABASE_TESTNET")
+		if testnetDB == "" {
+			testnetDB = "lake_testnet"
+		}
+		EnvDatabases["testnet"] = testnetDB
 	}
 
 	secure := os.Getenv("CLICKHOUSE_SECURE") == "true"
