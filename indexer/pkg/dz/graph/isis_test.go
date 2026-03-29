@@ -84,7 +84,11 @@ func TestStore_SyncISIS(t *testing.T) {
 		},
 	}
 
-	err = graphStore.SyncISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify ISIS data was synced
@@ -161,7 +165,11 @@ func TestStore_SyncISIS_NoMatchingLink(t *testing.T) {
 	}
 
 	// Should not error, just log unmatched neighbors
-	err = graphStore.SyncISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify no ISIS_ADJACENT relationships were created
@@ -198,10 +206,10 @@ func TestStore_SyncISIS_EmptyLSPs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Sync empty LSPs
-	err = graphStore.SyncISIS(ctx, nil)
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
-	err = graphStore.SyncISIS(ctx, []isis.LSP{})
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 }
 
@@ -278,7 +286,11 @@ func TestStore_SyncWithISIS(t *testing.T) {
 	}
 
 	// Sync graph with ISIS atomically
-	err = graphStore.SyncWithISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncWithISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify everything was synced together
@@ -338,7 +350,7 @@ func TestStore_SyncWithISIS_EmptyLSPs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Sync with empty LSPs - should still sync base graph
-	err = graphStore.SyncWithISIS(ctx, []isis.LSP{})
+	err = graphStore.SyncWithISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify base graph was synced
@@ -415,7 +427,11 @@ func TestStore_SyncWithISIS_ReplacesExistingData(t *testing.T) {
 			},
 		},
 	}
-	err = graphStore.SyncWithISIS(ctx, lsps1)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps1)
+	require.NoError(t, err)
+	err = graphStore.SyncWithISIS(ctx)
 	require.NoError(t, err)
 
 	session, err := neo4jClient.Session(ctx)
@@ -441,7 +457,9 @@ func TestStore_SyncWithISIS_ReplacesExistingData(t *testing.T) {
 			},
 		},
 	}
-	err = graphStore.SyncWithISIS(ctx, lsps2)
+	err = isisStore.Sync(ctx, lsps2)
+	require.NoError(t, err)
+	err = graphStore.SyncWithISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify second sync replaced the data
@@ -525,7 +543,11 @@ func TestStore_SyncISIS_DrainedLinkIncludesAdjacency(t *testing.T) {
 		},
 	}
 
-	err = graphStore.SyncISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
 	// The link ISIS metric should still be updated
@@ -608,7 +630,11 @@ func TestStore_SyncWithISIS_DrainedLinkIncludesAdjacency(t *testing.T) {
 		},
 	}
 
-	err = graphStore.SyncWithISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncWithISIS(ctx)
 	require.NoError(t, err)
 
 	session, err := neo4jClient.Session(ctx)
@@ -695,7 +721,11 @@ func TestStore_SyncISIS_HardDrainedLinkIncludesAdjacency(t *testing.T) {
 		},
 	}
 
-	err = graphStore.SyncISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
 	session, err := neo4jClient.Session(ctx)
@@ -797,7 +827,13 @@ func TestStore_SyncISIS_AdjacencyRemoval(t *testing.T) {
 		},
 	}
 
-	err = graphStore.SyncISIS(ctx, lsps1)
+	// Sync ISIS to ClickHouse (decoupled from graph store)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps1)
+	require.NoError(t, err)
+
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify adjacencies were written to ClickHouse
@@ -847,7 +883,10 @@ func TestStore_SyncISIS_AdjacencyRemoval(t *testing.T) {
 		},
 	}
 
-	err = graphStore.SyncISIS(ctx, lsps2)
+	err = isisStore.Sync(ctx, lsps2)
+	require.NoError(t, err)
+
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 
 	// Verify the removed adjacency got a tombstone in history

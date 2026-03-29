@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/malbeclabs/lake/indexer/pkg/indexer"
@@ -15,19 +16,20 @@ type VersionInfo struct {
 }
 
 type Config struct {
+	Log               *slog.Logger
 	ListenAddr        string
 	ReadHeaderTimeout time.Duration
 	ShutdownTimeout   time.Duration
 	VersionInfo       VersionInfo
-	IndexerConfig     indexer.Config
+	Indexer           *indexer.Indexer
 }
 
 func (cfg *Config) Validate() error {
 	if cfg.ListenAddr == "" {
 		return errors.New("listen addr is required")
 	}
-	if err := cfg.IndexerConfig.Validate(); err != nil {
-		return err
+	if cfg.Indexer == nil {
+		return errors.New("indexer is required")
 	}
 	return nil
 }

@@ -29,12 +29,14 @@ import (
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/dzingest"
 	"github.com/malbeclabs/lake/indexer/pkg/indexer"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 	"github.com/malbeclabs/lake/indexer/pkg/rollup"
 	"github.com/malbeclabs/lake/indexer/pkg/server"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
+	"github.com/malbeclabs/lake/indexer/pkg/solingest"
 	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
 	"github.com/malbeclabs/lake/utils/pkg/logger"
 	"github.com/oschwald/geoip2-golang"
@@ -113,8 +115,10 @@ func run() error {
 	validatorsAppAPIKeyFlag := flag.String("validatorsapp-api-key", "", "validators.app API key (or set VALIDATORSAPP_API_KEY env var)")
 	validatorsAppRefreshIntervalFlag := flag.Duration("validatorsapp-refresh-interval", 5*time.Minute, "validators.app refresh interval (or set VALIDATORSAPP_REFRESH_INTERVAL env var)")
 
-	// Rollup worker configuration
+	// Temporal worker configuration
 	noRollupFlag := flag.Bool("no-rollup", false, "Disable the embedded rollup worker (Temporal-based health bucket computation)")
+	noDZIngestFlag := flag.Bool("no-dz-ingest", false, "Disable the embedded DZ mainnet ingest worker (Temporal-based raw data collection)")
+	noSolIngestFlag := flag.Bool("no-sol-ingest", false, "Disable the embedded Solana ingest worker (Temporal-based raw data collection)")
 
 	// Remote tables configuration
 	setupRemoteTablesFlag := flag.Bool("setup-remote-tables", false, "Set up remote proxy tables on startup (or set SETUP_REMOTE_TABLES=true env var)")
@@ -219,12 +223,11 @@ func run() error {
 		}
 	}
 
-	log := logger.New(*verboseFlag)
+	log := logger.New(*verboseFlag).With("dz_env", *dzEnvFlag)
 
 	log.Info("indexer starting",
 		"version", version,
 		"commit", commit,
-		"dz_env", *dzEnvFlag,
 		"solana_env", *solanaEnvFlag,
 		"solana_enabled", solanaEnabled,
 		"geoip_enabled", geoipEnabled,
@@ -466,8 +469,81 @@ func run() error {
 		log.Info("validators.app disabled (mainnet-beta only)", "dz_env", *dzEnvFlag)
 	}
 
-	// Initialize server
-	server, err := server.New(ctx, server.Config{
+	// Initialize indexer (creates views but does not start refresh loops —
+	// Temporal workflows handle scheduling).
+	idx, err := indexer.New(ctx, indexer.Config{
+		DZEnv:            *dzEnvFlag,
+		Logger:           log,
+		Clock:            clockwork.NewRealClock(),
+		ClickHouse:       clickhouseDB,
+		MigrationsEnable: *migrationsEnableFlag,
+		MigrationsConfig: clickhouse.MigrationConfig{
+			Addr:     *clickhouseAddrFlag,
+			Database: *clickhouseDatabaseFlag,
+			Username: *clickhouseUsernameFlag,
+			Password: *clickhousePasswordFlag,
+			Secure:   *clickhouseSecureFlag,
+		},
+
+		RefreshInterval: *refreshIntervalFlag,
+		MaxConcurrency:  *maxConcurrencyFlag,
+
+		// GeoIP configuration
+		GeoIPResolver: geoIPResolver,
+
+		// Serviceability configuration
+		ServiceabilityRPC: serviceabilityClient,
+
+		// Telemetry configuration
+		TelemetryRPC:           telemetryClient,
+		DZEpochRPC:             dzRPCClient,
+		InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
+		InternetDataProviders:  telemetryconfig.InternetTelemetryDataProviders,
+
+		// Device usage configuration
+		DeviceUsageInfluxClient:      influxDBClient,
+		DeviceUsageInfluxBucket:      influxBucket,
+		DeviceUsageInfluxQueryWindow: deviceUsageQueryWindow,
+		DeviceUsageRefreshInterval:   *deviceUsageRefreshIntervalFlag,
+
+		// Solana configuration
+		SolanaRPC: solanaRPC,
+
+		// Neo4j configuration
+		Neo4j:                 neo4jClient,
+		Neo4jMigrationsEnable: *neo4jMigrationsEnableFlag,
+		Neo4jMigrationsConfig: neo4j.MigrationConfig{
+			URI:      *neo4jURIFlag,
+			Database: *neo4jDatabaseFlag,
+			Username: *neo4jUsernameFlag,
+			Password: *neo4jPasswordFlag,
+		},
+
+		// ISIS configuration
+		ISISEnabled:         *isisEnabledFlag,
+		ISISS3Bucket:        *isisS3BucketFlag,
+		ISISS3Region:        *isisS3RegionFlag,
+		ISISRefreshInterval: *isisRefreshIntervalFlag,
+
+		// validators.app configuration
+		ValidatorsAppClient:          validatorsAppClient,
+		ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
+
+		// Readiness configuration
+		SkipReadyWait: *skipReadyWaitFlag,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create indexer: %w", err)
+	}
+	defer func() {
+		if err := idx.Close(); err != nil {
+			log.Error("failed to close indexer", "error", err)
+		}
+	}()
+
+	// Initialize HTTP server (health/readiness/version endpoints).
+	server, err := server.New(server.Config{
+		Log:               log,
 		ListenAddr:        *listenAddrFlag,
 		ReadHeaderTimeout: 30 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
@@ -476,67 +552,7 @@ func run() error {
 			Commit:  commit,
 			Date:    date,
 		},
-		IndexerConfig: indexer.Config{
-			DZEnv:            *dzEnvFlag,
-			Logger:           log,
-			Clock:            clockwork.NewRealClock(),
-			ClickHouse:       clickhouseDB,
-			MigrationsEnable: *migrationsEnableFlag,
-			MigrationsConfig: clickhouse.MigrationConfig{
-				Addr:     *clickhouseAddrFlag,
-				Database: *clickhouseDatabaseFlag,
-				Username: *clickhouseUsernameFlag,
-				Password: *clickhousePasswordFlag,
-				Secure:   *clickhouseSecureFlag,
-			},
-
-			RefreshInterval: *refreshIntervalFlag,
-			MaxConcurrency:  *maxConcurrencyFlag,
-
-			// GeoIP configuration
-			GeoIPResolver: geoIPResolver,
-
-			// Serviceability configuration
-			ServiceabilityRPC: serviceabilityClient,
-
-			// Telemetry configuration
-			TelemetryRPC:           telemetryClient,
-			DZEpochRPC:             dzRPCClient,
-			InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
-			InternetDataProviders:  telemetryconfig.InternetTelemetryDataProviders,
-
-			// Device usage configuration
-			DeviceUsageInfluxClient:      influxDBClient,
-			DeviceUsageInfluxBucket:      influxBucket,
-			DeviceUsageInfluxQueryWindow: deviceUsageQueryWindow,
-			DeviceUsageRefreshInterval:   *deviceUsageRefreshIntervalFlag,
-
-			// Solana configuration
-			SolanaRPC: solanaRPC,
-
-			// Neo4j configuration
-			Neo4j:                 neo4jClient,
-			Neo4jMigrationsEnable: *neo4jMigrationsEnableFlag,
-			Neo4jMigrationsConfig: neo4j.MigrationConfig{
-				URI:      *neo4jURIFlag,
-				Database: *neo4jDatabaseFlag,
-				Username: *neo4jUsernameFlag,
-				Password: *neo4jPasswordFlag,
-			},
-
-			// ISIS configuration
-			ISISEnabled:         *isisEnabledFlag && neo4jEnabled,
-			ISISS3Bucket:        *isisS3BucketFlag,
-			ISISS3Region:        *isisS3RegionFlag,
-			ISISRefreshInterval: *isisRefreshIntervalFlag,
-
-			// validators.app configuration
-			ValidatorsAppClient:          validatorsAppClient,
-			ValidatorsAppRefreshInterval: *validatorsAppRefreshIntervalFlag,
-
-			// Readiness configuration
-			SkipReadyWait: *skipReadyWaitFlag,
-		},
+		Indexer: idx,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
@@ -550,6 +566,88 @@ func run() error {
 		}
 	}()
 
+	// Start the embedded DZ mainnet ingest worker (Temporal-based raw data collection).
+	var dzIngestErrCh chan error
+	if !*noDZIngestFlag {
+		dzIngestErrCh = make(chan error, 1)
+		go func() {
+			err := dzingest.Start(ctx, dzingest.Config{
+				Log:            log.With("component", "dz-ingest"),
+				Network:        *dzEnvFlag,
+				Serviceability: idx.Serviceability(),
+				TelemLatency:   idx.TelemLatency(),
+				TelemUsage:     idx.TelemUsage(),
+				GraphStore:     idx.GraphStore(),
+				ISISSource:     idx.ISISSource(),
+				ISISStore:      idx.ISISStore(),
+			})
+			if err != nil {
+				dzIngestErrCh <- err
+			}
+		}()
+	} else {
+		log.Info("dz ingest worker disabled (--no-dz-ingest)")
+	}
+
+	// Start the embedded Solana ingest worker (Temporal-based raw data collection).
+	var solIngestErrCh chan error
+	if !*noSolIngestFlag && idx.Solana() != nil {
+		solIngestErrCh = make(chan error, 1)
+		go func() {
+			err := solingest.Start(ctx, solingest.Config{
+				Log:           log.With("component", "sol-ingest"),
+				Network:       *dzEnvFlag,
+				Solana:        idx.Solana(),
+				GeoIP:         idx.GeoIP(),
+				ValidatorsApp: idx.ValidatorsApp(),
+			})
+			if err != nil {
+				solIngestErrCh <- err
+			}
+		}()
+	} else {
+		log.Info("sol ingest worker disabled", "no_sol_ingest", *noSolIngestFlag, "solana_configured", idx.Solana() != nil)
+	}
+
+	// Start secondary network indexers (devnet, testnet) if configured.
+	// These run lightweight DZ ingest workflows (serviceability + telemetry only).
+	secondaryEnvs := map[string]string{
+		"devnet":  os.Getenv("CLICKHOUSE_DATABASE_DEVNET"),
+		"testnet": os.Getenv("CLICKHOUSE_DATABASE_TESTNET"),
+	}
+	for env, database := range secondaryEnvs {
+		if database == "" {
+			continue
+		}
+		env, database := env, database // capture loop vars
+		go func() {
+			// InfluxDB bucket per network (e.g. doublezero-devnet, doublezero-testnet).
+			secondaryInfluxBucket := "doublezero-" + env
+
+			if err := startSecondaryNetwork(ctx, logger.New(*verboseFlag), env, secondaryNetworkConfig{
+				clickhouseAddr:             *clickhouseAddrFlag,
+				clickhouseDatabase:         database,
+				clickhouseUsername:         *clickhouseUsernameFlag,
+				clickhousePassword:         *clickhousePasswordFlag,
+				clickhouseSecure:           *clickhouseSecureFlag,
+				refreshInterval:            *refreshIntervalFlag,
+				maxConcurrency:             *maxConcurrencyFlag,
+				migrationsEnable:           *migrationsEnableFlag,
+				createDatabase:             true,
+				skipReadyWait:              *skipReadyWaitFlag,
+				isisS3Bucket:               "doublezero-" + env + "-isis-db",
+				isisS3Region:               *isisS3RegionFlag,
+				influxURL:                  influxURL,
+				influxToken:                influxToken,
+				influxBucket:               secondaryInfluxBucket,
+				deviceUsageRefreshInterval: *deviceUsageRefreshIntervalFlag,
+				deviceUsageQueryWindow:     deviceUsageQueryWindow,
+			}); err != nil {
+				log.Error("secondary network indexer failed", "env", env, "error", err)
+			}
+		}()
+	}
+
 	// Start the embedded rollup worker (Temporal-based health bucket computation).
 	var rollupErrCh chan error
 	if !*noRollupFlag {
@@ -557,6 +655,7 @@ func run() error {
 		go func() {
 			err := rollup.Start(ctx, rollup.Config{
 				Log:                log.With("component", "rollup"),
+				Network:            *dzEnvFlag,
 				ClickHouseAddr:     *clickhouseAddrFlag,
 				ClickHouseDatabase: *clickhouseDatabaseFlag,
 				ClickHouseUsername: *clickhouseUsernameFlag,
@@ -581,9 +680,168 @@ func run() error {
 	case err := <-metricsServerErrCh:
 		log.Error("server: metrics server error causing shutdown", "error", err)
 		return err
+	case err := <-dzIngestErrCh:
+		log.Error("server: dz ingest worker error causing shutdown", "error", err)
+		return err
+	case err := <-solIngestErrCh:
+		log.Error("server: sol ingest worker error causing shutdown", "error", err)
+		return err
 	case err := <-rollupErrCh:
 		log.Error("server: rollup worker error causing shutdown", "error", err)
 		return err
+	}
+}
+
+// secondaryNetworkConfig holds ClickHouse and indexer settings for a
+// secondary (non-primary) network indexer.
+type secondaryNetworkConfig struct {
+	clickhouseAddr     string
+	clickhouseDatabase string
+	clickhouseUsername string
+	clickhousePassword string
+	clickhouseSecure   bool
+	refreshInterval    time.Duration
+	maxConcurrency     int
+	migrationsEnable   bool
+	createDatabase     bool
+	skipReadyWait      bool
+
+	// ISIS configuration (optional).
+	isisS3Bucket string
+	isisS3Region string
+
+	// InfluxDB configuration (optional).
+	influxURL                  string
+	influxToken                string
+	influxBucket               string
+	deviceUsageRefreshInterval time.Duration
+	deviceUsageQueryWindow     time.Duration
+}
+
+// startSecondaryNetwork starts a lightweight indexer for a non-primary DZ
+// network (e.g. devnet, testnet). It only runs serviceability and telemetry
+// latency — Solana, GeoIP, Neo4j, ISIS, and rollup are mainnet-only.
+func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cfg secondaryNetworkConfig) error {
+	log = log.With("dz_env", env)
+	log.Info("starting secondary network indexer", "database", cfg.clickhouseDatabase)
+
+	networkConfig, err := config.NetworkConfigForEnv(env)
+	if err != nil {
+		return fmt.Errorf("failed to get network config for %s: %w", env, err)
+	}
+
+	// Create database if requested.
+	if cfg.createDatabase {
+		adminClient, err := clickhouse.NewClient(ctx, log, cfg.clickhouseAddr, "default", cfg.clickhouseUsername, cfg.clickhousePassword, cfg.clickhouseSecure)
+		if err != nil {
+			return fmt.Errorf("failed to create admin ClickHouse client: %w", err)
+		}
+		adminConn, err := adminClient.Conn(ctx)
+		if err != nil {
+			adminClient.Close()
+			return fmt.Errorf("failed to get admin ClickHouse connection: %w", err)
+		}
+		if err := clickhouse.CreateDatabase(ctx, log, adminConn, cfg.clickhouseDatabase); err != nil {
+			adminClient.Close()
+			return fmt.Errorf("failed to create database %s: %w", cfg.clickhouseDatabase, err)
+		}
+		adminClient.Close()
+	}
+
+	chClient, err := clickhouse.NewClient(ctx, log, cfg.clickhouseAddr, cfg.clickhouseDatabase, cfg.clickhouseUsername, cfg.clickhousePassword, cfg.clickhouseSecure)
+	if err != nil {
+		return fmt.Errorf("failed to create ClickHouse client for %s: %w", env, err)
+	}
+	defer chClient.Close()
+
+	dzRPCClient := rpc.NewWithRetries(networkConfig.LedgerPublicRPCURL, nil)
+	defer dzRPCClient.Close()
+	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
+	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
+
+	// Initialize InfluxDB client for device usage (optional).
+	var influxDBClient dztelemusage.InfluxDBClient
+	if cfg.influxURL != "" && cfg.influxToken != "" && cfg.influxBucket != "" {
+		influxDBClient, err = dztelemusage.NewSDKInfluxDBClient(cfg.influxURL, cfg.influxToken, cfg.influxBucket)
+		if err != nil {
+			return fmt.Errorf("failed to create InfluxDB client for %s: %w", env, err)
+		}
+		defer influxDBClient.Close()
+		log.Info("device usage (InfluxDB) client initialized", "bucket", cfg.influxBucket)
+	}
+
+	idx, err := indexer.New(ctx, indexer.Config{
+		DZEnv:            env,
+		Logger:           log,
+		Clock:            clockwork.NewRealClock(),
+		ClickHouse:       chClient,
+		MigrationsEnable: cfg.migrationsEnable,
+		MigrationsConfig: clickhouse.MigrationConfig{
+			Addr:     cfg.clickhouseAddr,
+			Database: cfg.clickhouseDatabase,
+			Username: cfg.clickhouseUsername,
+			Password: cfg.clickhousePassword,
+			Secure:   cfg.clickhouseSecure,
+		},
+		RefreshInterval:        cfg.refreshInterval,
+		MaxConcurrency:         cfg.maxConcurrency,
+		ServiceabilityRPC:      serviceabilityClient,
+		TelemetryRPC:           telemetryClient,
+		DZEpochRPC:             dzRPCClient,
+		InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
+		InternetDataProviders:  telemetryconfig.InternetTelemetryDataProviders,
+		SkipReadyWait:          cfg.skipReadyWait,
+
+		// Device usage configuration.
+		DeviceUsageInfluxClient:      influxDBClient,
+		DeviceUsageInfluxBucket:      cfg.influxBucket,
+		DeviceUsageInfluxQueryWindow: cfg.deviceUsageQueryWindow,
+		DeviceUsageRefreshInterval:   cfg.deviceUsageRefreshInterval,
+
+		// ISIS configuration.
+		ISISEnabled:  cfg.isisS3Bucket != "",
+		ISISS3Bucket: cfg.isisS3Bucket,
+		ISISS3Region: cfg.isisS3Region,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create indexer for %s: %w", env, err)
+	}
+	defer idx.Close()
+
+	// Start rollup worker in the background.
+	rollupErrCh := make(chan error, 1)
+	go func() {
+		rollupErrCh <- rollup.Start(ctx, rollup.Config{
+			Log:                log.With("component", "rollup"),
+			Network:            env,
+			ClickHouseAddr:     cfg.clickhouseAddr,
+			ClickHouseDatabase: cfg.clickhouseDatabase,
+			ClickHouseUsername: cfg.clickhouseUsername,
+			ClickHousePassword: cfg.clickhousePassword,
+			ClickHouseSecure:   cfg.clickhouseSecure,
+		})
+	}()
+
+	// Start DZ ingest worker (blocks until ctx cancelled or error).
+	dzErr := dzingest.Start(ctx, dzingest.Config{
+		Log:            log.With("component", "dz-ingest"),
+		Network:        env,
+		Serviceability: idx.Serviceability(),
+		TelemLatency:   idx.TelemLatency(),
+		TelemUsage:     idx.TelemUsage(),
+		GraphStore:     idx.GraphStore(),
+		ISISSource:     idx.ISISSource(),
+		ISISStore:      idx.ISISStore(),
+	})
+
+	select {
+	case err := <-rollupErrCh:
+		if err != nil {
+			return err
+		}
+		return dzErr
+	default:
+		return dzErr
 	}
 }
 

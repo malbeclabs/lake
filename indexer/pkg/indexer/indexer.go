@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
@@ -23,17 +22,15 @@ type Indexer struct {
 	log *slog.Logger
 	cfg Config
 
-	svc              *dzsvc.View
-	graphStore       *dzgraph.Store
-	telemLatency     *dztelemlatency.View
-	telemUsage       *dztelemusage.View
-	sol              *sol.View
-	geoip            *mcpgeoip.View
-	isisSource       isis.Source
-	lastISISDumpFile string // tracks S3 filename to skip redundant syncs
-	validatorsApp    *validatorsapp.View
-
-	startedAt time.Time
+	svc           *dzsvc.View
+	graphStore    *dzgraph.Store
+	telemLatency  *dztelemlatency.View
+	telemUsage    *dztelemusage.View
+	sol           *sol.View
+	geoip         *mcpgeoip.View
+	isisSource    isis.Source
+	isisStore     *isis.Store
+	validatorsApp *validatorsapp.View
 }
 
 func New(ctx context.Context, cfg Config) (*Indexer, error) {
@@ -170,8 +167,9 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		}
 	}
 
-	// Initialize ISIS source if enabled
+	// Initialize ISIS source and store if enabled
 	var isisSource isis.Source
+	var isisStore *isis.Store
 	if cfg.ISISEnabled {
 		isisSource, err = isis.NewS3Source(ctx, isis.S3SourceConfig{
 			Bucket:      cfg.ISISS3Bucket,
@@ -180,6 +178,13 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ISIS S3 source: %w", err)
+		}
+		isisStore, err = isis.NewStore(isis.StoreConfig{
+			Logger:     cfg.Logger,
+			ClickHouse: cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ISIS store: %w", err)
 		}
 		cfg.Logger.Info("ISIS S3 source initialized",
 			"bucket", cfg.ISISS3Bucket,
@@ -212,6 +217,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		sol:           solanaView,
 		geoip:         geoipView,
 		isisSource:    isisSource,
+		isisStore:     isisStore,
 		validatorsApp: validatorsAppView,
 	}
 
@@ -231,104 +237,6 @@ func (i *Indexer) Ready() bool {
 	return svcReady && telemLatencyReady && solReady && geoipReady
 }
 
-func (i *Indexer) Start(ctx context.Context) {
-	i.startedAt = i.cfg.Clock.Now()
-	i.svc.Start(ctx)
-	i.telemLatency.Start(ctx)
-	if i.sol != nil {
-		i.sol.Start(ctx)
-	}
-	if i.geoip != nil {
-		i.geoip.Start(ctx)
-	}
-	if i.telemUsage != nil {
-		i.telemUsage.Start(ctx)
-	}
-
-	// Start graph sync loop if Neo4j is configured
-	if i.graphStore != nil {
-		go i.startGraphSync(ctx)
-	}
-
-	// Start ISIS sync loop if enabled
-	if i.isisSource != nil {
-		go i.startISISSync(ctx)
-	}
-
-	if i.validatorsApp != nil {
-		i.validatorsApp.Start(ctx)
-	}
-}
-
-// startGraphSync runs the graph sync loop.
-// It waits for the serviceability view to be ready, then syncs the graph periodically.
-// When ISIS is enabled, it fetches ISIS data first and syncs everything atomically
-// to ensure there is never a moment where the graph has nodes but no ISIS relationships.
-func (i *Indexer) startGraphSync(ctx context.Context) {
-	i.log.Info("graph_sync: waiting for serviceability view to be ready")
-
-	// Wait for serviceability to be ready before first sync
-	if err := i.svc.WaitReady(ctx); err != nil {
-		i.log.Error("graph_sync: failed to wait for serviceability view", "error", err)
-		return
-	}
-
-	// Initial sync
-	i.log.Info("graph_sync: starting initial sync")
-	if err := i.doGraphSync(ctx); err != nil {
-		i.log.Error("graph_sync: initial sync failed", "error", err)
-	} else {
-		i.log.Info("graph_sync: initial sync completed")
-	}
-
-	// Periodic sync
-	ticker := i.cfg.Clock.NewTicker(i.cfg.RefreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.Chan():
-			if err := i.doGraphSync(ctx); err != nil {
-				i.log.Error("graph_sync: sync failed", "error", err)
-			}
-		}
-	}
-}
-
-// doGraphSync performs a single graph sync operation.
-// If ISIS is enabled, it fetches ISIS data and syncs atomically with the graph.
-// Otherwise, it syncs just the base graph.
-func (i *Indexer) doGraphSync(ctx context.Context) error {
-	if i.isisSource != nil {
-		// Fetch ISIS data first, then sync everything atomically.
-		// If the fetch fails, skip this sync cycle rather than wiping ISIS
-		// adjacencies with a base-only sync (which would cause flapping).
-		lsps, err := i.fetchISISData(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to fetch ISIS data: %w", err)
-		}
-		return i.graphStore.SyncWithISIS(ctx, lsps)
-	}
-	// No ISIS source configured, just sync the base graph
-	return i.graphStore.Sync(ctx)
-}
-
-// fetchISISData fetches and parses ISIS data from the source.
-func (i *Indexer) fetchISISData(ctx context.Context) ([]isis.LSP, error) {
-	dump, err := i.isisSource.FetchLatest(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch ISIS dump: %w", err)
-	}
-
-	lsps, err := isis.Parse(dump.RawJSON)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse ISIS dump: %w", err)
-	}
-
-	return lsps, nil
-}
-
 func (i *Indexer) Close() error {
 	var errs []error
 	if i.isisSource != nil {
@@ -343,76 +251,49 @@ func (i *Indexer) Close() error {
 	return nil
 }
 
-// startISISSync runs the ISIS sync loop for picking up topology changes between graph syncs.
-// The initial ISIS sync is handled atomically by startGraphSync, so this loop only handles
-// periodic updates to catch IS-IS topology changes that occur between full graph syncs.
-func (i *Indexer) startISISSync(ctx context.Context) {
-	i.log.Info("isis_sync: waiting for serviceability view to be ready")
+// View getters for Temporal workflow activities.
 
-	// Wait for serviceability to be ready
-	if err := i.svc.WaitReady(ctx); err != nil {
-		i.log.Error("isis_sync: failed to wait for serviceability view", "error", err)
-		return
-	}
-
-	// Determine refresh interval
-	refreshInterval := i.cfg.ISISRefreshInterval
-	if refreshInterval <= 0 {
-		refreshInterval = 30 * time.Second
-	}
-
-	// Periodic sync only - initial sync is handled atomically by graph sync
-	ticker := i.cfg.Clock.NewTicker(refreshInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.Chan():
-			if err := i.doISISSync(ctx); err != nil {
-				i.log.Error("isis_sync: sync failed", "error", err)
-			}
-		}
-	}
+// Serviceability returns the serviceability view.
+func (i *Indexer) Serviceability() *dzsvc.View {
+	return i.svc
 }
 
-// doISISSync performs a single IS-IS sync operation.
-// It skips the sync if the S3 dump file hasn't changed since the last sync.
-func (i *Indexer) doISISSync(ctx context.Context) error {
-	i.log.Debug("isis_sync: fetching latest dump")
+// TelemLatency returns the telemetry latency view.
+func (i *Indexer) TelemLatency() *dztelemlatency.View {
+	return i.telemLatency
+}
 
-	// Fetch the latest IS-IS dump from S3
-	dump, err := i.isisSource.FetchLatest(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to fetch ISIS dump: %w", err)
-	}
+// TelemUsage returns the telemetry usage view, or nil if not configured.
+func (i *Indexer) TelemUsage() *dztelemusage.View {
+	return i.telemUsage
+}
 
-	// Skip if the dump file hasn't changed since last sync
-	if dump.FileName == i.lastISISDumpFile {
-		i.log.Debug("isis_sync: dump unchanged, skipping", "file", dump.FileName)
-		return nil
-	}
+// Solana returns the Solana view, or nil if not configured.
+func (i *Indexer) Solana() *sol.View {
+	return i.sol
+}
 
-	i.log.Debug("isis_sync: parsing dump", "file", dump.FileName, "size", len(dump.RawJSON))
-
-	// Parse the dump
-	lsps, err := isis.Parse(dump.RawJSON)
-	if err != nil {
-		return fmt.Errorf("failed to parse ISIS dump: %w", err)
-	}
-
-	i.log.Debug("isis_sync: syncing to Neo4j", "lsps", len(lsps))
-
-	// Sync to Neo4j
-	if err := i.graphStore.SyncISIS(ctx, lsps); err != nil {
-		return fmt.Errorf("failed to sync ISIS to graph: %w", err)
-	}
-
-	i.lastISISDumpFile = dump.FileName
-	return nil
+// GeoIP returns the GeoIP view, or nil if not configured.
+func (i *Indexer) GeoIP() *mcpgeoip.View {
+	return i.geoip
 }
 
 // GraphStore returns the Neo4j graph store, or nil if Neo4j is not configured.
 func (i *Indexer) GraphStore() *dzgraph.Store {
 	return i.graphStore
+}
+
+// ISISSource returns the ISIS data source, or nil if not configured.
+func (i *Indexer) ISISSource() isis.Source {
+	return i.isisSource
+}
+
+// ISISStore returns the ISIS ClickHouse store, or nil if not configured.
+func (i *Indexer) ISISStore() *isis.Store {
+	return i.isisStore
+}
+
+// ValidatorsApp returns the validators.app view, or nil if not configured.
+func (i *Indexer) ValidatorsApp() *validatorsapp.View {
+	return i.validatorsApp
 }

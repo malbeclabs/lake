@@ -18,22 +18,17 @@ type Server struct {
 	httpSrv *http.Server
 }
 
-func New(ctx context.Context, cfg Config) (*Server, error) {
+func New(cfg Config) (*Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
-	}
-
-	indexer, err := indexer.New(ctx, cfg.IndexerConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create indexer: %w", err)
 	}
 
 	mux := http.NewServeMux()
 
 	s := &Server{
-		log:     cfg.IndexerConfig.Logger,
+		log:     cfg.Log,
 		cfg:     cfg,
-		indexer: indexer,
+		indexer: cfg.Indexer,
 	}
 
 	mux.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +57,6 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	s.indexer.Start(ctx)
-
 	serveErrCh := make(chan error, 1)
 	go func() {
 		if err := s.httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

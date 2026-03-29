@@ -54,7 +54,7 @@ func BackfillRollup(log *slog.Logger, cfg BackfillRollupConfig) error {
 	workflowID := fmt.Sprintf("rollup-backfill-%d", time.Now().Unix())
 	run, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
 		ID:        workflowID,
-		TaskQueue: rollup.TaskQueue,
+		TaskQueue: rollup.TaskQueueForNetwork(""),
 	}, rollup.BackfillRollupWorkflow, input)
 	if err != nil {
 		return fmt.Errorf("start backfill workflow: %w", err)

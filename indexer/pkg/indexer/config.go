@@ -131,11 +131,8 @@ func (c *Config) Validate() error {
 		return errors.New("device usage influx client is required when ready includes device usage")
 	}
 
-	// ISIS configuration validation.
-	// ISIS requires Neo4j to be configured.
-	if c.ISISEnabled && c.Neo4j == nil {
-		return errors.New("neo4j is required when isis is enabled")
-	}
+	// ISIS writes to ClickHouse independently of Neo4j. Neo4j reads ISIS
+	// state from ClickHouse during graph sync.
 
 	// Optional with defaults
 	if c.Clock == nil {

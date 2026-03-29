@@ -21,6 +21,11 @@ import (
 type Config struct {
 	Log *slog.Logger
 
+	// Network identifies the DZ environment (e.g. "mainnet-beta", "testnet", "devnet").
+	// Used to namespace the Temporal task queue and workflow ID.
+	// Empty string preserves the legacy "indexer-rollup" naming.
+	Network string
+
 	// ClickHouse connection parameters.
 	ClickHouseAddr     string
 	ClickHouseDatabase string
@@ -79,37 +84,40 @@ func Start(ctx context.Context, cfg Config) error {
 	defer tc.Close()
 	log.Info("rollup: temporal connected", "host", temporalHost, "namespace", temporalNS)
 
+	tq := taskQueue(cfg.Network)
+	wfID := workflowID(cfg.Network)
+
 	// Register rollup workflows
 	activities := &Activities{
 		ClickHouse: chConn,
 		Log:        log.With("component", "rollup"),
 	}
 
-	w := worker.New(tc, TaskQueue, worker.Options{})
+	w := worker.New(tc, tq, worker.Options{})
 	RegisterWorkflows(w)
 	w.RegisterActivity(activities)
 
 	// Terminate any existing rollup workflow from a previous deploy, then start
 	// fresh. This ensures the new worker code is used immediately rather than
 	// replaying old history which could cause non-determinism errors.
-	_ = tc.TerminateWorkflow(ctx, WorkflowID, "", "restarting on deploy")
+	_ = tc.TerminateWorkflow(ctx, wfID, "", "restarting on deploy")
 	run, err := tc.ExecuteWorkflow(ctx, temporalclient.StartWorkflowOptions{
-		ID:        WorkflowID,
-		TaskQueue: TaskQueue,
+		ID:        wfID,
+		TaskQueue: tq,
 	}, ComputeRollupWorkflow, 0)
 	if err != nil {
 		return fmt.Errorf("rollup: failed to start workflow: %w", err)
 	}
-	log.Info("rollup: workflow started", "id", WorkflowID)
+	log.Info("rollup: workflow started", "id", wfID)
 
 	// Watch the workflow in the background so failures surface in logs.
 	go func() {
 		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil {
-			log.Error("rollup: workflow failed", "id", WorkflowID, "error", err)
+			log.Error("rollup: workflow failed", "id", wfID, "error", err)
 		}
 	}()
 
-	log.Info("rollup: starting worker", "task_queue", TaskQueue)
+	log.Info("rollup: starting worker", "task_queue", tq)
 
 	// Run blocks until ctx is cancelled or worker error
 	errCh := make(chan error, 1)

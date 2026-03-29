@@ -2,12 +2,16 @@ package rollup
 
 import "time"
 
-const (
-	// TaskQueue is the Temporal task queue for rollup workflows.
-	TaskQueue = "indexer-rollup"
-	// WorkflowID is the Temporal workflow ID for the long-running rollup workflow.
-	WorkflowID = "indexer-rollup"
-)
+// TaskQueueForNetwork returns the Temporal task queue name for the given network.
+func TaskQueueForNetwork(network string) string {
+	if network == "" {
+		return "indexer-rollup"
+	}
+	return "indexer-rollup-" + network
+}
+
+func taskQueue(network string) string  { return TaskQueueForNetwork(network) }
+func workflowID(network string) string { return TaskQueueForNetwork(network) }
 
 // LinkLatencyStats holds latency/loss percentiles for one probe direction.
 type LinkLatencyStats struct {

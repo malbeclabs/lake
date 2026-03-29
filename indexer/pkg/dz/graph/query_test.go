@@ -207,7 +207,11 @@ func setupISISTestData(t *testing.T, chClient clickhouse.Client, graphStore *Sto
 			},
 		},
 	}
-	err = graphStore.SyncISIS(ctx, lsps)
+	isisStore, err := isis.NewStore(isis.StoreConfig{Logger: log, ClickHouse: chClient})
+	require.NoError(t, err)
+	err = isisStore.Sync(ctx, lsps)
+	require.NoError(t, err)
+	err = graphStore.SyncISIS(ctx)
 	require.NoError(t, err)
 }
 

@@ -147,8 +147,8 @@ func (s *Store) Sync(ctx context.Context) error {
 // SyncWithISIS reads current state from ClickHouse and IS-IS data, then replaces the Neo4j graph
 // atomically within a single transaction. This ensures there is never a moment where the graph
 // has base nodes but no ISIS relationships.
-func (s *Store) SyncWithISIS(ctx context.Context, lsps []isis.LSP) error {
-	s.log.Debug("graph: starting sync with ISIS", "lsps", len(lsps))
+func (s *Store) SyncWithISIS(ctx context.Context) error {
+	s.log.Debug("graph: starting sync with ISIS")
 
 	// Read current data from ClickHouse
 	devices, err := dzsvc.QueryCurrentDevices(ctx, s.log, s.cfg.ClickHouse)
@@ -176,12 +176,25 @@ func (s *Store) SyncWithISIS(ctx context.Context, lsps []isis.LSP) error {
 		return fmt.Errorf("failed to query contributors: %w", err)
 	}
 
+	// Read current ISIS state from ClickHouse
+	isisAdjacencies, err := isis.QueryCurrentAdjacencies(ctx, s.log, s.cfg.ClickHouse)
+	if err != nil {
+		return fmt.Errorf("failed to query ISIS adjacencies: %w", err)
+	}
+
+	isisDevices, err := isis.QueryCurrentDevices(ctx, s.log, s.cfg.ClickHouse)
+	if err != nil {
+		return fmt.Errorf("failed to query ISIS devices: %w", err)
+	}
+
 	s.log.Debug("graph: fetched data from ClickHouse",
 		"devices", len(devices),
 		"links", len(links),
 		"metros", len(metros),
 		"users", len(users),
-		"contributors", len(contributors))
+		"contributors", len(contributors),
+		"isis_adjacencies", len(isisAdjacencies),
+		"isis_devices", len(isisDevices))
 
 	session, err := s.cfg.Neo4j.Session(ctx)
 	if err != nil {
@@ -221,10 +234,10 @@ func (s *Store) SyncWithISIS(ctx context.Context, lsps []isis.LSP) error {
 			return nil, fmt.Errorf("failed to create users: %w", err)
 		}
 
-		// Now create ISIS relationships within the same transaction
-		if len(lsps) > 0 {
-			if err := s.syncISISInTx(ctx, tx, lsps); err != nil {
-				return nil, fmt.Errorf("failed to sync ISIS data: %w", err)
+		// Apply ISIS state from ClickHouse to the Neo4j graph
+		if len(isisAdjacencies) > 0 {
+			if err := s.applyISISInTx(ctx, tx, isisAdjacencies, isisDevices); err != nil {
+				return nil, fmt.Errorf("failed to apply ISIS data: %w", err)
 			}
 		}
 
@@ -239,67 +252,74 @@ func (s *Store) SyncWithISIS(ctx context.Context, lsps []isis.LSP) error {
 		"links", len(links),
 		"metros", len(metros),
 		"users", len(users),
-		"lsps", len(lsps))
+		"isis_adjacencies", len(isisAdjacencies),
+		"isis_devices", len(isisDevices))
 
 	return nil
 }
 
-// syncISISInTx creates ISIS relationships within an existing transaction.
-func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []isis.LSP) error {
-	// Build tunnel map from the newly created links
+// applyISISInTx applies ISIS state from ClickHouse to the Neo4j graph within
+// an existing transaction. It updates Link and Device nodes with ISIS properties
+// and creates ISIS_ADJACENT relationships using batched UNWIND queries.
+func (s *Store) applyISISInTx(ctx context.Context, tx neo4j.Transaction, adjacencies []isis.Adjacency, devices []isis.Device) error {
 	tMaps, err := s.buildTunnelMapInTx(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("failed to build tunnel map: %w", err)
 	}
-	s.log.Debug("graph: built tunnel map", "primary_mappings", len(tMaps.primary), "by_link_code_mappings", len(tMaps.byLinkCode))
 
-	now := time.Now()
-	var unmatchedNeighbors int
-
-	// Collect all updates into batches
-	var linkUpdates []map[string]any
-	var deviceUpdates []map[string]any
-	var adjUpdates []map[string]any
-
-	for _, lsp := range lsps {
-		for _, neighbor := range lsp.Neighbors {
-			mapping, found, ambiguous := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
-			if !found {
-				unmatchedNeighbors++
-				continue
-			}
-			if ambiguous {
-				s.log.Error("graph: duplicate tunnel_net IP with no hostname override, attribution may be wrong",
-					"hostname", lsp.Hostname,
-					"neighbor_addr", neighbor.NeighborAddr,
-					"link", mapping.linkCode)
-			}
-
-			linkUpdates = append(linkUpdates, map[string]any{
-				"pk":        mapping.linkPK,
-				"metric":    neighbor.Metric,
-				"adj_sids":  neighbor.AdjSIDs,
-				"last_sync": now.Unix(),
-			})
-			deviceUpdates = append(deviceUpdates, map[string]any{
-				"pk":        mapping.localPK,
-				"system_id": lsp.SystemID,
-				"router_id": lsp.RouterID,
-				"last_sync": now.Unix(),
-			})
-			adjUpdates = append(adjUpdates, map[string]any{
-				"from_pk":       mapping.localPK,
-				"to_pk":         mapping.neighborPK,
-				"metric":        neighbor.Metric,
-				"neighbor_addr": neighbor.NeighborAddr,
-				"adj_sids":      neighbor.AdjSIDs,
-				"last_seen":     now.Unix(),
-				"bandwidth_bps": mapping.bandwidth,
-			})
+	isisDeviceByPK := make(map[string]isis.Device, len(devices))
+	for _, d := range devices {
+		if d.DevicePK != "" {
+			isisDeviceByPK[d.DevicePK] = d
 		}
 	}
 
-	// Execute batched updates within the transaction
+	now := time.Now()
+	var linkUpdates []map[string]any
+	var deviceUpdates []map[string]any
+	var adjUpdates []map[string]any
+	updatedDevices := make(map[string]bool)
+
+	for _, adj := range adjacencies {
+		if adj.DevicePK == "" || adj.LinkPK == "" {
+			continue
+		}
+
+		mapping, found, _ := tMaps.resolve(adj.Hostname, adj.NeighborAddr)
+		if !found {
+			continue
+		}
+
+		linkUpdates = append(linkUpdates, map[string]any{
+			"pk":        adj.LinkPK,
+			"metric":    adj.Metric,
+			"adj_sids":  adj.AdjSIDs,
+			"last_sync": now.Unix(),
+		})
+
+		if !updatedDevices[adj.DevicePK] {
+			if d, ok := isisDeviceByPK[adj.DevicePK]; ok {
+				deviceUpdates = append(deviceUpdates, map[string]any{
+					"pk":        d.DevicePK,
+					"system_id": d.SystemID,
+					"router_id": d.RouterID,
+					"last_sync": now.Unix(),
+				})
+			}
+			updatedDevices[adj.DevicePK] = true
+		}
+
+		adjUpdates = append(adjUpdates, map[string]any{
+			"from_pk":       adj.DevicePK,
+			"to_pk":         mapping.neighborPK,
+			"metric":        adj.Metric,
+			"neighbor_addr": adj.NeighborAddr,
+			"adj_sids":      adj.AdjSIDs,
+			"last_seen":     now.Unix(),
+			"bandwidth_bps": mapping.bandwidth,
+		})
+	}
+
 	if err := batchUpdateLinksISISTx(ctx, tx, linkUpdates); err != nil {
 		return fmt.Errorf("failed to batch update links: %w", err)
 	}
@@ -310,16 +330,10 @@ func (s *Store) syncISISInTx(ctx context.Context, tx neo4j.Transaction, lsps []i
 		return fmt.Errorf("failed to batch create adjacencies: %w", err)
 	}
 
-	s.log.Debug("graph: ISIS sync in transaction completed",
+	s.log.Debug("graph: ISIS apply completed",
 		"adjacencies_created", len(adjUpdates),
 		"links_updated", len(linkUpdates),
-		"devices_updated", len(deviceUpdates),
-		"unmatched_neighbors", unmatchedNeighbors)
-
-	// Write ISIS data to ClickHouse
-	if err := s.writeISISToClickHouse(ctx, lsps, tMaps); err != nil {
-		s.log.Warn("graph: failed to write ISIS data to ClickHouse", "error", err)
-	}
+		"devices_updated", len(deviceUpdates))
 
 	return nil
 }
@@ -813,11 +827,26 @@ var duplicateTunnelHostnameToLinkCodes = map[string][]string{
 	"DZ-CH2-SW01": {"au1c-dz01:dz-ch2-sw01"},
 }
 
-// SyncISIS updates the Neo4j graph with IS-IS adjacency data.
-// It correlates IS-IS neighbors with existing Links via tunnel_net IP addresses,
-// creates ISIS_ADJACENT relationships between Devices, and updates Link properties.
-func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
-	s.log.Debug("graph: starting ISIS sync", "lsps", len(lsps))
+// SyncISIS updates the Neo4j graph with IS-IS state from ClickHouse.
+// It reads current ISIS adjacencies and devices, then updates Link and Device
+// nodes and creates ISIS_ADJACENT relationships.
+func (s *Store) SyncISIS(ctx context.Context) error {
+	s.log.Debug("graph: starting ISIS sync from ClickHouse")
+
+	isisAdjacencies, err := isis.QueryCurrentAdjacencies(ctx, s.log, s.cfg.ClickHouse)
+	if err != nil {
+		return fmt.Errorf("failed to query ISIS adjacencies: %w", err)
+	}
+
+	isisDevices, err := isis.QueryCurrentDevices(ctx, s.log, s.cfg.ClickHouse)
+	if err != nil {
+		return fmt.Errorf("failed to query ISIS devices: %w", err)
+	}
+
+	if len(isisAdjacencies) == 0 {
+		s.log.Debug("graph: no ISIS adjacencies in ClickHouse, skipping")
+		return nil
+	}
 
 	session, err := s.cfg.Neo4j.Session(ctx)
 	if err != nil {
@@ -825,63 +854,64 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 	}
 	defer session.Close(ctx)
 
-	// Step 1: Query all Links with their tunnel_net and side device PKs
 	tMaps, err := s.buildTunnelMap(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to build tunnel map: %w", err)
 	}
-	s.log.Debug("graph: built tunnel map", "primary_mappings", len(tMaps.primary), "by_link_code_mappings", len(tMaps.byLinkCode))
 
-	now := time.Now()
-	var unmatchedNeighbors int
-
-	// Step 2: Collect all updates into batches
-	var linkUpdates []map[string]any
-	var deviceUpdates []map[string]any
-	var adjUpdates []map[string]any
-
-	for _, lsp := range lsps {
-		for _, neighbor := range lsp.Neighbors {
-			mapping, found, ambiguous := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr)
-			if !found {
-				unmatchedNeighbors++
-				s.log.Debug("graph: unmatched IS-IS neighbor",
-					"neighbor_addr", neighbor.NeighborAddr,
-					"neighbor_system_id", neighbor.SystemID)
-				continue
-			}
-			if ambiguous {
-				s.log.Error("graph: duplicate tunnel_net IP with no hostname override, attribution may be wrong",
-					"hostname", lsp.Hostname,
-					"neighbor_addr", neighbor.NeighborAddr,
-					"link", mapping.linkCode)
-			}
-
-			linkUpdates = append(linkUpdates, map[string]any{
-				"pk":        mapping.linkPK,
-				"metric":    neighbor.Metric,
-				"adj_sids":  neighbor.AdjSIDs,
-				"last_sync": now.Unix(),
-			})
-			deviceUpdates = append(deviceUpdates, map[string]any{
-				"pk":        mapping.localPK,
-				"system_id": lsp.SystemID,
-				"router_id": lsp.RouterID,
-				"last_sync": now.Unix(),
-			})
-			adjUpdates = append(adjUpdates, map[string]any{
-				"from_pk":       mapping.localPK,
-				"to_pk":         mapping.neighborPK,
-				"metric":        neighbor.Metric,
-				"neighbor_addr": neighbor.NeighborAddr,
-				"adj_sids":      neighbor.AdjSIDs,
-				"last_seen":     now.Unix(),
-				"bandwidth_bps": mapping.bandwidth,
-			})
+	isisDeviceByPK := make(map[string]isis.Device, len(isisDevices))
+	for _, d := range isisDevices {
+		if d.DevicePK != "" {
+			isisDeviceByPK[d.DevicePK] = d
 		}
 	}
 
-	// Step 3: Execute batched updates (3 queries instead of N*3)
+	now := time.Now()
+	var linkUpdates []map[string]any
+	var deviceUpdates []map[string]any
+	var adjUpdates []map[string]any
+	updatedDevices := make(map[string]bool)
+
+	for _, adj := range isisAdjacencies {
+		if adj.DevicePK == "" || adj.LinkPK == "" {
+			continue
+		}
+
+		mapping, found, _ := tMaps.resolve(adj.Hostname, adj.NeighborAddr)
+		if !found {
+			continue
+		}
+
+		linkUpdates = append(linkUpdates, map[string]any{
+			"pk":        adj.LinkPK,
+			"metric":    adj.Metric,
+			"adj_sids":  adj.AdjSIDs,
+			"last_sync": now.Unix(),
+		})
+
+		if !updatedDevices[adj.DevicePK] {
+			if d, ok := isisDeviceByPK[adj.DevicePK]; ok {
+				deviceUpdates = append(deviceUpdates, map[string]any{
+					"pk":        d.DevicePK,
+					"system_id": d.SystemID,
+					"router_id": d.RouterID,
+					"last_sync": now.Unix(),
+				})
+			}
+			updatedDevices[adj.DevicePK] = true
+		}
+
+		adjUpdates = append(adjUpdates, map[string]any{
+			"from_pk":       adj.DevicePK,
+			"to_pk":         mapping.neighborPK,
+			"metric":        adj.Metric,
+			"neighbor_addr": adj.NeighborAddr,
+			"adj_sids":      adj.AdjSIDs,
+			"last_seen":     now.Unix(),
+			"bandwidth_bps": mapping.bandwidth,
+		})
+	}
+
 	if err := batchUpdateLinksISIS(ctx, session, linkUpdates); err != nil {
 		return fmt.Errorf("failed to batch update links: %w", err)
 	}
@@ -893,16 +923,9 @@ func (s *Store) SyncISIS(ctx context.Context, lsps []isis.LSP) error {
 	}
 
 	s.log.Info("graph: ISIS sync completed",
-		"lsps", len(lsps),
 		"adjacencies_created", len(adjUpdates),
 		"links_updated", len(linkUpdates),
-		"devices_updated", len(deviceUpdates),
-		"unmatched_neighbors", unmatchedNeighbors)
-
-	// Write ISIS data to ClickHouse
-	if err := s.writeISISToClickHouse(ctx, lsps, tMaps); err != nil {
-		s.log.Warn("graph: failed to write ISIS data to ClickHouse", "error", err)
-	}
+		"devices_updated", len(deviceUpdates))
 
 	return nil
 }
@@ -1096,87 +1119,6 @@ func batchCreateISISAdjacent(ctx context.Context, session neo4j.Session, updates
 	}
 	_, err = res.Consume(ctx)
 	return err
-}
-
-// writeISISToClickHouse builds ISIS adjacency and device slices from LSPs and writes them to ClickHouse.
-// All adjacencies are included (matched and unmatched). device_pk and link_pk are enrichment columns
-// populated via tunnel net correlation when possible, empty when not.
-func (s *Store) writeISISToClickHouse(ctx context.Context, lsps []isis.LSP, tMaps *tunnelMaps) error {
-	isisStore, err := isis.NewStore(isis.StoreConfig{
-		Logger:     s.log,
-		ClickHouse: s.cfg.ClickHouse,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create ISIS store: %w", err)
-	}
-
-	// Build device lookup: system_id -> device_pk (from tunnel map matches)
-	devicePKBySystemID := make(map[string]string)
-	for _, lsp := range lsps {
-		for _, neighbor := range lsp.Neighbors {
-			if mapping, found, _ := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
-				devicePKBySystemID[lsp.SystemID] = mapping.localPK
-			}
-		}
-	}
-
-	// Build adjacency and device slices
-	var adjacencies []isis.Adjacency
-	for _, lsp := range lsps {
-		for _, neighbor := range lsp.Neighbors {
-			adj := isis.Adjacency{
-				SystemID:         lsp.SystemID,
-				NeighborSystemID: neighbor.SystemID,
-				NeighborAddr:     neighbor.NeighborAddr,
-				Hostname:         lsp.Hostname,
-				RouterID:         lsp.RouterID,
-				LocalAddr:        neighbor.LocalAddr,
-				Metric:           int64(neighbor.Metric),
-				AdjSIDs:          isis.AdjSIDsToJSON(neighbor.AdjSIDs),
-			}
-			// Enrich with device_pk and link_pk if we have a tunnel match
-			if mapping, found, _ := tMaps.resolve(lsp.Hostname, neighbor.NeighborAddr); found {
-				adj.DevicePK = mapping.localPK
-				adj.LinkPK = mapping.linkPK
-			}
-			adjacencies = append(adjacencies, adj)
-		}
-	}
-
-	var devices []isis.Device
-	for _, lsp := range lsps {
-		var overload, nodeUnreachable uint8
-		if lsp.Overload {
-			overload = 1
-		}
-		if lsp.NodeUnreachable {
-			nodeUnreachable = 1
-		}
-		dev := isis.Device{
-			SystemID:        lsp.SystemID,
-			DevicePK:        devicePKBySystemID[lsp.SystemID],
-			Hostname:        lsp.Hostname,
-			RouterID:        lsp.RouterID,
-			Overload:        overload,
-			NodeUnreachable: nodeUnreachable,
-			Sequence:        lsp.Sequence,
-		}
-		devices = append(devices, dev)
-	}
-
-	if err := isisStore.ReplaceAdjacencies(ctx, adjacencies); err != nil {
-		return fmt.Errorf("failed to replace adjacencies: %w", err)
-	}
-
-	if err := isisStore.ReplaceDevices(ctx, devices); err != nil {
-		return fmt.Errorf("failed to replace devices: %w", err)
-	}
-
-	s.log.Info("graph: wrote ISIS data to ClickHouse",
-		"adjacencies", len(adjacencies),
-		"devices", len(devices))
-
-	return nil
 }
 
 // parseTunnelNet31 parses a /31 CIDR and returns both IP addresses.
