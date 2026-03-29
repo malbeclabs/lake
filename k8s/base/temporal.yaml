@@ -44,6 +44,8 @@ spec:
               value: postgres
             - name: DEFAULT_NAMESPACE_RETENTION
               value: "24h"
+            - name: BIND_ON_IP
+              value: "0.0.0.0"
           readinessProbe:
             tcpSocket:
               port: 7233
