@@ -253,6 +253,15 @@ cmd_up() {
     echo "  temporal-ui: http://localhost:$((8233 + offset))"
     echo "  tilt:        http://localhost:$((10350 + offset))"
     echo ""
+    echo "  Run local tools against this cluster:"
+    echo "    eval \$($0 env${NAME_ARG:+ $NAME_ARG})"
+    echo ""
+    echo "  Sync .env secrets (after editing .env):"
+    echo "    $0 sync${NAME_ARG:+ $NAME_ARG}"
+    echo ""
+    echo "  kubectl:"
+    echo "    KUBECONFIG=$KUBECONFIG kubectl -n lake-dev ..."
+    echo ""
 
     export LAKE_CLUSTER_NAME="$CLUSTER_NAME"
 
