@@ -13,7 +13,7 @@ import (
 	"time"
 
 	commonprompts "github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	
+
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

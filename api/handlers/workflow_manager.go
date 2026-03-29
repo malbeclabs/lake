@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
-	
 )
 
 // WorkflowEvent represents a progress event from a running workflow.

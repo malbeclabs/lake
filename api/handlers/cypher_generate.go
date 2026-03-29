@@ -13,7 +13,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	
+
 	"github.com/malbeclabs/lake/api/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
 )

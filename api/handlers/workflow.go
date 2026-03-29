@@ -11,7 +11,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
-	
 )
 
 // WorkflowStep represents a single step in the workflow execution timeline.

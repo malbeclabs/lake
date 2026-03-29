@@ -14,7 +14,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/getsentry/sentry-go"
 	"github.com/malbeclabs/lake/agent/pkg/workflow/prompts"
-	
+
 	"github.com/malbeclabs/lake/api/metrics"
 )
 

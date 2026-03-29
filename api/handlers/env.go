@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-
 )
 
 // DZEnv represents a DoubleZero network environment.
