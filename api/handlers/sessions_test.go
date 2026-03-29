@@ -52,6 +52,7 @@ func withChiURLParams(r *http.Request, params map[string]string) *http.Request {
 }
 
 func TestCreateSession_Authenticated(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -87,6 +88,7 @@ func TestCreateSession_Authenticated(t *testing.T) {
 }
 
 func TestCreateSession_Anonymous(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 
 	sessionID := uuid.New()
@@ -118,6 +120,7 @@ func TestCreateSession_Anonymous(t *testing.T) {
 }
 
 func TestCreateSession_NoAuth(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 
 	sessionID := uuid.New()
@@ -139,6 +142,7 @@ func TestCreateSession_NoAuth(t *testing.T) {
 }
 
 func TestCreateSession_InvalidType(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -163,6 +167,7 @@ func TestCreateSession_InvalidType(t *testing.T) {
 }
 
 func TestGetSession_Owner(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -192,6 +197,7 @@ func TestGetSession_Owner(t *testing.T) {
 }
 
 func TestGetSession_NotFound(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -208,6 +214,7 @@ func TestGetSession_NotFound(t *testing.T) {
 }
 
 func TestGetSession_Forbidden(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -235,6 +242,7 @@ func TestGetSession_Forbidden(t *testing.T) {
 }
 
 func TestUpdateSession(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -272,6 +280,7 @@ func TestUpdateSession(t *testing.T) {
 }
 
 func TestDeleteSession(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -302,6 +311,7 @@ func TestDeleteSession(t *testing.T) {
 }
 
 func TestListSessions_Pagination(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -348,6 +358,7 @@ func TestListSessions_Pagination(t *testing.T) {
 }
 
 func TestListSessions_TypeFilter(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -395,6 +406,7 @@ func TestListSessions_TypeFilter(t *testing.T) {
 }
 
 func TestBatchGetSessions(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 

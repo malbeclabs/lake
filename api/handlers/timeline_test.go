@@ -18,6 +18,7 @@ import (
 )
 
 func TestDZStakeAttribution_Disconnect(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -82,6 +83,7 @@ func TestDZStakeAttribution_Disconnect(t *testing.T) {
 }
 
 func TestDZStakeAttribution_Connect(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -127,6 +129,7 @@ func TestDZStakeAttribution_Connect(t *testing.T) {
 }
 
 func TestDZStakeAttribution_StakeChange(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -175,6 +178,7 @@ func TestDZStakeAttribution_StakeChange(t *testing.T) {
 }
 
 func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -216,6 +220,7 @@ func TestDZStakeAttribution_ValidatorLeft(t *testing.T) {
 }
 
 func TestDZStakeAttribution_NoChange(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -251,6 +256,7 @@ func TestDZStakeAttribution_NoChange(t *testing.T) {
 // (from queryVoteAccountChanges) get dz_total_stake_share_pct populated
 // via queryDZTotalBySnapshot.
 func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -318,6 +324,7 @@ func TestDZTotalStakeShare_OnJoinedEvent(t *testing.T) {
 // days. This is the scenario that was broken in production: the total drifted from
 // ~39% down to ~36% because the old dedup removed legitimate events.
 func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	// 4 timestamps over 3 days — each transition changes DZ composition
@@ -434,6 +441,7 @@ func TestDZTotalBackfillWalk_MultipleSnapshots(t *testing.T) {
 // TestDZTotalBackfillWalk_StableTotal tests that when no attribution events exist
 // (DZ composition doesn't change), all events show the same DZ total.
 func TestDZTotalBackfillWalk_StableTotal(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -506,6 +514,7 @@ func TestDZTotalBackfillWalk_StableTotal(t *testing.T) {
 // This was a bug: the old dedup keyed on (vote_pubkey, event_type) globally,
 // removing legitimate stake change events at different times.
 func TestDedup_SameValidatorDifferentTimestamps(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -569,6 +578,7 @@ func TestDedup_SameValidatorDifferentTimestamps(t *testing.T) {
 // for a validator that joins DZ, changes stake, and leaves DZ. Asserts exact
 // event types, ordering, field values, and DZ total consistency.
 func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -738,6 +748,7 @@ func TestTimeline_FullResponse_JoinLeaveSequence(t *testing.T) {
 // TestTimeline_FullResponse_DZFilter tests that the dz_filter=on_dz parameter
 // correctly filters events to only DZ-related validators.
 func TestTimeline_FullResponse_DZFilter(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 4, 1, 0, 0, 0, 0, time.UTC)
@@ -832,6 +843,7 @@ func TestTimeline_FullResponse_DZFilter(t *testing.T) {
 // TestTimeline_FullResponse_MinStakeFilter tests that min_stake_pct correctly
 // excludes low-stake validators from results.
 func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
@@ -892,6 +904,7 @@ func TestTimeline_FullResponse_MinStakeFilter(t *testing.T) {
 
 // TestTimeline_FullResponse_Pagination tests that limit and offset work correctly.
 func TestTimeline_FullResponse_Pagination(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -984,6 +997,7 @@ func TestTimeline_FullResponse_Pagination(t *testing.T) {
 // TestTimeline_FullResponse_EventFields tests that all required fields are
 // present and correctly typed on validator events.
 func TestTimeline_FullResponse_EventFields(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
@@ -1075,6 +1089,7 @@ func TestTimeline_FullResponse_EventFields(t *testing.T) {
 // TestTimeline_FullResponse_ActionFilter tests the action filter with exact
 // expected outputs for added/removed/changed actions.
 func TestTimeline_FullResponse_ActionFilter(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 8, 1, 0, 0, 0, 0, time.UTC)
@@ -1294,6 +1309,7 @@ func getDetails(t *testing.T, event handlers.TimelineEvent) map[string]any {
 // --- queryVoteAccountChanges tests ---
 
 func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t0 := time.Date(2025, 5, 31, 22, 0, 0, 0, time.UTC) // before query range
@@ -1334,6 +1350,7 @@ func TestVoteAccountChanges_ValidatorLeft(t *testing.T) {
 }
 
 func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1401,6 +1418,7 @@ func TestVoteAccountChanges_JoinedAndLeft(t *testing.T) {
 }
 
 func TestVoteAccountChanges_DZMetadata(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1459,6 +1477,7 @@ func TestVoteAccountChanges_DZMetadata(t *testing.T) {
 // --- queryGossipNetworkChanges tests ---
 
 func TestGossipNetworkChanges_ValidatorOffline(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1494,6 +1513,7 @@ func TestGossipNetworkChanges_ValidatorOffline(t *testing.T) {
 }
 
 func TestGossipNetworkChanges_GossipNodeOffline(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1531,6 +1551,7 @@ func TestGossipNetworkChanges_GossipNodeOffline(t *testing.T) {
 // --- queryStakeChanges tests ---
 
 func TestStakeChanges_Increase(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1561,6 +1582,7 @@ func TestStakeChanges_Increase(t *testing.T) {
 }
 
 func TestStakeChanges_Decrease(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1591,6 +1613,7 @@ func TestStakeChanges_Decrease(t *testing.T) {
 }
 
 func TestStakeChanges_BelowThreshold(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1620,6 +1643,7 @@ func TestStakeChanges_BelowThreshold(t *testing.T) {
 }
 
 func TestStakeChanges_PercentageThreshold(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1647,6 +1671,7 @@ func TestStakeChanges_PercentageThreshold(t *testing.T) {
 }
 
 func TestStakeChanges_OnDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1678,6 +1703,7 @@ func TestStakeChanges_OnDZ(t *testing.T) {
 }
 
 func TestStakeChanges_OnDZ_ContributorEnrichment(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1717,6 +1743,7 @@ func TestStakeChanges_OnDZ_ContributorEnrichment(t *testing.T) {
 // --- queryValidatorEvents tests ---
 
 func TestValidatorEvents_JoinedDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1759,6 +1786,7 @@ func TestValidatorEvents_JoinedDZ(t *testing.T) {
 }
 
 func TestValidatorEvents_LeftDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1800,6 +1828,7 @@ func TestValidatorEvents_LeftDZ(t *testing.T) {
 }
 
 func TestValidatorEvents_LeftDZ_DeletedWhileActivated(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1840,6 +1869,7 @@ func TestValidatorEvents_LeftDZ_DeletedWhileActivated(t *testing.T) {
 }
 
 func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1876,6 +1906,7 @@ func TestValidatorEvents_GossipNodeJoinedDZ(t *testing.T) {
 }
 
 func TestValidatorEvents_GossipNodeLeftDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1914,6 +1945,7 @@ func TestValidatorEvents_GossipNodeLeftDZ(t *testing.T) {
 // --- Filter tests ---
 
 func TestDZFilter_OnDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1951,6 +1983,7 @@ func TestDZFilter_OnDZ(t *testing.T) {
 }
 
 func TestDZFilter_OffDZ(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1997,6 +2030,7 @@ func TestDZFilter_OffDZ(t *testing.T) {
 }
 
 func TestDZFilter_AttributionPassThrough(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2027,6 +2061,7 @@ func TestDZFilter_AttributionPassThrough(t *testing.T) {
 }
 
 func TestActionFilter_Added(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2074,6 +2109,7 @@ func TestActionFilter_Added(t *testing.T) {
 }
 
 func TestActionFilter_Removed(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2116,6 +2152,7 @@ func TestActionFilter_Removed(t *testing.T) {
 }
 
 func TestActionFilter_Changed(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2151,6 +2188,7 @@ func TestActionFilter_Changed(t *testing.T) {
 }
 
 func TestActionFilter_AlertingIncludesStakeIncrease(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2178,6 +2216,7 @@ func TestActionFilter_AlertingIncludesStakeIncrease(t *testing.T) {
 }
 
 func TestMinStakePct_FiltersValidators(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2222,6 +2261,7 @@ func TestMinStakePct_FiltersValidators(t *testing.T) {
 }
 
 func TestMinStakePct_NonValidatorPassThrough(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
@@ -2273,6 +2313,7 @@ func TestMinStakePct_NonValidatorPassThrough(t *testing.T) {
 // --- Integration / edge case tests ---
 
 func TestDZTotal_OnAllEventTypes(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2317,6 +2358,7 @@ func TestDZTotal_OnAllEventTypes(t *testing.T) {
 }
 
 func TestEdge_NoDZUsers(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2345,6 +2387,7 @@ func TestEdge_NoDZUsers(t *testing.T) {
 }
 
 func TestEdge_ZeroStake(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -2371,6 +2414,7 @@ func TestEdge_ZeroStake(t *testing.T) {
 }
 
 func TestCombinedFilters(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	t1 := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)

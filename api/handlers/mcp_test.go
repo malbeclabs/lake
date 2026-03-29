@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-
 	"github.com/malbeclabs/lake/api/handlers"
 	apitesting "github.com/malbeclabs/lake/api/testing"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
@@ -51,6 +50,7 @@ func parseSSEResponse(body string) (map[string]any, error) {
 }
 
 func TestMCPHandler_Initialize(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler := api.InitMCP()
 	require.NotNil(t, handler)
@@ -99,6 +99,7 @@ func TestMCPHandler_Initialize(t *testing.T) {
 }
 
 func TestMCPHandler_ListTools(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler := api.InitMCP()
 	require.NotNil(t, handler)
@@ -168,6 +169,7 @@ func TestMCPHandler_ListTools(t *testing.T) {
 }
 
 func TestMCPHandler_ListResources(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler := api.InitMCP()
 	require.NotNil(t, handler)
@@ -234,6 +236,7 @@ func TestMCPHandler_ListResources(t *testing.T) {
 }
 
 func TestMCPHandler_ListPrompts(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler := api.InitMCP()
 	require.NotNil(t, handler)
@@ -352,6 +355,7 @@ func callTool(t *testing.T, handler http.Handler, sessionID string, toolName str
 }
 
 func TestMCPHandler_ExecuteSQL_EmptyResults(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	// Create a simple test table
@@ -397,6 +401,7 @@ func TestMCPHandler_ExecuteSQL_EmptyResults(t *testing.T) {
 }
 
 func TestMCPHandler_ExecuteSQL_WithData(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	ctx := t.Context()
@@ -432,6 +437,7 @@ func TestMCPHandler_ExecuteSQL_WithData(t *testing.T) {
 }
 
 func TestMCPHandler_ExecuteSQL_InvalidQuery(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	handler, sessionID := mcpSession(t, api)
@@ -452,6 +458,7 @@ func TestMCPHandler_ExecuteSQL_InvalidQuery(t *testing.T) {
 }
 
 func TestMCPHandler_ExecuteCypher_EmptyResults(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIAll(t, testChDB, nil, testNeo4jDB, nil)
 
 	handler, sessionID := mcpSession(t, api)
@@ -491,6 +498,7 @@ func TestMCPHandler_ExecuteCypher_EmptyResults(t *testing.T) {
 }
 
 func TestMCPHandler_ExecuteCypher_WithData(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	seedFunc := func(ctx context.Context, session neo4j.Session) error {
 		_, err := session.Run(ctx, `
@@ -533,6 +541,7 @@ func TestMCPHandler_ExecuteCypher_WithData(t *testing.T) {
 }
 
 func TestMCPHandler_GetSchema(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	// Create a test table so schema has something to return
@@ -561,6 +570,7 @@ func TestMCPHandler_GetSchema(t *testing.T) {
 }
 
 func TestMCPHandler_ReadDocs(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler, sessionID := mcpSession(t, api)
 
@@ -586,6 +596,7 @@ func TestMCPHandler_ReadDocs(t *testing.T) {
 }
 
 func TestMCPHandler_ReadDocs_InvalidPage(t *testing.T) {
+	t.Parallel()
 	api := &handlers.API{}
 	handler, sessionID := mcpSession(t, api)
 

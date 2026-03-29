@@ -127,6 +127,7 @@ func queryIssueStart(t *testing.T, api *handlers.API, linkCode string) (time.Tim
 }
 
 func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupIssueDurationTables(t, api)
 	ctx := t.Context()
@@ -176,6 +177,7 @@ func TestIssueDuration_BriefHealthyBucketDoesNotResetDuration(t *testing.T) {
 }
 
 func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupIssueDurationTables(t, api)
 	ctx := t.Context()
@@ -216,6 +218,7 @@ func TestIssueDuration_SustainedHealthyPeriodResetsCorrectly(t *testing.T) {
 }
 
 func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupIssueDurationTables(t, api)
 	ctx := t.Context()
@@ -258,6 +261,7 @@ func TestIssueDuration_TwoHealthyBucketsNotEnoughToReset(t *testing.T) {
 }
 
 func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupIssueDurationTables(t, api)
 	ctx := t.Context()
@@ -287,6 +291,7 @@ func TestIssueDuration_NoHealthyPeriodFallsBackToEarliestIssue(t *testing.T) {
 }
 
 func TestIssueDuration_NoIssueReturnsNoResults(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupIssueDurationTables(t, api)
 	ctx := t.Context()

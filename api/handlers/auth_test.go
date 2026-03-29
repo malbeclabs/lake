@@ -16,6 +16,7 @@ import (
 )
 
 func TestGetAuthNonce(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/nonce", nil)
@@ -40,6 +41,7 @@ func TestGetAuthNonce(t *testing.T) {
 }
 
 func TestGetAuthNonce_CleansExpired(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -64,6 +66,7 @@ func TestGetAuthNonce_CleansExpired(t *testing.T) {
 }
 
 func TestGetAuthMe_Authenticated(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -85,6 +88,7 @@ func TestGetAuthMe_Authenticated(t *testing.T) {
 }
 
 func TestGetAuthMe_Anonymous(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/me", nil)
@@ -103,6 +107,7 @@ func TestGetAuthMe_Anonymous(t *testing.T) {
 }
 
 func TestPostAuthLogout(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -127,6 +132,7 @@ func TestPostAuthLogout(t *testing.T) {
 }
 
 func TestGetUsageQuota_Anonymous(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -156,6 +162,7 @@ func TestGetUsageQuota_Anonymous(t *testing.T) {
 }
 
 func TestGetUsageQuota_Authenticated(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -185,6 +192,7 @@ func TestGetUsageQuota_Authenticated(t *testing.T) {
 }
 
 func TestGetAccountByToken_Valid(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -227,6 +235,7 @@ func TestGetAccountByToken_Valid(t *testing.T) {
 }
 
 func TestGetAccountByToken_Expired(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -253,6 +262,7 @@ func TestGetAccountByToken_Expired(t *testing.T) {
 }
 
 func TestGetAccountByToken_InactiveAccount(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -279,6 +289,7 @@ func TestGetAccountByToken_InactiveAccount(t *testing.T) {
 }
 
 func TestGetQuotaForAccount_WithUsage(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -309,6 +320,7 @@ func TestGetQuotaForAccount_WithUsage(t *testing.T) {
 }
 
 func TestGetQuotaForAccount_NoLimit(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -327,6 +339,7 @@ func TestGetQuotaForAccount_NoLimit(t *testing.T) {
 }
 
 func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -355,6 +368,7 @@ func TestGetQuotaForAccount_AnonymousByIP(t *testing.T) {
 }
 
 func TestMigrateAnonymousSessions(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIPg(t, testPgDB)
 	ctx := t.Context()
 
@@ -398,6 +412,7 @@ func TestMigrateAnonymousSessions(t *testing.T) {
 }
 
 func TestGetIPFromRequest(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		headers    map[string]string
@@ -451,6 +466,7 @@ func TestGetIPFromRequest(t *testing.T) {
 }
 
 func TestNextMidnightUTC(t *testing.T) {
+	t.Parallel()
 	// Get next midnight
 	now := time.Now().UTC()
 	expectedMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)

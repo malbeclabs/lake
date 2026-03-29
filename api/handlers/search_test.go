@@ -147,6 +147,7 @@ func insertSearchTestData(t *testing.T, api *handlers.API) {
 }
 
 func TestSearchAutocomplete_EmptyQuery(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 
@@ -163,6 +164,7 @@ func TestSearchAutocomplete_EmptyQuery(t *testing.T) {
 }
 
 func TestSearchAutocomplete_ShortQuery(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 
@@ -180,6 +182,7 @@ func TestSearchAutocomplete_ShortQuery(t *testing.T) {
 }
 
 func TestSearchAutocomplete_FindsDevices(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -219,6 +222,7 @@ func TestSearchAutocomplete_FindsDevices(t *testing.T) {
 }
 
 func TestSearchAutocomplete_DevicePrefix(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -241,6 +245,7 @@ func TestSearchAutocomplete_DevicePrefix(t *testing.T) {
 }
 
 func TestSearchAutocomplete_MetroPrefix(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -267,6 +272,7 @@ func TestSearchAutocomplete_MetroPrefix(t *testing.T) {
 }
 
 func TestSearchAutocomplete_LimitParam(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -284,6 +290,7 @@ func TestSearchAutocomplete_LimitParam(t *testing.T) {
 }
 
 func TestSearchAutocomplete_IPPrefix(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -310,6 +317,7 @@ func TestSearchAutocomplete_IPPrefix(t *testing.T) {
 }
 
 func TestSearch_EmptyQuery(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 
@@ -327,6 +335,7 @@ func TestSearch_EmptyQuery(t *testing.T) {
 }
 
 func TestSearch_ReturnsGroupedResults(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -359,6 +368,7 @@ func TestSearch_ReturnsGroupedResults(t *testing.T) {
 }
 
 func TestSearch_TypesFilter(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -381,6 +391,7 @@ func TestSearch_TypesFilter(t *testing.T) {
 }
 
 func TestSearch_MultipleTypes(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -403,6 +414,7 @@ func TestSearch_MultipleTypes(t *testing.T) {
 }
 
 func TestSearch_LimitParam(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -425,6 +437,7 @@ func TestSearch_LimitParam(t *testing.T) {
 }
 
 func TestSearch_ValidatorSearch(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -446,6 +459,7 @@ func TestSearch_ValidatorSearch(t *testing.T) {
 }
 
 func TestSearch_ContributorSearch(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -467,6 +481,7 @@ func TestSearch_ContributorSearch(t *testing.T) {
 }
 
 func TestSearch_MultiTokenQuery(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -491,6 +506,7 @@ func TestSearch_MultiTokenQuery(t *testing.T) {
 }
 
 func TestSearchAutocomplete_NoResults(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)
@@ -508,6 +524,7 @@ func TestSearchAutocomplete_NoResults(t *testing.T) {
 }
 
 func TestSearch_SuggestionURLFormat(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPIBare(t, testChDB)
 	setupSearchTables(t, api)
 	insertSearchTestData(t, api)

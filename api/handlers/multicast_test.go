@@ -61,6 +61,7 @@ func insertMulticastTestData(t *testing.T, api *handlers.API) {
 }
 
 func TestGetMulticastGroups_Empty(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups", nil)
@@ -76,6 +77,7 @@ func TestGetMulticastGroups_Empty(t *testing.T) {
 }
 
 func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -98,6 +100,7 @@ func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
 }
 
 func TestGetMulticastGroup_NotFound(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/nonexistent", nil)
@@ -112,6 +115,7 @@ func TestGetMulticastGroup_NotFound(t *testing.T) {
 }
 
 func TestGetMulticastGroup_ReturnsMetadataOnly(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -134,6 +138,7 @@ func TestGetMulticastGroup_ReturnsMetadataOnly(t *testing.T) {
 }
 
 func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -187,6 +192,7 @@ func TestGetMulticastGroupMembers_ReturnsMembers(t *testing.T) {
 }
 
 func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -237,6 +243,7 @@ func TestGetMulticastGroupMembers_TrafficBps(t *testing.T) {
 }
 
 func TestGetMulticastGroupMembers_TrafficBps_NoCounters(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -260,6 +267,7 @@ func TestGetMulticastGroupMembers_TrafficBps_NoCounters(t *testing.T) {
 }
 
 func TestGetMulticastGroup_MissingCode(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/", nil)
@@ -273,6 +281,7 @@ func TestGetMulticastGroup_MissingCode(t *testing.T) {
 }
 
 func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -349,6 +358,7 @@ func TestGetMulticastGroupMembers_LeaderEnrichment(t *testing.T) {
 }
 
 func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -392,6 +402,7 @@ func TestGetMulticastGroupTraffic_ReturnsTimeSeries(t *testing.T) {
 }
 
 func TestGetMulticastGroupTraffic_NotFound(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/multicast-groups/nonexistent/traffic", nil)
@@ -406,6 +417,7 @@ func TestGetMulticastGroupTraffic_NotFound(t *testing.T) {
 }
 
 func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -426,6 +438,7 @@ func TestGetMulticastGroupTraffic_NoCounters(t *testing.T) {
 }
 
 func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 
@@ -482,6 +495,7 @@ func TestGetMulticastGroupMembers_NoLeader(t *testing.T) {
 }
 
 func TestGetMulticastGroupMembers_ValidatorEnrichment(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	insertMulticastTestData(t, api)
 

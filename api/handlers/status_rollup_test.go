@@ -111,6 +111,7 @@ func seedContributor(t *testing.T, api *handlers.API, pk, code string) {
 // TestQueryLinkRollup verifies the link rollup query executes valid SQL
 // and correctly re-buckets 5-minute data into display buckets.
 func TestQueryLinkRollup(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
@@ -152,6 +153,7 @@ func TestQueryLinkRollup(t *testing.T) {
 
 // TestQueryLinkRollup_Empty verifies the query works with no data.
 func TestQueryLinkRollup_Empty(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	params := handlers.ExportParseBucketParams("1h", 3)
@@ -163,6 +165,7 @@ func TestQueryLinkRollup_Empty(t *testing.T) {
 // TestQueryInterfaceRollup verifies the interface rollup query executes valid SQL
 // and supports different grouping modes.
 func TestQueryInterfaceRollup(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
@@ -234,6 +237,7 @@ func TestQueryInterfaceRollup(t *testing.T) {
 
 // TestQueryInterfaceRollup_Empty verifies the query works with no data.
 func TestQueryInterfaceRollup_Empty(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	params := handlers.ExportParseBucketParams("1h", 3)
@@ -246,6 +250,7 @@ func TestQueryInterfaceRollup_Empty(t *testing.T) {
 
 // TestQueryLinkRollup_FilterByLinkPK verifies filtering by specific link PKs.
 func TestQueryLinkRollup_FilterByLinkPK(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
@@ -265,6 +270,7 @@ func TestQueryLinkRollup_FilterByLinkPK(t *testing.T) {
 
 // TestQueryLinkRollup_StateColumns verifies entity state columns are returned.
 func TestQueryLinkRollup_StateColumns(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	now := time.Now().UTC().Truncate(5 * time.Minute)
@@ -298,6 +304,7 @@ func TestQueryLinkRollup_StateColumns(t *testing.T) {
 // then verifies that querying with UseRaw=true produces equivalent results
 // to querying the rollup table.
 func TestLinkRollupVsRaw(t *testing.T) {
+	t.Parallel()
 	api := apitesting.NewTestAPI(t, testChDB)
 	ctx := t.Context()
 
