@@ -259,8 +259,8 @@ cmd_up() {
     echo "  Sync .env secrets (after editing .env):"
     echo "    $0 sync${NAME_ARG:+ $NAME_ARG}"
     echo ""
-    echo "  kubectl:"
-    echo "    KUBECONFIG=$KUBECONFIG kubectl -n lake-dev ..."
+    echo "  kubectl (run 'eval' above first to set KUBECONFIG):"
+    echo "    kubectl -n lake-dev get pods"
     echo ""
 
     export LAKE_CLUSTER_NAME="$CLUSTER_NAME"
