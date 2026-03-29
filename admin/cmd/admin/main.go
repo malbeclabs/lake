@@ -156,54 +156,36 @@ func run() error {
 
 	log := logger.New(*verboseFlag)
 
-	// Override ClickHouse flags with environment variables if set
-	if envClickhouseAddr := os.Getenv("CLICKHOUSE_ADDR_TCP"); envClickhouseAddr != "" {
-		*clickhouseAddrFlag = envClickhouseAddr
+	// Fill in flags from environment variables when not explicitly set on the command line.
+	setFromEnv := func(name, envKey string) {
+		f := flag.Lookup(name)
+		if f == nil || f.Changed {
+			return // explicitly set via flag, don't override
+		}
+		if v := os.Getenv(envKey); v != "" {
+			_ = f.Value.Set(v)
+		}
 	}
-	if envClickhouseDatabase := os.Getenv("CLICKHOUSE_DATABASE"); envClickhouseDatabase != "" {
-		*clickhouseDatabaseFlag = envClickhouseDatabase
-	}
-	if envClickhouseUsername := os.Getenv("CLICKHOUSE_USERNAME"); envClickhouseUsername != "" {
-		*clickhouseUsernameFlag = envClickhouseUsername
-	}
-	if envClickhousePassword := os.Getenv("CLICKHOUSE_PASSWORD"); envClickhousePassword != "" {
-		*clickhousePasswordFlag = envClickhousePassword
-	}
-	if os.Getenv("CLICKHOUSE_SECURE") == "true" {
+	setFromEnv("clickhouse-addr", "CLICKHOUSE_ADDR_TCP")
+	setFromEnv("clickhouse-database", "CLICKHOUSE_DATABASE")
+	setFromEnv("clickhouse-username", "CLICKHOUSE_USERNAME")
+	setFromEnv("clickhouse-password", "CLICKHOUSE_PASSWORD")
+	if os.Getenv("CLICKHOUSE_SECURE") == "true" && !flag.Lookup("clickhouse-secure").Changed {
 		*clickhouseSecureFlag = true
 	}
 
-	// Override Neo4j flags with environment variables if set
-	if envNeo4jURI := os.Getenv("NEO4J_URI"); envNeo4jURI != "" {
-		*neo4jURIFlag = envNeo4jURI
-	}
-	if envNeo4jDatabase := os.Getenv("NEO4J_DATABASE"); envNeo4jDatabase != "" {
-		*neo4jDatabaseFlag = envNeo4jDatabase
-	}
-	if envNeo4jUsername := os.Getenv("NEO4J_USERNAME"); envNeo4jUsername != "" {
-		*neo4jUsernameFlag = envNeo4jUsername
-	}
-	if envNeo4jPassword := os.Getenv("NEO4J_PASSWORD"); envNeo4jPassword != "" {
-		*neo4jPasswordFlag = envNeo4jPassword
-	}
-
-	// Override InfluxDB flags with environment variables if set
-	if envInfluxURL := os.Getenv("INFLUX_URL"); envInfluxURL != "" {
-		*influxURLFlag = envInfluxURL
-	}
-	if envInfluxToken := os.Getenv("INFLUX_TOKEN"); envInfluxToken != "" {
-		*influxTokenFlag = envInfluxToken
-	}
-	if envInfluxBucket := os.Getenv("INFLUX_BUCKET"); envInfluxBucket != "" {
-		*influxBucketFlag = envInfluxBucket
-	}
-	if envDZEnv := os.Getenv("DZ_ENV"); envDZEnv != "" {
-		*dzEnvFlag = envDZEnv
-	}
+	setFromEnv("neo4j-uri", "NEO4J_URI")
+	setFromEnv("neo4j-database", "NEO4J_DATABASE")
+	setFromEnv("neo4j-username", "NEO4J_USERNAME")
+	setFromEnv("neo4j-password", "NEO4J_PASSWORD")
+	setFromEnv("influx-url", "INFLUX_URL")
+	setFromEnv("influx-token", "INFLUX_TOKEN")
+	setFromEnv("influx-bucket", "INFLUX_BUCKET")
+	setFromEnv("dz-env", "DZ_ENV")
 
 	// For non-mainnet envs, default to "lake_<env>" as the ClickHouse database
 	// (same convention as the indexer). Explicit --clickhouse-database still wins.
-	if *dzEnvFlag != config.EnvMainnetBeta && *clickhouseDatabaseFlag == "default" {
+	if *dzEnvFlag != config.EnvMainnetBeta && !flag.Lookup("clickhouse-database").Changed {
 		*clickhouseDatabaseFlag = "lake_" + *dzEnvFlag
 	}
 
