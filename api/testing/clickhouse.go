@@ -162,8 +162,6 @@ func NewClickHouseDB(ctx context.Context, log *slog.Logger, cfg *ClickHouseDBCon
 	return db, nil
 }
 
-
-
 // createClickHouseConn creates a ClickHouse connection.
 func createClickHouseConn(ctx context.Context, addr, database, username, password string) (driver.Conn, error) {
 	opts := &clickhouse.Options{

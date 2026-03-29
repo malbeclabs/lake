@@ -81,12 +81,6 @@ func (a *API) availableEnvs() []string {
 	return envs
 }
 
-// databaseForEnv returns the database name for the given environment.
-func (a *API) databaseForEnv(env string) (string, bool) {
-	db, ok := a.EnvDatabases[env]
-	return db, ok
-}
-
 // readPageCache reads a cached JSON value from Postgres.
 func (a *API) readPageCache(ctx context.Context, key string) (json.RawMessage, error) {
 	if a.PgPool == nil {

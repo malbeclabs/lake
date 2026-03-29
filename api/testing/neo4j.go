@@ -116,7 +116,6 @@ func NewNeo4jDB(ctx context.Context, log *slog.Logger, cfg *Neo4jDBConfig) (*Neo
 	return db, nil
 }
 
-
 // SetupNeo4jForTest creates a read-only Neo4j client for the test.
 // Does NOT touch config.Neo4jClient.
 func SetupNeo4jForTest(t *testing.T, db *Neo4jDB) neo4j.Client {
