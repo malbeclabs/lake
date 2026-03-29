@@ -226,7 +226,6 @@ func main() {
 	}
 
 	slog.Info("starting lake-api", "version", version, "commit", commit, "date", date)
-	
 
 	// Load .env files if they exist
 	// godotenv doesn't override existing env vars, so later files don't overwrite earlier ones

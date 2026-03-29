@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/malbeclabs/lake/agent/pkg/workflow"
 	v3 "github.com/malbeclabs/lake/agent/pkg/workflow/v3"
-	
 )
 
 // ChatMessage represents a single message in conversation history.
