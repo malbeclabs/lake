@@ -201,6 +201,12 @@ func run() error {
 		*dzEnvFlag = envDZEnv
 	}
 
+	// For non-mainnet envs, default to "lake_<env>" as the ClickHouse database
+	// (same convention as the indexer). Explicit --clickhouse-database still wins.
+	if *dzEnvFlag != config.EnvMainnetBeta && *clickhouseDatabaseFlag == "default" {
+		*clickhouseDatabaseFlag = "lake_" + *dzEnvFlag
+	}
+
 	// Override remote ClickHouse flags with environment variables if set
 	if envRemoteCHAddr := os.Getenv("REMOTE_CH_HOST"); envRemoteCHAddr != "" {
 		*remoteClickhouseAddrFlag = envRemoteCHAddr
