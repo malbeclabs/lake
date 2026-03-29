@@ -266,6 +266,10 @@ cmd_up() {
     export LAKE_CLUSTER_NAME="$CLUSTER_NAME"
 
     info "Starting Tilt (cluster: $CLUSTER_NAME)..."
+    echo "  Ctrl-C stops Tilt but the cluster keeps running."
+    echo "  Re-run '$0 up${NAME_ARG:+ $NAME_ARG}' to reconnect Tilt."
+    echo "  Run '$0 down${NAME_ARG:+ $NAME_ARG}' to stop the cluster."
+    echo ""
     cd "$LAKE_ROOT"
     exec tilt up --port "$((10350 + offset))"
 }
