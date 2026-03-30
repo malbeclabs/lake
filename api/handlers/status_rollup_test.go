@@ -1,6 +1,9 @@
 package handlers_test
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -384,4 +387,54 @@ func TestLinkRollupVsRaw(t *testing.T) {
 	// Status should match
 	assert.Equal(t, rollupRow.Status, rawRow.Status, "status should match")
 	assert.Equal(t, rollupRow.ISISDown, rawRow.ISISDown, "isis_down should match")
+}
+
+// TestGetInterfaceIssues verifies the interface issues query executes valid SQL
+// and returns issues for devices with errors.
+func TestGetInterfaceIssues(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	// Seed dimension data
+	seedContributor(t, api, "contrib-1", "acme")
+	seedMetro(t, api, "metro-a", "NYC")
+	seedDeviceMetadata(t, api, "dev-a", "DEV-A", "router", "contrib-1", "metro-a", 10, "activated")
+	seedLinkMetadata(t, api, "link-1", "NYC-LAX-1", "WAN", "contrib-1", "dev-a", "dev-a", 10_000_000_000, 500_000, "activated")
+
+	// Seed interface rollup with errors
+	now := time.Now().UTC().Truncate(5 * time.Minute)
+	seedInterfaceRollup(t, api, now.Add(-10*time.Minute), "dev-a", "Ethernet1/1", "link-1", "A", 50, 10, 1_000_000, "activated")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status/interface-issues?range=1h", nil)
+	rr := httptest.NewRecorder()
+
+	api.GetInterfaceIssues(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.InterfaceIssuesResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Len(t, resp.Issues, 1)
+	assert.Equal(t, "dev-a", resp.Issues[0].DevicePK)
+	assert.Equal(t, uint64(50), resp.Issues[0].InErrors)
+	assert.Equal(t, uint64(10), resp.Issues[0].OutErrors)
+}
+
+// TestGetInterfaceIssues_Empty verifies the query works with no data.
+func TestGetInterfaceIssues_Empty(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status/interface-issues?range=1h", nil)
+	rr := httptest.NewRecorder()
+
+	api.GetInterfaceIssues(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp handlers.InterfaceIssuesResponse
+	err := json.NewDecoder(rr.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Empty(t, resp.Issues)
 }
