@@ -178,6 +178,7 @@ type MulticastGroupDetail struct {
 	Status          string `json:"status"`
 	PublisherCount  uint32 `json:"publisher_count"`
 	SubscriberCount uint32 `json:"subscriber_count"`
+	HasShredStats   bool   `json:"has_shred_stats"`
 }
 
 func (a *API) GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +228,8 @@ func (a *API) GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
+
+	group.HasShredStats = group.PK == ShredGroupPK
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(group); err != nil {
@@ -1542,4 +1545,129 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("multicast tree segments completed", "segments", len(response.Segments), "publishers", len(publisherPKs), "duration", time.Since(start))
 	writeJSON(w, response)
+}
+
+// ShredStatsPoint represents a time-bucketed shred stats data point for a publisher.
+type ShredStatsPoint struct {
+	Time         string `json:"time"`
+	DZUserPubkey string `json:"dz_user_pubkey"`
+	UniqueShreds uint64 `json:"unique_shreds"`
+	TotalPackets uint64 `json:"total_packets"`
+	DataShreds   uint64 `json:"data_shreds"`
+	CodingShreds uint64 `json:"coding_shreds"`
+	Slots        uint64 `json:"slots"`
+	LeaderSlots  uint64 `json:"leader_slots"`
+	RepairSlots  uint64 `json:"repair_slots"`
+}
+
+// GetMulticastGroupShredStats returns time-bucketed shred stats for publishers in a multicast group.
+// Only meaningful for groups backed by publisher_shred_stats (e.g. edge-solana-shreds).
+func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	pkOrCode := chi.URLParam(r, "pk")
+	if pkOrCode == "" {
+		http.Error(w, "missing multicast group pk", http.StatusBadRequest)
+		return
+	}
+
+	timeRange := r.URL.Query().Get("time_range")
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+	rangeInterval := dashboardTimeRange(timeRange)
+	bucketParam := parseBucket(r.URL.Query().Get("bucket"))
+	bucketInterval := effectiveBucket(timeRange, bucketParam)
+
+	start := time.Now()
+
+	// Resolve pk from pk or code
+	var groupPK string
+	err := a.envDB(ctx).QueryRow(ctx,
+		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
+	if err != nil {
+		logError("multicast group shred stats group query error", "error", err)
+		http.Error(w, "multicast group not found", http.StatusNotFound)
+		return
+	}
+
+	// Get publisher user PKs for this group
+	memberRows, err := a.envDB(ctx).Query(ctx, `
+		SELECT u.pk
+		FROM dz_users_current u
+		WHERE u.status = 'activated'
+			AND has(JSONExtract(u.publishers, 'Array(String)'), ?)
+	`, groupPK)
+	if err != nil {
+		logError("multicast group shred stats members query error", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer memberRows.Close()
+
+	var userPKs []string
+	for memberRows.Next() {
+		var pk string
+		if err := memberRows.Scan(&pk); err != nil {
+			continue
+		}
+		userPKs = append(userPKs, pk)
+	}
+
+	if len(userPKs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[]"))
+		return
+	}
+
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.ShredderDB)
+
+	query := fmt.Sprintf(`
+		SELECT
+			toStartOfInterval(event_ts, INTERVAL %s) AS bucket,
+			dz_user_pubkey,
+			sum(unique_shreds) AS unique_shreds,
+			sum(total_packets) AS total_packets,
+			sum(data_shreds) AS data_shreds,
+			sum(coding_shreds) AS coding_shreds,
+			count() AS slots,
+			countIf(is_scheduled_leader = true) AS leader_slots,
+			countIf(needs_repair = true) AS repair_slots
+		FROM %s
+		WHERE event_ts >= now() - INTERVAL %s
+			AND dz_user_pubkey IN (?)
+		GROUP BY bucket, dz_user_pubkey
+		ORDER BY bucket, dz_user_pubkey
+	`, bucketInterval, shredStatsTable, rangeInterval)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, userPKs)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		logError("multicast group shred stats query error", "error", err, "duration", duration)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var points []ShredStatsPoint
+	for rows.Next() {
+		var p ShredStatsPoint
+		var t time.Time
+		if err := rows.Scan(&t, &p.DZUserPubkey, &p.UniqueShreds, &p.TotalPackets, &p.DataShreds, &p.CodingShreds, &p.Slots, &p.LeaderSlots, &p.RepairSlots); err != nil {
+			logError("multicast group shred stats scan error", "error", err)
+			continue
+		}
+		p.Time = t.UTC().Format(time.RFC3339)
+		points = append(points, p)
+	}
+
+	if points == nil {
+		points = []ShredStatsPoint{}
+	}
+
+	slog.Info("multicast group shred stats completed", "group", pkOrCode, "points", len(points), "duration", duration)
+	writeJSON(w, points)
 }

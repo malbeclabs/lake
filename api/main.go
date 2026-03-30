@@ -545,6 +545,7 @@ func main() {
 		r.Get("/api/dz/multicast-groups/{pk}/tree-segments", api.GetMulticastTreeSegments)
 		r.Get("/api/dz/multicast-groups/{pk}/traffic", api.GetMulticastGroupTraffic)
 		r.Get("/api/dz/multicast-groups/{pk}/member-counts", api.GetMulticastGroupMemberCounts)
+		r.Get("/api/dz/multicast-groups/{pk}/shred-stats", api.GetMulticastGroupShredStats)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		r.Get("/api/dz/tenants", api.GetTenants)

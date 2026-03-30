@@ -160,8 +160,7 @@ func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam, slotsParam int) (*PublisherCheckResponse, error) {
 	start := time.Now()
 
-	// Multicast group PK for edge-solana-shreds (formerly "bebop").
-	const shredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
+	shredGroupPK := ShredGroupPK
 
 	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.ShredderDB)
 

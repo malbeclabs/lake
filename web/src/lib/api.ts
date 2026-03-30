@@ -1852,6 +1852,7 @@ export interface MulticastMember {
 
 export interface MulticastGroupDetail extends MulticastGroupListItem {
   members: MulticastMember[]
+  has_shred_stats: boolean
 }
 
 export interface MulticastMembersResponse extends PaginatedResponse<MulticastMember> {
@@ -1877,7 +1878,7 @@ export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGr
   if (!groupRes.ok) {
     throw new Error('Failed to fetch multicast group')
   }
-  const group = await groupRes.json() as MulticastGroupListItem
+  const group = await groupRes.json() as MulticastGroupListItem & { has_shred_stats?: boolean }
   let members: MulticastMember[] = []
   if (pubRes.ok) {
     const pubData = await pubRes.json() as MulticastMembersResponse
@@ -1893,7 +1894,7 @@ export async function fetchMulticastGroup(pkOrCode: string): Promise<MulticastGr
       }
     }
   }
-  return { ...group, members }
+  return { ...group, members, has_shred_stats: group.has_shred_stats ?? false }
 }
 
 export async function fetchMulticastGroupMembers(
@@ -2025,6 +2026,31 @@ export async function fetchMulticastGroupMemberCounts(pkOrCode: string, timeRang
   const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/member-counts${qs ? `?${qs}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast group member counts')
+  }
+  return res.json()
+}
+
+export interface ShredStatsPoint {
+  time: string
+  dz_user_pubkey: string
+  unique_shreds: number
+  total_packets: number
+  data_shreds: number
+  coding_shreds: number
+  slots: number
+  leader_slots: number
+  repair_slots: number
+  [key: string]: string | number
+}
+
+export async function fetchMulticastGroupShredStats(pkOrCode: string, timeRange?: string, bucket?: string): Promise<ShredStatsPoint[]> {
+  const params = new URLSearchParams()
+  if (timeRange) params.set('time_range', timeRange)
+  if (bucket && bucket !== 'auto') params.set('bucket', bucket)
+  const qs = params.toString()
+  const res = await apiFetch(`/api/dz/multicast-groups/${encodeURIComponent(pkOrCode)}/shred-stats${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch multicast group shred stats')
   }
   return res.json()
 }

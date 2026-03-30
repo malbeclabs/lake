@@ -12,6 +12,9 @@ import (
 
 var errNoPgPool = errors.New("postgres not configured")
 
+// ShredGroupPK is the multicast group PK for edge-solana-shreds (formerly "bebop").
+const ShredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
+
 // API holds all dependencies for HTTP handlers. It is constructed once at
 // startup and passed through to every handler and middleware, replacing the
 // former package-level globals in api/config.

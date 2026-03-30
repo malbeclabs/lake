@@ -6,7 +6,7 @@ import uPlot from 'uplot'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatChartAxisRate, formatChartAxisPps } from '@/components/topology/utils'
-import { fetchMulticastGroup, fetchMulticastGroupMembers, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, type MulticastMember } from '@/lib/api'
+import { fetchMulticastGroup, fetchMulticastGroupMembers, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, fetchMulticastGroupShredStats, type MulticastMember } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { InlineFilter } from '@/components/inline-filter'
@@ -555,6 +555,493 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   )
 }
 
+type ShredMetric = 'unique_shreds' | 'total_packets' | 'data_shreds' | 'coding_shreds' | 'leader_slots' | 'repair_slots'
+
+const SHRED_METRIC_LABELS: Record<ShredMetric, string> = {
+  unique_shreds: 'Unique Shreds',
+  total_packets: 'Total Packets',
+  data_shreds: 'Data Shreds',
+  coding_shreds: 'Coding Shreds',
+  leader_slots: 'Leader Slots',
+  repair_slots: 'Repair Slots',
+}
+
+function formatCount(v: number): string {
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`
+  return v.toFixed(0)
+}
+
+function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: {
+  groupCode: string
+  members: MulticastMember[]
+  onHoverMember?: (seriesKey: string | null) => void
+  onSelectMember?: (keys: Set<string>) => void
+}) {
+  const queryClient = useQueryClient()
+  const [timeRange, setTimeRange] = useState<string>('1h')
+  const [metric, setMetric] = useState<ShredMetric>('unique_shreds')
+  const [bucket, setBucket] = useState<string>('auto')
+
+  const effectiveBucket = bucket === 'auto' ? resolveAutoBucket(timeRange) : bucket
+  const autoBucketLabel = BUCKET_LABELS[resolveAutoBucket(timeRange)] || '5m'
+
+  const { data: shredData, isFetching } = useQuery({
+    queryKey: ['multicast-shred-stats', groupCode, timeRange, effectiveBucket],
+    queryFn: () => fetchMulticastGroupShredStats(groupCode, timeRange, effectiveBucket),
+    refetchInterval: 30000,
+    placeholderData: keepPreviousData,
+  })
+
+  // Build a lookup from dz_user_pubkey (user_pk) to display info and member table keys
+  const userInfo = useMemo(() => {
+    const map = new Map<string, { ownerPubkey: string; code: string }>()
+    for (const m of members) {
+      if (m.mode === 'P' || m.mode === 'P+S') {
+        if (!map.has(m.user_pk)) {
+          map.set(m.user_pk, {
+            ownerPubkey: m.owner_pubkey,
+            code: m.device_code || m.device_pk.slice(0, 8),
+          })
+        }
+      }
+    }
+    return map
+  }, [members])
+
+  // Map user_pk -> device_pk_tunnel_id (for table highlighting)
+  const userPkToMemberKeys = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const m of members) {
+      if ((m.mode === 'P' || m.mode === 'P+S') && m.tunnel_id > 0) {
+        const existing = map.get(m.user_pk) ?? []
+        existing.push(`${m.device_pk}_${m.tunnel_id}`)
+        map.set(m.user_pk, existing)
+      }
+    }
+    return map
+  }, [members])
+
+  const { uplotData, seriesKeys } = useMemo(() => {
+    if (!shredData || shredData.length === 0)
+      return { uplotData: [new Float64Array(0)] as uPlot.AlignedData, seriesKeys: [] as string[] }
+
+    const keySet = new Set<string>()
+    const timeMap = new Map<string, Map<string, number>>()
+
+    for (const p of shredData) {
+      keySet.add(p.dz_user_pubkey)
+
+      let byKey = timeMap.get(p.time)
+      if (!byKey) {
+        byKey = new Map()
+        timeMap.set(p.time, byKey)
+      }
+      byKey.set(p.dz_user_pubkey, p[metric] as number)
+    }
+
+    const keys = [...keySet].sort()
+    const sortedTimes = [...timeMap.keys()].sort()
+    const timestamps = new Float64Array(sortedTimes.map(t => new Date(t).getTime() / 1000))
+    const columns = keys.map(key =>
+      new Float64Array(sortedTimes.map(t => timeMap.get(t)?.get(key) ?? 0))
+    )
+
+    return {
+      uplotData: [timestamps, ...columns] as uPlot.AlignedData,
+      seriesKeys: keys,
+    }
+  }, [shredData, metric])
+
+  const legend = useChartLegend()
+  const chartContainerRef = useRef<HTMLDivElement>(null)
+  const focusedKeyRef = useRef<string | null>(null)
+
+  // Legend state
+  const LEGEND_HEADER_HEIGHT = 60
+  const LEGEND_ROW_HEIGHT = 22
+  const LEGEND_HANDLE_HEIGHT = 12
+  const [legendMaxHeight, setLegendMaxHeight] = useState(256)
+  const [legendSearchExpanded, setLegendSearchExpanded] = useState(false)
+  const [legendSearchText, setLegendSearchText] = useState('')
+  const legendSearchInputRef = useRef<HTMLInputElement>(null)
+  const [legendSortBy, setLegendSortBy] = useState<'name' | 'value'>('value')
+  const [legendSortDir, setLegendSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const handleLegendResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = legendMaxHeight
+    const handleMouseMove = (e: MouseEvent) => {
+      const newHeight = Math.max(128, Math.min(640, startHeight + (e.clientY - startY)))
+      setLegendMaxHeight(newHeight)
+    }
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  const handleLegendResizeDoubleClick = () => {
+    if (legendMaxHeight <= 138) {
+      setLegendMaxHeight(256)
+    } else {
+      setLegendMaxHeight(128)
+    }
+  }
+
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+
+  const displayValues = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!uplotData[0] || uplotData[0].length === 0) return map
+    const idx = hoveredIdx != null && hoveredIdx < uplotData[0].length
+      ? hoveredIdx
+      : uplotData[0].length - 1
+    for (let i = 0; i < seriesKeys.length; i++) {
+      map.set(seriesKeys[i], (uplotData[i + 1] as number[])?.[idx] ?? 0)
+    }
+    return map
+  }, [uplotData, seriesKeys, hoveredIdx])
+
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIdx(idx)
+  }, [])
+
+  const handleFocusSeries = useCallback((seriesIdx: number | null) => {
+    if (seriesIdx != null && seriesIdx > 0 && seriesIdx <= seriesKeys.length) {
+      const key = seriesKeys[seriesIdx - 1]
+      focusedKeyRef.current = key
+      legend.handleMouseEnter(key)
+    } else {
+      focusedKeyRef.current = null
+      legend.handleMouseLeave()
+    }
+  }, [seriesKeys, legend])
+
+  const uplotSeries = useMemo((): uPlot.Series[] => {
+    const s: uPlot.Series[] = [{}]
+    for (let i = 0; i < seriesKeys.length; i++) {
+      s.push({
+        label: seriesKeys[i],
+        stroke: TRAFFIC_COLORS[i % TRAFFIC_COLORS.length],
+        width: 1.5,
+        points: { show: false },
+      })
+    }
+    return s
+  }, [seriesKeys])
+
+  const uplotAxes = useMemo((): uPlot.Axis[] => [
+    {},
+    {
+      values: (_u: uPlot, vals: number[]) => vals.map(v => formatCount(v)),
+    },
+  ], [])
+
+  const chartScales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: { auto: true },
+  }), [])
+
+  const { plotRef } = useUPlotChart({
+    containerRef: chartContainerRef,
+    data: uplotData,
+    series: uplotSeries,
+    height: 224,
+    axes: uplotAxes,
+    scales: chartScales,
+    onCursorIdx: handleCursorIdx,
+    onFocusSeries: handleFocusSeries,
+  })
+
+  useUPlotLegendSync(plotRef, legend, seriesKeys)
+
+  const legendRef = useRef(legend)
+  legendRef.current = legend
+  const handleChartClick = useCallback((e: React.MouseEvent) => {
+    const leg = legendRef.current
+    if (focusedKeyRef.current) {
+      leg.handleClick(focusedKeyRef.current, e)
+    } else if (leg.selectedSeries.size > 0) {
+      leg.setSelectedSeries(new Set())
+    }
+  }, [])
+
+  // Propagate hover to parent (translate user_pk -> device_pk_tunnel_id)
+  const prevHoveredKey = useRef<string | null>(null)
+  if (legend.hoveredSeries !== prevHoveredKey.current) {
+    prevHoveredKey.current = legend.hoveredSeries
+    if (legend.hoveredSeries) {
+      const memberKeys = userPkToMemberKeys.get(legend.hoveredSeries)
+      onHoverMember?.(memberKeys?.[0] ?? null)
+    } else {
+      onHoverMember?.(null)
+    }
+  }
+
+  // Propagate selection to parent (translate user_pks -> device_pk_tunnel_ids)
+  const prevSelectedRef = useRef<Set<string>>(legend.selectedSeries)
+  useEffect(() => {
+    if (prevSelectedRef.current !== legend.selectedSeries) {
+      prevSelectedRef.current = legend.selectedSeries
+      if (legend.selectedSeries.size === 0) {
+        onSelectMember?.(new Set())
+      } else {
+        const memberKeySet = new Set<string>()
+        for (const userPk of legend.selectedSeries) {
+          const keys = userPkToMemberKeys.get(userPk)
+          if (keys) keys.forEach(k => memberKeySet.add(k))
+        }
+        onSelectMember?.(memberKeySet)
+      }
+    }
+  }, [legend.selectedSeries, userPkToMemberKeys, onSelectMember])
+
+  // Legend: filter by search text, then sort
+  const legendFilteredKeys = useMemo(() => {
+    let keys = seriesKeys
+    if (legendSearchText) {
+      const needle = legendSearchText.toLowerCase()
+      keys = keys.filter(key => {
+        const info = userInfo.get(key)
+        const ownerPk = info?.ownerPubkey ?? ''
+        const code = info?.code ?? ''
+        return ownerPk.toLowerCase().includes(needle) ||
+          code.toLowerCase().includes(needle) ||
+          key.toLowerCase().includes(needle)
+      })
+    }
+    const sorted = [...keys].sort((a, b) => {
+      if (legendSortBy === 'value') {
+        const va = displayValues.get(a) ?? 0
+        const vb = displayValues.get(b) ?? 0
+        return legendSortDir === 'desc' ? vb - va : va - vb
+      }
+      const infoA = userInfo.get(a)
+      const infoB = userInfo.get(b)
+      const labelA = infoA?.ownerPubkey ?? a
+      const labelB = infoB?.ownerPubkey ?? b
+      return legendSortDir === 'asc' ? labelA.localeCompare(labelB) : labelB.localeCompare(labelA)
+    })
+    return sorted
+  }, [seriesKeys, legendSearchText, legendSortBy, legendSortDir, userInfo, displayValues])
+
+  const legendHeight = useMemo(() => {
+    const contentHeight = LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
+    return Math.min(legendMaxHeight, contentHeight)
+  }, [legendMaxHeight, legendFilteredKeys.length])
+
+  return (
+    <div className="border border-border rounded-lg p-4 bg-card group/chart">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-muted-foreground">
+            Shred Stats (publishers)
+          </h3>
+          {isFetching ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : (
+            <button
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['multicast-shred-stats', groupCode] })}
+              className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+              title="Refresh"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={metric}
+            onChange={e => setMetric(e.target.value as ShredMetric)}
+            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
+          >
+            {(Object.keys(SHRED_METRIC_LABELS) as ShredMetric[]).map(m => (
+              <option key={m} value={m}>{SHRED_METRIC_LABELS[m]}</option>
+            ))}
+          </select>
+          <select
+            value={bucket}
+            onChange={e => setBucket(e.target.value)}
+            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
+          >
+            {BUCKET_OPTIONS.map(b => (
+              <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
+            ))}
+          </select>
+          <select
+            value={timeRange}
+            onChange={e => setTimeRange(e.target.value)}
+            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
+          >
+            {TIME_RANGES.map(r => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="h-0.5 w-full overflow-hidden rounded-full mb-2">
+        {isFetching && (
+          <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+        )}
+      </div>
+
+      {!shredData && !isFetching && (
+        <div className="flex items-center justify-center h-56 text-sm text-muted-foreground">
+          No shred stats data available
+        </div>
+      )}
+
+      {(shredData || isFetching) && (
+        <div>
+          <div
+            ref={chartContainerRef}
+            className="h-56"
+            onClick={handleChartClick}
+          />
+          {seriesKeys.length > 0 && (
+            <div className="relative mt-2" style={{ height: `${legendHeight}px` }}>
+              <div className="flex flex-col h-full text-xs">
+                {/* Sticky header */}
+                <div className="flex-none px-2 pt-2">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="text-xs font-medium whitespace-nowrap">
+                      Series ({legendFilteredKeys.length}/{seriesKeys.length})
+                    </div>
+                    {legendSearchExpanded ? (
+                      <div className="relative flex-1">
+                        <input
+                          ref={legendSearchInputRef}
+                          type="text"
+                          value={legendSearchText}
+                          onChange={(e) => setLegendSearchText(e.target.value)}
+                          onBlur={() => { if (!legendSearchText) setLegendSearchExpanded(false) }}
+                          placeholder="Filter by owner, device..."
+                          className="w-full px-1.5 py-0.5 pr-6 text-xs bg-transparent border-b border-border focus:outline-none focus:border-foreground placeholder:text-muted-foreground/60"
+                        />
+                        {legendSearchText && (
+                          <button
+                            onClick={() => { setLegendSearchText(''); legendSearchInputRef.current?.focus() }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
+                            aria-label="Clear search"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setLegendSearchExpanded(true); setTimeout(() => legendSearchInputRef.current?.focus(), 0) }}
+                        className="text-muted-foreground hover:text-foreground"
+                        aria-label="Search series"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => legend.setSelectedSeries(new Set())}
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={() => legend.setSelectedSeries(new Set(['__none__']))}
+                      className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                    >
+                      None
+                    </button>
+                    <div className="relative group flex-shrink-0">
+                      <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
+                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
+                        <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[10px] leading-relaxed whitespace-nowrap shadow-md">
+                          <div><strong>Click</strong> — solo select</div>
+                          <div><strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Column headers */}
+                  <div className="flex items-center gap-4 px-1 mb-1">
+                    <div className="w-2.5" />
+                    <button
+                      onClick={() => { setLegendSortBy('name'); setLegendSortDir(legendSortBy === 'name' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
+                      className="flex-1 min-w-0 flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
+                    >
+                      Owner
+                      {legendSortBy === 'name' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                    </button>
+                    <div className="w-48 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">DZ ID</div>
+                    <button
+                      onClick={() => { setLegendSortBy('value'); setLegendSortDir(legendSortBy === 'value' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
+                      className="w-20 flex items-center justify-end gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
+                    >
+                      Value
+                      {legendSortBy === 'value' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                    </button>
+                  </div>
+                </div>
+                {/* Scrollable items */}
+                <div className="flex-1 overflow-y-auto px-2 pb-2">
+                  <div className="space-y-0.5">
+                    {legendFilteredKeys.map((key) => {
+                      const i = seriesKeys.indexOf(key)
+                      const info = userInfo.get(key)
+                      const val = displayValues.get(key)
+                      const opacity = legend.getOpacity(key)
+                      const isSelected = legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
+                      const ownerLabel = info?.ownerPubkey
+                        ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
+                        : key.slice(0, 8)
+                      const dzIdLabel = info?.ownerPubkey || key
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center gap-4 px-1 py-0.5 rounded cursor-pointer select-none transition-opacity hover:bg-muted/60"
+                          style={{ opacity: Math.max(opacity, 0.3) }}
+                          onClick={(e) => legend.handleClick(key, e)}
+                          onMouseEnter={() => legend.handleMouseEnter(key)}
+                          onMouseLeave={() => legend.handleMouseLeave()}
+                        >
+                          <div
+                            className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors"
+                            style={{ backgroundColor: isSelected ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] : 'var(--border)' }}
+                          />
+                          <div className="flex-1 min-w-0 text-foreground truncate font-mono">
+                            {ownerLabel}
+                            <span className="text-muted-foreground ml-2">{info?.code ?? key.slice(0, 8)}</span>
+                          </div>
+                          <div className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text" title={dzIdLabel}>{dzIdLabel}</div>
+                          <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? formatCount(val) : '—'}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              {/* Resize handle */}
+              <div
+                onMouseDown={handleLegendResizeStart}
+                onDoubleClick={handleLegendResizeDoubleClick}
+                className="absolute bottom-0 left-0 right-0 h-3 cursor-ns-resize hover:bg-muted transition-colors flex items-center justify-center"
+              >
+                <div className="w-12 h-1 bg-border rounded-full" />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MemberCountChart({ groupCode }: { groupCode: string }) {
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<string>('7d')
@@ -608,7 +1095,7 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
   })
 
   return (
-    <div className="border border-border rounded-lg p-4 bg-card mt-6 group/chart">
+    <div className="border border-border rounded-lg p-4 bg-card group/chart">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium text-muted-foreground">Members Over Time</h3>
@@ -1180,19 +1667,31 @@ export function MulticastGroupDetailPage() {
           )}
         </div>
 
-        {/* Traffic chart — uses all members (not just current page) for series labels */}
-        {pk && group && group.members.length > 0 && (
-          <MulticastTrafficChart
-            groupCode={pk}
-            members={group.members}
-            activeTab={activeTab}
-            onHoverMember={setHoveredSeriesKey}
-            onSelectMember={setSelectedSeriesKeys}
-          />
-        )}
+        <div className="space-y-6">
+          {/* Shred stats chart — only for groups with shred stats */}
+          {pk && group && group.has_shred_stats && group.members.length > 0 && (
+            <ShredStatsChart
+              groupCode={pk}
+              members={group.members}
+              onHoverMember={setHoveredSeriesKey}
+              onSelectMember={setSelectedSeriesKeys}
+            />
+          )}
 
-        {/* Member count chart */}
-        {pk && <MemberCountChart groupCode={pk} />}
+          {/* Traffic chart — uses all members (not just current page) for series labels */}
+          {pk && group && group.members.length > 0 && (
+            <MulticastTrafficChart
+              groupCode={pk}
+              members={group.members}
+              activeTab={activeTab}
+              onHoverMember={setHoveredSeriesKey}
+              onSelectMember={setSelectedSeriesKeys}
+            />
+          )}
+
+          {/* Member count chart */}
+          {pk && <MemberCountChart groupCode={pk} />}
+        </div>
       </div>
     </div>
   )
