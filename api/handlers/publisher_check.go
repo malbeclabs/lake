@@ -228,7 +228,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
 		LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-		INNER JOIN stats s ON u.pk = s.dz_user_pubkey
+		LEFT JOIN stats s ON u.pk = s.dz_user_pubkey
 		LEFT JOIN validatorsapp_validators_current va ON v.vote_pubkey = va.vote_account
 		WHERE u.status = 'activated'
 			AND has(JSONExtract(u.publishers, 'Array(String)'), ?)
