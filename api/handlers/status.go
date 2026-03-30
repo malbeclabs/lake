@@ -1131,7 +1131,9 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
-			slog.Warn("status: failed to query ISIS device issues", "error", err)
+			if ctx.Err() == nil {
+				slog.Warn("status: failed to query ISIS device issues", "error", err)
+			}
 			return nil
 		}
 		defer rows.Close()
@@ -1184,7 +1186,9 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 		if err != nil {
-			slog.Warn("status: failed to query missing ISIS adjacencies", "error", err)
+			if ctx.Err() == nil {
+				slog.Warn("status: failed to query missing ISIS adjacencies", "error", err)
+			}
 			return nil
 		}
 		defer rows.Close()

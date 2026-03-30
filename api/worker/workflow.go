@@ -134,11 +134,17 @@ func (a *Activities) refresh(ctx context.Context, name, key string, fn func(cont
 
 	result, err := fn(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		a.Log.Error("cache refresh failed", "cache", name, "error", err)
 		return
 	}
 
 	if err := a.API.WritePageCache(ctx, key, result); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		a.Log.Error("cache write failed", "cache", name, "error", err)
 		return
 	}

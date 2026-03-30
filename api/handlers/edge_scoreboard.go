@@ -485,7 +485,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 	rows4, err := a.envDB(ctx).Query(ctx, query4)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		log.Printf("EdgeScoreboard query4 error: %v", err)
 		// Non-fatal: stake data is optional
 	} else {
@@ -539,7 +539,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 		rows4b, err := a.envDB(ctx).Query(ctx, query4b, lookupIPs)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			log.Printf("EdgeScoreboard query4b error: %v", err)
 			// Non-fatal: gossip enrichment is optional
 		} else {
@@ -606,7 +606,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 	rows5, err := a.envDB(ctx).Query(ctx, query5)
 	duration = time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		log.Printf("EdgeScoreboard query5 error: %v", err)
 		// Non-fatal
 	} else {
@@ -664,7 +664,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 		// slot -> pubkey mapping
 		slotPubkeys := make(map[uint64]string)
 		pubkeySet := make(map[string]bool)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			log.Printf("EdgeScoreboard query6a error: %v", err)
 		} else {
 			defer rows6a.Close()
@@ -710,7 +710,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 				name, ip, asnOrg, city, country string
 			}
 			infoByPubkey := make(map[string]*leaderInfo)
-			if err != nil {
+			if err != nil && ctx.Err() == nil {
 				log.Printf("EdgeScoreboard query6b error: %v", err)
 			} else {
 				defer rows6b.Close()

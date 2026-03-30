@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -62,8 +63,10 @@ func Start(ctx context.Context, cfg Config) error {
 	log.Info("page-cache: workflow started", "id", WorkflowID)
 
 	// Watch the workflow in the background so failures surface in logs.
+	// Suppress "terminated" errors — a new deploy terminates the previous
+	// workflow before the old process's context is cancelled.
 	go func() {
-		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil {
+		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil && !isWorkflowTerminated(err) {
 			log.Error("page-cache: workflow failed", "id", WorkflowID, "error", err)
 		}
 	}()
@@ -95,6 +98,10 @@ func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // suppress to avo
 func (l *temporalLogger) Info(msg string, keyvals ...any)  { l.log.Info(msg, keyvals...) }
 func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
 func (l *temporalLogger) Error(msg string, keyvals ...any) { l.log.Error(msg, keyvals...) }
+
+func isWorkflowTerminated(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "terminated")
+}
 
 func envOrDefault(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {
