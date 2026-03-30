@@ -3,16 +3,23 @@ package handlers
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
+	"syscall"
 
 	"github.com/getsentry/sentry-go"
 )
 
 // isClientDisconnect returns true if the error is caused by the client
-// canceling the request or the request deadline being exceeded.
+// disconnecting: context cancellation, deadline exceeded, broken pipe,
+// connection reset, or unexpected EOF.
 func isClientDisconnect(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // logError logs at ERROR level, silently skipping client disconnects.
