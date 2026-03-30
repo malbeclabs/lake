@@ -119,6 +119,8 @@ func run() error {
 	noRollupFlag := flag.Bool("no-rollup", false, "Disable the embedded rollup worker (Temporal-based health bucket computation)")
 	noDZIngestFlag := flag.Bool("no-dz-ingest", false, "Disable the embedded DZ mainnet ingest worker (Temporal-based raw data collection)")
 	noSolIngestFlag := flag.Bool("no-sol-ingest", false, "Disable the embedded Solana ingest worker (Temporal-based raw data collection)")
+	noDevnetFlag := flag.Bool("no-devnet", false, "Disable the devnet secondary network indexer")
+	noTestnetFlag := flag.Bool("no-testnet", false, "Disable the testnet secondary network indexer")
 
 	// Remote tables configuration
 	setupRemoteTablesFlag := flag.Bool("setup-remote-tables", false, "Set up remote proxy tables on startup (or set SETUP_REMOTE_TABLES=true env var)")
@@ -609,16 +611,27 @@ func run() error {
 		log.Info("sol ingest worker disabled", "no_sol_ingest", *noSolIngestFlag, "solana_configured", idx.Solana() != nil)
 	}
 
-	// Start secondary network indexers (devnet, testnet) if configured.
+	// Start secondary network indexers (devnet, testnet).
 	// These run lightweight DZ ingest workflows (serviceability + telemetry only).
+	// Enabled by default; disable with --no-devnet / --no-testnet.
+	// Database names default to lake_devnet / lake_testnet but can be overridden via env vars.
 	secondaryEnvs := map[string]string{
-		"devnet":  os.Getenv("CLICKHOUSE_DATABASE_DEVNET"),
-		"testnet": os.Getenv("CLICKHOUSE_DATABASE_TESTNET"),
+		"devnet":  "lake_devnet",
+		"testnet": "lake_testnet",
+	}
+	if db := os.Getenv("CLICKHOUSE_DATABASE_DEVNET"); db != "" {
+		secondaryEnvs["devnet"] = db
+	}
+	if db := os.Getenv("CLICKHOUSE_DATABASE_TESTNET"); db != "" {
+		secondaryEnvs["testnet"] = db
+	}
+	if *noDevnetFlag {
+		delete(secondaryEnvs, "devnet")
+	}
+	if *noTestnetFlag {
+		delete(secondaryEnvs, "testnet")
 	}
 	for env, database := range secondaryEnvs {
-		if database == "" {
-			continue
-		}
 		env, database := env, database // capture loop vars
 		go func() {
 			// InfluxDB bucket per network (e.g. doublezero-devnet, doublezero-testnet).
