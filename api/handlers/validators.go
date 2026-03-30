@@ -290,6 +290,69 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type ValidatorMetadataItem struct {
+	IP              string `json:"ip"`
+	ActiveStake     int64  `json:"active_stake"`
+	VoteAccount     string `json:"vote_account"`
+	SoftwareClient  string `json:"software_client"`
+	SoftwareVersion string `json:"software_version"`
+}
+
+func (a *API) GetValidatorsMetadata(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	query := `
+		SELECT
+			COALESCE(v.ip, '') as ip,
+			v.active_stake,
+			v.vote_account,
+			COALESCE(v.software_client, '') as software_client,
+			COALESCE(v.software_version, '') as software_version
+		FROM validatorsapp_validators_current v
+		WHERE v.is_active = 1
+		ORDER BY v.active_stake DESC
+	`
+
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		logError("validators metadata query failed", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []ValidatorMetadataItem
+	for rows.Next() {
+		var item ValidatorMetadataItem
+		if err := rows.Scan(&item.IP, &item.ActiveStake, &item.VoteAccount, &item.SoftwareClient, &item.SoftwareVersion); err != nil {
+			logError("validators metadata row scan failed", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		logError("validators metadata rows iteration failed", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if items == nil {
+		items = []ValidatorMetadataItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
 type ValidatorDetail struct {
 	VotePubkey      string  `json:"vote_pubkey"`
 	NodePubkey      string  `json:"node_pubkey"`
