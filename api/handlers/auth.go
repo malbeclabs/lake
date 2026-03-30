@@ -345,7 +345,7 @@ func (a *API) GetAuthMe(w http.ResponseWriter, r *http.Request) {
 
 	quota, err := a.GetQuotaForAccount(ctx, account, ip)
 	if err != nil {
-		slog.Error("Failed to get quota", "error", err)
+		logError("Failed to get quota", "error", err)
 		// Return response anyway, just without quota
 		quota = nil
 	}
@@ -355,7 +355,7 @@ func (a *API) GetAuthMe(w http.ResponseWriter, r *http.Request) {
 		Account: account,
 		Quota:   quota,
 	}); err != nil {
-		slog.Error("Failed to encode response", "error", err)
+		logError("Failed to encode response", "error", err)
 	}
 }
 
@@ -378,7 +378,7 @@ func (a *API) PostAuthLogout(w http.ResponseWriter, r *http.Request) {
 		DELETE FROM auth_sessions WHERE token_hash = $1
 	`, tokenHash)
 	if err != nil {
-		slog.Error("Failed to delete session", "error", err)
+		logError("Failed to delete session", "error", err)
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -391,7 +391,7 @@ func (a *API) GetAuthNonce(w http.ResponseWriter, r *http.Request) {
 
 	nonce, err := generateNonce()
 	if err != nil {
-		slog.Error("Failed to generate nonce", "error", err)
+		logError("Failed to generate nonce", "error", err)
 		http.Error(w, "Failed to generate nonce", http.StatusInternalServerError)
 		return
 	}
@@ -405,14 +405,14 @@ func (a *API) GetAuthNonce(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, NOW() + INTERVAL '5 minutes')
 	`, nonce)
 	if err != nil {
-		slog.Error("Failed to store nonce", "error", err)
+		logError("Failed to store nonce", "error", err)
 		http.Error(w, "Failed to store nonce", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(WalletNonceResponse{Nonce: nonce}); err != nil {
-		slog.Error("Failed to encode response", "error", err)
+		logError("Failed to encode response", "error", err)
 	}
 }
 
@@ -487,7 +487,7 @@ func (a *API) PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 		&displayName, &account.IsActive, &account.CreatedAt, &account.UpdatedAt, &account.LastLoginAt,
 	)
 	if err != nil {
-		slog.Error("Failed to create/update account", "error", err)
+		logError("Failed to create/update account", "error", err)
 		http.Error(w, "Failed to create account", http.StatusInternalServerError)
 		return
 	}
@@ -504,7 +504,7 @@ func (a *API) PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 			UPDATE accounts SET sol_balance = $1, sol_balance_updated_at = $2 WHERE id = $3
 		`, balance, now, account.ID)
 		if err != nil {
-			slog.Error("Failed to store SOL balance", "wallet", req.PublicKey, "error", err)
+			logError("Failed to store SOL balance", "wallet", req.PublicKey, "error", err)
 			// Don't fail auth, just log
 		} else {
 			account.SolBalance = &balance
@@ -516,7 +516,7 @@ func (a *API) PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 	// Migrate anonymous sessions to this account
 	if req.AnonymousID != nil && *req.AnonymousID != "" {
 		if err := a.migrateAnonymousSessions(ctx, account.ID, *req.AnonymousID); err != nil {
-			slog.Error("Failed to migrate sessions", "error", err)
+			logError("Failed to migrate sessions", "error", err)
 			// Don't fail auth, just log
 		}
 	}
@@ -524,7 +524,7 @@ func (a *API) PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 	// Create session
 	token, err := a.createSession(ctx, account.ID)
 	if err != nil {
-		slog.Error("Failed to create session", "error", err)
+		logError("Failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
@@ -534,7 +534,7 @@ func (a *API) PostAuthWallet(w http.ResponseWriter, r *http.Request) {
 		Token:   token,
 		Account: &account,
 	}); err != nil {
-		slog.Error("Failed to encode response", "error", err)
+		logError("Failed to encode response", "error", err)
 	}
 }
 
@@ -586,7 +586,7 @@ func (a *API) PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 		&account.GoogleID, &displayName, &account.IsActive, &account.CreatedAt, &account.UpdatedAt, &account.LastLoginAt,
 	)
 	if err != nil {
-		slog.Error("Failed to create/update account", "error", err)
+		logError("Failed to create/update account", "error", err)
 		http.Error(w, "Failed to create account", http.StatusInternalServerError)
 		return
 	}
@@ -596,7 +596,7 @@ func (a *API) PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	// Migrate anonymous sessions to this account
 	if req.AnonymousID != nil && *req.AnonymousID != "" {
 		if err := a.migrateAnonymousSessions(ctx, account.ID, *req.AnonymousID); err != nil {
-			slog.Error("Failed to migrate sessions", "error", err)
+			logError("Failed to migrate sessions", "error", err)
 			// Don't fail auth, just log
 		}
 	}
@@ -604,7 +604,7 @@ func (a *API) PostAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	// Create session
 	token, err := a.createSession(ctx, account.ID)
 	if err != nil {
-		slog.Error("Failed to create session", "error", err)
+		logError("Failed to create session", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
@@ -626,7 +626,7 @@ func (a *API) GetUsageQuota(w http.ResponseWriter, r *http.Request) {
 
 	quota, err := a.GetQuotaForAccount(ctx, account, ip)
 	if err != nil {
-		slog.Error("Failed to get quota", "error", err)
+		logError("Failed to get quota", "error", err)
 		http.Error(w, "Failed to get quota", http.StatusInternalServerError)
 		return
 	}

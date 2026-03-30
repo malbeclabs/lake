@@ -76,7 +76,7 @@ func (a *API) GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		slog.Error("simulate link removal codes query error", "error", err)
+		logError("simulate link removal codes query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -123,12 +123,12 @@ func (a *API) GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		slog.Error("simulate link removal disconnect query error", "error", err)
+		logError("simulate link removal disconnect query error", "error", err)
 		response.Error = "failed to query disconnect impact"
 	} else {
 		disconnectRecords, err := disconnectResult.Collect(ctx)
 		if err != nil {
-			slog.Error("simulate link removal disconnect collect error", "error", err)
+			logError("simulate link removal disconnect collect error", "error", err)
 			response.Error = "failed to query disconnect impact"
 		} else {
 			slog.Debug("simulate link removal disconnect query returned records", "count", len(disconnectRecords))
@@ -211,12 +211,12 @@ func (a *API) GetSimulateLinkRemoval(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		slog.Error("simulate link removal affected paths query error", "error", err)
+		logError("simulate link removal affected paths query error", "error", err)
 		response.Error = "failed to query affected paths"
 	} else {
 		affectedRecords, err := affectedResult.Collect(ctx)
 		if err != nil {
-			slog.Error("simulate link removal affected paths collect error", "error", err)
+			logError("simulate link removal affected paths collect error", "error", err)
 			response.Error = "failed to query affected paths"
 		} else {
 			for _, record := range affectedRecords {
@@ -351,7 +351,7 @@ func (a *API) GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 		"target_pk": targetPK,
 	})
 	if err != nil {
-		slog.Error("simulate link addition codes query error", "error", err)
+		logError("simulate link addition codes query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -494,12 +494,12 @@ func (a *API) GetSimulateLinkAddition(w http.ResponseWriter, r *http.Request) {
 		"metric":    int64(metric),
 	})
 	if err != nil {
-		slog.Error("simulate link addition improved paths query error", "error", err)
+		logError("simulate link addition improved paths query error", "error", err)
 		response.Error = "failed to query improved paths: " + err.Error()
 	} else {
 		improvedRecords, err := improvedResult.Collect(ctx)
 		if err != nil {
-			slog.Error("simulate link addition improved paths collect error", "error", err)
+			logError("simulate link addition improved paths collect error", "error", err)
 			response.Error = "failed to query improved paths: " + err.Error()
 		} else {
 			for _, record := range improvedRecords {
@@ -684,7 +684,7 @@ func (a *API) analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, d
 
 	result, err := session.Run(ctx, infoCypher, map[string]any{"devicePK": devicePK})
 	if err != nil {
-		slog.Error("device removal info query error", "error", err)
+		logError("device removal info query error", "error", err)
 		item.Code = devicePK
 		return item
 	}
@@ -720,7 +720,7 @@ func (a *API) analyzeDeviceRemoval(ctx context.Context, session neo4j.Session, d
 
 	neighborsResult, err := session.Run(ctx, neighborsCypher, map[string]any{"devicePK": devicePK})
 	if err != nil {
-		slog.Error("device removal neighbors query error", "error", err)
+		logError("device removal neighbors query error", "error", err)
 		return item
 	}
 
@@ -868,7 +868,7 @@ func (a *API) analyzeLinkRemoval(ctx context.Context, session neo4j.Session, lin
 
 	var sideAPK, sideZPK, sideACode, sideZCode string
 	if err := a.envDB(ctx).QueryRow(ctx, linkQuery, linkPK).Scan(&sideAPK, &sideZPK, &sideACode, &sideZCode); err != nil {
-		slog.Error("link lookup error", "link_pk", linkPK, "error", err)
+		logError("link lookup error", "link_pk", linkPK, "error", err)
 		item.Code = "Link not found"
 		return item
 	}
@@ -901,7 +901,7 @@ func (a *API) analyzeLinkRemoval(ctx context.Context, session neo4j.Session, lin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		slog.Error("link disconnect check error", "error", err)
+		logError("link disconnect check error", "error", err)
 	} else if degResult.Next(ctx) {
 		record := degResult.Record()
 		sourceDegree, _ := record.Get("sourceDegree")
@@ -932,7 +932,7 @@ func (a *API) analyzeLinkRemoval(ctx context.Context, session neo4j.Session, lin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		slog.Error("link metric query error", "error", err)
+		logError("link metric query error", "error", err)
 		return item
 	}
 	if linkMetricResult.Next(ctx) {
@@ -960,7 +960,7 @@ func (a *API) analyzeLinkRemoval(ctx context.Context, session neo4j.Session, lin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		slog.Error("link src neighbors query error", "error", err)
+		logError("link src neighbors query error", "error", err)
 		return item
 	}
 
@@ -989,7 +989,7 @@ func (a *API) analyzeLinkRemoval(ctx context.Context, session neo4j.Session, lin
 		"targetPK": sideZPK,
 	})
 	if err != nil {
-		slog.Error("link tgt neighbors query error", "error", err)
+		logError("link tgt neighbors query error", "error", err)
 		return item
 	}
 

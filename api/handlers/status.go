@@ -228,7 +228,7 @@ func (a *API) GetStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -1399,7 +1399,7 @@ func (a *API) GetLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -1539,14 +1539,14 @@ func (a *API) GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 	filters := parseStatusFilterParam(r.URL.Query().Get("filter"))
 	resp, err := a.FetchDeviceHistoryData(ctx, timeRange, requestedBuckets, filters...)
 	if err != nil {
-		slog.Error("fetchDeviceHistoryData error", "error", err)
+		logError("fetchDeviceHistoryData error", "error", err)
 		http.Error(w, "Failed to fetch device history", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -1597,7 +1597,7 @@ func (a *API) GetInterfaceIssues(w http.ResponseWriter, r *http.Request) {
 
 	issues, err := a.fetchInterfaceIssuesData(ctx, duration)
 	if err != nil {
-		slog.Error("error fetching interface issues", "error", err)
+		logError("error fetching interface issues", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1670,7 +1670,7 @@ func (a *API) GetDeviceInterfaceHistory(w http.ResponseWriter, r *http.Request) 
 
 	resp, err := a.fetchDeviceInterfaceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
 	if err != nil {
-		slog.Error("error fetching device interface history", "error", err)
+		logError("error fetching device interface history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1721,7 +1721,7 @@ func (a *API) GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchSingleLinkHistoryData(ctx, linkPK, timeRange, requestedBuckets)
 	if err != nil {
-		slog.Error("error fetching single link history", "error", err)
+		logError("error fetching single link history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1733,7 +1733,7 @@ func (a *API) GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -1783,7 +1783,7 @@ func (a *API) GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchSingleDeviceHistoryData(ctx, devicePK, timeRange, requestedBuckets)
 	if err != nil {
-		slog.Error("error fetching single device history", "error", err)
+		logError("error fetching single device history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1795,7 +1795,7 @@ func (a *API) GetSingleDeviceHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 

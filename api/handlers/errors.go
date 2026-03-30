@@ -1,16 +1,41 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"strings"
 
 	"github.com/getsentry/sentry-go"
 )
 
+// isClientDisconnect returns true if the error is caused by the client
+// canceling the request or the request deadline being exceeded.
+func isClientDisconnect(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// logError logs at ERROR level, silently skipping client disconnects.
+func logError(msg string, args ...any) {
+	// Extract the error from args to check for client disconnect.
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == "error" {
+			if err, ok := args[i+1].(error); ok && isClientDisconnect(err) {
+				return
+			}
+		}
+	}
+	slog.Error(msg, args...)
+}
+
 // internalError logs the full error internally and returns a user-safe message.
 // The returned message does not contain sensitive information like credentials,
 // hostnames, or query details.
 func internalError(operation string, err error) string {
+	if isClientDisconnect(err) {
+		return operation
+	}
+
 	// Log full error for debugging
 	slog.Error(operation, "error", err)
 

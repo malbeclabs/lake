@@ -150,7 +150,7 @@ func (a *API) GetPublisherCheck(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 

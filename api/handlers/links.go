@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"math"
 	"net/http"
 	"time"
@@ -48,7 +47,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	countQuery := `SELECT count(*) FROM dz_links_current`
 	var total uint64
 	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		slog.Error("links count query failed", "error", err)
+		logError("links count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -112,7 +111,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("links query failed", "error", err)
+		logError("links query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -143,7 +142,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 			&l.JitterUs,
 			&l.LossPercent,
 		); err != nil {
-			slog.Error("links row scan failed", "error", err)
+			logError("links row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -151,7 +150,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("links rows iteration failed", "error", err)
+		logError("links rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -170,7 +169,7 @@ func (a *API) GetLinks(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -281,7 +280,7 @@ func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("link health query failed", "error", err)
+		logError("link health query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -308,7 +307,7 @@ func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 			&isDark,
 			&isDown,
 		); err != nil {
-			slog.Error("link health row scan failed", "error", err)
+			logError("link health row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -364,7 +363,7 @@ func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("link health rows iteration failed", "error", err)
+		logError("link health rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -384,7 +383,7 @@ func (a *API) GetLinkHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -441,18 +440,18 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			slog.Error("link not found", "error", err, "pk", pk)
+			logError("link not found", "error", err, "pk", pk)
 			http.Error(w, "link not found", http.StatusNotFound)
 			return
 		}
-		slog.Error("link query failed", "error", err, "pk", pk)
+		logError("link query failed", "error", err, "pk", pk)
 		http.Error(w, "failed to fetch link", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(link); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 

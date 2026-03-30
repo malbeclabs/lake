@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -186,6 +185,6 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 		ElapsedMs: duration.Milliseconds(),
 	}); err != nil {
 		// Log encoding error - response is already partially written
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }

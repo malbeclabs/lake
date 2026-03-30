@@ -44,14 +44,14 @@ type grafanaAlert struct {
 func (a *API) HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 	var payload grafanaWebhook
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		slog.Error("grafana webhook: failed to parse", "error", err)
+		logError("grafana webhook: failed to parse", "error", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
 	channelID := r.URL.Query().Get("channel")
 	if channelID == "" {
-		slog.Error("grafana webhook: missing channel parameter")
+		logError("grafana webhook: missing channel parameter")
 		http.Error(w, "missing channel parameter", http.StatusBadRequest)
 		return
 	}
@@ -60,7 +60,7 @@ func (a *API) HandleGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 	alertName := payload.GroupLabels["alertname"]
 
 	if err := a.postEnrichedAlerts(r.Context(), payload, channelID); err != nil {
-		slog.Error("grafana webhook: failed to post", "error", err, "channel", channelID)
+		logError("grafana webhook: failed to post", "error", err, "channel", channelID)
 		metrics.GrafanaWebhookTotal.WithLabelValues("error", alertName).Inc()
 		metrics.GrafanaWebhookDuration.Observe(time.Since(start).Seconds())
 		http.Error(w, "failed to post to slack", http.StatusInternalServerError)

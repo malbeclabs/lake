@@ -319,7 +319,7 @@ func (a *API) GetLinkIncidents(w http.ResponseWriter, r *http.Request) {
 
 	allIncidents, err := fetchLinkIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
-		slog.Error("failed to fetch incidents", "error", err)
+		logError("failed to fetch incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch incidents: %v", err), http.StatusInternalServerError)
 		return
 	}

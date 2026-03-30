@@ -40,7 +40,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	countQuery := `SELECT count(*) FROM dz_devices_current`
 	var total uint64
 	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		slog.Error("devices count query failed", "error", err)
+		logError("devices count query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -105,7 +105,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("devices query failed", "error", err)
+		logError("devices query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -131,7 +131,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			&d.PeakInBps,
 			&d.PeakOutBps,
 		); err != nil {
-			slog.Error("devices row scan failed", "error", err)
+			logError("devices row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -139,7 +139,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("devices rows iteration failed", "error", err)
+		logError("devices rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -158,7 +158,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -304,7 +304,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("device query failed", "error", err, "pk", pk)
+		logError("device query failed", "error", err, "pk", pk)
 		http.Error(w, "device not found", http.StatusNotFound)
 		return
 	}
@@ -317,6 +317,6 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(device); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }

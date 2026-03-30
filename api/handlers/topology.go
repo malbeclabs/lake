@@ -137,7 +137,7 @@ func (a *API) GetTopology(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -229,7 +229,7 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 				return err
 			}
 			if err := json.Unmarshal([]byte(interfacesJSON), &d.Interfaces); err != nil {
-				slog.Error("failed to parse interfaces JSON", "device_pk", d.PK, "error", err)
+				logError("failed to parse interfaces JSON", "device_pk", d.PK, "error", err)
 				d.Interfaces = []DeviceInterface{}
 			}
 			devices = append(devices, d)
@@ -657,7 +657,7 @@ func (a *API) GetEntityTraffic(w http.ResponseWriter, r *http.Request) {
 func (a *API) scanTrafficPoints(ctx context.Context, query, pk string) []TrafficDataPoint {
 	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
-		slog.Error("traffic query error", "error", err)
+		logError("traffic query error", "error", err)
 		return nil
 	}
 	defer rows.Close()
@@ -667,7 +667,7 @@ func (a *API) scanTrafficPoints(ctx context.Context, query, pk string) []Traffic
 		var p TrafficDataPoint
 		var avgIn, avgOut, peakIn, peakOut *float64
 		if err := rows.Scan(&p.Time, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-			slog.Error("traffic scan error", "error", err)
+			logError("traffic scan error", "error", err)
 			return points
 		}
 		if avgIn != nil {
@@ -691,7 +691,7 @@ func (a *API) scanTrafficPoints(ctx context.Context, query, pk string) []Traffic
 func (a *API) scanInterfaceTrafficPoints(ctx context.Context, query, pk string) []InterfaceTrafficDataPoint {
 	rows, err := a.envDB(ctx).Query(ctx, query, pk)
 	if err != nil {
-		slog.Error("interface traffic query error", "error", err)
+		logError("interface traffic query error", "error", err)
 		return nil
 	}
 	defer rows.Close()
@@ -701,7 +701,7 @@ func (a *API) scanInterfaceTrafficPoints(ctx context.Context, query, pk string) 
 		var p InterfaceTrafficDataPoint
 		var avgIn, avgOut, peakIn, peakOut *float64
 		if err := rows.Scan(&p.Time, &p.Intf, &avgIn, &avgOut, &peakIn, &peakOut); err != nil {
-			slog.Error("interface traffic scan error", "error", err)
+			logError("interface traffic scan error", "error", err)
 			return points
 		}
 		if avgIn != nil {
@@ -725,7 +725,7 @@ func (a *API) scanInterfaceTrafficPoints(ctx context.Context, query, pk string) 
 func (a *API) scanLatencyPoints(ctx context.Context, query string, args ...any) []LinkLatencyDataPoint {
 	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	if err != nil {
-		slog.Error("latency query error", "error", err)
+		logError("latency query error", "error", err)
 		return nil
 	}
 	defer rows.Close()
@@ -735,7 +735,7 @@ func (a *API) scanLatencyPoints(ctx context.Context, query string, args ...any) 
 		var p LinkLatencyDataPoint
 		var avgRtt, p95Rtt, avgJitter, lossPct, avgRttAtoZ, p95RttAtoZ, avgRttZtoA, p95RttZtoA, jitterAtoZ, jitterZtoA *float64
 		if err := rows.Scan(&p.Time, &avgRtt, &p95Rtt, &avgJitter, &lossPct, &avgRttAtoZ, &p95RttAtoZ, &avgRttZtoA, &p95RttZtoA, &jitterAtoZ, &jitterZtoA); err != nil {
-			slog.Error("latency scan error", "error", err)
+			logError("latency scan error", "error", err)
 			return points
 		}
 		if avgRtt != nil && !math.IsNaN(*avgRtt) {
@@ -985,7 +985,7 @@ func (a *API) GetLinkLatencyHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(LinkLatencyResponse{Points: points}); err != nil {
-		slog.Error("failed to encode response", "pk", pk, "error", err)
+		logError("failed to encode response", "pk", pk, "error", err)
 	}
 }
 
@@ -1071,7 +1071,7 @@ func (a *API) GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("latency comparison query error", "error", err)
+		logError("latency comparison query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -1103,7 +1103,7 @@ func (a *API) GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 			&lc.RttImprovementPct,
 			&lc.JitterImprovementPct,
 		); err != nil {
-			slog.Error("latency comparison scan error", "error", err)
+			logError("latency comparison scan error", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
@@ -1120,7 +1120,7 @@ func (a *API) GetLatencyComparison(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("latency comparison rows error", "error", err)
+		logError("latency comparison rows error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -1361,7 +1361,7 @@ func (a *API) GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("latency history query error", "error", err)
+		logError("latency history query error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
@@ -1379,7 +1379,7 @@ func (a *API) GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 			&p.InetAvgJitterMs,
 			&p.InetSampleCount,
 		); err != nil {
-			slog.Error("latency history scan error", "error", err)
+			logError("latency history scan error", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
@@ -1387,7 +1387,7 @@ func (a *API) GetLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("latency history rows error", "error", err)
+		logError("latency history rows error", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}

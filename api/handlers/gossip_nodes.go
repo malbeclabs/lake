@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -133,7 +132,7 @@ func (a *API) GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("gossip nodes query failed", "error", err)
+		logError("gossip nodes query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -159,7 +158,7 @@ func (a *API) GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 			&onDZCount,
 			&validatorCount,
 		); err != nil {
-			slog.Error("gossip nodes row scan failed", "error", err)
+			logError("gossip nodes row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -167,7 +166,7 @@ func (a *API) GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("gossip nodes rows iteration failed", "error", err)
+		logError("gossip nodes rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -188,7 +187,7 @@ func (a *API) GetGossipNodes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -295,13 +294,13 @@ func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("gossip node query failed", "error", err, "pubkey", pubkey)
+		logError("gossip node query failed", "error", err, "pubkey", pubkey)
 		http.Error(w, "gossip node not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(node); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }

@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -201,7 +200,7 @@ func (a *API) GetDZLedger(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := FetchLedgerData(ctx, GetDZLedgerRPCURL())
 	if err != nil {
-		slog.Error("DZ ledger RPC request failed", "error", err)
+		logError("DZ ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
@@ -225,7 +224,7 @@ func (a *API) GetSolanaLedger(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := FetchLedgerData(ctx, GetSolanaRPCURL())
 	if err != nil {
-		slog.Error("Solana ledger RPC request failed", "error", err)
+		logError("Solana ledger RPC request failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		_ = json.NewEncoder(w).Encode(LedgerResponse{Error: err.Error()})
@@ -283,7 +282,7 @@ func (a *API) FetchValidatorPerfData(ctx context.Context) (*ValidatorPerfRespons
 			totalStakeSOL  float64
 		)
 		if err := rows.Scan(&dzStatus, &validatorCount, &avgVoteLag, &avgSkipRate, &delinquentCnt, &totalStakeSOL); err != nil {
-			slog.Error("validator performance scan failed", "error", err)
+			logError("validator performance scan failed", "error", err)
 			continue
 		}
 		group := ValidatorPerfGroup{
@@ -317,7 +316,7 @@ func (a *API) GetValidatorPerformance(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.FetchValidatorPerfData(ctx)
 	if err != nil {
-		slog.Error("validator performance query failed", "error", err)
+		logError("validator performance query failed", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(ValidatorPerfResponse{Error: err.Error()})

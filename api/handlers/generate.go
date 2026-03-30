@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -99,7 +98,7 @@ func (a *API) GenerateSQL(w http.ResponseWriter, r *http.Request) {
 	// Require Anthropic API key
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		w.Header().Set("Content-Type", "application/json")
-		slog.Error("ANTHROPIC_API_KEY is not set")
+		logError("ANTHROPIC_API_KEY is not set")
 		_ = json.NewEncoder(w).Encode(GenerateResponse{Error: "AI service is not configured. Please contact the administrator."})
 		return
 	}
@@ -196,7 +195,7 @@ func (a *API) GenerateSQLStream(w http.ResponseWriter, r *http.Request) {
 
 	// Require Anthropic API key
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		slog.Error("ANTHROPIC_API_KEY is not set")
+		logError("ANTHROPIC_API_KEY is not set")
 		sendEvent("error", "AI service is not configured. Please contact the administrator.")
 		return
 	}

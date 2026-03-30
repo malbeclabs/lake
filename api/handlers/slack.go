@@ -164,7 +164,7 @@ func (a *API) GetSlackOAuthStart(w http.ResponseWriter, r *http.Request) {
 
 	state, err := a.CreateOAuthState(r.Context(), account.ID.String())
 	if err != nil {
-		slog.Error("failed to create oauth state", "error", err)
+		logError("failed to create oauth state", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -240,13 +240,13 @@ func (a *API) GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	tokenResp, err := exchangeSlackCode(r.Context(), clientID, clientSecret, code, redirectURI)
 	if err != nil {
-		slog.Error("failed to exchange slack code", "error", err)
+		logError("failed to exchange slack code", "error", err)
 		a.settingsRedirect(w, r, "slack=error&reason=token_exchange")
 		return
 	}
 
 	if !tokenResp.OK {
-		slog.Error("slack oauth token response not ok", "error", tokenResp.Error)
+		logError("slack oauth token response not ok", "error", tokenResp.Error)
 		a.settingsRedirect(w, r, "slack=error&reason="+tokenResp.Error)
 		return
 	}
@@ -264,7 +264,7 @@ func (a *API) GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		// Store as pending and ask user to confirm the takeover
 		pendingID, err := a.CreatePendingInstallation(r.Context(), accountID, tokenResp)
 		if err != nil {
-			slog.Error("failed to create pending installation", "error", err)
+			logError("failed to create pending installation", "error", err)
 			a.settingsRedirect(w, r, "slack=error&reason=storage")
 			return
 		}
@@ -287,7 +287,7 @@ func (a *API) GetSlackOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		accountID,
 	)
 	if err != nil {
-		slog.Error("failed to store slack installation", "error", err)
+		logError("failed to store slack installation", "error", err)
 		a.settingsRedirect(w, r, "slack=error&reason=storage")
 		return
 	}
@@ -348,7 +348,7 @@ func (a *API) GetSlackInstallations(w http.ResponseWriter, r *http.Request) {
 
 	installations, err := a.ListSlackInstallations(r.Context(), account.ID.String())
 	if err != nil {
-		slog.Error("failed to list slack installations", "error", err)
+		logError("failed to list slack installations", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -378,7 +378,7 @@ func (a *API) DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	// Fetch the installation to get the bot token for uninstall
 	inst, err := a.GetSlackInstallationByTeamID(r.Context(), teamID)
 	if err != nil {
-		slog.Error("failed to get slack installation for uninstall", "error", err, "team_id", teamID)
+		logError("failed to get slack installation for uninstall", "error", err, "team_id", teamID)
 		http.Error(w, "Installation not found", http.StatusNotFound)
 		return
 	}
@@ -394,14 +394,14 @@ func (a *API) DeleteSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	clientSecret := os.Getenv("SLACK_CLIENT_SECRET")
 	if clientID != "" && clientSecret != "" {
 		if err := uninstallSlackApp(r.Context(), inst.BotToken, clientID, clientSecret); err != nil {
-			slog.Error("failed to uninstall slack app from workspace", "error", err, "team_id", teamID)
+			logError("failed to uninstall slack app from workspace", "error", err, "team_id", teamID)
 			http.Error(w, "Failed to uninstall Slack app from workspace. Please try again.", http.StatusBadGateway)
 			return
 		}
 	}
 
 	if err := a.DeactivateSlackInstallation(r.Context(), teamID); err != nil {
-		slog.Error("failed to deactivate slack installation", "error", err)
+		logError("failed to deactivate slack installation", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -463,7 +463,7 @@ func (a *API) ConfirmSlackInstallation(w http.ResponseWriter, r *http.Request) {
 	// Upsert the installation
 	err = a.UpsertSlackInstallation(r.Context(), teamID, teamName, botToken, botUserID, scope, account.ID.String())
 	if err != nil {
-		slog.Error("failed to store slack installation from pending", "error", err)
+		logError("failed to store slack installation from pending", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}

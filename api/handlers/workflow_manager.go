@@ -456,7 +456,7 @@ func (m *WorkflowManager) runWorkflow(
 	// Load prompts
 	prompts, err := v3.LoadPrompts()
 	if err != nil {
-		slog.Error("Background workflow failed to load prompts", "workflow_id", rw.ID, "error", err)
+		logError("Background workflow failed to load prompts", "workflow_id", rw.ID, "error", err)
 		m.failWorkflow(ctx, rw, fmt.Sprintf("Failed to load prompts: %v", err))
 		return
 	}
@@ -493,7 +493,7 @@ func (m *WorkflowManager) runWorkflow(
 	// Create workflow
 	wf, err := v3.New(cfg)
 	if err != nil {
-		slog.Error("Background workflow failed to create workflow", "workflow_id", rw.ID, "error", err)
+		logError("Background workflow failed to create workflow", "workflow_id", rw.ID, "error", err)
 		m.failWorkflow(ctx, rw, fmt.Sprintf("Failed to create workflow: %v", err))
 		return
 	}
@@ -734,7 +734,7 @@ func (m *WorkflowManager) runWorkflow(
 				Data: map[string]string{"error": "Workflow was cancelled"},
 			})
 		} else {
-			slog.Error("Background workflow failed", "workflow_id", rw.ID, "error", err)
+			logError("Background workflow failed", "workflow_id", rw.ID, "error", err)
 			m.failWorkflow(ctx, rw, err.Error())
 		}
 		return
@@ -885,7 +885,7 @@ func (m *WorkflowManager) resumeWorkflow(
 	// Load prompts
 	prompts, err := v3.LoadPrompts()
 	if err != nil {
-		slog.Error("Resume workflow failed to load prompts", "workflow_id", rw.ID, "error", err)
+		logError("Resume workflow failed to load prompts", "workflow_id", rw.ID, "error", err)
 		m.failWorkflow(ctx, rw, fmt.Sprintf("Failed to load prompts: %v", err))
 		return
 	}
@@ -922,7 +922,7 @@ func (m *WorkflowManager) resumeWorkflow(
 	// Create workflow
 	wf, err := v3.New(cfg)
 	if err != nil {
-		slog.Error("Resume workflow failed to create workflow", "workflow_id", rw.ID, "error", err)
+		logError("Resume workflow failed to create workflow", "workflow_id", rw.ID, "error", err)
 		m.failWorkflow(ctx, rw, fmt.Sprintf("Failed to create workflow: %v", err))
 		return
 	}
@@ -1158,7 +1158,7 @@ func (m *WorkflowManager) resumeWorkflow(
 			slog.Info("Resume workflow cancelled", "workflow_id", rw.ID)
 			_ = m.api.CancelWorkflowRun(context.Background(), rw.ID)
 		} else {
-			slog.Error("Resume workflow failed", "workflow_id", rw.ID, "error", err)
+			logError("Resume workflow failed", "workflow_id", rw.ID, "error", err)
 			m.failWorkflow(ctx, rw, err.Error())
 		}
 		return
@@ -1221,7 +1221,7 @@ func (m *WorkflowManager) ResumeIncompleteWorkflows() {
 		// Atomically claim one workflow at a time
 		run, err := m.api.ClaimIncompleteWorkflow(ctx, m.serverID, staleTimeout)
 		if err != nil {
-			slog.Error("Failed to claim workflow", "error", err)
+			logError("Failed to claim workflow", "error", err)
 			break
 		}
 		if run == nil {
@@ -1236,7 +1236,7 @@ func (m *WorkflowManager) ResumeIncompleteWorkflows() {
 			"iteration", run.Iteration)
 
 		if err := m.ResumeWorkflowBackground(run); err != nil {
-			slog.Error("Failed to resume workflow", "workflow_id", run.ID, "error", err)
+			logError("Failed to resume workflow", "workflow_id", run.ID, "error", err)
 			// Mark as failed so we don't keep trying
 			_ = m.api.FailWorkflowRun(ctx, run.ID, fmt.Sprintf("Failed to resume: %v", err))
 		}
@@ -1268,7 +1268,7 @@ func (m *WorkflowManager) ensureSessionExists(ctx context.Context, sessionID uui
 		ON CONFLICT (id) DO NOTHING
 	`, sessionID)
 	if err != nil {
-		slog.Error("ensureSessionExists failed", "session_id", sessionID, "error", err)
+		logError("ensureSessionExists failed", "session_id", sessionID, "error", err)
 		return fmt.Errorf("failed to ensure session exists: %w", err)
 	}
 	slog.Info("ensureSessionExists completed", "session_id", sessionID, "rows_affected", result.RowsAffected())

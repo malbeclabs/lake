@@ -49,7 +49,7 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multicast groups query error", "error", err)
+		logError("multicast groups query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -67,7 +67,7 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 			&g.PublisherCount,
 			&g.SubscriberCount,
 		); err != nil {
-			slog.Error("multicast groups scan error", "error", err)
+			logError("multicast groups scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -75,7 +75,7 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("multicast groups rows error", "error", err)
+		logError("multicast groups rows error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -127,7 +127,7 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 				var gpk string
 				var pubCount, subCount uint64
 				if err := countRows.Scan(&gpk, &pubCount, &subCount); err != nil {
-					slog.Error("multicast groups counts scan error", "error", err)
+					logError("multicast groups counts scan error", "error", err)
 					continue
 				}
 				if idx, ok := groupByPK[gpk]; ok {
@@ -140,7 +140,7 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(groups); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -217,14 +217,14 @@ func (a *API) GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multicast group query error", "error", err)
+		logError("multicast group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(group); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -281,7 +281,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
-		slog.Error("multicast group members group query error", "error", err)
+		logError("multicast group members group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
@@ -676,7 +676,7 @@ func (a *API) GetMulticastGroupMembers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -711,7 +711,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
-		slog.Error("multicast group traffic group query error", "error", err)
+		logError("multicast group traffic group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
@@ -738,7 +738,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 
 	memberRows, err := a.envDB(ctx).Query(ctx, membersQuery, groupPK, groupPK, groupPK, groupPK, groupPK)
 	if err != nil {
-		slog.Error("multicast group traffic members query error", "error", err)
+		logError("multicast group traffic members query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -757,7 +757,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	for memberRows.Next() {
 		var m memberInfo
 		if err := memberRows.Scan(&m.userPK, &m.devicePK, &m.tunnelID, &m.mode); err != nil {
-			slog.Error("multicast group traffic members scan error", "error", err)
+			logError("multicast group traffic members scan error", "error", err)
 			continue
 		}
 		if m.tunnelID > 0 {
@@ -849,7 +849,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multicast group traffic query error", "error", err)
+		logError("multicast group traffic query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -859,7 +859,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	for trafficRows.Next() {
 		var p MulticastTrafficPoint
 		if err := trafficRows.Scan(&p.Time, &p.DevicePK, &p.TunnelID, &p.InBps, &p.OutBps, &p.InPps, &p.OutPps); err != nil {
-			slog.Error("multicast group traffic scan error", "error", err)
+			logError("multicast group traffic scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -884,7 +884,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := trafficRows.Err(); err != nil {
-		slog.Error("multicast group traffic rows error", "error", err)
+		logError("multicast group traffic rows error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -895,7 +895,7 @@ func (a *API) GetMulticastGroupTraffic(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(points); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -945,7 +945,7 @@ func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Reque
 	err := a.envDB(ctx).QueryRow(ctx,
 		`SELECT pk FROM dz_multicast_groups_current WHERE pk = ? OR code = ?`, pkOrCode, pkOrCode).Scan(&groupPK)
 	if err != nil {
-		slog.Error("multicast group member counts group query error", "error", err)
+		logError("multicast group member counts group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return
 	}
@@ -1021,7 +1021,7 @@ func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Reque
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multicast group member counts query error", "error", err)
+		logError("multicast group member counts query error", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1031,7 +1031,7 @@ func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var p MulticastMemberCountPoint
 		if err := rows.Scan(&p.Time, &p.PublisherCount, &p.SubscriberCount); err != nil {
-			slog.Error("multicast group member counts scan error", "error", err)
+			logError("multicast group member counts scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1092,7 +1092,7 @@ func (a *API) GetMulticastGroupMemberCounts(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(points); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -1147,7 +1147,7 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	`
 	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
-		slog.Error("multicast tree paths group query error", "error", err)
+		logError("multicast tree paths group query error", "error", err)
 		response.Error = "multicast group not found"
 		writeJSON(w, response)
 		return
@@ -1178,7 +1178,7 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multicast tree paths members query error", "error", err)
+		logError("multicast tree paths members query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1196,7 +1196,7 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var mode, devicePK, deviceCode string
 		if err := rows.Scan(&mode, &devicePK, &deviceCode); err != nil {
-			slog.Error("multicast tree paths members scan error", "error", err)
+			logError("multicast tree paths members scan error", "error", err)
 			continue
 		}
 		if devicePK == "" {
@@ -1313,7 +1313,7 @@ func (a *API) GetMulticastTreePaths(w http.ResponseWriter, r *http.Request) {
 	// Collect results
 	for result := range resultChan {
 		if result.err != nil {
-			slog.Error("multicast tree paths query error", "error", result.err)
+			logError("multicast tree paths query error", "error", result.err)
 			continue
 		}
 		response.Paths = append(response.Paths, result.path)
@@ -1368,7 +1368,7 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	`
 	err := a.envDB(ctx).QueryRow(ctx, groupQuery, pkOrCode, pkOrCode).Scan(&response.GroupPK, &response.GroupCode)
 	if err != nil {
-		slog.Error("multicast tree segments group query error", "error", err)
+		logError("multicast tree segments group query error", "error", err)
 		response.Error = "multicast group not found"
 		writeJSON(w, response)
 		return
@@ -1397,7 +1397,7 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multicast tree segments members query error", "error", err)
+		logError("multicast tree segments members query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1411,7 +1411,7 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var mode, devicePK string
 		if err := rows.Scan(&mode, &devicePK); err != nil {
-			slog.Error("multicast tree segments members scan error", "error", err)
+			logError("multicast tree segments members scan error", "error", err)
 			continue
 		}
 		if devicePK == "" {
@@ -1509,7 +1509,7 @@ func (a *API) GetMulticastTreeSegments(w http.ResponseWriter, r *http.Request) {
 
 	for result := range resultChan {
 		if result.err != nil {
-			slog.Error("multicast tree segments path query error", "publisher", result.publisherPK, "error", result.err)
+			logError("multicast tree segments path query error", "publisher", result.publisherPK, "error", result.err)
 			continue
 		}
 		for key := range result.segments {

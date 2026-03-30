@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -228,7 +227,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("validators query failed", "error", err)
+		logError("validators query failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -257,7 +256,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 			&total,
 			&onDZCount,
 		); err != nil {
-			slog.Error("validators row scan failed", "error", err)
+			logError("validators row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -265,7 +264,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("validators rows iteration failed", "error", err)
+		logError("validators rows iteration failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -285,7 +284,7 @@ func (a *API) GetValidators(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -437,13 +436,13 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("validator query failed", "error", err, "vote_pubkey", votePubkey)
+		logError("validator query failed", "error", err, "vote_pubkey", votePubkey)
 		http.Error(w, "validator not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(validator); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }

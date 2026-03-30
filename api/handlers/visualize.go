@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -48,7 +47,7 @@ func (a *API) RecommendVisualization(w http.ResponseWriter, r *http.Request) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		w.Header().Set("Content-Type", "application/json")
-		slog.Error("ANTHROPIC_API_KEY is not set")
+		logError("ANTHROPIC_API_KEY is not set")
 		_ = json.NewEncoder(w).Encode(VisualizeResponse{Recommended: false, Error: "AI service is not configured. Please contact the administrator."})
 		return
 	}

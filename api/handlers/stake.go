@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -242,7 +241,7 @@ func (a *API) GetStakeOverview(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.FetchStakeOverviewData(ctx)
 	if err != nil {
-		slog.Error("stake overview query error", "error", err)
+		logError("stake overview query error", "error", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(StakeOverview{Error: err.Error()})
@@ -333,7 +332,7 @@ func (a *API) GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("stake history query error", "error", err)
+		logError("stake history query error", "error", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
@@ -344,7 +343,7 @@ func (a *API) GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var point StakeHistoryPoint
 		if err := rows.Scan(&point.Timestamp, &point.DZStakeSol, &point.TotalStakeSol, &point.StakeSharePct); err != nil {
-			slog.Error("stake history row scan error", "error", err)
+			logError("stake history row scan error", "error", err)
 			response.Error = fmt.Sprintf("row scan error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -355,7 +354,7 @@ func (a *API) GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("stake history rows error", "error", err)
+		logError("stake history rows error", "error", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -365,7 +364,7 @@ func (a *API) GetStakeHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -568,7 +567,7 @@ func (a *API) GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("stake changes query error", "error", err)
+		logError("stake changes query error", "error", err)
 		response.Error = err.Error()
 	}
 
@@ -588,7 +587,7 @@ func (a *API) GetStakeChanges(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -649,7 +648,7 @@ func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 		WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
 	`).Scan(&totalStake)
 	if err != nil {
-		slog.Error("total stake query error", "error", err)
+		logError("total stake query error", "error", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
@@ -756,7 +755,7 @@ func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("stake validators query error", "error", err)
+		logError("stake validators query error", "error", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
@@ -768,7 +767,7 @@ func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 		var v StakeValidator
 		var onDZInt uint8
 		if err := rows.Scan(&v.VotePubkey, &v.NodePubkey, &v.StakeSol, &v.Commission, &v.Version, &v.City, &v.Country, &onDZInt, &v.DeviceCode, &v.MetroCode); err != nil {
-			slog.Error("stake validator row scan error", "error", err)
+			logError("stake validator row scan error", "error", err)
 			response.Error = fmt.Sprintf("row scan error: %v", err)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -789,7 +788,7 @@ func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rows.Err(); err != nil {
-		slog.Error("stake validators rows error", "error", err)
+		logError("stake validators rows error", "error", err)
 		response.Error = err.Error()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -799,6 +798,6 @@ func (a *API) GetStakeValidators(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }

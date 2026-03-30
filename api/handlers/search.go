@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -616,7 +615,7 @@ func (a *API) SearchAutocomplete(w http.ResponseWriter, r *http.Request) {
 				suggestions, _, err = a.searchMulticastGroups(gCtx, term, perTypeLimit)
 			}
 			if err != nil {
-				slog.Error("search query failed", "entity_type", string(et), "error", err)
+				logError("search query failed", "entity_type", string(et), "error", err)
 				return nil // Don't fail the whole search
 			}
 			resultsChan <- searchResult{entityType: et, suggestions: suggestions}
@@ -730,7 +729,7 @@ func (a *API) Search(w http.ResponseWriter, r *http.Request) {
 				suggestions, total, err = a.searchMulticastGroups(gCtx, term, limit)
 			}
 			if err != nil {
-				slog.Error("search query failed", "entity_type", string(et), "error", err)
+				logError("search query failed", "entity_type", string(et), "error", err)
 				return nil // Don't fail the whole search
 			}
 			resultsChan <- searchResult{entityType: et, suggestions: suggestions, total: total}

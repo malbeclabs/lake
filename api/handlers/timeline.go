@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"math"
 	"net/http"
 	"sort"
@@ -619,7 +618,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryEntityChangeEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
 			if err != nil {
-				slog.Error("error querying entity changes", "error", err)
+				logError("error querying entity changes", "error", err)
 				return nil // Don't fail the whole request
 			}
 			mu.Lock()
@@ -641,7 +640,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryIncidentEvents(ctx, params.StartTime, params.EndTime)
 			if err != nil {
-				slog.Error("error querying incident events", "error", err)
+				logError("error querying incident events", "error", err)
 				return nil
 			}
 			// Filter by requested categories
@@ -670,7 +669,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryValidatorEvents(ctx, params.StartTime, params.EndTime, params.IncludeInternal)
 			if err != nil {
-				slog.Error("error querying validator events", "error", err)
+				logError("error querying validator events", "error", err)
 				return nil
 			}
 			mu.Lock()
@@ -686,7 +685,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryGossipNetworkChanges(ctx, params.StartTime, params.EndTime)
 			if err != nil {
-				slog.Error("error querying gossip network changes", "error", err)
+				logError("error querying gossip network changes", "error", err)
 				return nil
 			}
 			mu.Lock()
@@ -702,7 +701,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryVoteAccountChanges(ctx, params.StartTime, params.EndTime)
 			if err != nil {
-				slog.Error("error querying vote account changes", "error", err)
+				logError("error querying vote account changes", "error", err)
 				return nil
 			}
 			mu.Lock()
@@ -718,7 +717,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryStakeChanges(ctx, params.StartTime, params.EndTime)
 			if err != nil {
-				slog.Error("error querying stake changes", "error", err)
+				logError("error querying stake changes", "error", err)
 				return nil
 			}
 			mu.Lock()
@@ -734,7 +733,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			events, err := a.queryDZStakeAttribution(ctx, params.StartTime, params.EndTime)
 			if err != nil {
-				slog.Error("error querying DZ stake attribution", "error", err)
+				logError("error querying DZ stake attribution", "error", err)
 				return nil
 			}
 			mu.Lock()
@@ -750,7 +749,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		g.Go(func() error {
 			info, err := a.queryCurrentDZTotalStakeShare(ctx)
 			if err != nil {
-				slog.Error("error querying DZ total stake share", "error", err)
+				logError("error querying DZ total stake share", "error", err)
 				return nil
 			}
 			mu.Lock()
@@ -761,7 +760,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := g.Wait(); err != nil {
-		slog.Error("error in timeline queries", "error", err)
+		logError("error in timeline queries", "error", err)
 	}
 
 	// Merge all events
@@ -1028,7 +1027,7 @@ func (a *API) GetTimeline(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		slog.Error("error encoding timeline response", "error", err)
+		logError("error encoding timeline response", "error", err)
 	}
 }
 
@@ -3253,7 +3252,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryEntityChangeEvents(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Error("cache: entity changes query failed", "error", err)
+			logError("cache: entity changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3266,7 +3265,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryIncidentEvents(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: incident events query failed", "error", err)
+			logError("cache: incident events query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3279,7 +3278,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryValidatorEvents(ctx, startTime, endTime, false)
 		if err != nil {
-			slog.Error("cache: validator events query failed", "error", err)
+			logError("cache: validator events query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3292,7 +3291,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryGossipNetworkChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: gossip network changes query failed", "error", err)
+			logError("cache: gossip network changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3305,7 +3304,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryVoteAccountChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: vote account changes query failed", "error", err)
+			logError("cache: vote account changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3318,7 +3317,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryStakeChanges(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: stake changes query failed", "error", err)
+			logError("cache: stake changes query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3332,7 +3331,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		events, err := a.queryDZStakeAttribution(ctx, startTime, endTime)
 		if err != nil {
-			slog.Error("cache: DZ stake attribution query failed", "error", err)
+			logError("cache: DZ stake attribution query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3346,7 +3345,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	g.Go(func() error {
 		info, err := a.queryCurrentDZTotalStakeShare(ctx)
 		if err != nil {
-			slog.Error("cache: DZ total stake share query failed", "error", err)
+			logError("cache: DZ total stake share query failed", "error", err)
 			return nil
 		}
 		mu.Lock()
@@ -3356,7 +3355,7 @@ func (a *API) FetchDefaultTimelineData(ctx context.Context) *TimelineResponse {
 	})
 
 	if err := g.Wait(); err != nil {
-		slog.Error("cache: timeline queries failed", "error", err)
+		logError("cache: timeline queries failed", "error", err)
 	}
 
 	// Merge all events

@@ -80,7 +80,7 @@ func (a *API) GetISISTopology(w http.ResponseWriter, r *http.Request) {
 	`
 	deviceRows, err := a.envDB(ctx).Query(ctx, deviceQuery)
 	if err != nil {
-		slog.Error("ISIS topology device query error", "error", err)
+		logError("ISIS topology device query error", "error", err)
 		response.Error = "Failed to query ISIS devices"
 		writeJSON(w, response)
 		return
@@ -90,7 +90,7 @@ func (a *API) GetISISTopology(w http.ResponseWriter, r *http.Request) {
 	for deviceRows.Next() {
 		var pk, code, status, deviceType, systemID, routerID, metroPK string
 		if err := deviceRows.Scan(&pk, &code, &status, &deviceType, &systemID, &routerID, &metroPK); err != nil {
-			slog.Error("ISIS topology device scan error", "error", err)
+			logError("ISIS topology device scan error", "error", err)
 			continue
 		}
 		response.Nodes = append(response.Nodes, ISISNode{
@@ -120,7 +120,7 @@ func (a *API) GetISISTopology(w http.ResponseWriter, r *http.Request) {
 	`
 	adjRows, err := a.envDB(ctx).Query(ctx, adjQuery)
 	if err != nil {
-		slog.Error("ISIS topology adjacency query error", "error", err)
+		logError("ISIS topology adjacency query error", "error", err)
 		response.Error = "Failed to query ISIS adjacencies"
 		writeJSON(w, response)
 		return
@@ -131,7 +131,7 @@ func (a *API) GetISISTopology(w http.ResponseWriter, r *http.Request) {
 		var fromPK, toPK, neighborAddr, adjSidsJSON string
 		var metric int64
 		if err := adjRows.Scan(&fromPK, &toPK, &metric, &neighborAddr, &adjSidsJSON); err != nil {
-			slog.Error("ISIS topology adjacency scan error", "error", err)
+			logError("ISIS topology adjacency scan error", "error", err)
 			continue
 		}
 
@@ -212,7 +212,7 @@ func asFloat64(v any) float64 {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("failed to encode response", "error", err)
+		logError("failed to encode response", "error", err)
 	}
 }
 
@@ -274,14 +274,14 @@ func (a *API) GetISISPath(w http.ResponseWriter, r *http.Request) {
 		"to_pk":   toPK,
 	})
 	if err != nil {
-		slog.Error("ISIS path query error", "error", err)
+		logError("ISIS path query error", "error", err)
 		writeJSON(w, PathResponse{Error: "Failed to find path: " + err.Error()})
 		return
 	}
 
 	record, err := result.Single(ctx)
 	if err != nil {
-		slog.Error("ISIS path no result", "error", err)
+		logError("ISIS path no result", "error", err)
 		writeJSON(w, PathResponse{Error: "No path found between devices"})
 		return
 	}
@@ -388,7 +388,7 @@ func (a *API) GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	`
 	adjRows, err := db.Query(ctx, adjQuery)
 	if err != nil {
-		slog.Error("topology compare adjacency query error", "error", err)
+		logError("topology compare adjacency query error", "error", err)
 		response.Error = "Failed to query ISIS adjacencies"
 		writeJSON(w, response)
 		return
@@ -400,7 +400,7 @@ func (a *API) GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 		var fromPK, toPK, linkPK, neighborAddr string
 		var metric int64
 		if err := adjRows.Scan(&fromPK, &toPK, &linkPK, &metric, &neighborAddr); err != nil {
-			slog.Error("topology compare adjacency scan error", "error", err)
+			logError("topology compare adjacency scan error", "error", err)
 			continue
 		}
 		totalAdjs++
@@ -436,7 +436,7 @@ func (a *API) GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	`
 	linkRows, err := db.Query(ctx, linkQuery)
 	if err != nil {
-		slog.Error("topology compare link query error", "error", err)
+		logError("topology compare link query error", "error", err)
 		response.Error = "Failed to query configured links"
 		writeJSON(w, response)
 		return
@@ -447,7 +447,7 @@ func (a *API) GetTopologyCompare(w http.ResponseWriter, r *http.Request) {
 	for linkRows.Next() {
 		var li linkInfo
 		if err := linkRows.Scan(&li.pk, &li.code, &li.status, &li.committedRttNs, &li.tunnelNet, &li.deviceAPK, &li.deviceACode, &li.deviceBPK, &li.deviceBCode); err != nil {
-			slog.Error("topology compare link scan error", "error", err)
+			logError("topology compare link scan error", "error", err)
 			continue
 		}
 		links = append(links, li)
@@ -643,7 +643,7 @@ func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	deviceCypher := `MATCH (d:Device {pk: $pk}) RETURN d.code AS code`
 	deviceResult, err := session.Run(ctx, deviceCypher, map[string]any{"pk": devicePK})
 	if err != nil {
-		slog.Error("failure impact device query error", "error", err)
+		logError("failure impact device query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -690,7 +690,7 @@ func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 		"device_pk": devicePK,
 	})
 	if err != nil {
-		slog.Error("failure impact query error", "error", err)
+		logError("failure impact query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -698,7 +698,7 @@ func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 
 	impactRecords, err := impactResult.Collect(ctx)
 	if err != nil {
-		slog.Error("failure impact collect error", "error", err)
+		logError("failure impact collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -740,12 +740,12 @@ func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 	`
 	metroResult, err := session.Run(ctx, metroCypher, map[string]any{})
 	if err != nil {
-		slog.Error("failure impact metro query error", "error", err)
+		logError("failure impact metro query error", "error", err)
 		// Don't fail the whole response, just log the error
 	} else {
 		metroRecords, err := metroResult.Collect(ctx)
 		if err != nil {
-			slog.Error("failure impact metro collect error", "error", err)
+			logError("failure impact metro collect error", "error", err)
 		} else {
 			for _, record := range metroRecords {
 				metroPK, _ := record.Get("metro_pk")
@@ -832,12 +832,12 @@ func (a *API) GetFailureImpact(w http.ResponseWriter, r *http.Request) {
 		"device_pk": devicePK,
 	})
 	if err != nil {
-		slog.Error("failure impact affected paths query error", "error", err)
+		logError("failure impact affected paths query error", "error", err)
 		// Don't fail the whole response, just log the error
 	} else {
 		affectedRecords, err := affectedResult.Collect(ctx)
 		if err != nil {
-			slog.Error("failure impact affected paths collect error", "error", err)
+			logError("failure impact affected paths collect error", "error", err)
 		} else {
 			for _, record := range affectedRecords {
 				fromPK, _ := record.Get("from_pk")
@@ -945,7 +945,7 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 	// This is faster than Neo4j's allSimplePaths which has combinatorial explosion at high depths.
 	paths, err := a.findKShortestPaths(ctx, fromPK, toPK, k)
 	if err != nil {
-		slog.Error("KSP error", "error", err)
+		logError("KSP error", "error", err)
 		response.Error = "Failed to find paths: " + err.Error()
 		writeJSON(w, response)
 		return
@@ -961,7 +961,7 @@ func (a *API) GetISISPaths(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich paths with measured latency from ClickHouse
 	if err := a.enrichPathsWithMeasuredLatency(ctx, &response); err != nil {
-		slog.Error("enrichPathsWithMeasuredLatency error", "error", err)
+		logError("enrichPathsWithMeasuredLatency error", "error", err)
 		response.Error = fmt.Sprintf("failed to enrich paths with measured latency: %v", err)
 	}
 
@@ -1124,7 +1124,7 @@ func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 
 	result, err := session.Run(ctx, cypher, nil)
 	if err != nil {
-		slog.Error("critical links query error", "error", err)
+		logError("critical links query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1132,7 +1132,7 @@ func (a *API) GetCriticalLinks(w http.ResponseWriter, r *http.Request) {
 
 	records, err := result.Collect(ctx)
 	if err != nil {
-		slog.Error("critical links collect error", "error", err)
+		logError("critical links collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1257,7 +1257,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	leafResult, err := session.Run(ctx, leafCypher, nil)
 	if err != nil {
-		slog.Error("redundancy report leaf devices query error", "error", err)
+		logError("redundancy report leaf devices query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1265,7 +1265,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	leafRecords, err := leafResult.Collect(ctx)
 	if err != nil {
-		slog.Error("redundancy report leaf devices collect error", "error", err)
+		logError("redundancy report leaf devices collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1315,7 +1315,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	criticalResult, err := session.Run(ctx, criticalLinksCypher, nil)
 	if err != nil {
-		slog.Error("redundancy report critical links query error", "error", err)
+		logError("redundancy report critical links query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1323,7 +1323,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	criticalRecords, err := criticalResult.Collect(ctx)
 	if err != nil {
-		slog.Error("redundancy report critical links collect error", "error", err)
+		logError("redundancy report critical links collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1367,7 +1367,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	singleExitResult, err := session.Run(ctx, singleExitCypher, nil)
 	if err != nil {
-		slog.Error("redundancy report single-exit metros query error", "error", err)
+		logError("redundancy report single-exit metros query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1375,7 +1375,7 @@ func (a *API) GetRedundancyReport(w http.ResponseWriter, r *http.Request) {
 
 	singleExitRecords, err := singleExitResult.Collect(ctx)
 	if err != nil {
-		slog.Error("redundancy report single-exit metros collect error", "error", err)
+		logError("redundancy report single-exit metros collect error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -1513,7 +1513,7 @@ func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 	`
 	chRows, err := a.DB.Query(ctx, chQuery)
 	if err != nil {
-		slog.Error("metro connectivity ClickHouse query error", "error", err)
+		logError("metro connectivity ClickHouse query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -1539,7 +1539,7 @@ func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 	metroRecords, err := runNeo4jQuery(metroCypher)
 	if err != nil {
-		slog.Error("metro connectivity metro query error", "error", err)
+		logError("metro connectivity metro query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -1593,7 +1593,7 @@ func (a *API) GetMetroConnectivity(w http.ResponseWriter, r *http.Request) {
 
 	connRecords, err := runNeo4jQuery(connectivityCypher)
 	if err != nil {
-		slog.Error("metro connectivity query error", "error", err)
+		logError("metro connectivity query error", "error", err)
 		response.Error = dberror.UserMessage(err)
 		writeJSON(w, response)
 		return
@@ -1733,7 +1733,7 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 
 	response, err := a.FetchMetroPathLatencyData(ctx, optimize)
 	if err != nil {
-		slog.Error("metro path latency error", "error", err)
+		logError("metro path latency error", "error", err)
 		writeJSON(w, MetroPathLatencyResponse{Optimize: optimize, Paths: []MetroPathLatency{}, Error: err.Error()})
 		return
 	}
@@ -1924,7 +1924,7 @@ func (a *API) GetMetroPathDetail(w http.ResponseWriter, r *http.Request) {
 	// Load in-memory topology graph with committed latency
 	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
-		slog.Error("metro path detail graph load error", "error", err)
+		logError("metro path detail graph load error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -2342,7 +2342,7 @@ func (a *API) analyzeDevicesImpactBatch(ctx context.Context, session neo4j.Sessi
 		"devicePKs": devicePKs,
 	})
 	if err != nil {
-		slog.Error("batch device impact query error", "error", err)
+		logError("batch device impact query error", "error", err)
 		// Fallback to individual queries
 		for _, pk := range devicePKs {
 			items = append(items, analyzeDeviceImpact(ctx, session, pk))
@@ -2646,7 +2646,7 @@ func computeAffectedPathsFast(ctx context.Context, session neo4j.Session,
 		"limit":            limit * 2, // Get more candidates, we'll filter
 	})
 	if err != nil {
-		slog.Error("error computing affected paths", "error", err)
+		logError("error computing affected paths", "error", err)
 		return result
 	}
 
@@ -2788,7 +2788,7 @@ func computeAffectedMetrosFast(ctx context.Context, session neo4j.Session,
 		"offlineDevicePKs": offlineDevicePKs,
 	})
 	if err != nil {
-		slog.Error("error computing affected metros fast", "error", err)
+		logError("error computing affected metros fast", "error", err)
 		return result
 	}
 
@@ -2989,7 +2989,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 		"toPK":   toMetroPK,
 	})
 	if err != nil {
-		slog.Error("metro device paths metro query error", "error", err)
+		logError("metro device paths metro query error", "error", err)
 		response.Error = err.Error()
 		writeJSON(w, response)
 		return
@@ -2997,7 +2997,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 
 	record, err := result.Single(ctx)
 	if err != nil {
-		slog.Error("metro device paths metro query no result", "error", err)
+		logError("metro device paths metro query no result", "error", err)
 		response.Error = "One or both metros not found"
 		writeJSON(w, response)
 		return
@@ -3055,7 +3055,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 	// Load graph once, find shortest path for each pair in-memory
 	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
-		slog.Error("metro device paths graph load error", "error", err)
+		logError("metro device paths graph load error", "error", err)
 		response.Error = "Failed to load graph: " + err.Error()
 		writeJSON(w, response)
 		return
@@ -3141,7 +3141,7 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 			multiPathResp.Paths[i] = pair.BestPath
 		}
 		if err := a.enrichPathsWithMeasuredLatency(ctx, multiPathResp); err != nil {
-			slog.Error("enrichPathsWithMeasuredLatency error for metro paths", "error", err)
+			logError("enrichPathsWithMeasuredLatency error for metro paths", "error", err)
 		} else {
 			// Copy enriched paths back
 			for i := range response.DevicePairs {

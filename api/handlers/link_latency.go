@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"math"
 	"net/http"
 	"strings"
@@ -270,7 +269,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("link latency query error", "error", err, "duration", duration)
+		logError("link latency query error", "error", err, "duration", duration)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
@@ -285,7 +284,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 			&s.ContributorCode, &s.SideACode, &s.SideZCode, &s.CommittedRttMs, &s.CommittedJitterMs,
 			&rttA, &rttZ, &jitterA, &jitterZ, &lossA, &lossZ,
 			&s.Samples); err != nil {
-			slog.Error("link latency scan error", "error", err)
+			logError("link latency scan error", "error", err)
 			break
 		}
 		if rttA != nil && !math.IsNaN(*rttA) {
@@ -317,7 +316,7 @@ func (a *API) GetLinkLatencyData(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(LinkLatencySummaryResponse{
 		Links: links,
 	}); err != nil {
-		slog.Error("failed to encode link latency response", "error", err)
+		logError("failed to encode link latency response", "error", err)
 	}
 }
 
@@ -397,7 +396,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 		metrics.RecordClickHouseQuery(duration, err)
 
 		if err != nil {
-			slog.Error("aggregate latency query error", "error", err, "duration", duration)
+			logError("aggregate latency query error", "error", err, "duration", duration)
 			http.Error(w, "query failed", http.StatusInternalServerError)
 			return
 		}
@@ -417,7 +416,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 				&row.avgRtt, &row.p95Rtt, &row.p99Rtt, &row.maxRtt,
 				&row.avgJitter, &row.p95Jitter, &row.p99Jitter, &row.maxJitter,
 				&row.avgLoss, &row.maxLoss); err != nil {
-				slog.Error("aggregate latency scan error", "error", err)
+				logError("aggregate latency scan error", "error", err)
 				break
 			}
 
@@ -501,7 +500,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
-		slog.Error("multi-link latency query error", "error", err, "duration", duration)
+		logError("multi-link latency query error", "error", err, "duration", duration)
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
@@ -523,7 +522,7 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 			p.LinkCode = "All Links"
 		}
 		if scanErr != nil {
-			slog.Error("multi-link latency scan error", "error", scanErr)
+			logError("multi-link latency scan error", "error", scanErr)
 			break
 		}
 
@@ -553,6 +552,6 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 	if err := json.NewEncoder(w).Encode(MultiLinkLatencyResponse{
 		Points: points,
 	}); err != nil {
-		slog.Error("failed to encode multi-link latency response", "error", err)
+		logError("failed to encode multi-link latency response", "error", err)
 	}
 }

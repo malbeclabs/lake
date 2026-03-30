@@ -381,7 +381,7 @@ func (a *API) GetDeviceIncidents(w http.ResponseWriter, r *http.Request) {
 
 	allIncidents, err := fetchDeviceIncidentsFromRollup(ctx, a.envDB(ctx), params)
 	if err != nil {
-		slog.Error("failed to fetch device incidents", "error", err)
+		logError("failed to fetch device incidents", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to fetch device incidents: %v", err), http.StatusInternalServerError)
 		return
 	}

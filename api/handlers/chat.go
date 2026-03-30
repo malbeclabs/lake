@@ -127,7 +127,7 @@ func (a *API) Chat(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		slog.Error("ANTHROPIC_API_KEY is not set")
+		logError("ANTHROPIC_API_KEY is not set")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ChatResponse{Error: "AI service is not configured. Please contact the administrator."})
 		return
@@ -305,7 +305,7 @@ func (a *API) ChatStream(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		slog.Error("Failed to check quota", "error", err)
+		logError("Failed to check quota", "error", err)
 		// Continue without quota check on other errors
 	} else if remaining != nil && *remaining <= 0 {
 		// Quota exceeded - return error before setting SSE headers
@@ -335,7 +335,7 @@ func (a *API) ChatStream(w http.ResponseWriter, r *http.Request) {
 		`, sessionUUID).Scan(&accountID, &anonymousID)
 
 		if err != nil && err.Error() != "no rows in result set" {
-			slog.Error("Failed to check session ownership", "session_id", req.SessionID, "error", err)
+			logError("Failed to check session ownership", "session_id", req.SessionID, "error", err)
 			http.Error(w, "Failed to verify session ownership", http.StatusInternalServerError)
 			return
 		}
@@ -386,7 +386,7 @@ func (a *API) ChatStream(w http.ResponseWriter, r *http.Request) {
 	sendEvent := func(eventType string, data any) {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
-			slog.Error("Failed to marshal SSE event data", "eventType", eventType, "error", err)
+			logError("Failed to marshal SSE event data", "eventType", eventType, "error", err)
 			// Send an error event instead
 			errorData, _ := json.Marshal(map[string]string{"error": "Failed to serialize response"})
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorData))
@@ -400,14 +400,14 @@ func (a *API) ChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		slog.Error("ANTHROPIC_API_KEY is not set")
+		logError("ANTHROPIC_API_KEY is not set")
 		sendEvent("error", map[string]string{"error": "AI service is not configured. Please contact the administrator."})
 		return
 	}
 
 	// Record usage immediately (before starting workflow to prevent gaming)
 	if err := a.IncrementQuestionCount(ctx, account, ip); err != nil {
-		slog.Error("Failed to record usage", "error", err)
+		logError("Failed to record usage", "error", err)
 		// Continue even on error - don't block the user
 	}
 
@@ -442,7 +442,7 @@ func (a *API) chatStreamV3(ctx context.Context, req ChatRequest, history []workf
 	// Start the workflow in background
 	workflowID, err := a.Manager.StartWorkflow(sessionUUID, req.Message, history, req.Format, env)
 	if err != nil {
-		slog.Error("Failed to start background workflow", "session_id", req.SessionID, "error", err)
+		logError("Failed to start background workflow", "session_id", req.SessionID, "error", err)
 		// Don't expose internal errors to the UI
 		sendEvent("error", map[string]string{"error": "Failed to start workflow. Please try again."})
 		return
@@ -525,7 +525,7 @@ func (a *API) Complete(w http.ResponseWriter, r *http.Request) {
 
 	// Check if we should use Anthropic
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		slog.Error("ANTHROPIC_API_KEY is not set")
+		logError("ANTHROPIC_API_KEY is not set")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(CompleteResponse{Error: "AI service is not configured. Please contact the administrator."})
 		return

@@ -120,7 +120,7 @@ func (a *API) CheckQuota(ctx context.Context, account *Account, ip string) (*int
 	if globalLimit > 0 && !isDomainUser {
 		globalUsage, err := a.GetGlobalUsageToday(ctx)
 		if err != nil {
-			slog.Error("Failed to check global usage", "error", err)
+			logError("Failed to check global usage", "error", err)
 			// Don't block on error, just log
 		} else if globalUsage >= globalLimit {
 			slog.Warn("Global limit exceeded, blocking non-domain user",
@@ -212,7 +212,7 @@ func (a *API) checkAndAlertGlobalUsage(ctx context.Context) {
 
 	total, err := a.GetGlobalUsageToday(ctx)
 	if err != nil {
-		slog.Error("Failed to get global usage for alerting", "error", err)
+		logError("Failed to get global usage for alerting", "error", err)
 		return
 	}
 
@@ -369,13 +369,13 @@ func (a *API) CleanupOldUsageData(ctx context.Context) error {
 // RunCleanupTasks runs all cleanup tasks (call periodically)
 func (a *API) RunCleanupTasks(ctx context.Context) {
 	if err := a.CleanupExpiredSessions(ctx); err != nil {
-		slog.Error("Failed to cleanup expired sessions", "error", err)
+		logError("Failed to cleanup expired sessions", "error", err)
 	}
 	if err := a.CleanupExpiredNonces(ctx); err != nil {
-		slog.Error("Failed to cleanup expired nonces", "error", err)
+		logError("Failed to cleanup expired nonces", "error", err)
 	}
 	if err := a.CleanupOldUsageData(ctx); err != nil {
-		slog.Error("Failed to cleanup old usage data", "error", err)
+		logError("Failed to cleanup old usage data", "error", err)
 	}
 }
 
@@ -403,7 +403,7 @@ func (a *API) InitUsageMetrics(ctx context.Context) {
 	// Set initial daily gauge from database
 	total, err := a.GetGlobalUsageToday(ctx)
 	if err != nil {
-		slog.Error("Failed to get initial global usage", "error", err)
+		logError("Failed to get initial global usage", "error", err)
 		return
 	}
 
