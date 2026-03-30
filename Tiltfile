@@ -119,21 +119,17 @@ k8s_resource('indexer', labels=['app'],
 docker_build(
     'lake-web',
     context='.',
-    dockerfile='k8s/docker/web.Dockerfile',
-    only=['web/', 'k8s/docker/nginx.conf'],
+    dockerfile='k8s/docker/web-dev.Dockerfile',
+    only=['web/'],
     live_update=[
         sync('./web/src', '/app/src'),
         sync('./web/public', '/app/public'),
         sync('./web/index.html', '/app/index.html'),
-        run(
-            'cd /app && bun run build && cp -r dist/* /usr/share/nginx/html/',
-            trigger=['web/src/', 'web/public/', 'web/index.html'],
-        ),
     ],
 )
 
 k8s_resource('web', labels=['app'],
-    port_forwards=[p(5173, 80)])
+    port_forwards=[p(5173, 5173)])
 
 # ---------------------------------------------------------------------------
 # Print port mapping on startup
