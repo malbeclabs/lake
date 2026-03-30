@@ -573,6 +573,28 @@ function formatCount(v: number): string {
   return v.toFixed(0)
 }
 
+function formatRate(v: number): string {
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B/s`
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M/s`
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K/s`
+  if (v >= 1) return `${v.toFixed(1)}/s`
+  if (v > 0) return `${v.toFixed(2)}/s`
+  return '0/s'
+}
+
+function bucketToSeconds(bucket: string): number {
+  const match = bucket.match(/^(\d+)\s+(\w+)$/)
+  if (!match) return 60
+  const n = parseInt(match[1])
+  switch (match[2]) {
+    case 'SECOND': return n
+    case 'MINUTE': return n * 60
+    case 'HOUR': return n * 3600
+    case 'DAY': return n * 86400
+    default: return 60
+  }
+}
+
 function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: {
   groupCode: string
   members: MulticastMember[]
@@ -583,9 +605,11 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
   const [timeRange, setTimeRange] = useState<string>('1h')
   const [metric, setMetric] = useState<ShredMetric>('unique_shreds')
   const [bucket, setBucket] = useState<string>('auto')
+  const [rateMode, setRateMode] = useState(true)
 
   const effectiveBucket = bucket === 'auto' ? resolveAutoBucket(timeRange) : bucket
   const autoBucketLabel = BUCKET_LABELS[resolveAutoBucket(timeRange)] || '5m'
+  const bucketSeconds = bucketToSeconds(effectiveBucket)
 
   const { data: shredData, isFetching } = useQuery({
     queryKey: ['multicast-shred-stats', groupCode, timeRange, effectiveBucket],
@@ -638,7 +662,8 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
         byKey = new Map()
         timeMap.set(p.time, byKey)
       }
-      byKey.set(p.dz_user_pubkey, p[metric] as number)
+      const raw = p[metric] as number
+      byKey.set(p.dz_user_pubkey, rateMode ? raw / bucketSeconds : raw)
     }
 
     const keys = [...keySet].sort()
@@ -652,7 +677,7 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
       uplotData: [timestamps, ...columns] as uPlot.AlignedData,
       seriesKeys: keys,
     }
-  }, [shredData, metric])
+  }, [shredData, metric, rateMode, bucketSeconds])
 
   const legend = useChartLegend()
   const chartContainerRef = useRef<HTMLDivElement>(null)
@@ -739,12 +764,14 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
     return s
   }, [seriesKeys])
 
+  const fmtValue = rateMode ? formatRate : formatCount
+
   const uplotAxes = useMemo((): uPlot.Axis[] => [
     {},
     {
-      values: (_u: uPlot, vals: number[]) => vals.map(v => formatCount(v)),
+      values: (_u: uPlot, vals: number[]) => vals.map(v => rateMode ? formatRate(v) : formatCount(v)),
     },
-  ], [])
+  ], [rateMode])
 
   const chartScales = useMemo((): uPlot.Scales => ({
     x: { time: true },
@@ -867,6 +894,14 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
             {(Object.keys(SHRED_METRIC_LABELS) as ShredMetric[]).map(m => (
               <option key={m} value={m}>{SHRED_METRIC_LABELS[m]}</option>
             ))}
+          </select>
+          <select
+            value={rateMode ? 'rate' : 'total'}
+            onChange={e => setRateMode(e.target.value === 'rate')}
+            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
+          >
+            <option value="rate">Rate (/s)</option>
+            <option value="total">Total</option>
           </select>
           <select
             value={bucket}
@@ -1019,7 +1054,7 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                             <span className="text-muted-foreground ml-2">{info?.code ?? key.slice(0, 8)}</span>
                           </div>
                           <div className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text" title={dzIdLabel}>{dzIdLabel}</div>
-                          <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? formatCount(val) : '—'}</div>
+                          <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
                         </div>
                       )
                     })}
@@ -1669,7 +1704,7 @@ export function MulticastGroupDetailPage() {
 
         <div className="space-y-6">
           {/* Shred stats chart — only for groups with shred stats */}
-          {pk && group && group.has_shred_stats && group.members.length > 0 && (
+          {pk && group && group.has_shred_stats && activeTab === 'publishers' && group.members.length > 0 && (
             <ShredStatsChart
               groupCode={pk}
               members={group.members}
