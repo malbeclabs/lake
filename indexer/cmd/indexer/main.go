@@ -615,15 +615,33 @@ func run() error {
 	// These run lightweight DZ ingest workflows (serviceability + telemetry only).
 	// Enabled by default; disable with --no-devnet / --no-testnet.
 	// Database names default to lake_devnet / lake_testnet but can be overridden via env vars.
-	secondaryEnvs := map[string]string{
-		"devnet":  "lake_devnet",
-		"testnet": "lake_testnet",
+	type secondaryEnvConfig struct {
+		database       string
+		dzLedgerRPCURL string
+	}
+	secondaryEnvs := map[string]secondaryEnvConfig{
+		"devnet":  {database: "lake_devnet"},
+		"testnet": {database: "lake_testnet"},
 	}
 	if db := os.Getenv("CLICKHOUSE_DATABASE_DEVNET"); db != "" {
-		secondaryEnvs["devnet"] = db
+		cfg := secondaryEnvs["devnet"]
+		cfg.database = db
+		secondaryEnvs["devnet"] = cfg
 	}
 	if db := os.Getenv("CLICKHOUSE_DATABASE_TESTNET"); db != "" {
-		secondaryEnvs["testnet"] = db
+		cfg := secondaryEnvs["testnet"]
+		cfg.database = db
+		secondaryEnvs["testnet"] = cfg
+	}
+	if rpcURL := os.Getenv("DZ_LEDGER_RPC_URL_DEVNET"); rpcURL != "" {
+		cfg := secondaryEnvs["devnet"]
+		cfg.dzLedgerRPCURL = rpcURL
+		secondaryEnvs["devnet"] = cfg
+	}
+	if rpcURL := os.Getenv("DZ_LEDGER_RPC_URL_TESTNET"); rpcURL != "" {
+		cfg := secondaryEnvs["testnet"]
+		cfg.dzLedgerRPCURL = rpcURL
+		secondaryEnvs["testnet"] = cfg
 	}
 	if *noDevnetFlag {
 		delete(secondaryEnvs, "devnet")
@@ -631,15 +649,15 @@ func run() error {
 	if *noTestnetFlag {
 		delete(secondaryEnvs, "testnet")
 	}
-	for env, database := range secondaryEnvs {
-		env, database := env, database // capture loop vars
+	for env, envCfg := range secondaryEnvs {
 		go func() {
 			// InfluxDB bucket per network (e.g. doublezero-devnet, doublezero-testnet).
 			secondaryInfluxBucket := "doublezero-" + env
 
 			if err := startSecondaryNetwork(ctx, logger.New(*verboseFlag), env, secondaryNetworkConfig{
 				clickhouseAddr:             *clickhouseAddrFlag,
-				clickhouseDatabase:         database,
+				clickhouseDatabase:         envCfg.database,
+				dzLedgerRPCURL:             envCfg.dzLedgerRPCURL,
 				clickhouseUsername:         *clickhouseUsernameFlag,
 				clickhousePassword:         *clickhousePasswordFlag,
 				clickhouseSecure:           *clickhouseSecureFlag,
@@ -719,6 +737,9 @@ type secondaryNetworkConfig struct {
 	createDatabase     bool
 	skipReadyWait      bool
 
+	// DZ ledger RPC URL override (optional).
+	dzLedgerRPCURL string
+
 	// ISIS configuration (optional).
 	isisS3Bucket string
 	isisS3Region string
@@ -741,6 +762,10 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	networkConfig, err := config.NetworkConfigForEnv(env)
 	if err != nil {
 		return fmt.Errorf("failed to get network config for %s: %w", env, err)
+	}
+
+	if cfg.dzLedgerRPCURL != "" {
+		networkConfig.LedgerPublicRPCURL = cfg.dzLedgerRPCURL
 	}
 
 	// Create database if requested.
