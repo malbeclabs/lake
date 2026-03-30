@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -217,6 +219,10 @@ func (a *API) GetMulticastGroup(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "multicast group not found", http.StatusNotFound)
+			return
+		}
 		logError("multicast group query error", "error", err)
 		http.Error(w, "multicast group not found", http.StatusNotFound)
 		return

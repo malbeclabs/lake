@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -304,6 +306,10 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
+		}
 		logError("device query failed", "error", err, "pk", pk)
 		http.Error(w, "device not found", http.StatusNotFound)
 		return

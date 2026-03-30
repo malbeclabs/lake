@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -294,6 +296,10 @@ func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "gossip node not found", http.StatusNotFound)
+			return
+		}
 		logError("gossip node query failed", "error", err, "pubkey", pubkey)
 		http.Error(w, "gossip node not found", http.StatusNotFound)
 		return

@@ -440,7 +440,6 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			logError("link not found", "error", err, "pk", pk)
 			http.Error(w, "link not found", http.StatusNotFound)
 			return
 		}

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -243,6 +245,10 @@ func (a *API) GetContributor(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "contributor not found", http.StatusNotFound)
+			return
+		}
 		logError("contributor query failed", "error", err, "pk", pk)
 		http.Error(w, "contributor not found", http.StatusNotFound)
 		return

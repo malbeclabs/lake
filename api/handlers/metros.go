@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -222,6 +224,10 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "metro not found", http.StatusNotFound)
+			return
+		}
 		logError("metro query failed", "error", err, "pk", pk)
 		http.Error(w, "metro not found", http.StatusNotFound)
 		return

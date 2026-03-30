@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -145,6 +147,10 @@ func (a *API) GetTenant(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "tenant not found", http.StatusNotFound)
+			return
+		}
 		logError("tenant query failed", "error", err)
 		http.Error(w, "tenant not found", http.StatusNotFound)
 		return

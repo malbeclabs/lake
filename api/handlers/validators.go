@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -436,6 +438,10 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "validator not found", http.StatusNotFound)
+			return
+		}
 		logError("validator query failed", "error", err, "vote_pubkey", votePubkey)
 		http.Error(w, "validator not found", http.StatusNotFound)
 		return
