@@ -330,7 +330,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	var totalPublishers uint64
 	var totalPublisherStake int64
-	err = envDB(ctx).QueryRow(ctx,
+	err = a.envDB(ctx).QueryRow(ctx,
 		`SELECT count(), COALESCE(sum(v.activated_stake_lamports), 0)
 		 FROM dz_users_current u
 		 LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
