@@ -245,7 +245,11 @@ func (v *View) Refresh(ctx context.Context) error {
 
 	// Refresh vote account activity (sampled every minute)
 	if err := v.RefreshVoteAccountActivity(ctx); err != nil {
-		v.log.Error("solana: failed to refresh vote account activity", "error", err)
+		if errors.Is(err, context.Canceled) {
+			v.log.Warn("solana: vote account activity refresh cancelled", "error", err)
+		} else {
+			v.log.Error("solana: failed to refresh vote account activity", "error", err)
+		}
 		// Don't fail the entire refresh if vote account activity fails
 	}
 
