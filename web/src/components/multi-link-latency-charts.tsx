@@ -225,6 +225,10 @@ export function MultiLinkLatencyCharts({
   ], [])
 
   // Compute fixed x-axis range from timeRange so the chart always spans the full period
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    setNowSeconds(Math.floor(Date.now() / 1000))
+  }, [timeRange])
   const xRange = useMemo((): [number, number] | null => {
     if (filters?.start_time && filters?.end_time) {
       return [Number(filters.start_time), Number(filters.end_time)]
@@ -235,9 +239,8 @@ export function MultiLinkLatencyCharts({
     }
     const secs = durations[timeRange]
     if (!secs) return null
-    const now = Math.floor(Date.now() / 1000)
-    return [now - secs, now]
-  }, [timeRange, filters?.start_time, filters?.end_time])
+    return [nowSeconds - secs, nowSeconds]
+  }, [timeRange, filters?.start_time, filters?.end_time, nowSeconds])
 
   const chartScales = useMemo((): uPlot.Scales => ({
     x: { time: true, ...(xRange ? { min: xRange[0], max: xRange[1] } : {}) },
