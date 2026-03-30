@@ -49,6 +49,9 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	for iteration < continueAsNewThreshold {
 		// Solana validator state must run first — GeoIP depends on gossip IPs.
 		if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshSolana).Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Error("solana refresh failed", "error", err)
 		}
 
@@ -68,15 +71,24 @@ func SolIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		}
 
 		if err := geoipFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Error("geoip refresh failed", "error", err)
 		}
 		if blockProdFuture != nil {
 			if err := blockProdFuture.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				logger.Error("block production refresh failed", "error", err)
 			}
 		}
 		if validatorsAppFuture != nil {
 			if err := validatorsAppFuture.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				logger.Error("validatorsapp refresh failed", "error", err)
 			}
 		}

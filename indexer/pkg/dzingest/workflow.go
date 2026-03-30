@@ -46,6 +46,9 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		// Serviceability must run first — other activities depend on its
 		// ClickHouse state (device/link/user dimension tables).
 		if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshServiceability).Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Error("serviceability refresh failed", "error", err)
 		}
 
@@ -61,16 +64,28 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		}
 
 		if err := telemLatencyFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Error("telemetry latency refresh failed", "error", err)
 		}
 		if err := isisSyncFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Error("isis sync failed", "error", err)
 		}
 		if err := graphSyncFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			logger.Error("graph sync failed", "error", err)
 		}
 		if telemUsageFuture != nil {
 			if err := telemUsageFuture.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				logger.Error("telemetry usage refresh failed", "error", err)
 			}
 		}

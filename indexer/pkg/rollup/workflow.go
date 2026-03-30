@@ -66,10 +66,14 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 // so the workflow loop continues on failure.
 func runIteration(ctx temporalworkflow.Context, logger log.Logger, window BackfillChunkInput) {
 	if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupLinks, window).Get(ctx, nil); err != nil {
-		logger.Error("link rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+		if ctx.Err() == nil {
+			logger.Error("link rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+		}
 	}
 	if err := temporalworkflow.ExecuteActivity(ctx, (*Activities).RollupDeviceInterfaces, window).Get(ctx, nil); err != nil {
-		logger.Error("device interface rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+		if ctx.Err() == nil {
+			logger.Error("device interface rollup failed", "error", err, "window_start", window.WindowStart, "window_end", window.WindowEnd)
+		}
 	}
 }
 
