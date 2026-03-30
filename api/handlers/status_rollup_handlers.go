@@ -645,7 +645,7 @@ func (a *API) fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.
 			sum(r.carrier_transitions) as carrier_transitions,
 			formatDateTime(min(r.bucket_ts), '%%Y-%%m-%%dT%%H:%%i:%%sZ', 'UTC') as first_seen,
 			formatDateTime(max(r.bucket_ts), '%%Y-%%m-%%dT%%H:%%i:%%sZ', 'UTC') as last_seen
-		FROM device_interface_rollup_5m FINAL r
+		FROM device_interface_rollup_5m r FINAL
 		JOIN dz_devices_current d ON r.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current contrib ON d.contributor_pk = contrib.pk
