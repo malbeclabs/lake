@@ -153,11 +153,6 @@ function getStatusReasons(status: StatusResponse): string[] {
     reasons.push(`${devicesWithIssues} device${devicesWithIssues > 1 ? 's' : ''} with interface issues`)
   }
 
-  if (status.performance.avg_loss_percent >= 1.0) {
-    reasons.push(`${status.performance.avg_loss_percent.toFixed(1)}% average packet loss`)
-  } else if (status.performance.avg_loss_percent >= 0.1) {
-    reasons.push(`${status.performance.avg_loss_percent.toFixed(2)}% packet loss detected`)
-  }
 
   const nonActivatedDevices = Object.entries(status.network.devices_by_status)
     .filter(([s]) => s !== 'activated')
