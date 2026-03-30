@@ -360,6 +360,14 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
           <h3 className="text-sm font-medium text-muted-foreground">
             Traffic ({activeTab})
           </h3>
+          <div className="relative group/info flex-shrink-0">
+            <Info className="h-3.5 w-3.5 text-muted-foreground/50 group-hover/info:text-muted-foreground cursor-help" />
+            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 hidden group-hover/info:block z-50 pointer-events-none">
+              <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-3 py-2 text-xs leading-relaxed w-64 shadow-md">
+                Traffic is measured per tunnel and does not distinguish between multicast groups. If a member publishes or subscribes on multiple groups, their traffic will look similar across each group.
+              </div>
+            </div>
+          </div>
           {isFetching ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : (
