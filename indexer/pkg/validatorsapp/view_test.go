@@ -60,7 +60,7 @@ func TestView_Ready(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(context.Background())
+		_, err = view.Refresh(context.Background())
 		require.NoError(t, err)
 		require.True(t, view.Ready(), "view should be ready after successful refresh")
 	})
@@ -114,7 +114,7 @@ func TestView_Refresh(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(context.Background())
+		_, err = view.Refresh(context.Background())
 		require.NoError(t, err)
 
 		// Verify data was written
@@ -153,7 +153,7 @@ func TestView_Refresh(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(context.Background())
+		_, err = view.Refresh(context.Background())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "rejecting empty validator response")
 		require.False(t, view.Ready(), "view should not be ready after empty response")
@@ -177,7 +177,7 @@ func TestView_Refresh(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(context.Background())
+		_, err = view.Refresh(context.Background())
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "API rate limited")
 		require.False(t, view.Ready(), "view should not be ready after API error")

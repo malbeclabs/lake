@@ -109,7 +109,7 @@ func TestLake_Solana_View_Ready(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		require.True(t, view.Ready(), "view should be ready after successful refresh")
@@ -134,7 +134,7 @@ func TestLake_Solana_View_WaitReady(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		err = view.WaitReady(ctx)
@@ -243,7 +243,7 @@ func TestLake_Solana_View_Refresh(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify data was inserted by querying the database
@@ -381,7 +381,7 @@ func TestLake_Solana_View_Refresh(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify gossip nodes are still stored
@@ -450,7 +450,7 @@ func TestLake_Solana_View_RefreshBlockProduction(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.RefreshBlockProduction(ctx)
+		_, err = view.RefreshBlockProduction(ctx)
 		require.NoError(t, err)
 
 		// Verify block production was stored
@@ -511,7 +511,7 @@ func TestLake_Solana_View_RefreshBlockProduction(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.RefreshBlockProduction(ctx)
+		_, err = view.RefreshBlockProduction(ctx)
 		require.NoError(t, err)
 
 		// Verify no data was stored (table may not exist if no data was inserted)
@@ -578,7 +578,7 @@ func TestLake_Solana_View_RefreshBlockProduction(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.RefreshBlockProduction(ctx)
+		_, err = view.RefreshBlockProduction(ctx)
 		require.NoError(t, err)
 
 		// Verify no data was stored (table may not exist if no data was inserted)
@@ -634,7 +634,7 @@ func TestLake_Solana_View_RefreshBlockProduction(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.RefreshBlockProduction(ctx)
+		_, err = view.RefreshBlockProduction(ctx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to get epoch info")
 	})

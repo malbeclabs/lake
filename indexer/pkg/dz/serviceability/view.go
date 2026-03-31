@@ -13,6 +13,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
@@ -242,7 +243,7 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if err := v.Refresh(ctx); err != nil {
+	if _, err := v.Refresh(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -250,9 +251,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}
 }
 
-func (v *View) Refresh(ctx context.Context) error {
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
+
+	var result ingestionlog.RefreshResult
 
 	refreshStart := time.Now()
 	v.log.Debug("serviceability: refresh started", "start_time", refreshStart)
@@ -267,7 +270,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	pd, err := v.cfg.ServiceabilityRPC.GetProgramData(ctx)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("serviceability", "error").Inc()
-		return err
+		return result, err
 	}
 
 	v.log.Debug("serviceability: fetched program data",
@@ -283,15 +286,15 @@ func (v *View) Refresh(ctx context.Context) error {
 	// Check each independently since they're written separately with MissingMeansDeleted=true.
 	if len(pd.Contributors) == 0 {
 		metrics.ViewRefreshTotal.WithLabelValues("serviceability", "error").Inc()
-		return fmt.Errorf("refusing to write snapshot: RPC returned no contributors (possible RPC issue)")
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no contributors (possible RPC issue)")
 	}
 	if len(pd.Devices) == 0 {
 		metrics.ViewRefreshTotal.WithLabelValues("serviceability", "error").Inc()
-		return fmt.Errorf("refusing to write snapshot: RPC returned no devices (possible RPC issue)")
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no devices (possible RPC issue)")
 	}
 	if len(pd.Exchanges) == 0 {
 		metrics.ViewRefreshTotal.WithLabelValues("serviceability", "error").Inc()
-		return fmt.Errorf("refusing to write snapshot: RPC returned no metros (possible RPC issue)")
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no metros (possible RPC issue)")
 	}
 
 	contributors := convertContributors(pd.Contributors)
@@ -305,32 +308,35 @@ func (v *View) Refresh(ctx context.Context) error {
 	fetchedAt := time.Now().UTC()
 
 	if err := v.store.ReplaceContributors(ctx, contributors); err != nil {
-		return fmt.Errorf("failed to replace contributors: %w", err)
+		return result, fmt.Errorf("failed to replace contributors: %w", err)
 	}
 
 	if err := v.store.ReplaceDevices(ctx, devices); err != nil {
-		return fmt.Errorf("failed to replace devices: %w", err)
+		return result, fmt.Errorf("failed to replace devices: %w", err)
 	}
 
 	if err := v.store.ReplaceUsers(ctx, users); err != nil {
-		return fmt.Errorf("failed to replace users: %w", err)
+		return result, fmt.Errorf("failed to replace users: %w", err)
 	}
 
 	if err := v.store.ReplaceMetros(ctx, metros); err != nil {
-		return fmt.Errorf("failed to replace metros: %w", err)
+		return result, fmt.Errorf("failed to replace metros: %w", err)
 	}
 
 	if err := v.store.ReplaceLinks(ctx, links); err != nil {
-		return fmt.Errorf("failed to replace links: %w", err)
+		return result, fmt.Errorf("failed to replace links: %w", err)
 	}
 
 	if err := v.store.ReplaceMulticastGroups(ctx, multicastGroups); err != nil {
-		return fmt.Errorf("failed to replace multicast groups: %w", err)
+		return result, fmt.Errorf("failed to replace multicast groups: %w", err)
 	}
 
 	if err := v.store.ReplaceTenants(ctx, tenants); err != nil {
-		return fmt.Errorf("failed to replace tenants: %w", err)
+		return result, fmt.Errorf("failed to replace tenants: %w", err)
 	}
+
+	result.RowsAffected = int64(len(contributors) + len(devices) + len(users) + len(metros) + len(links) + len(multicastGroups) + len(tenants))
+	result.SourceMaxEventTS = &fetchedAt
 
 	v.fetchedAt = fetchedAt
 	v.readyOnce.Do(func() {
@@ -340,7 +346,7 @@ func (v *View) Refresh(ctx context.Context) error {
 
 	v.log.Debug("serviceability: refresh completed", "fetched_at", fetchedAt)
 	metrics.ViewRefreshTotal.WithLabelValues("serviceability", "success").Inc()
-	return nil
+	return result, nil
 }
 
 func convertContributors(onchain []serviceability.Contributor) []Contributor {

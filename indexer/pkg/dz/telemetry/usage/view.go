@@ -14,6 +14,7 @@ import (
 	"github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
@@ -181,7 +182,7 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if err := v.Refresh(ctx); err != nil {
+	if _, err := v.Refresh(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -189,7 +190,9 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}
 }
 
-func (v *View) Refresh(ctx context.Context) error {
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	var result ingestionlog.RefreshResult
+
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
 
@@ -204,7 +207,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	maxTime, err := v.store.GetMaxTimestamp(ctx)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
-		return fmt.Errorf("failed to get max timestamp: %w", err)
+		return result, fmt.Errorf("failed to get max timestamp: %w", err)
 	}
 	if maxTime != nil {
 		v.log.Debug("telemetry/usage: found max timestamp", "max_time", maxTime.UTC())
@@ -252,7 +255,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	chDuration := time.Since(chStart)
 	if err != nil {
 		v.log.Warn("telemetry/usage: failed to query baseline counters from clickhouse", "error", err, "duration", chDuration.String())
-		return fmt.Errorf("failed to query baseline counters from clickhouse: %w", err)
+		return result, fmt.Errorf("failed to query baseline counters from clickhouse: %w", err)
 	} else {
 		totalKeys := v.countUniqueBaselineKeys(chBaselines)
 		if totalKeys > 0 {
@@ -274,7 +277,7 @@ func (v *View) Refresh(ctx context.Context) error {
 		influxDuration := time.Since(influxStart)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
-				return err
+				return result, err
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				v.log.Warn("telemetry/usage: baseline query timed out, proceeding without baselines", "duration", influxDuration.String())
@@ -326,10 +329,10 @@ func (v *View) Refresh(ctx context.Context) error {
 	usage, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return err
+			return result, err
 		}
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
-		return fmt.Errorf("failed to query influxdb: %w", err)
+		return result, fmt.Errorf("failed to query influxdb: %w", err)
 	}
 
 	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", now)
@@ -341,13 +344,13 @@ func (v *View) Refresh(ctx context.Context) error {
 			v.log.Info("telemetry/usage: view is now ready (no data)")
 		})
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "success").Inc()
-		return nil
+		return result, nil
 	}
 
 	insertStart := time.Now()
 	if err := v.store.InsertInterfaceUsage(ctx, usage); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
-		return fmt.Errorf("failed to insert interface usage data to clickhouse: %w", err)
+		return result, fmt.Errorf("failed to insert interface usage data to clickhouse: %w", err)
 	}
 	insertDuration := time.Since(insertStart)
 	v.log.Info("telemetry/usage: inserted data to clickhouse", "rows", len(usage), "duration", insertDuration.String())
@@ -357,8 +360,12 @@ func (v *View) Refresh(ctx context.Context) error {
 		v.log.Info("telemetry/usage: view is now ready")
 	})
 
+	now2 := v.cfg.Clock.Now()
+	result.RowsAffected = int64(len(usage))
+	result.SourceMaxEventTS = &now2
+
 	metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "success").Inc()
-	return nil
+	return result, nil
 }
 
 // LinkInfo holds link information for a device/interface

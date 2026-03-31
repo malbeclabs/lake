@@ -390,7 +390,7 @@ func TestLake_TelemetryUsage_View_Ready(t *testing.T) {
 
 		require.False(t, view.Ready())
 
-		err = view.Refresh(t.Context())
+		_, err = view.Refresh(t.Context())
 		require.NoError(t, err)
 
 		require.True(t, view.Ready())
@@ -424,7 +424,7 @@ func TestLake_TelemetryUsage_View_WaitReady(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(t.Context())
+		_, err = view.Refresh(t.Context())
 		require.NoError(t, err)
 
 		// Should return immediately

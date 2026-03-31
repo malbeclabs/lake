@@ -10,6 +10,7 @@ import (
 
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
@@ -123,7 +124,7 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if err := v.Refresh(ctx); err != nil {
+	if _, err := v.Refresh(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -132,7 +133,8 @@ func (v *View) safeRefresh(ctx context.Context) {
 }
 
 // Refresh fetches validators from the API and writes them to ClickHouse.
-func (v *View) Refresh(ctx context.Context) error {
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	var result ingestionlog.RefreshResult
 	refreshStart := time.Now()
 	v.log.Debug("validatorsapp: refresh started")
 	defer func() {
@@ -144,17 +146,17 @@ func (v *View) Refresh(ctx context.Context) error {
 	validators, err := v.cfg.Client.GetValidators(ctx)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("validatorsapp", "error").Inc()
-		return fmt.Errorf("failed to get validators: %w", err)
+		return result, fmt.Errorf("failed to get validators: %w", err)
 	}
 
 	if len(validators) == 0 {
 		metrics.ViewRefreshTotal.WithLabelValues("validatorsapp", "error").Inc()
-		return fmt.Errorf("rejecting empty validator response")
+		return result, fmt.Errorf("rejecting empty validator response")
 	}
 
 	if err := v.store.ReplaceValidators(ctx, validators); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("validatorsapp", "error").Inc()
-		return fmt.Errorf("failed to replace validators: %w", err)
+		return result, fmt.Errorf("failed to replace validators: %w", err)
 	}
 
 	v.readyOnce.Do(func() {
@@ -162,6 +164,7 @@ func (v *View) Refresh(ctx context.Context) error {
 		v.log.Info("validatorsapp: view is now ready")
 	})
 
+	result.RowsAffected = int64(len(validators))
 	metrics.ViewRefreshTotal.WithLabelValues("validatorsapp", "success").Inc()
-	return nil
+	return result, nil
 }

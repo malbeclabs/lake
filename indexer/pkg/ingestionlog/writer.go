@@ -30,6 +30,21 @@ func NewWriter(inserter Inserter, log *slog.Logger) *Writer {
 	return &Writer{inserter: inserter, log: log}
 }
 
+// RefreshResult holds metadata about a refresh/ingestion operation.
+// Views populate whichever fields are meaningful for their data source.
+type RefreshResult struct {
+	// RowsAffected is the number of rows written to ClickHouse.
+	RowsAffected int64
+
+	// SourceMinEventTS is the earliest source timestamp in the ingested batch.
+	// Nil when not applicable (e.g. snapshot-based views with no source timestamps).
+	SourceMinEventTS *time.Time
+
+	// SourceMaxEventTS is the latest source timestamp in the ingested batch.
+	// For snapshot-based views, this is typically the fetchedAt time.
+	SourceMaxEventTS *time.Time
+}
+
 // record writes a single ingestion run to ClickHouse. Errors are logged but
 // never returned — ingestion logs must not interfere with data ingestion.
 func (w *Writer) record(rec runRecord) {
@@ -38,8 +53,9 @@ func (w *Writer) record(rec runRecord) {
 	}
 
 	query := `INSERT INTO log_ingestion_runs
-		(run_id, workflow, activity, network, status, started_at, finished_at, duration_ms, rows_affected, error_message)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		(run_id, workflow, activity, network, status, started_at, finished_at, duration_ms,
+		 rows_affected, error_message, source_min_event_ts, source_max_event_ts)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	// Use a detached context so the insert isn't cancelled if the activity
 	// context is done (e.g. during shutdown).
@@ -57,6 +73,8 @@ func (w *Writer) record(rec runRecord) {
 		rec.DurationMs,
 		rec.RowsAffected,
 		rec.ErrorMessage,
+		rec.SourceMinEventTS,
+		rec.SourceMaxEventTS,
 	); err != nil {
 		w.log.Warn("ingestionlog: failed to write run record",
 			"workflow", rec.Workflow,
@@ -68,29 +86,35 @@ func (w *Writer) record(rec runRecord) {
 
 // runRecord is the internal representation of an ingestion run log entry.
 type runRecord struct {
-	RunID        uuid.UUID
-	Workflow     string
-	Activity     string
-	Network      string
-	Status       string
-	StartedAt    time.Time
-	FinishedAt   time.Time
-	DurationMs   uint64
-	RowsAffected *int64
-	ErrorMessage *string
+	RunID            uuid.UUID
+	Workflow         string
+	Activity         string
+	Network          string
+	Status           string
+	StartedAt        time.Time
+	FinishedAt       time.Time
+	DurationMs       uint64
+	RowsAffected     *int64
+	ErrorMessage     *string
+	SourceMinEventTS *time.Time
+	SourceMaxEventTS *time.Time
 }
 
-func buildRecord(workflow, activity, network string, start time.Time, rowsAffected *int64, err error) runRecord {
+func buildRecord(workflow, activity, network string, start time.Time, result RefreshResult, err error) runRecord {
 	now := time.Now()
 	rec := runRecord{
-		RunID:        uuid.New(),
-		Workflow:     workflow,
-		Activity:     activity,
-		Network:      network,
-		StartedAt:    start,
-		FinishedAt:   now,
-		DurationMs:   uint64(now.Sub(start).Milliseconds()),
-		RowsAffected: rowsAffected,
+		RunID:            uuid.New(),
+		Workflow:         workflow,
+		Activity:         activity,
+		Network:          network,
+		StartedAt:        start,
+		FinishedAt:       now,
+		DurationMs:       uint64(now.Sub(start).Milliseconds()),
+		SourceMinEventTS: result.SourceMinEventTS,
+		SourceMaxEventTS: result.SourceMaxEventTS,
+	}
+	if result.RowsAffected > 0 {
+		rec.RowsAffected = &result.RowsAffected
 	}
 	if err != nil {
 		rec.Status = "error"
@@ -104,27 +128,15 @@ func buildRecord(workflow, activity, network string, start time.Time, rowsAffect
 
 // Wrap executes fn and records the result as an ingestion log entry.
 // If w is nil, fn is called directly without recording.
-func (w *Writer) Wrap(ctx context.Context, workflow, activity, network string, fn func() error) error {
+func (w *Writer) Wrap(ctx context.Context, workflow, activity, network string, fn func() (RefreshResult, error)) error {
 	if w == nil {
-		return fn()
+		_, err := fn()
+		return err
 	}
 	start := time.Now()
-	err := fn()
-	w.record(buildRecord(workflow, activity, network, start, nil, err))
+	result, err := fn()
+	w.record(buildRecord(workflow, activity, network, start, result, err))
 	return err
-}
-
-// WrapWithCount executes fn (which returns a count) and records the result.
-// The count is stored as rows_affected. If w is nil, fn is called directly.
-func (w *Writer) WrapWithCount(ctx context.Context, workflow, activity, network string, fn func() (int, error)) (int, error) {
-	if w == nil {
-		return fn()
-	}
-	start := time.Now()
-	count, err := fn()
-	rows := int64(count)
-	w.record(buildRecord(workflow, activity, network, start, &rows, err))
-	return count, err
 }
 
 // WrapSkipped records a skipped activity (dependency not configured).

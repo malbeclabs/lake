@@ -65,7 +65,7 @@ func TestLake_Serviceability_View_Ready(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		require.True(t, view.Ready(), "view should be ready after successful refresh")
@@ -90,7 +90,7 @@ func TestLake_Serviceability_View_WaitReady(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		err = view.WaitReady(ctx)
@@ -521,7 +521,7 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify contributors were stored by querying the database
@@ -685,7 +685,7 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify users are still stored even without geoip
@@ -732,7 +732,7 @@ func TestLake_Serviceability_View_Refresh(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "refusing to write snapshot")
 	})

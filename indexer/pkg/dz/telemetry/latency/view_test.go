@@ -300,7 +300,7 @@ func TestLake_TelemetryLatency_View_Refresh_SavesToDB(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Now set up telemetry view
@@ -321,7 +321,7 @@ func TestLake_TelemetryLatency_View_Refresh_SavesToDB(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify samples were saved (if any telemetry data was returned)
@@ -416,7 +416,7 @@ func TestLake_TelemetryLatency_View_Refresh_SavesToDB(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Set up telemetry RPC to return samples
@@ -452,7 +452,7 @@ func TestLake_TelemetryLatency_View_Refresh_SavesToDB(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify samples were saved
@@ -573,7 +573,7 @@ func TestLake_TelemetryLatency_View_Refresh_SavesToDB(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify we can read devices back by querying the database directly
@@ -756,7 +756,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Set up telemetry RPC to return samples with NextSampleIndex
@@ -826,7 +826,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		require.NoError(t, err)
 
 		// First refresh: should insert 3 samples
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		var sampleCount uint64
@@ -852,7 +852,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		require.Equal(t, int32(2), maxIdx, "max sample_index should be 2 after first refresh")
 
 		// Second refresh: should append only the 2 new samples (indices 3-4)
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		conn, err = db.Conn(ctx)
@@ -968,7 +968,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Set up telemetry RPC to return internet samples with NextSampleIndex
@@ -1028,7 +1028,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		require.NoError(t, err)
 
 		// First refresh: should insert 2 samples
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		var sampleCount uint64
@@ -1054,7 +1054,7 @@ func TestLake_TelemetryLatency_View_IncrementalAppend(t *testing.T) {
 		require.Equal(t, int32(1), maxIdx, "max sample_index should be 1 after first refresh")
 
 		// Second refresh: should append only the 2 new samples (indices 2-3)
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		conn, err = db.Conn(ctx)
@@ -1232,7 +1232,7 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Set up telemetry RPC to return samples
@@ -1269,7 +1269,7 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// First refresh should succeed and insert samples
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify samples were inserted
@@ -1291,7 +1291,7 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 
 		// Second refresh should fail when GetExistingMaxSampleIndices fails
 		// The key behavior is that it should NOT insert all samples when GetExistingMaxSampleIndices fails
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to get existing max indices")
 
@@ -1374,7 +1374,7 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx := context.Background()
-		err = svcView.Refresh(ctx)
+		_, err = svcView.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Set up telemetry RPC to return internet samples
@@ -1419,7 +1419,7 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// First refresh should succeed and insert samples
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify samples were inserted
@@ -1441,7 +1441,7 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 
 		// Second refresh should fail when GetExistingInternetMaxSampleIndices fails
 		// The key behavior is that it should NOT insert all samples when GetExistingInternetMaxSampleIndices fails
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to get existing max indices")
 

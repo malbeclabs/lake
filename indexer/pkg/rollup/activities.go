@@ -765,29 +765,39 @@ func (a *Activities) WriteDeviceInterfaceBuckets(ctx context.Context, buckets []
 // RollupLinks computes link rollup buckets and writes them to ClickHouse in a
 // single activity, avoiding large payloads flowing through Temporal.
 func (a *Activities) RollupLinks(ctx context.Context, input BackfillChunkInput) (int, error) {
-	return a.IngestionLog.WrapWithCount(ctx, "rollup", "RollupLinks", a.Network, func() (int, error) {
+	var count int
+	err := a.IngestionLog.Wrap(ctx, "rollup", "RollupLinks", a.Network, func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
 		buckets, err := a.ComputeLinkRollup(ctx, input)
 		if err != nil {
-			return 0, err
+			return result, err
 		}
 		if err := a.WriteLinkBuckets(ctx, buckets); err != nil {
-			return 0, err
+			return result, err
 		}
-		return len(buckets), nil
+		count = len(buckets)
+		result.RowsAffected = int64(count)
+		return result, nil
 	})
+	return count, err
 }
 
 // RollupDeviceInterfaces computes device interface rollup buckets and writes
 // them to ClickHouse in a single activity.
 func (a *Activities) RollupDeviceInterfaces(ctx context.Context, input BackfillChunkInput) (int, error) {
-	return a.IngestionLog.WrapWithCount(ctx, "rollup", "RollupDeviceInterfaces", a.Network, func() (int, error) {
+	var count int
+	err := a.IngestionLog.Wrap(ctx, "rollup", "RollupDeviceInterfaces", a.Network, func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
 		buckets, err := a.ComputeDeviceInterfaceRollup(ctx, input)
 		if err != nil {
-			return 0, err
+			return result, err
 		}
 		if err := a.WriteDeviceInterfaceBuckets(ctx, buckets); err != nil {
-			return 0, err
+			return result, err
 		}
-		return len(buckets), nil
+		count = len(buckets)
+		result.RowsAffected = int64(count)
+		return result, nil
 	})
+	return count, err
 }

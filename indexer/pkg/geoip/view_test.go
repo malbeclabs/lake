@@ -302,7 +302,7 @@ func TestLake_GeoIP_View_Refresh(t *testing.T) {
 		require.NoError(t, err)
 
 		// Refresh the view
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Verify geoip records were saved
@@ -402,7 +402,7 @@ func TestLake_GeoIP_View_Refresh(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err) // Should succeed even with no data
 
 		require.True(t, view.Ready())
@@ -497,7 +497,7 @@ func TestLake_GeoIP_View_Refresh(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = view.Refresh(ctx)
+		_, err = view.Refresh(ctx)
 		require.NoError(t, err)
 
 		// Should only have one record for 1.1.1.1 (deduplicated)

@@ -24,22 +24,24 @@ type Activities struct {
 // RefreshSolana fetches the latest Solana validator state from RPC
 // and writes it to ClickHouse fact tables.
 func (a *Activities) RefreshSolana(ctx context.Context) error {
-	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshSolana", a.Network, func() error {
-		if err := a.Solana.Refresh(ctx); err != nil {
-			return fmt.Errorf("solana refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshSolana", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.Solana.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("solana refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }
 
 // RefreshBlockProduction fetches Solana block production data from RPC
 // and writes it to ClickHouse fact tables.
 func (a *Activities) RefreshBlockProduction(ctx context.Context) error {
-	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshBlockProduction", a.Network, func() error {
-		if err := a.Solana.RefreshBlockProduction(ctx); err != nil {
-			return fmt.Errorf("block production refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshBlockProduction", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.Solana.RefreshBlockProduction(ctx)
+		if err != nil {
+			return result, fmt.Errorf("block production refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }
 
@@ -50,11 +52,12 @@ func (a *Activities) RefreshGeoIP(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "solingest", "RefreshGeoIP", a.Network)
 		return nil
 	}
-	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshGeoIP", a.Network, func() error {
-		if err := a.GeoIP.Refresh(ctx); err != nil {
-			return fmt.Errorf("geoip refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshGeoIP", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.GeoIP.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("geoip refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }
 
@@ -65,10 +68,11 @@ func (a *Activities) RefreshValidatorsApp(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "solingest", "RefreshValidatorsApp", a.Network)
 		return nil
 	}
-	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshValidatorsApp", a.Network, func() error {
-		if err := a.ValidatorsApp.Refresh(ctx); err != nil {
-			return fmt.Errorf("validatorsapp refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "solingest", "RefreshValidatorsApp", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.ValidatorsApp.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("validatorsapp refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }

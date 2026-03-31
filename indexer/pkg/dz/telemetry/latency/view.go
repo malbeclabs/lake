@@ -14,6 +14,7 @@ import (
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
@@ -138,7 +139,7 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if err := v.Refresh(ctx); err != nil {
+	if _, err := v.Refresh(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -146,7 +147,9 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}
 }
 
-func (v *View) Refresh(ctx context.Context) error {
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	var result ingestionlog.RefreshResult
+
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
 
@@ -164,26 +167,26 @@ func (v *View) Refresh(ctx context.Context) error {
 
 		if err := v.cfg.Serviceability.WaitReady(waitCtx); err != nil {
 			metrics.ViewRefreshTotal.WithLabelValues("telemetry", "error").Inc()
-			return fmt.Errorf("serviceability view not ready: %w", err)
+			return result, fmt.Errorf("serviceability view not ready: %w", err)
 		}
 	}
 
 	devices, err := dzsvc.QueryCurrentDevices(ctx, v.log, v.cfg.ClickHouse)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry", "error").Inc()
-		return fmt.Errorf("failed to query devices: %w", err)
+		return result, fmt.Errorf("failed to query devices: %w", err)
 	}
 
 	links, err := dzsvc.QueryCurrentLinks(ctx, v.log, v.cfg.ClickHouse)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry", "error").Inc()
-		return fmt.Errorf("failed to query links: %w", err)
+		return result, fmt.Errorf("failed to query links: %w", err)
 	}
 
 	// Refresh device-link latency samples
 	if err := v.refreshDeviceLinkTelemetrySamples(ctx, devices, links); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry", "error").Inc()
-		return fmt.Errorf("failed to refresh device-link latency samples: %w", err)
+		return result, fmt.Errorf("failed to refresh device-link latency samples: %w", err)
 	}
 
 	// Refresh internet-metro latency samples if configured
@@ -191,12 +194,12 @@ func (v *View) Refresh(ctx context.Context) error {
 		metros, err := dzsvc.QueryCurrentMetros(ctx, v.log, v.cfg.ClickHouse)
 		if err != nil {
 			metrics.ViewRefreshTotal.WithLabelValues("telemetry", "error").Inc()
-			return fmt.Errorf("failed to query metros: %w", err)
+			return result, fmt.Errorf("failed to query metros: %w", err)
 		}
 
 		if err := v.refreshInternetMetroLatencySamples(ctx, metros); err != nil {
 			metrics.ViewRefreshTotal.WithLabelValues("telemetry", "error").Inc()
-			return fmt.Errorf("failed to refresh internet-metro latency samples: %w", err)
+			return result, fmt.Errorf("failed to refresh internet-metro latency samples: %w", err)
 		}
 	}
 
@@ -207,7 +210,9 @@ func (v *View) Refresh(ctx context.Context) error {
 	})
 
 	metrics.ViewRefreshTotal.WithLabelValues("telemetry", "success").Inc()
-	return nil
+	fetchedAt := time.Now().UTC()
+	result.SourceMaxEventTS = &fetchedAt
+	return result, nil
 }
 
 // Ready returns true if the view has completed at least one successful refresh

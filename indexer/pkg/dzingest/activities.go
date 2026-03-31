@@ -29,22 +29,24 @@ type Activities struct {
 // RefreshServiceability fetches the latest DZ serviceability state from RPC
 // and writes it to ClickHouse dimension tables.
 func (a *Activities) RefreshServiceability(ctx context.Context) error {
-	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshServiceability", a.Network, func() error {
-		if err := a.Serviceability.Refresh(ctx); err != nil {
-			return fmt.Errorf("serviceability refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshServiceability", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.Serviceability.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("serviceability refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }
 
 // RefreshTelemetryLatency fetches device link latency samples from RPC
 // and writes them to ClickHouse fact tables.
 func (a *Activities) RefreshTelemetryLatency(ctx context.Context) error {
-	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryLatency", a.Network, func() error {
-		if err := a.TelemLatency.Refresh(ctx); err != nil {
-			return fmt.Errorf("telemetry latency refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryLatency", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.TelemLatency.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("telemetry latency refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }
 
@@ -55,11 +57,12 @@ func (a *Activities) RefreshTelemetryUsage(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshTelemetryUsage", a.Network)
 		return nil
 	}
-	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryUsage", a.Network, func() error {
-		if err := a.TelemUsage.Refresh(ctx); err != nil {
-			return fmt.Errorf("telemetry usage refresh: %w", err)
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryUsage", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.TelemUsage.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("telemetry usage refresh: %w", err)
 		}
-		return nil
+		return result, nil
 	})
 }
 
@@ -71,13 +74,12 @@ func (a *Activities) SyncGraph(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncGraph", a.Network)
 		return nil
 	}
-	return a.IngestionLog.Wrap(ctx, "dzingest", "SyncGraph", a.Network, func() error {
+	return a.IngestionLog.Wrap(ctx, "dzingest", "SyncGraph", a.Network, func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
 		if a.ISISStore != nil {
-			// ISIS data is already in ClickHouse (written by SyncISIS activity).
-			// Graph store reads it from there.
-			return a.GraphStore.SyncWithISIS(ctx)
+			return result, a.GraphStore.SyncWithISIS(ctx)
 		}
-		return a.GraphStore.Sync(ctx)
+		return result, a.GraphStore.Sync(ctx)
 	})
 }
 
@@ -88,12 +90,13 @@ func (a *Activities) SyncISIS(ctx context.Context) error {
 		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncISIS", a.Network)
 		return nil
 	}
-	return a.IngestionLog.Wrap(ctx, "dzingest", "SyncISIS", a.Network, func() error {
+	return a.IngestionLog.Wrap(ctx, "dzingest", "SyncISIS", a.Network, func() (ingestionlog.RefreshResult, error) {
+		var result ingestionlog.RefreshResult
 		lsps, err := a.fetchISISData(ctx)
 		if err != nil {
-			return fmt.Errorf("isis sync: %w", err)
+			return result, fmt.Errorf("isis sync: %w", err)
 		}
-		return a.ISISStore.Sync(ctx, lsps)
+		return result, a.ISISStore.Sync(ctx, lsps)
 	})
 }
 

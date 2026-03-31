@@ -12,6 +12,7 @@ import (
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
@@ -159,7 +160,7 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if err := v.Refresh(ctx); err != nil {
+	if _, err := v.Refresh(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -176,7 +177,7 @@ func (v *View) safeRefreshBlockProduction(ctx context.Context) {
 		}
 	}()
 
-	if err := v.RefreshBlockProduction(ctx); err != nil {
+	if _, err := v.RefreshBlockProduction(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -184,7 +185,8 @@ func (v *View) safeRefreshBlockProduction(ctx context.Context) {
 	}
 }
 
-func (v *View) Refresh(ctx context.Context) error {
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	var result ingestionlog.RefreshResult
 	refreshStart := time.Now()
 	v.log.Debug("solana: refresh started", "start_time", refreshStart)
 	defer func() {
@@ -200,13 +202,13 @@ func (v *View) Refresh(ctx context.Context) error {
 	epochInfo, err := v.cfg.RPC.GetEpochInfo(ctx, solanarpc.CommitmentFinalized)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("solana", "error").Inc()
-		return fmt.Errorf("failed to get epoch info: %w", err)
+		return result, fmt.Errorf("failed to get epoch info: %w", err)
 	}
 	currentEpoch := epochInfo.Epoch
 
 	leaderSchedule, err := v.cfg.RPC.GetLeaderSchedule(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get leader schedule: %w", err)
+		return result, fmt.Errorf("failed to get leader schedule: %w", err)
 	}
 	leaderScheduleEntries := make([]LeaderScheduleEntry, 0, len(leaderSchedule))
 	for pk, slots := range leaderSchedule {
@@ -220,31 +222,31 @@ func (v *View) Refresh(ctx context.Context) error {
 		Commitment: solanarpc.CommitmentFinalized,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to get vote accounts: %w", err)
+		return result, fmt.Errorf("failed to get vote accounts: %w", err)
 	}
 
 	clusterNodes, err := v.cfg.RPC.GetClusterNodes(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get cluster nodes: %w", err)
+		return result, fmt.Errorf("failed to get cluster nodes: %w", err)
 	}
 
 	v.log.Debug("solana: refreshing leader schedule", "count", len(leaderScheduleEntries))
 	if err := v.store.ReplaceLeaderSchedule(ctx, leaderScheduleEntries, fetchedAt, currentEpoch); err != nil {
-		return fmt.Errorf("failed to refresh leader schedule: %w", err)
+		return result, fmt.Errorf("failed to refresh leader schedule: %w", err)
 	}
 
 	v.log.Debug("solana: refreshing vote accounts", "count", len(voteAccounts.Current))
 	if err := v.store.ReplaceVoteAccounts(ctx, voteAccounts.Current, fetchedAt, currentEpoch); err != nil {
-		return fmt.Errorf("failed to refresh vote accounts: %w", err)
+		return result, fmt.Errorf("failed to refresh vote accounts: %w", err)
 	}
 
 	v.log.Debug("solana: refreshing cluster nodes", "count", len(clusterNodes))
 	if err := v.store.ReplaceGossipNodes(ctx, clusterNodes, fetchedAt, currentEpoch); err != nil {
-		return fmt.Errorf("failed to refresh cluster nodes: %w", err)
+		return result, fmt.Errorf("failed to refresh cluster nodes: %w", err)
 	}
 
 	// Refresh vote account activity (sampled every minute)
-	if err := v.RefreshVoteAccountActivity(ctx); err != nil {
+	if _, err := v.RefreshVoteAccountActivity(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			v.log.Warn("solana: vote account activity refresh cancelled", "error", err)
 		} else {
@@ -261,11 +263,14 @@ func (v *View) Refresh(ctx context.Context) error {
 
 	v.log.Debug("solana: refresh completed", "fetched_at", fetchedAt)
 	metrics.ViewRefreshTotal.WithLabelValues("solana", "success").Inc()
-	return nil
+	result.RowsAffected = int64(len(leaderScheduleEntries) + len(voteAccounts.Current) + len(clusterNodes))
+	result.SourceMaxEventTS = &fetchedAt
+	return result, nil
 }
 
 // RefreshVoteAccountActivity collects and inserts vote account activity data
-func (v *View) RefreshVoteAccountActivity(ctx context.Context) error {
+func (v *View) RefreshVoteAccountActivity(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	var result ingestionlog.RefreshResult
 	refreshStart := time.Now()
 	v.log.Debug("solana: vote account activity refresh started", "start_time", refreshStart)
 	defer func() {
@@ -279,7 +284,7 @@ func (v *View) RefreshVoteAccountActivity(ctx context.Context) error {
 	// Get cluster slot
 	clusterSlot, err := v.cfg.RPC.GetSlot(ctx, solanarpc.CommitmentFinalized)
 	if err != nil {
-		return fmt.Errorf("failed to get cluster slot: %w", err)
+		return result, fmt.Errorf("failed to get cluster slot: %w", err)
 	}
 
 	// Get vote accounts
@@ -287,7 +292,7 @@ func (v *View) RefreshVoteAccountActivity(ctx context.Context) error {
 		Commitment: solanarpc.CommitmentFinalized,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to get vote accounts: %w", err)
+		return result, fmt.Errorf("failed to get vote accounts: %w", err)
 	}
 
 	// Create a map to track delinquent accounts
@@ -355,16 +360,18 @@ func (v *View) RefreshVoteAccountActivity(ctx context.Context) error {
 
 	if len(entries) > 0 {
 		if err := v.store.InsertVoteAccountActivity(ctx, entries); err != nil {
-			return fmt.Errorf("failed to insert vote account activity: %w", err)
+			return result, fmt.Errorf("failed to insert vote account activity: %w", err)
 		}
 		v.log.Debug("solana: inserted vote account activity", "count", len(entries))
 	}
 
-	return nil
+	result.RowsAffected = int64(len(entries))
+	return result, nil
 }
 
 // RefreshBlockProduction collects and inserts block production data
-func (v *View) RefreshBlockProduction(ctx context.Context) error {
+func (v *View) RefreshBlockProduction(ctx context.Context) (ingestionlog.RefreshResult, error) {
+	var result ingestionlog.RefreshResult
 	refreshStart := time.Now()
 	v.log.Debug("solana: block production refresh started", "start_time", refreshStart)
 	defer func() {
@@ -377,7 +384,7 @@ func (v *View) RefreshBlockProduction(ctx context.Context) error {
 	// Get current epoch
 	epochInfo, err := v.cfg.RPC.GetEpochInfo(ctx, solanarpc.CommitmentFinalized)
 	if err != nil {
-		return fmt.Errorf("failed to get epoch info: %w", err)
+		return result, fmt.Errorf("failed to get epoch info: %w", err)
 	}
 	currentEpoch := int(epochInfo.Epoch)
 
@@ -385,16 +392,16 @@ func (v *View) RefreshBlockProduction(ctx context.Context) error {
 	// getBlockProduction returns data for the current or previous epoch
 	blockProduction, err := v.cfg.RPC.GetBlockProduction(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get block production: %w", err)
+		return result, fmt.Errorf("failed to get block production: %w", err)
 	}
 
 	if blockProduction == nil {
-		return fmt.Errorf("block production response is nil")
+		return result, fmt.Errorf("block production response is nil")
 	}
 
 	if blockProduction.Value.ByIdentity == nil {
 		v.log.Debug("solana: block production has no identity data")
-		return nil
+		return result, nil
 	}
 
 	entries := make([]BlockProductionEntry, 0, len(blockProduction.Value.ByIdentity))
@@ -420,10 +427,12 @@ func (v *View) RefreshBlockProduction(ctx context.Context) error {
 
 	if len(entries) > 0 {
 		if err := v.store.InsertBlockProduction(ctx, entries); err != nil {
-			return fmt.Errorf("failed to insert block production: %w", err)
+			return result, fmt.Errorf("failed to insert block production: %w", err)
 		}
 		v.log.Debug("solana: inserted block production", "count", len(entries), "epoch", currentEpoch)
 	}
 
-	return nil
+	result.RowsAffected = int64(len(entries))
+	result.SourceMaxEventTS = &collectionTime
+	return result, nil
 }

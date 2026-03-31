@@ -12,6 +12,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
 )
@@ -124,7 +125,7 @@ func (v *View) safeRefresh(ctx context.Context) {
 		}
 	}()
 
-	if err := v.Refresh(ctx); err != nil {
+	if _, err := v.Refresh(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
@@ -132,9 +133,11 @@ func (v *View) safeRefresh(ctx context.Context) {
 	}
 }
 
-func (v *View) Refresh(ctx context.Context) error {
+func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) {
 	v.refreshMu.Lock()
 	defer v.refreshMu.Unlock()
+
+	var result ingestionlog.RefreshResult
 
 	refreshStart := time.Now()
 	v.log.Debug("geoip: refresh started", "start_time", refreshStart)
@@ -153,7 +156,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	users, err := dzsvc.QueryCurrentUsers(ctx, v.log, v.cfg.ServiceabilityStore.GetClickHouse())
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("geoip", "error").Inc()
-		return fmt.Errorf("failed to get users: %w", err)
+		return result, fmt.Errorf("failed to get users: %w", err)
 	}
 	for _, user := range users {
 		if user.ClientIP != nil {
@@ -165,7 +168,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	gossipIPs, err := v.cfg.SolanaStore.GetGossipIPs(ctx)
 	if err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("geoip", "error").Inc()
-		return fmt.Errorf("failed to get gossip IPs: %w", err)
+		return result, fmt.Errorf("failed to get gossip IPs: %w", err)
 	}
 	for _, ip := range gossipIPs {
 		if ip != nil {
@@ -190,7 +193,7 @@ func (v *View) Refresh(ctx context.Context) error {
 	// Upsert records
 	if err := v.cfg.GeoIPStore.UpsertRecords(ctx, geoipRecords); err != nil {
 		metrics.ViewRefreshTotal.WithLabelValues("geoip", "error").Inc()
-		return fmt.Errorf("failed to update geoip records: %w", err)
+		return result, fmt.Errorf("failed to update geoip records: %w", err)
 	}
 
 	v.fetchedAt = time.Now().UTC()
@@ -199,7 +202,10 @@ func (v *View) Refresh(ctx context.Context) error {
 		v.log.Info("geoip: view is now ready")
 	})
 
+	result.RowsAffected = int64(len(geoipRecords))
+	result.SourceMaxEventTS = &v.fetchedAt
+
 	v.log.Debug("geoip: refresh completed", "fetched_at", v.fetchedAt)
 	metrics.ViewRefreshTotal.WithLabelValues("geoip", "success").Inc()
-	return nil
+	return result, nil
 }
