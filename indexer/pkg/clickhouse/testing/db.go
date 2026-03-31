@@ -136,7 +136,6 @@ func newTestClientInternal(t *testing.T, db *DB) (clickhouse.Client, string, err
 	require.NoError(t, err)
 	err = adminConn.Exec(t.Context(), fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", databaseName))
 	require.NoError(t, err)
-	defer adminConn.Close()
 
 	// Create test client
 	// Retry test client connection/ping up to 3 times for retryable errors
@@ -159,6 +158,7 @@ func newTestClientInternal(t *testing.T, db *DB) (clickhouse.Client, string, err
 		dropCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err = adminConn.Exec(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+		adminConn.Close()
 		require.NoError(t, err)
 		testClient.Close()
 	})
