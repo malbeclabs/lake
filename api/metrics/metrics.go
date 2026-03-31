@@ -191,7 +191,6 @@ var (
 			Help: "Current utilization of global daily limit (0-1, or 0 if unlimited)",
 		},
 	)
-
 )
 
 // Middleware returns a chi middleware that records HTTP metrics.
