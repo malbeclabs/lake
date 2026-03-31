@@ -12,9 +12,7 @@ CREATE TABLE IF NOT EXISTS log_ingestion_runs
     finished_at          DateTime64(3),
     duration_ms          UInt64,
     rows_affected        Nullable(Int64),
-    error_message        Nullable(String),
-    source_min_event_ts  Nullable(DateTime64(3)),
-    source_max_event_ts  Nullable(DateTime64(3))
+    error_message        Nullable(String)
 ) ENGINE = MergeTree
 PARTITION BY toYYYYMM(started_at)
 ORDER BY (workflow, activity, network, started_at)
