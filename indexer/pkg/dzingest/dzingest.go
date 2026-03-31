@@ -6,6 +6,7 @@ package dzingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -120,7 +121,28 @@ func newTemporalLogger(log *slog.Logger) *temporalLogger {
 func (l *temporalLogger) Debug(msg string, keyvals ...any) {} // suppress noisy debug logs
 func (l *temporalLogger) Info(msg string, keyvals ...any)  { l.log.Info(msg, keyvals...) }
 func (l *temporalLogger) Warn(msg string, keyvals ...any)  { l.log.Warn(msg, keyvals...) }
-func (l *temporalLogger) Error(msg string, keyvals ...any) { l.log.Error(msg, keyvals...) }
+func (l *temporalLogger) Error(msg string, keyvals ...any) {
+	if isContextCancellation(keyvals) {
+		l.log.Warn(msg, keyvals...)
+		return
+	}
+	l.log.Error(msg, keyvals...)
+}
+
+// isContextCancellation checks Temporal's key-value log pairs for errors
+// caused by context cancellation (e.g. worker shutdown).
+func isContextCancellation(keyvals []any) bool {
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		if keyvals[i] == "Error" {
+			if err, ok := keyvals[i+1].(error); ok {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 func envOrDefault(key, defaultValue string) string {
 	if v := os.Getenv(key); v != "" {

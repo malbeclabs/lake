@@ -15,11 +15,19 @@ import (
 // disconnecting: context cancellation, deadline exceeded, broken pipe,
 // connection reset, or unexpected EOF.
 func isClientDisconnect(err error) bool {
-	return errors.Is(err, context.Canceled) ||
+	if errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, syscall.EPIPE) ||
 		errors.Is(err, syscall.ECONNRESET) ||
-		errors.Is(err, io.ErrUnexpectedEOF)
+		errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	// Some drivers (e.g. neo4j) wrap context errors without using Go's
+	// standard error wrapping, so errors.Is fails. Fall back to checking
+	// the error message.
+	msg := err.Error()
+	return strings.Contains(msg, "context canceled") ||
+		strings.Contains(msg, "context deadline exceeded")
 }
 
 // logError logs at ERROR level, silently skipping client disconnects.
