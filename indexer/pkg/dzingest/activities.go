@@ -10,11 +10,14 @@ import (
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 )
 
 // Activities holds dependencies for DZ ingest activities.
 type Activities struct {
 	Log            *slog.Logger
+	IngestionLog   *ingestionlog.Writer
+	Network        string
 	Serviceability *dzsvc.View
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // nil when InfluxDB is not configured
@@ -26,31 +29,38 @@ type Activities struct {
 // RefreshServiceability fetches the latest DZ serviceability state from RPC
 // and writes it to ClickHouse dimension tables.
 func (a *Activities) RefreshServiceability(ctx context.Context) error {
-	if err := a.Serviceability.Refresh(ctx); err != nil {
-		return fmt.Errorf("serviceability refresh: %w", err)
-	}
-	return nil
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshServiceability", a.Network, func() error {
+		if err := a.Serviceability.Refresh(ctx); err != nil {
+			return fmt.Errorf("serviceability refresh: %w", err)
+		}
+		return nil
+	})
 }
 
 // RefreshTelemetryLatency fetches device link latency samples from RPC
 // and writes them to ClickHouse fact tables.
 func (a *Activities) RefreshTelemetryLatency(ctx context.Context) error {
-	if err := a.TelemLatency.Refresh(ctx); err != nil {
-		return fmt.Errorf("telemetry latency refresh: %w", err)
-	}
-	return nil
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryLatency", a.Network, func() error {
+		if err := a.TelemLatency.Refresh(ctx); err != nil {
+			return fmt.Errorf("telemetry latency refresh: %w", err)
+		}
+		return nil
+	})
 }
 
 // RefreshTelemetryUsage fetches device interface counters from InfluxDB
 // and writes them to ClickHouse fact tables. No-op if InfluxDB is not configured.
 func (a *Activities) RefreshTelemetryUsage(ctx context.Context) error {
 	if a.TelemUsage == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshTelemetryUsage", a.Network)
 		return nil
 	}
-	if err := a.TelemUsage.Refresh(ctx); err != nil {
-		return fmt.Errorf("telemetry usage refresh: %w", err)
-	}
-	return nil
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryUsage", a.Network, func() error {
+		if err := a.TelemUsage.Refresh(ctx); err != nil {
+			return fmt.Errorf("telemetry usage refresh: %w", err)
+		}
+		return nil
+	})
 }
 
 // SyncGraph syncs the Neo4j topology graph from ClickHouse state.
@@ -58,27 +68,33 @@ func (a *Activities) RefreshTelemetryUsage(ctx context.Context) error {
 // base graph. No-op if Neo4j is not configured.
 func (a *Activities) SyncGraph(ctx context.Context) error {
 	if a.GraphStore == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncGraph", a.Network)
 		return nil
 	}
-	if a.ISISStore != nil {
-		// ISIS data is already in ClickHouse (written by SyncISIS activity).
-		// Graph store reads it from there.
-		return a.GraphStore.SyncWithISIS(ctx)
-	}
-	return a.GraphStore.Sync(ctx)
+	return a.IngestionLog.Wrap(ctx, "dzingest", "SyncGraph", a.Network, func() error {
+		if a.ISISStore != nil {
+			// ISIS data is already in ClickHouse (written by SyncISIS activity).
+			// Graph store reads it from there.
+			return a.GraphStore.SyncWithISIS(ctx)
+		}
+		return a.GraphStore.Sync(ctx)
+	})
 }
 
 // SyncISIS fetches IS-IS topology from S3 and writes adjacency/device data
 // to ClickHouse. Independent of Neo4j. No-op if ISIS is not enabled.
 func (a *Activities) SyncISIS(ctx context.Context) error {
 	if a.ISISSource == nil || a.ISISStore == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "SyncISIS", a.Network)
 		return nil
 	}
-	lsps, err := a.fetchISISData(ctx)
-	if err != nil {
-		return fmt.Errorf("isis sync: %w", err)
-	}
-	return a.ISISStore.Sync(ctx, lsps)
+	return a.IngestionLog.Wrap(ctx, "dzingest", "SyncISIS", a.Network, func() error {
+		lsps, err := a.fetchISISData(ctx)
+		if err != nil {
+			return fmt.Errorf("isis sync: %w", err)
+		}
+		return a.ISISStore.Sync(ctx, lsps)
+	})
 }
 
 func (a *Activities) fetchISISData(ctx context.Context) ([]isis.LSP, error) {

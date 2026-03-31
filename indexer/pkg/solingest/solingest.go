@@ -14,13 +14,15 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/sol"
 	"github.com/malbeclabs/lake/indexer/pkg/validatorsapp"
 )
 
 // Config configures the Solana ingest worker.
 type Config struct {
-	Log *slog.Logger
+	Log          *slog.Logger
+	IngestionLog *ingestionlog.Writer // optional
 
 	// Network identifies the DZ environment (e.g. "mainnet-beta", "testnet", "devnet").
 	// Used to namespace the Temporal task queue and workflow ID.
@@ -61,6 +63,8 @@ func Start(ctx context.Context, cfg Config) error {
 
 	activities := &Activities{
 		Log:           log.With("component", "sol-ingest"),
+		IngestionLog:  cfg.IngestionLog,
+		Network:       cfg.Network,
 		Solana:        cfg.Solana,
 		GeoIP:         cfg.GeoIP,
 		ValidatorsApp: cfg.ValidatorsApp,

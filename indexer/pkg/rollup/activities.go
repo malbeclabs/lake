@@ -8,13 +8,16 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"go.temporal.io/sdk/activity"
 )
 
 // Activities holds dependencies for rollup activities.
 type Activities struct {
-	ClickHouse driver.Conn
-	Log        *slog.Logger
+	ClickHouse   driver.Conn
+	Log          *slog.Logger
+	IngestionLog *ingestionlog.Writer
+	Network      string
 }
 
 // tableRef returns a qualified table reference. If sourceDB is non-empty, the
@@ -762,25 +765,29 @@ func (a *Activities) WriteDeviceInterfaceBuckets(ctx context.Context, buckets []
 // RollupLinks computes link rollup buckets and writes them to ClickHouse in a
 // single activity, avoiding large payloads flowing through Temporal.
 func (a *Activities) RollupLinks(ctx context.Context, input BackfillChunkInput) (int, error) {
-	buckets, err := a.ComputeLinkRollup(ctx, input)
-	if err != nil {
-		return 0, err
-	}
-	if err := a.WriteLinkBuckets(ctx, buckets); err != nil {
-		return 0, err
-	}
-	return len(buckets), nil
+	return a.IngestionLog.WrapWithCount(ctx, "rollup", "RollupLinks", a.Network, func() (int, error) {
+		buckets, err := a.ComputeLinkRollup(ctx, input)
+		if err != nil {
+			return 0, err
+		}
+		if err := a.WriteLinkBuckets(ctx, buckets); err != nil {
+			return 0, err
+		}
+		return len(buckets), nil
+	})
 }
 
 // RollupDeviceInterfaces computes device interface rollup buckets and writes
 // them to ClickHouse in a single activity.
 func (a *Activities) RollupDeviceInterfaces(ctx context.Context, input BackfillChunkInput) (int, error) {
-	buckets, err := a.ComputeDeviceInterfaceRollup(ctx, input)
-	if err != nil {
-		return 0, err
-	}
-	if err := a.WriteDeviceInterfaceBuckets(ctx, buckets); err != nil {
-		return 0, err
-	}
-	return len(buckets), nil
+	return a.IngestionLog.WrapWithCount(ctx, "rollup", "RollupDeviceInterfaces", a.Network, func() (int, error) {
+		buckets, err := a.ComputeDeviceInterfaceRollup(ctx, input)
+		if err != nil {
+			return 0, err
+		}
+		if err := a.WriteDeviceInterfaceBuckets(ctx, buckets); err != nil {
+			return 0, err
+		}
+		return len(buckets), nil
+	})
 }

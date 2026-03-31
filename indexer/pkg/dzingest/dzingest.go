@@ -18,11 +18,13 @@ import (
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 )
 
 // Config configures the DZ ingest worker.
 type Config struct {
-	Log *slog.Logger
+	Log          *slog.Logger
+	IngestionLog *ingestionlog.Writer // optional
 
 	// Network identifies the DZ environment (e.g. "mainnet-beta", "testnet", "devnet").
 	// Used to namespace the Temporal task queue and workflow ID.
@@ -66,6 +68,8 @@ func Start(ctx context.Context, cfg Config) error {
 
 	activities := &Activities{
 		Log:            log.With("component", "dz-ingest"),
+		IngestionLog:   cfg.IngestionLog,
+		Network:        cfg.Network,
 		Serviceability: cfg.Serviceability,
 		TelemLatency:   cfg.TelemLatency,
 		TelemUsage:     cfg.TelemUsage,

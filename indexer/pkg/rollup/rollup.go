@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 )
@@ -88,9 +89,12 @@ func Start(ctx context.Context, cfg Config) error {
 	wfID := workflowID(cfg.Network)
 
 	// Register rollup workflows
+	ingestionLogWriter := ingestionlog.NewWriter(chConn, log)
 	activities := &Activities{
-		ClickHouse: chConn,
-		Log:        log.With("component", "rollup"),
+		ClickHouse:   chConn,
+		Log:          log.With("component", "rollup"),
+		IngestionLog: ingestionLogWriter,
+		Network:      cfg.Network,
 	}
 
 	w := worker.New(tc, tq, worker.Options{})
