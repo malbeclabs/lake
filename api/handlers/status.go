@@ -1459,12 +1459,16 @@ func determineOverallStatus(resp *StatusResponse) string {
 		}
 	}
 
-	// Check performance
-	if resp.Performance.AvgLossPercent >= LossCriticalPct {
-		return "unhealthy"
-	}
-	if resp.Performance.AvgLossPercent >= LossWarningPct {
-		return "degraded"
+	// Check aggregate performance, but only if individual links are actually
+	// degraded or unhealthy. The network average can exceed thresholds due to
+	// a few links with minor loss that individually classify as healthy.
+	if resp.Links.Degraded > 0 || resp.Links.Unhealthy > 0 || resp.Links.Down > 0 {
+		if resp.Performance.AvgLossPercent >= LossCriticalPct {
+			return "unhealthy"
+		}
+		if resp.Performance.AvgLossPercent >= LossWarningPct {
+			return "degraded"
+		}
 	}
 
 	return "healthy"
