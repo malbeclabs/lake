@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -268,6 +270,10 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
 		logError("user query failed", "error", err, "pk", pk)
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
