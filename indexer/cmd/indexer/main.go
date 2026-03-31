@@ -121,6 +121,8 @@ func run() error {
 	noSolIngestFlag := flag.Bool("no-sol-ingest", false, "Disable the embedded Solana ingest worker (Temporal-based raw data collection)")
 	noDevnetFlag := flag.Bool("no-devnet", false, "Disable the devnet secondary network indexer")
 	noTestnetFlag := flag.Bool("no-testnet", false, "Disable the testnet secondary network indexer")
+	noInfluxDevnetFlag := flag.Bool("no-influx-devnet", false, "Disable InfluxDB ingestion for devnet (or set NO_INFLUX_DEVNET=true env var)")
+	noInfluxTestnetFlag := flag.Bool("no-influx-testnet", false, "Disable InfluxDB ingestion for testnet (or set NO_INFLUX_TESTNET=true env var)")
 
 	// Remote tables configuration
 	setupRemoteTablesFlag := flag.Bool("setup-remote-tables", false, "Set up remote proxy tables on startup (or set SETUP_REMOTE_TABLES=true env var)")
@@ -200,6 +202,12 @@ func run() error {
 	// Override mock device usage flag with environment variable if set
 	if os.Getenv("MOCK_DEVICE_USAGE") == "true" {
 		*mockDeviceUsageFlag = true
+	}
+	if os.Getenv("NO_INFLUX_DEVNET") == "true" {
+		*noInfluxDevnetFlag = true
+	}
+	if os.Getenv("NO_INFLUX_TESTNET") == "true" {
+		*noInfluxTestnetFlag = true
 	}
 
 	// For non-mainnet envs, use "lake_<env>" as the ClickHouse database.
@@ -618,6 +626,7 @@ func run() error {
 	type secondaryEnvConfig struct {
 		database       string
 		dzLedgerRPCURL string
+		noInflux       bool
 	}
 	secondaryEnvs := map[string]secondaryEnvConfig{
 		"devnet":  {database: "lake_devnet"},
@@ -643,6 +652,16 @@ func run() error {
 		cfg.dzLedgerRPCURL = rpcURL
 		secondaryEnvs["testnet"] = cfg
 	}
+	if *noInfluxDevnetFlag {
+		cfg := secondaryEnvs["devnet"]
+		cfg.noInflux = true
+		secondaryEnvs["devnet"] = cfg
+	}
+	if *noInfluxTestnetFlag {
+		cfg := secondaryEnvs["testnet"]
+		cfg.noInflux = true
+		secondaryEnvs["testnet"] = cfg
+	}
 	if *noDevnetFlag {
 		delete(secondaryEnvs, "devnet")
 	}
@@ -652,7 +671,15 @@ func run() error {
 	for env, envCfg := range secondaryEnvs {
 		go func() {
 			// InfluxDB bucket per network (e.g. doublezero-devnet, doublezero-testnet).
+			secondaryInfluxURL := influxURL
+			secondaryInfluxToken := influxToken
 			secondaryInfluxBucket := "doublezero-" + env
+			if envCfg.noInflux {
+				log.Info("InfluxDB ingestion disabled for secondary network", "env", env)
+				secondaryInfluxURL = ""
+				secondaryInfluxToken = ""
+				secondaryInfluxBucket = ""
+			}
 
 			if err := startSecondaryNetwork(ctx, logger.New(*verboseFlag), env, secondaryNetworkConfig{
 				clickhouseAddr:             *clickhouseAddrFlag,
@@ -668,8 +695,8 @@ func run() error {
 				skipReadyWait:              *skipReadyWaitFlag,
 				isisS3Bucket:               "doublezero-" + env + "-isis-db",
 				isisS3Region:               *isisS3RegionFlag,
-				influxURL:                  influxURL,
-				influxToken:                influxToken,
+				influxURL:                  secondaryInfluxURL,
+				influxToken:                secondaryInfluxToken,
 				influxBucket:               secondaryInfluxBucket,
 				deviceUsageRefreshInterval: *deviceUsageRefreshIntervalFlag,
 				deviceUsageQueryWindow:     deviceUsageQueryWindow,
