@@ -96,20 +96,17 @@ export function StressPanel() {
         x: {
           time: true,
           range: (() => {
+            const now = Math.floor(Date.now() / 1000)
             if (state.customStart && state.customEnd) {
-              return (_u: uPlot, _dataMin: number, _dataMax: number): [number, number] => {
-                return [state.customStart!, state.customEnd!]
-              }
+              const start = state.customStart, end = state.customEnd
+              return (): uPlot.Range.MinMax => [start, end]
             }
             const map: Record<string, number> = {
               '1h': 3600, '3h': 10800, '6h': 21600, '12h': 43200, '24h': 86400,
               '3d': 259200, '7d': 604800, '14d': 1209600, '30d': 2592000,
             }
             const secs = map[state.timeRange] || 86400
-            const now = Math.floor(Date.now() / 1000)
-            return (_u: uPlot, _dataMin: number, _dataMax: number): [number, number] => {
-              return [now - secs, now]
-            }
+            return (): uPlot.Range.MinMax => [now - secs, now]
           })(),
         },
         y: { auto: true },
