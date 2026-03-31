@@ -1430,10 +1430,12 @@ export interface SingleLinkHistoryResponse {
   bucket_count: number
 }
 
-export async function fetchSingleLinkHistory(linkPk: string, timeRange?: string, buckets?: number): Promise<SingleLinkHistoryResponse> {
+export async function fetchSingleLinkHistory(linkPk: string, timeRange?: string, buckets?: number, startTime?: number, endTime?: number): Promise<SingleLinkHistoryResponse> {
   const params = new URLSearchParams()
   if (timeRange) params.set('range', timeRange)
   if (buckets) params.set('buckets', buckets.toString())
+  if (startTime) params.set('start_time', startTime.toString())
+  if (endTime) params.set('end_time', endTime.toString())
   const url = `/api/status/links/${encodeURIComponent(linkPk)}/history${params.toString() ? '?' + params.toString() : ''}`
   const res = await fetchWithRetry(url)
   if (!res.ok) {
@@ -4864,5 +4866,203 @@ export async function fetchEdgeScoreboard(window: string = '1h'): Promise<EdgeSc
   if (!res.ok) {
     throw new Error('Failed to fetch edge scoreboard')
   }
+  return res.json()
+}
+
+// --- Unified Metrics Types ---
+
+export interface EntityStatusChange {
+  previous_status: string
+  new_status: string
+  changed_ts: string
+}
+
+export interface LinkMetricsStatus {
+  health: string
+  drain_status: string
+  provisioning: boolean
+  isis_down: boolean
+  collecting: boolean
+}
+
+export interface LinkMetricsLatency {
+  a_avg_rtt_us: number
+  a_min_rtt_us: number
+  a_p50_rtt_us: number
+  a_p90_rtt_us: number
+  a_p95_rtt_us: number
+  a_p99_rtt_us: number
+  a_max_rtt_us: number
+  a_loss_pct: number
+  a_samples: number
+  z_avg_rtt_us: number
+  z_min_rtt_us: number
+  z_p50_rtt_us: number
+  z_p90_rtt_us: number
+  z_p95_rtt_us: number
+  z_p99_rtt_us: number
+  z_max_rtt_us: number
+  z_loss_pct: number
+  z_samples: number
+  a_avg_jitter_us: number
+  a_min_jitter_us: number
+  a_p50_jitter_us: number
+  a_p90_jitter_us: number
+  a_p95_jitter_us: number
+  a_p99_jitter_us: number
+  a_max_jitter_us: number
+  z_avg_jitter_us: number
+  z_min_jitter_us: number
+  z_p50_jitter_us: number
+  z_p90_jitter_us: number
+  z_p95_jitter_us: number
+  z_p99_jitter_us: number
+  z_max_jitter_us: number
+}
+
+export interface LinkMetricsTraffic {
+  side_a_in_bps: number
+  side_a_out_bps: number
+  side_z_in_bps: number
+  side_z_out_bps: number
+  side_a_max_in_bps: number
+  side_a_max_out_bps: number
+  side_z_max_in_bps: number
+  side_z_max_out_bps: number
+  side_a_in_pps: number
+  side_a_out_pps: number
+  side_z_in_pps: number
+  side_z_out_pps: number
+  side_a_max_in_pps: number
+  side_a_max_out_pps: number
+  side_z_max_in_pps: number
+  side_z_max_out_pps: number
+  side_a_in_errors: number
+  side_a_out_errors: number
+  side_a_in_fcs_errors: number
+  side_a_in_discards: number
+  side_a_out_discards: number
+  side_a_carrier_transitions: number
+  side_z_in_errors: number
+  side_z_out_errors: number
+  side_z_in_fcs_errors: number
+  side_z_in_discards: number
+  side_z_out_discards: number
+  side_z_carrier_transitions: number
+  utilization_in_pct: number
+  utilization_out_pct: number
+}
+
+export interface LinkMetricsBucket {
+  ts: string
+  status?: LinkMetricsStatus
+  latency?: LinkMetricsLatency
+  traffic?: LinkMetricsTraffic
+}
+
+export interface LinkMetricsResponse {
+  link_pk: string
+  link_code: string
+  link_type: string
+  contributor_code: string
+  side_a_metro: string
+  side_z_metro: string
+  committed_rtt_us: number
+  committed_jitter_us: number
+  bandwidth_bps: number
+  time_range: string
+  bucket_seconds: number
+  bucket_count: number
+  buckets: LinkMetricsBucket[]
+  status_changes?: EntityStatusChange[]
+}
+
+export type LinkMetricsInclude = 'all' | 'status' | 'latency' | 'traffic' | 'status_changes'
+
+export interface FetchLinkMetricsParams {
+  range?: string
+  startTime?: number
+  endTime?: number
+  bucket?: string
+  include?: LinkMetricsInclude[]
+}
+
+export async function fetchLinkMetrics(pk: string, params: FetchLinkMetricsParams = {}): Promise<LinkMetricsResponse> {
+  const qs = new URLSearchParams()
+  if (params.range) qs.set('range', params.range)
+  if (params.startTime) qs.set('start_time', params.startTime.toString())
+  if (params.endTime) qs.set('end_time', params.endTime.toString())
+  if (params.bucket) qs.set('bucket', params.bucket)
+  if (params.include) qs.set('include', params.include.join(','))
+  const res = await apiFetch(`/api/link-metrics/${encodeURIComponent(pk)}${qs.toString() ? '?' + qs.toString() : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch link metrics')
+  return res.json()
+}
+
+export interface DeviceMetricsStatus {
+  health: string
+  drain_status: string
+  collecting: boolean
+  isis_overload: boolean
+  isis_unreachable: boolean
+  no_probes: boolean
+}
+
+export interface DeviceMetricsTraffic {
+  in_bps: number
+  out_bps: number
+  max_in_bps: number
+  max_out_bps: number
+  in_pps: number
+  out_pps: number
+  max_in_pps: number
+  max_out_pps: number
+  in_errors: number
+  out_errors: number
+  in_fcs_errors: number
+  in_discards: number
+  out_discards: number
+  carrier_transitions: number
+}
+
+export interface DeviceMetricsBucket {
+  ts: string
+  status?: DeviceMetricsStatus
+  latency?: LinkMetricsLatency
+  traffic?: DeviceMetricsTraffic
+}
+
+export interface DeviceMetricsResponse {
+  device_pk: string
+  device_code: string
+  device_type: string
+  contributor_code: string
+  metro: string
+  time_range: string
+  bucket_seconds: number
+  bucket_count: number
+  buckets: DeviceMetricsBucket[]
+  status_changes?: EntityStatusChange[]
+}
+
+export type DeviceMetricsInclude = 'all' | 'status' | 'traffic' | 'status_changes'
+
+export interface FetchDeviceMetricsParams {
+  range?: string
+  startTime?: number
+  endTime?: number
+  bucket?: string
+  include?: DeviceMetricsInclude[]
+}
+
+export async function fetchDeviceMetrics(pk: string, params: FetchDeviceMetricsParams = {}): Promise<DeviceMetricsResponse> {
+  const qs = new URLSearchParams()
+  if (params.range) qs.set('range', params.range)
+  if (params.startTime) qs.set('start_time', params.startTime.toString())
+  if (params.endTime) qs.set('end_time', params.endTime.toString())
+  if (params.bucket) qs.set('bucket', params.bucket)
+  if (params.include) qs.set('include', params.include.join(','))
+  const res = await apiFetch(`/api/device-metrics/${encodeURIComponent(pk)}${qs.toString() ? '?' + qs.toString() : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch device metrics')
   return res.json()
 }

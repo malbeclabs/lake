@@ -131,12 +131,112 @@ func deviceMatchesFilters(meta *statusDeviceMeta, filters []statusFilter) bool {
 
 // bucketParams holds resolved time-window and bucket-size parameters.
 type bucketParams struct {
-	TotalMinutes  int
-	TotalHours    int
-	BucketMinutes int
-	BucketCount   int
-	TimeRange     string // normalized: "1h", "3h", "6h", "12h", "24h", "3d", "7d"
-	UseRaw        bool   // query raw fact tables instead of rollup tables
+	TotalMinutes   int
+	TotalHours     int
+	BucketMinutes  int
+	BucketSeconds  int    // for sub-minute buckets (when > 0, overrides BucketMinutes)
+	BucketInterval string // SQL interval string (e.g., "10 SECOND", "5 MINUTE")
+	BucketCount    int
+	TimeRange      string     // normalized: "1h", "3h", "6h", "12h", "24h", "3d", "7d", or "custom"
+	UseRaw         bool       // query raw fact tables instead of rollup tables
+	StartTime      *time.Time // custom start time (only when TimeRange == "custom")
+	EndTime        *time.Time // custom end time (only when TimeRange == "custom")
+}
+
+// parseBucketParamsCustom creates bucket params for a custom time range.
+// Uses the same bucket sizing as traffic/latency endpoints (bucketForDuration),
+// and auto-enables raw fact table queries for sub-5-minute buckets.
+func parseBucketParamsCustom(startTime, endTime time.Time, requestedBuckets int) bucketParams {
+	duration := endTime.Sub(startTime)
+	totalMinutes := int(duration.Minutes())
+	if totalMinutes < 1 {
+		totalMinutes = 1
+	}
+
+	// Use the same bucket logic as traffic/latency endpoints
+	interval := bucketForDuration(duration)
+	bucketSecs := intervalToSeconds(interval)
+
+	// Truncate start time to the bucket boundary so the WHERE filter
+	// includes the first bucket's rollup data. Without this, the query
+	// filters bucket_ts >= unaligned_start which misses the first bucket.
+	bucketDuration := time.Duration(bucketSecs) * time.Second
+	startTime = startTime.Truncate(bucketDuration)
+
+	totalSecs := int(endTime.Sub(startTime).Seconds())
+	bucketCount := totalSecs / bucketSecs
+	if bucketCount < 1 {
+		bucketCount = 1
+	}
+
+	useRaw := bucketSecs < 300 // sub-5-minute needs raw fact tables
+
+	return bucketParams{
+		TotalMinutes:   totalMinutes,
+		TotalHours:     totalMinutes / 60,
+		BucketMinutes:  bucketSecs / 60, // 0 for sub-minute
+		BucketSeconds:  bucketSecs,
+		BucketInterval: interval,
+		BucketCount:    bucketCount,
+		TimeRange:      "custom",
+		UseRaw:         useRaw,
+		StartTime:      &startTime,
+		EndTime:        &endTime,
+	}
+}
+
+// intervalToSeconds converts a SQL interval string to seconds.
+func intervalToSeconds(interval string) int {
+	switch interval {
+	case "10 SECOND":
+		return 10
+	case "30 SECOND":
+		return 30
+	case "1 MINUTE":
+		return 60
+	case "5 MINUTE":
+		return 300
+	case "10 MINUTE":
+		return 600
+	case "15 MINUTE":
+		return 900
+	case "30 MINUTE":
+		return 1800
+	case "1 HOUR":
+		return 3600
+	case "4 HOUR":
+		return 14400
+	case "12 HOUR":
+		return 43200
+	case "1 DAY":
+		return 86400
+	default:
+		return 300
+	}
+}
+
+// presetToDuration converts a time range preset string to a duration.
+func presetToDuration(preset string) time.Duration {
+	switch preset {
+	case "1h":
+		return time.Hour
+	case "3h":
+		return 3 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "12h":
+		return 12 * time.Hour
+	case "3d":
+		return 3 * 24 * time.Hour
+	case "7d":
+		return 7 * 24 * time.Hour
+	case "14d":
+		return 14 * 24 * time.Hour
+	case "30d":
+		return 30 * 24 * time.Hour
+	default:
+		return 24 * time.Hour
+	}
 }
 
 // parseBucketParams resolves a time range string and requested bucket count into
@@ -199,6 +299,22 @@ type linkRollupRow struct {
 	ZLossPct  float64
 	ZSamples  uint64
 
+	// Per-direction jitter (sample-weighted avg for re-bucketed data)
+	AAvgJitterUs float64
+	AMinJitterUs float64
+	AP50JitterUs float64
+	AP90JitterUs float64
+	AP95JitterUs float64
+	AP99JitterUs float64
+	AMaxJitterUs float64
+	ZAvgJitterUs float64
+	ZMinJitterUs float64
+	ZP50JitterUs float64
+	ZP90JitterUs float64
+	ZP95JitterUs float64
+	ZP99JitterUs float64
+	ZMaxJitterUs float64
+
 	// Entity state (baked in at rollup write time)
 	Status       string // latest status in display bucket
 	Provisioning bool   // latest provisioning flag
@@ -217,16 +333,28 @@ type linkBucketKey struct {
 // Returns a map keyed by (link_pk, bucket_ts).
 // If linkPKs is non-empty, only those links are returned.
 func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, linkPKs ...string) (map[linkBucketKey]*linkRollupRow, error) {
-	bucketExpr := bucketIntervalExpr("bucket_ts", params.BucketMinutes)
+	bucketExpr := bucketIntervalExprFromParams("bucket_ts", params)
+	rawBucketExpr := bucketIntervalExprFromParams("f.event_ts", params)
 
 	var filterClause string
 	var args []any
-	args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	if params.StartTime != nil {
+		args = append(args, *params.StartTime)
+	} else {
+		args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	}
+
+	var endTimeClause string
+	if params.EndTime != nil {
+		args = append(args, *params.EndTime)
+		endTimeClause = fmt.Sprintf(" AND bucket_ts < $%d", len(args))
+	}
 
 	if len(linkPKs) > 0 {
-		filterClause = " AND link_pk IN ($2)"
 		args = append(args, linkPKs)
+		filterClause = fmt.Sprintf(" AND link_pk IN ($%d)", len(args))
 	}
+	filterClause = endTimeClause + filterClause
 
 	// Build the query. In raw mode, we prepend CTEs that compute from fact tables
 	// and reference them as the source. In rollup mode, we read directly from the table.
@@ -236,8 +364,8 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 		WITH
 		latency_buckets AS (
 			SELECT
-				toStartOfFiveMinutes(f.event_ts) AS bucket_ts,
-				f.link_pk AS link_pk,
+				%s AS bucket_ts,
+				f.link_pk AS link_pk,`, rawBucketExpr) + fmt.Sprintf(`
 				avgIf(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_avg_rtt_us,
 				toFloat64(minIf(f.rtt_us, f.origin_device_pk = l.side_a_pk)) AS a_min_rtt_us,
 				quantileIf(0.50)(f.rtt_us, f.origin_device_pk = l.side_a_pk) AS a_p50_rtt_us,
@@ -257,7 +385,21 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				toFloat64(maxIf(f.rtt_us, f.origin_device_pk != l.side_a_pk)) AS z_max_rtt_us,
 				countIf(f.origin_device_pk != l.side_a_pk AND (f.loss = true OR f.rtt_us = 0)) * 100.0
 					/ greatest(countIf(f.origin_device_pk != l.side_a_pk), 1) AS z_loss_pct,
-				toUInt32(countIf(f.origin_device_pk != l.side_a_pk)) AS z_samples
+				toUInt32(countIf(f.origin_device_pk != l.side_a_pk)) AS z_samples,
+				avgIf(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) AS a_avg_jitter_us,
+				toFloat64(minIf(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk)) AS a_min_jitter_us,
+				quantileIf(0.50)(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) AS a_p50_jitter_us,
+				quantileIf(0.90)(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) AS a_p90_jitter_us,
+				quantileIf(0.95)(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) AS a_p95_jitter_us,
+				quantileIf(0.99)(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) AS a_p99_jitter_us,
+				toFloat64(maxIf(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk)) AS a_max_jitter_us,
+				avgIf(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) AS z_avg_jitter_us,
+				toFloat64(minIf(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk)) AS z_min_jitter_us,
+				quantileIf(0.50)(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) AS z_p50_jitter_us,
+				quantileIf(0.90)(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) AS z_p90_jitter_us,
+				quantileIf(0.95)(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) AS z_p95_jitter_us,
+				quantileIf(0.99)(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) AS z_p99_jitter_us,
+				toFloat64(maxIf(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk)) AS z_max_jitter_us
 			FROM fact_dz_device_link_latency f
 			JOIN dz_links_current l ON f.link_pk = l.pk
 			WHERE f.event_ts >= $1
@@ -291,6 +433,14 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				lb.a_p95_rtt_us, lb.a_p99_rtt_us, lb.a_max_rtt_us, lb.a_loss_pct, lb.a_samples,
 				lb.z_avg_rtt_us, lb.z_min_rtt_us, lb.z_p50_rtt_us, lb.z_p90_rtt_us,
 				lb.z_p95_rtt_us, lb.z_p99_rtt_us, lb.z_max_rtt_us, lb.z_loss_pct, lb.z_samples,
+				lb.a_avg_jitter_us, lb.a_min_jitter_us,
+				lb.a_p50_jitter_us, lb.a_p90_jitter_us,
+				lb.a_p95_jitter_us, lb.a_p99_jitter_us,
+				lb.a_max_jitter_us,
+				lb.z_avg_jitter_us, lb.z_min_jitter_us,
+				lb.z_p50_jitter_us, lb.z_p90_jitter_us,
+				lb.z_p95_jitter_us, lb.z_p99_jitter_us,
+				lb.z_max_jitter_us,
 				COALESCE(ls.status, '') AS status,
 				COALESCE(ls.committed_rtt_ns, 0) = 500000 AS provisioning,
 				CASE
@@ -323,6 +473,20 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				maxIf(z_max_rtt_us, z_samples > 0) as z_max,
 				max(z_loss_pct) as z_loss,
 				toUInt64(sum(z_samples)) as z_n,
+				sumIf(a_avg_jitter_us * a_samples, a_samples > 0) as a_jw_avg,
+				sumIf(a_p50_jitter_us * a_samples, a_samples > 0) as a_jw_p50,
+				sumIf(a_p90_jitter_us * a_samples, a_samples > 0) as a_jw_p90,
+				sumIf(a_p95_jitter_us * a_samples, a_samples > 0) as a_jw_p95,
+				sumIf(a_p99_jitter_us * a_samples, a_samples > 0) as a_jw_p99,
+				minIf(a_min_jitter_us, a_samples > 0) as a_jmin,
+				maxIf(a_max_jitter_us, a_samples > 0) as a_jmax,
+				sumIf(z_avg_jitter_us * z_samples, z_samples > 0) as z_jw_avg,
+				sumIf(z_p50_jitter_us * z_samples, z_samples > 0) as z_jw_p50,
+				sumIf(z_p90_jitter_us * z_samples, z_samples > 0) as z_jw_p90,
+				sumIf(z_p95_jitter_us * z_samples, z_samples > 0) as z_jw_p95,
+				sumIf(z_p99_jitter_us * z_samples, z_samples > 0) as z_jw_p99,
+				minIf(z_min_jitter_us, z_samples > 0) as z_jmin,
+				maxIf(z_max_jitter_us, z_samples > 0) as z_jmax,
 				argMax(status, bucket_ts) as agg_status,
 				argMax(provisioning, bucket_ts) as agg_provisioning,
 				max(isis_down) as agg_isis_down,
@@ -347,6 +511,20 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			if(z_n > 0, z_w_p95 / z_n, 0) as z_p95_rtt_us,
 			if(z_n > 0, z_w_p99 / z_n, 0) as z_p99_rtt_us,
 			z_max as z_max_rtt_us, z_loss as z_loss_pct, z_n as z_samples,
+			if(a_n > 0, a_jw_avg / a_n, 0) as a_avg_jitter_us,
+			a_jmin as a_min_jitter_us,
+			if(a_n > 0, a_jw_p50 / a_n, 0) as a_p50_jitter_us,
+			if(a_n > 0, a_jw_p90 / a_n, 0) as a_p90_jitter_us,
+			if(a_n > 0, a_jw_p95 / a_n, 0) as a_p95_jitter_us,
+			if(a_n > 0, a_jw_p99 / a_n, 0) as a_p99_jitter_us,
+			a_jmax as a_max_jitter_us,
+			if(z_n > 0, z_jw_avg / z_n, 0) as z_avg_jitter_us,
+			z_jmin as z_min_jitter_us,
+			if(z_n > 0, z_jw_p50 / z_n, 0) as z_p50_jitter_us,
+			if(z_n > 0, z_jw_p90 / z_n, 0) as z_p90_jitter_us,
+			if(z_n > 0, z_jw_p95 / z_n, 0) as z_p95_jitter_us,
+			if(z_n > 0, z_jw_p99 / z_n, 0) as z_p99_jitter_us,
+			z_jmax as z_max_jitter_us,
 			agg_status as status, agg_provisioning as provisioning, agg_isis_down as isis_down,
 			agg_was_drained as was_drained
 		FROM agg
@@ -376,6 +554,20 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 				maxIf(z_max_rtt_us, z_samples > 0) as z_max,
 				max(z_loss_pct) as z_loss,
 				toUInt64(sum(z_samples)) as z_n,
+				sumIf(a_avg_jitter_us * a_samples, a_samples > 0) as a_jw_avg,
+				sumIf(a_p50_jitter_us * a_samples, a_samples > 0) as a_jw_p50,
+				sumIf(a_p90_jitter_us * a_samples, a_samples > 0) as a_jw_p90,
+				sumIf(a_p95_jitter_us * a_samples, a_samples > 0) as a_jw_p95,
+				sumIf(a_p99_jitter_us * a_samples, a_samples > 0) as a_jw_p99,
+				minIf(a_min_jitter_us, a_samples > 0) as a_jmin,
+				maxIf(a_max_jitter_us, a_samples > 0) as a_jmax,
+				sumIf(z_avg_jitter_us * z_samples, z_samples > 0) as z_jw_avg,
+				sumIf(z_p50_jitter_us * z_samples, z_samples > 0) as z_jw_p50,
+				sumIf(z_p90_jitter_us * z_samples, z_samples > 0) as z_jw_p90,
+				sumIf(z_p95_jitter_us * z_samples, z_samples > 0) as z_jw_p95,
+				sumIf(z_p99_jitter_us * z_samples, z_samples > 0) as z_jw_p99,
+				minIf(z_min_jitter_us, z_samples > 0) as z_jmin,
+				maxIf(z_max_jitter_us, z_samples > 0) as z_jmax,
 				argMax(status, bucket_ts) as agg_status,
 				argMax(provisioning, bucket_ts) as agg_provisioning,
 				max(isis_down) as agg_isis_down,
@@ -400,6 +592,20 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			if(z_n > 0, z_w_p95 / z_n, 0) as z_p95_rtt_us,
 			if(z_n > 0, z_w_p99 / z_n, 0) as z_p99_rtt_us,
 			z_max as z_max_rtt_us, z_loss as z_loss_pct, z_n as z_samples,
+			if(a_n > 0, a_jw_avg / a_n, 0) as a_avg_jitter_us,
+			a_jmin as a_min_jitter_us,
+			if(a_n > 0, a_jw_p50 / a_n, 0) as a_p50_jitter_us,
+			if(a_n > 0, a_jw_p90 / a_n, 0) as a_p90_jitter_us,
+			if(a_n > 0, a_jw_p95 / a_n, 0) as a_p95_jitter_us,
+			if(a_n > 0, a_jw_p99 / a_n, 0) as a_p99_jitter_us,
+			a_jmax as a_max_jitter_us,
+			if(z_n > 0, z_jw_avg / z_n, 0) as z_avg_jitter_us,
+			z_jmin as z_min_jitter_us,
+			if(z_n > 0, z_jw_p50 / z_n, 0) as z_p50_jitter_us,
+			if(z_n > 0, z_jw_p90 / z_n, 0) as z_p90_jitter_us,
+			if(z_n > 0, z_jw_p95 / z_n, 0) as z_p95_jitter_us,
+			if(z_n > 0, z_jw_p99 / z_n, 0) as z_p99_jitter_us,
+			z_jmax as z_max_jitter_us,
 			agg_status as status, agg_provisioning as provisioning, agg_isis_down as isis_down,
 			agg_was_drained as was_drained
 		FROM agg
@@ -420,6 +626,8 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			&r.BucketTS, &r.LinkPK,
 			&r.AAvgRttUs, &r.AMinRttUs, &r.AP50RttUs, &r.AP90RttUs, &r.AP95RttUs, &r.AP99RttUs, &r.AMaxRttUs, &r.ALossPct, &r.ASamples,
 			&r.ZAvgRttUs, &r.ZMinRttUs, &r.ZP50RttUs, &r.ZP90RttUs, &r.ZP95RttUs, &r.ZP99RttUs, &r.ZMaxRttUs, &r.ZLossPct, &r.ZSamples,
+			&r.AAvgJitterUs, &r.AMinJitterUs, &r.AP50JitterUs, &r.AP90JitterUs, &r.AP95JitterUs, &r.AP99JitterUs, &r.AMaxJitterUs,
+			&r.ZAvgJitterUs, &r.ZMinJitterUs, &r.ZP50JitterUs, &r.ZP90JitterUs, &r.ZP95JitterUs, &r.ZP99JitterUs, &r.ZMaxJitterUs,
 			&r.Status, &r.Provisioning, &r.ISISDown, &r.WasDrained,
 		); err != nil {
 			return nil, fmt.Errorf("link rollup scan: %w", err)
@@ -499,7 +707,7 @@ type interfaceRollupRow struct {
 // queryInterfaceRollup reads device_interface_rollup_5m FINAL with re-bucketing.
 // Aggregation: sum for counters, avg/max for rates.
 func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketParams, opts interfaceRollupOpts) ([]interfaceRollupRow, error) {
-	bucketExpr := bucketIntervalExpr("bucket_ts", params.BucketMinutes)
+	bucketExpr := bucketIntervalExprFromParams("bucket_ts", params)
 
 	// Build GROUP BY and SELECT keys based on grouping mode
 	var groupKeys, selectKeys string
@@ -526,10 +734,19 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 	// Build WHERE filters
 	var filters []string
 	var args []any
-	args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	if params.StartTime != nil {
+		args = append(args, *params.StartTime)
+	} else {
+		args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	}
 	filters = append(filters, "bucket_ts >= $1")
 
 	argIdx := 2
+	if params.EndTime != nil {
+		args = append(args, *params.EndTime)
+		filters = append(filters, fmt.Sprintf("bucket_ts < $%d", argIdx))
+		argIdx++
+	}
 	if len(opts.LinkPKs) > 0 {
 		filters = append(filters, fmt.Sprintf("link_pk IN ($%d)", argIdx))
 		args = append(args, opts.LinkPKs)
@@ -589,7 +806,8 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 		ORDER BY %s, display_bucket
 	`, bucketExpr, selectKeys, func() string {
 		if params.UseRaw {
-			return rawInterfaceSource()
+			rawBucketExpr := bucketIntervalExprFromParams("ic.event_ts", params)
+			return rawInterfaceSource(rawBucketExpr)
 		}
 		return "device_interface_rollup_5m FINAL"
 	}(), whereClause, groupKeys, havingClause, groupKeys)
@@ -635,13 +853,23 @@ func bucketIntervalExpr(column string, bucketMinutes int) string {
 	return fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d MINUTE, 'UTC')", column, bucketMinutes)
 }
 
+// bucketIntervalExprFromParams uses BucketInterval string if available, falling
+// back to BucketMinutes.
+func bucketIntervalExprFromParams(column string, params bucketParams) string {
+	if params.BucketInterval != "" {
+		return fmt.Sprintf("toStartOfInterval(%s, INTERVAL %s, 'UTC')", column, params.BucketInterval)
+	}
+	return bucketIntervalExpr(column, params.BucketMinutes)
+}
+
 // rawInterfaceSource returns a flat subquery (no CTEs) that computes
 // device_interface_rollup_5m-equivalent columns from raw fact tables.
+// bucketExpr controls the bucketing granularity (e.g. "toStartOfInterval(ic.event_ts, INTERVAL 1 MINUTE, 'UTC')").
 // State uses current tables since ClickHouse doesn't support CTEs in subqueries.
-func rawInterfaceSource() string {
-	return `(
+func rawInterfaceSource(bucketExpr string) string {
+	return fmt.Sprintf(`(
 		SELECT
-			toStartOfFiveMinutes(ic.event_ts) AS bucket_ts,
+			%s AS bucket_ts,`, bucketExpr) + `
 			ic.device_pk AS device_pk,
 			ic.intf AS intf,
 			anyIf(ic.link_pk, ic.link_pk != '') AS link_pk,
@@ -693,20 +921,21 @@ func rawInterfaceSource() string {
 
 // statusLinkMeta holds static link metadata from dimension tables for status pages.
 type statusLinkMeta struct {
-	PK             string
-	Code           string
-	LinkType       string
-	Contributor    string
-	SideAMetro     string
-	SideZMetro     string
-	SideADevice    string
-	SideZDevice    string
-	SideADevicePK  string
-	SideZDevicePK  string
-	BandwidthBps   int64
-	CommittedRttUs float64
-	CommittedRttNs int64
-	Status         string
+	PK                string
+	Code              string
+	LinkType          string
+	Contributor       string
+	SideAMetro        string
+	SideZMetro        string
+	SideADevice       string
+	SideZDevice       string
+	SideADevicePK     string
+	SideZDevicePK     string
+	BandwidthBps      int64
+	CommittedRttUs    float64
+	CommittedRttNs    int64
+	CommittedJitterUs float64
+	Status            string
 }
 
 // queryStatusLinkMeta fetches metadata for active links (activated, soft-drained, hard-drained).
@@ -734,6 +963,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			l.bandwidth_bps,
 			l.committed_rtt_ns / 1000.0 as committed_rtt_us,
 			l.committed_rtt_ns,
+			COALESCE(l.committed_jitter_ns, 0) / 1000.0 as committed_jitter_us,
 			l.status
 		FROM dz_links_current l
 		JOIN dz_devices_current da ON l.side_a_pk = da.pk
@@ -757,7 +987,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			&m.PK, &m.Code, &m.LinkType, &m.Contributor,
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
-			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.Status,
+			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status,
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)
 		}

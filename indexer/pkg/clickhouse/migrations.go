@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/pressly/goose/v3"
@@ -286,11 +287,14 @@ func newSQLDB(cfg MigrationConfig) (*sql.DB, error) {
 			Username: cfg.Username,
 			Password: cfg.Password,
 		},
+		DialTimeout: 30 * time.Second,
 	}
 
 	if cfg.Secure {
 		options.TLS = &tls.Config{}
 	}
 
-	return clickhouse.OpenDB(options), nil
+	db := clickhouse.OpenDB(options)
+	db.SetMaxOpenConns(1)
+	return db, nil
 }

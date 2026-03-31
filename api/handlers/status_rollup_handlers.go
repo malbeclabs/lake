@@ -645,7 +645,7 @@ func (a *API) fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.
 			sum(r.carrier_transitions) as carrier_transitions,
 			formatDateTime(min(r.bucket_ts), '%%Y-%%m-%%dT%%H:%%i:%%sZ', 'UTC') as first_seen,
 			formatDateTime(max(r.bucket_ts), '%%Y-%%m-%%dT%%H:%%i:%%sZ', 'UTC') as last_seen
-		FROM device_interface_rollup_5m r FINAL
+		FROM device_interface_rollup_5m FINAL r
 		JOIN dz_devices_current d ON r.device_pk = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current contrib ON d.contributor_pk = contrib.pk
@@ -778,12 +778,30 @@ func (a *API) fetchDeviceInterfaceHistoryFromRollup(ctx context.Context, deviceP
 }
 
 // fetchSingleLinkHistoryFromRollup returns the history for a single link using rollup tables.
+func (a *API) fetchSingleLinkHistoryFromRollupCustom(ctx context.Context, linkPK string, startTime, endTime time.Time, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
+	params := parseBucketParamsCustom(startTime, endTime, requestedBuckets)
+	params.UseRaw = isRawSource(ctx)
+	return a.fetchSingleLinkHistoryWithParams(ctx, linkPK, params)
+}
+
 func (a *API) fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
-	db := a.envDB(ctx)
 	params := parseBucketParams(timeRange, requestedBuckets)
 	params.UseRaw = isRawSource(ctx)
-	bucketDuration := time.Duration(params.BucketMinutes) * time.Minute
+	return a.fetchSingleLinkHistoryWithParams(ctx, linkPK, params)
+}
+
+func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK string, params bucketParams) (*SingleLinkHistoryResponse, error) {
+	db := a.envDB(ctx)
+	var bucketDuration time.Duration
+	if params.BucketSeconds > 0 {
+		bucketDuration = time.Duration(params.BucketSeconds) * time.Second
+	} else {
+		bucketDuration = time.Duration(params.BucketMinutes) * time.Minute
+	}
 	now := time.Now().UTC()
+	if params.EndTime != nil {
+		now = *params.EndTime
+	}
 
 	var (
 		meta          *statusLinkMeta
@@ -843,7 +861,13 @@ func (a *API) fetchSingleLinkHistoryFromRollup(ctx context.Context, linkPK strin
 
 	var hours []LinkHourStatus
 	for i := params.BucketCount - 1; i >= 0; i-- {
-		bucketStart := now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
+		var bucketStart time.Time
+		if params.StartTime != nil {
+			// Custom range: iterate forward from start time
+			bucketStart = params.StartTime.Truncate(bucketDuration).Add(time.Duration(params.BucketCount-1-i) * bucketDuration)
+		} else {
+			bucketStart = now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
+		}
 		key := bucketStart.Format(time.RFC3339)
 		isCollecting := i == 0
 

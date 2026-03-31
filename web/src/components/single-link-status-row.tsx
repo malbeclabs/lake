@@ -6,6 +6,8 @@ import { StatusTimeline } from './status-timeline'
 interface SingleLinkStatusRowProps {
   linkPk: string
   timeRange?: string
+  startTime?: number
+  endTime?: number
 }
 
 function useBucketCount() {
@@ -31,12 +33,12 @@ function useBucketCount() {
   return buckets
 }
 
-export function SingleLinkStatusRow({ linkPk, timeRange = '24h' }: SingleLinkStatusRowProps) {
+export function SingleLinkStatusRow({ linkPk, timeRange = '24h', startTime, endTime }: SingleLinkStatusRowProps) {
   const buckets = useBucketCount()
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['single-link-history', linkPk, timeRange, buckets],
-    queryFn: () => fetchSingleLinkHistory(linkPk, timeRange, buckets),
+    queryKey: ['single-link-history', linkPk, timeRange, buckets, startTime, endTime],
+    queryFn: () => fetchSingleLinkHistory(linkPk, startTime ? undefined : timeRange, buckets, startTime, endTime),
     refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,

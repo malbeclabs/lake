@@ -1,0 +1,365 @@
+import { useState, useMemo } from 'react'
+import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
+
+interface LinkHealthTimelineProps {
+  data: LinkMetricsResponse
+  className?: string
+}
+
+const healthColors: Record<string, string> = {
+  healthy: 'bg-green-500',
+  degraded: 'bg-amber-500',
+  unhealthy: 'bg-red-500',
+  no_data: 'bg-transparent border border-gray-200 dark:border-gray-700',
+}
+
+const healthLabels: Record<string, string> = {
+  healthy: 'Healthy',
+  degraded: 'Degraded',
+  unhealthy: 'Unhealthy',
+  no_data: 'No Data',
+}
+
+const healthPriority: Record<string, number> = {
+  unhealthy: 3,
+  degraded: 2,
+  no_data: 1,
+  healthy: 0,
+}
+
+function worstHealth(a: string, b: string): string {
+  return (healthPriority[a] ?? 0) >= (healthPriority[b] ?? 0) ? a : b
+}
+
+interface MergedBar {
+  ts: string
+  spanSeconds: number
+  health: string
+  collecting: boolean
+  // Aggregated metrics for tooltip
+  maxLossPct: number
+  avgLatencyUs: number
+  totalErrors: number
+  totalFcsErrors: number
+  totalDiscards: number
+  totalCarrier: number
+  isisDown: boolean
+  drainStatus: string
+  samples: number
+  hasLatency: boolean
+  hasTraffic: boolean
+  missingLatency: boolean
+  missingTraffic: boolean
+}
+
+function aggregateBar(group: LinkMetricsBucket[], bucketSeconds: number): MergedBar {
+  let health = 'healthy'
+  let collecting = false
+  let maxLossPct = 0
+  let latencySum = 0
+  let latencyCount = 0
+  let totalErrors = 0
+  let totalFcsErrors = 0
+  let totalDiscards = 0
+  let totalCarrier = 0
+  let isisDown = false
+  let drainStatus = ''
+  let samples = 0
+  let hasLatency = false
+  let hasTraffic = false
+  let missingLatency = false
+  let missingTraffic = false
+  let nonCollectingCount = 0
+
+  for (const b of group) {
+    health = worstHealth(health, b.status?.health ?? 'no_data')
+    if (b.status?.collecting) collecting = true
+    if (b.status?.isis_down) isisDown = true
+    if (b.status?.drain_status) drainStatus = b.status.drain_status
+
+    if (!b.status?.collecting) {
+      nonCollectingCount++
+      if (!b.latency) missingLatency = true
+      if (!b.traffic) missingTraffic = true
+    }
+
+    if (b.latency) {
+      hasLatency = true
+      const loss = Math.max(b.latency.a_loss_pct, b.latency.z_loss_pct)
+      if (loss > maxLossPct) maxLossPct = loss
+      const totalSamples = b.latency.a_samples + b.latency.z_samples
+      if (totalSamples > 0) {
+        const avgLat = (b.latency.a_avg_rtt_us * b.latency.a_samples + b.latency.z_avg_rtt_us * b.latency.z_samples) / totalSamples
+        latencySum += avgLat
+        latencyCount++
+      }
+      samples += totalSamples
+    }
+
+    if (b.traffic) {
+      hasTraffic = true
+      const t = b.traffic
+      totalErrors += t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors
+      totalFcsErrors += t.side_a_in_fcs_errors + t.side_z_in_fcs_errors
+      totalDiscards += t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards
+      totalCarrier += t.side_a_carrier_transitions + t.side_z_carrier_transitions
+    }
+  }
+
+  return {
+    ts: group[0].ts,
+    spanSeconds: group.length * bucketSeconds,
+    health,
+    collecting,
+    maxLossPct,
+    avgLatencyUs: latencyCount > 0 ? latencySum / latencyCount : 0,
+    totalErrors,
+    totalFcsErrors,
+    totalDiscards,
+    totalCarrier,
+    isisDown,
+    drainStatus,
+    samples,
+    hasLatency,
+    hasTraffic,
+    missingLatency: missingLatency && nonCollectingCount > 0,
+    missingTraffic: missingTraffic && nonCollectingCount > 0,
+  }
+}
+
+function mergeBuckets(buckets: LinkMetricsBucket[], bucketSeconds: number, maxBars: number): MergedBar[] {
+  if (buckets.length <= maxBars) {
+    return buckets.map((b) => aggregateBar([b], bucketSeconds))
+  }
+
+  let groupSize = Math.ceil(buckets.length / maxBars)
+  while (groupSize > 1 && Math.ceil(buckets.length / groupSize) < MIN_BARS) {
+    groupSize--
+  }
+  const bars: MergedBar[] = []
+  for (let i = 0; i < buckets.length; i += groupSize) {
+    bars.push(aggregateBar(buckets.slice(i, i + groupSize), bucketSeconds))
+  }
+  return bars
+}
+
+// Mark trailing no_data bars as collecting if they're within the rollup lag
+// window (near now). The backend only marks the very last bucket as collecting,
+// but rollup data typically lags by 5-10 minutes.
+// Mark trailing bars near now as collecting to account for rollup lag.
+// The backend only marks the very last bucket, but data typically lags 5-10 min.
+// Also suppress missingLatency/missingTraffic in the lag window since partial
+// data there is expected, not an incident signal.
+function markTrailingCollecting(bars: MergedBar[]): void {
+  const now = Date.now()
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const barEnd = new Date(bars[i].ts).getTime() + bars[i].spanSeconds * 1000
+    if (now - barEnd > 10 * 60 * 1000) break
+    // Suppress missing-data flags in the lag window
+    bars[i].missingLatency = false
+    bars[i].missingTraffic = false
+    if (bars[i].health === 'no_data' && !bars[i].hasLatency && !bars[i].hasTraffic) {
+      bars[i].collecting = true
+    }
+  }
+}
+
+function getReasons(bar: MergedBar, committedRttUs: number): string[] {
+  const reasons: string[] = []
+
+  if (bar.isisDown) reasons.push('ISIS down')
+  if (bar.missingLatency) reasons.push('No latency data')
+  if (bar.missingTraffic) reasons.push('No traffic data')
+  if (bar.health === 'no_data') return reasons
+
+  if (bar.maxLossPct >= 95) reasons.push('Extended packet loss (≥95%)')
+  else if (bar.maxLossPct >= 25) reasons.push(`Severe packet loss (${bar.maxLossPct.toFixed(1)}%)`)
+  else if (bar.maxLossPct >= 1) reasons.push(`Moderate packet loss (${bar.maxLossPct.toFixed(1)}%)`)
+  else if (bar.maxLossPct > 0) reasons.push(`Minor packet loss (${bar.maxLossPct.toFixed(2)}%)`)
+
+  if (committedRttUs > 0 && bar.avgLatencyUs > 0) {
+    const overPct = ((bar.avgLatencyUs - committedRttUs) / committedRttUs) * 100
+    if (overPct >= 100) reasons.push(`High latency (${overPct.toFixed(0)}% over SLA)`)
+    else if (overPct >= 20) reasons.push(`Elevated latency (${overPct.toFixed(0)}% over SLA)`)
+  }
+
+  const intfIssues: string[] = []
+  if (bar.totalErrors > 0) intfIssues.push(`${bar.totalErrors} interface errors`)
+  if (bar.totalFcsErrors > 0) intfIssues.push(`${bar.totalFcsErrors} FCS errors`)
+  if (bar.totalDiscards > 0) intfIssues.push(`${bar.totalDiscards} discards`)
+  if (bar.totalCarrier > 0) intfIssues.push(`${bar.totalCarrier} carrier transitions`)
+  if (intfIssues.length > 0) reasons.push(intfIssues.join(', '))
+
+  return reasons
+}
+
+function formatTimeRange(ts: string, spanSeconds: number): string {
+  const start = new Date(ts)
+  const end = new Date(start.getTime() + spanSeconds * 1000)
+  const timeOpts: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit', ...(spanSeconds < 60 ? { second: '2-digit' } : {}) }
+  const startTime = start.toLocaleTimeString([], timeOpts)
+  const endTime = end.toLocaleTimeString([], timeOpts)
+  const startDate = start.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  if (start.getDate() !== end.getDate()) {
+    const endDate = end.toLocaleDateString([], { month: 'short', day: 'numeric' })
+    return `${startDate} ${startTime} — ${endDate} ${endTime}`
+  }
+  return `${startDate} ${startTime} — ${endTime}`
+}
+
+const MAX_BARS = 64
+const MIN_BARS = 48
+
+export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+
+  const bars = useMemo(() => {
+    const merged = mergeBuckets(data.buckets, data.bucket_seconds, MAX_BARS)
+    markTrailingCollecting(merged)
+    return merged
+  }, [data.buckets, data.bucket_seconds])
+
+  // Detect issue badges across all buckets
+  const badges = useMemo(() => {
+    const found = new Set<string>()
+    for (const b of data.buckets) {
+      if (b.latency) {
+        if (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0) found.add('Loss')
+      }
+      if (b.traffic) {
+        const t = b.traffic
+        if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) found.add('Errors')
+        if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) found.add('FCS')
+        if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) found.add('Discards')
+        if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) found.add('Carrier')
+      }
+      if (b.status?.isis_down) found.add('ISIS Down')
+    }
+    return Array.from(found)
+  }, [data.buckets])
+
+  // Time labels
+  const labels = useMemo(() => {
+    const rangeMap: Record<string, string> = {
+      '1h': '1h ago', '6h': '6h ago', '12h': '12h ago',
+      '24h': '24h ago', '3d': '3d ago', '7d': '7d ago',
+    }
+    if (rangeMap[data.time_range]) {
+      return { startLabel: rangeMap[data.time_range], endLabel: 'Now' as string }
+    }
+    // Custom range — derive from actual bucket timestamps
+    const fmt = (ts: string) => {
+      const d = new Date(ts)
+      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    }
+    const buckets = data.buckets
+    if (buckets.length === 0) return { startLabel: '', endLabel: '' }
+    const lastBucket = buckets[buckets.length - 1]
+    const endMs = new Date(lastBucket.ts).getTime() + data.bucket_seconds * 1000
+    return { startLabel: fmt(buckets[0].ts), endMs }
+  }, [data.time_range, data.buckets, data.bucket_seconds])
+
+  const [nowMs] = useState(() => Date.now())
+  const startLabel = labels.startLabel
+  const endLabel = 'endLabel' in labels
+    ? labels.endLabel
+    : nowMs - labels.endMs < 5 * 60 * 1000
+      ? 'Now'
+      : new Date(labels.endMs).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+  if (bars.length === 0) return null
+
+  return (
+    <div className={className}>
+      <div className="relative">
+        <div className="flex gap-[2px]">
+          {bars.map((bar, index) => {
+            const reasons = getReasons(bar, data.committed_rtt_us)
+            // Upgrade to degraded if missing data in any bucket
+            const displayHealth = bar.health === 'healthy' && (bar.missingLatency || bar.missingTraffic)
+              ? 'degraded' : bar.health
+            const prevBar = index > 0 ? bars[index - 1] : undefined
+            const prevHealth = prevBar
+              ? (prevBar.health === 'healthy' && (prevBar.missingLatency || prevBar.missingTraffic) ? 'degraded' : prevBar.health)
+              : undefined
+            return (
+              <div
+                key={bar.ts}
+                className="relative flex-1 min-w-0"
+                onMouseEnter={() => setHoveredIndex(index)}
+                onMouseLeave={() => setHoveredIndex(null)}
+              >
+                <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
+                  <div
+                    className={`absolute inset-0 ${
+                      bar.collecting && displayHealth === 'no_data'
+                        ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
+                        : (healthColors[displayHealth] ?? healthColors['no_data'])
+                    }`}
+                  />
+                  {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
+                  )}
+                </div>
+
+                {/* Tooltip */}
+                {hoveredIndex === index && (
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50">
+                    <div className="bg-popover border border-border rounded-lg shadow-lg px-2.5 py-2 whitespace-nowrap">
+                      <div className="text-[11px] font-medium text-foreground/80 mb-0.5">
+                        {formatTimeRange(bar.ts, bar.spanSeconds)}
+                      </div>
+                      <div className={`text-xs ${
+                        displayHealth === 'healthy' ? 'text-green-600 dark:text-green-400' :
+                        displayHealth === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
+                        displayHealth === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
+                        'text-muted-foreground'
+                      }`}>
+                        {healthLabels[displayHealth] || displayHealth}
+                        {bar.collecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
+                        {bar.drainStatus && <span className="text-muted-foreground ml-1">({bar.drainStatus})</span>}
+                        {reasons.length === 1 && <span className="text-muted-foreground"> — {reasons[0]}</span>}
+                      </div>
+                      {reasons.length > 1 && (
+                        <div className="text-xs text-muted-foreground mt-1.5 space-y-0.5">
+                          {reasons.map((reason, i) => (
+                            <div key={i}>• {reason}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* Arrow */}
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px]">
+                      <div className="border-8 border-transparent border-t-border" />
+                      <div className="absolute top-0 left-1/2 -translate-x-1/2 border-[7px] border-transparent border-t-popover" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Time labels */}
+        <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
+          <span>{startLabel}</span>
+          <span>{endLabel}</span>
+        </div>
+      </div>
+
+      {/* Issue badges */}
+      {badges.length > 0 && (
+        <div className="flex gap-1.5 mt-2 flex-wrap">
+          {badges.map((badge) => (
+            <span
+              key={badge}
+              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+            >
+              {badge}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

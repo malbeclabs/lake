@@ -154,12 +154,28 @@ func newTestClientInternal(t *testing.T, db *DB) (clickhouse.Client, string, err
 		break
 	}
 
+	// Close the setup connection now — cleanup will create its own.
+	adminConn.Close()
+
 	t.Cleanup(func() {
-		dropCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err = adminConn.Exec(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
-		adminConn.Close()
-		require.NoError(t, err)
+		dropClient, err := clickhouse.NewClient(dropCtx, db.log, db.addr, db.cfg.Database, db.cfg.Username, db.cfg.Password, false)
+		if err != nil {
+			t.Logf("warning: failed to create admin client for cleanup: %v", err)
+			testClient.Close()
+			return
+		}
+		dropConn, err := dropClient.Conn(dropCtx)
+		if err != nil {
+			t.Logf("warning: failed to get admin connection for cleanup: %v", err)
+			dropClient.Close()
+			testClient.Close()
+			return
+		}
+		_ = dropConn.Exec(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", databaseName))
+		dropConn.Close()
+		dropClient.Close()
 		testClient.Close()
 	})
 

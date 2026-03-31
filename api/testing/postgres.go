@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+var gooseInit sync.Once
 
 // DBConfig holds the PostgreSQL test container configuration.
 type DBConfig struct {
@@ -121,14 +124,17 @@ func NewDB(ctx context.Context, log *slog.Logger, cfg *DBConfig) (*DB, error) {
 func SetupPostgresForTest(t *testing.T, db *DB) *pgxpool.Pool {
 	t.Helper()
 
-	goose.SetBaseFS(config.EmbedMigrations)
+	gooseInit.Do(func() {
+		goose.SetBaseFS(config.EmbedMigrations)
+		if err := goose.SetDialect("postgres"); err != nil {
+			panic("failed to set goose dialect: " + err.Error())
+		}
+		goose.SetLogger(goose.NopLogger())
+	})
+
 	sqlDB, err := sql.Open("pgx", db.connStr)
 	require.NoError(t, err, "failed to open database for migrations")
 
-	err = goose.SetDialect("postgres")
-	require.NoError(t, err, "failed to set goose dialect")
-
-	goose.SetLogger(goose.NopLogger())
 	err = goose.Up(sqlDB, "migrations")
 	require.NoError(t, err, "failed to run migrations")
 	sqlDB.Close()

@@ -305,7 +305,8 @@ export async function fetchLatencyHistory(
  *  Returns the formatted time at the given index, or undefined if no valid index. */
 export function formatHoveredTime(
   timestamps: ArrayLike<number>,
-  hoveredIdx: number | null
+  hoveredIdx: number | null,
+  showSeconds?: boolean,
 ): string | undefined {
   if (timestamps.length === 0) return undefined
   const idx = hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
@@ -317,6 +318,7 @@ export function formatHoveredTime(
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    ...(showSeconds ? { second: '2-digit' } : {}),
     hour12: false,
   })
 }

@@ -1131,9 +1131,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
-			if ctx.Err() == nil {
-				slog.Warn("status: failed to query ISIS device issues", "error", err)
-			}
+			slog.Warn("status: failed to query ISIS device issues", "error", err)
 			return nil
 		}
 		defer rows.Close()
@@ -1186,9 +1184,7 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query, committedRttProvisioningNs)
 		if err != nil {
-			if ctx.Err() == nil {
-				slog.Warn("status: failed to query missing ISIS adjacencies", "error", err)
-			}
+			slog.Warn("status: failed to query missing ISIS adjacencies", "error", err)
 			return nil
 		}
 		defer rows.Close()
@@ -1724,10 +1720,29 @@ func (a *API) GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Support custom time range via start_time/end_time (unix seconds)
+	startTimeStr := r.URL.Query().Get("start_time")
+	endTimeStr := r.URL.Query().Get("end_time")
+
 	ctx, cancel := statusContext(r, 15*time.Second)
 	defer cancel()
 
-	resp, err := a.fetchSingleLinkHistoryData(ctx, linkPK, timeRange, requestedBuckets)
+	var resp *SingleLinkHistoryResponse
+	var err error
+
+	if startTimeStr != "" && endTimeStr != "" {
+		startUnix, err1 := strconv.ParseInt(startTimeStr, 10, 64)
+		endUnix, err2 := strconv.ParseInt(endTimeStr, 10, 64)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "invalid start_time or end_time", http.StatusBadRequest)
+			return
+		}
+		resp, err = a.fetchSingleLinkHistoryCustomRange(ctx, linkPK,
+			time.Unix(startUnix, 0).UTC(), time.Unix(endUnix, 0).UTC(), requestedBuckets)
+	} else {
+		resp, err = a.fetchSingleLinkHistoryData(ctx, linkPK, timeRange, requestedBuckets)
+	}
+
 	if err != nil {
 		logError("error fetching single link history", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1747,6 +1762,10 @@ func (a *API) GetSingleLinkHistory(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) fetchSingleLinkHistoryData(ctx context.Context, linkPK string, timeRange string, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
 	return a.fetchSingleLinkHistoryFromRollup(ctx, linkPK, timeRange, requestedBuckets)
+}
+
+func (a *API) fetchSingleLinkHistoryCustomRange(ctx context.Context, linkPK string, startTime, endTime time.Time, requestedBuckets int) (*SingleLinkHistoryResponse, error) {
+	return a.fetchSingleLinkHistoryFromRollupCustom(ctx, linkPK, startTime, endTime, requestedBuckets)
 }
 
 // SingleDeviceHistoryResponse is the response for single device history endpoint

@@ -13,6 +13,12 @@ const (
 	// rollupInterval is how often the rollup workflow computes new buckets.
 	rollupInterval = 30 * time.Second
 
+	// rollupWindow is how far back the live rollup looks. Each bucket stays
+	// in the window for this duration, giving it multiple chances to be
+	// processed. Larger values are more resilient to worker stalls but do
+	// more redundant work.
+	rollupWindow = 30 * time.Minute
+
 	// continueAsNewThreshold is the number of iterations before the workflow
 	// uses continue-as-new to reset history and avoid unbounded growth.
 	continueAsNewThreshold = 60
@@ -44,7 +50,7 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	for iteration < continueAsNewThreshold {
 		now := temporalworkflow.Now(ctx)
 		window := BackfillChunkInput{
-			WindowStart: now.Add(-10 * time.Minute).Truncate(5 * time.Minute),
+			WindowStart: now.Add(-rollupWindow).Truncate(5 * time.Minute),
 			WindowEnd:   now.Truncate(5 * time.Minute),
 		}
 
@@ -94,11 +100,21 @@ func BackfillRollupWorkflow(ctx temporalworkflow.Context, input BackfillInput) e
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, chunkOpts)
 
+	// Cap end time to avoid overlapping with the live rollup window.
+	// The live rollup covers the last rollupWindow, so backfill should
+	// stop before that to avoid resource contention and dropped buckets.
+	endTime := input.EndTime
+	liveStart := temporalworkflow.Now(ctx).Add(-rollupWindow).Truncate(5 * time.Minute)
+	if endTime.After(liveStart) {
+		endTime = liveStart
+		logger.Info("capped backfill end time to avoid live rollup overlap", "end_time", endTime)
+	}
+
 	chunkStart := input.StartTime
-	for chunkStart.Before(input.EndTime) {
+	for chunkStart.Before(endTime) {
 		chunkEnd := chunkStart.Add(input.ChunkSize)
-		if chunkEnd.After(input.EndTime) {
-			chunkEnd = input.EndTime
+		if chunkEnd.After(endTime) {
+			chunkEnd = endTime
 		}
 
 		chunk := BackfillChunkInput{

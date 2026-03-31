@@ -1,17 +1,36 @@
-import { useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Loader2, Server, AlertCircle, ArrowLeft } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { useParams, Link } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Loader2, RefreshCw, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
-import { fetchDevice } from '@/lib/api'
+import { fetchDevice, fetchDeviceMetrics, type FetchDeviceMetricsParams } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
-import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
-import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
+import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
+import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
+import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
-import { timeRangeToString } from '@/components/topology/utils'
+
+/** Convert a custom time string (yyyy-mm-dd-hh:mm:ss) to unix seconds. */
+function parseCustomTime(s: string): number | undefined {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2}):(\d{2})$/)
+  if (!m) return undefined
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
+  return Math.floor(d.getTime() / 1000)
+}
+
+function toMetricsParams(timeRange: TimeRange): FetchDeviceMetricsParams {
+  const params: FetchDeviceMetricsParams = {}
+  if (timeRange.preset === 'custom' && timeRange.from && timeRange.to) {
+    params.startTime = parseCustomTime(timeRange.from)
+    params.endTime = parseCustomTime(timeRange.to)
+  } else if (timeRange.preset !== 'custom') {
+    params.range = timeRange.preset
+  }
+  return params
+}
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -31,12 +50,20 @@ const statusColors: Record<string, string> = {
 
 export function DeviceDetailPage() {
   const { pk } = useParams<{ pk: string }>()
-  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
 
   const { data: device, isLoading, error } = useQuery({
     queryKey: ['device', pk],
     queryFn: () => fetchDevice(pk!),
+    enabled: !!pk,
+  })
+
+  const metricsParams = useMemo(() => toMetricsParams(timeRange), [timeRange])
+
+  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
+    queryKey: ['deviceMetrics', pk, metricsParams],
+    queryFn: () => fetchDeviceMetrics(pk!, metricsParams),
     enabled: !!pk,
   })
 
@@ -56,12 +83,12 @@ export function DeviceDetailPage() {
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Device not found</div>
-          <button
-            onClick={() => navigate('/dz/devices')}
+          <Link
+            to="/dz/devices"
             className="text-sm text-muted-foreground hover:text-foreground"
           >
             Back to devices
-          </button>
+          </Link>
         </div>
       </div>
     )
@@ -74,13 +101,13 @@ export function DeviceDetailPage() {
       {/* Header section - constrained width */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
-        <button
-          onClick={() => navigate('/dz/devices')}
+        <Link
+          to="/dz/devices"
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to devices
-        </button>
+        </Link>
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
@@ -134,17 +161,38 @@ export function DeviceDetailPage() {
         <DeviceInfoContent device={deviceInfo} hideStatusRow hideCharts />
       </div>
 
-      {/* Filters + status row + charts */}
+      {/* Filters + charts */}
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pb-8 space-y-6">
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2 items-center">
+          <button
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['deviceMetrics'] })}
+            disabled={metricsFetching}
+            className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            title="Refresh"
+          >
+            {metricsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          </button>
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
 
-        {/* Status row */}
-        <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
-
-        {/* Interface charts (traffic + health) */}
-        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} className="rounded-lg border border-border p-4" />
+        {metricsLoading && (
+          <div className="space-y-4">
+            <div className="animate-pulse bg-muted rounded h-6 w-full" />
+            {[1, 2].map((i) => (
+              <div key={i} className="rounded-lg border border-border p-4 space-y-2">
+                <div className="animate-pulse bg-muted rounded h-4 w-32" />
+                <div className="animate-pulse bg-muted rounded h-36 w-full" />
+              </div>
+            ))}
+          </div>
+        )}
+        {metrics && (
+          <div className="space-y-4">
+            <DeviceHealthTimeline data={metrics} />
+            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
+            <DeviceTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
+          </div>
+        )}
       </div>
     </div>
   )

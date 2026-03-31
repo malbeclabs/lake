@@ -78,7 +78,7 @@ export function ChartLegendTable({ series, legend, values, maxValues, hoveredTim
             className="text-xs text-muted-foreground w-28 text-right whitespace-nowrap cursor-pointer select-none hover:text-foreground"
             onClick={() => handleSort('max')}
           >
-            Max<SortIcon field="max" />
+            Peak<SortIcon field="max" />
           </span>
         )}
         <span

@@ -17,6 +17,9 @@ interface LinkStatusChartsProps {
   linkPk: string
   timeRange?: string
   bucket?: BucketSize
+  /** Custom time range (unix seconds). When set, overrides timeRange. */
+  startTime?: number
+  endTime?: number
   /** Additional CSS classes for the outer wrapper */
   className?: string
 }
@@ -51,7 +54,7 @@ function RefreshButton({ fetching, onClick }: { fetching: boolean; onClick: () =
   )
 }
 
-export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className }: LinkStatusChartsProps) {
+export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, startTime, endTime, className }: LinkStatusChartsProps) {
   const queryClient = useQueryClient()
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -64,24 +67,53 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
   const handleLossCursorIdx = useCallback((idx: number | null) => setLossHoveredIdx(idx), [])
   const handleIssuesCursorIdx = useCallback((idx: number | null) => setIssuesHoveredIdx(idx), [])
 
-  // Convert bucket size to bucket count for the API
+  // Convert bucket size to bucket count for the API.
+  // For custom time ranges, use the same bucket logic as traffic/latency pages.
   const bucketCount = useMemo(() => {
-    const effectiveBucket = (!bucket || bucket === 'auto')
-      ? resolveAutoBucket(timeRange as TimeRangePreset)
-      : bucket
-    const rangeS = presetToSeconds(timeRange as TimeRangePreset)
+    const rangeS = (startTime && endTime)
+      ? endTime - startTime
+      : presetToSeconds(timeRange as TimeRangePreset)
+
+    let effectiveBucket: BucketSize
+    if (bucket && bucket !== 'auto') {
+      effectiveBucket = bucket
+    } else if (startTime && endTime) {
+      // Match bucketForDuration on the backend: <=1h→10s, <=3h→30s, <=6h→1m, etc.
+      const rangeH = rangeS / 3600
+      if (rangeH <= 1) effectiveBucket = '10 SECOND'
+      else if (rangeH <= 3) effectiveBucket = '30 SECOND'
+      else if (rangeH <= 6) effectiveBucket = '1 MINUTE'
+      else if (rangeH <= 12) effectiveBucket = '5 MINUTE'
+      else if (rangeH <= 24) effectiveBucket = '10 MINUTE'
+      else if (rangeH <= 72) effectiveBucket = '30 MINUTE'
+      else effectiveBucket = '1 HOUR'
+    } else {
+      effectiveBucket = resolveAutoBucket(timeRange as TimeRangePreset)
+    }
+
     const bucketS = bucketSizeToSeconds(effectiveBucket)
     return Math.ceil(rangeS / bucketS)
-  }, [bucket, timeRange])
+  }, [bucket, timeRange, startTime, endTime])
 
   const chartScales = useMemo((): uPlot.Scales => ({
     x: { time: true },
     y: { auto: true },
   }), [])
 
+  const packetLossScales = useMemo((): uPlot.Scales => ({
+    x: { time: true },
+    y: {
+      auto: true,
+      range: (_u, _min, max) => {
+        if (!isFinite(max) || max <= 0) return [0, 5] as [number, number]
+        return [0, Math.min(Math.ceil(max * 1.1), 100)] as [number, number]
+      },
+    },
+  }), [])
+
   const { data: historyData, isLoading, isFetching, error } = useQuery({
-    queryKey: ['single-link-history', linkPk, timeRange, bucketCount],
-    queryFn: () => fetchSingleLinkHistory(linkPk, timeRange, bucketCount),
+    queryKey: ['single-link-history', linkPk, timeRange, bucketCount, startTime, endTime],
+    queryFn: () => fetchSingleLinkHistory(linkPk, startTime ? undefined : timeRange, bucketCount, startTime, endTime),
     refetchInterval: 60000,
     retry: false,
     placeholderData: keepPreviousData,
@@ -200,7 +232,7 @@ export function LinkStatusCharts({ linkPk, timeRange = '24h', bucket, className 
     series: packetLossSeries,
     height: 144,
     axes: pctAxes,
-    scales: chartScales,
+    scales: packetLossScales,
     onCursorIdx: handleLossCursorIdx,
   })
 

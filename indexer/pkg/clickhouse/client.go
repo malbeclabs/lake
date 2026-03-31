@@ -62,7 +62,7 @@ func NewClient(ctx context.Context, log *slog.Logger, addr string, database stri
 		Settings: clickhouse.Settings{
 			"max_execution_time": 60,
 		},
-		DialTimeout: 5 * time.Second,
+		DialTimeout: 15 * time.Second,
 	}
 
 	// Enable TLS for ClickHouse Cloud (port 9440)

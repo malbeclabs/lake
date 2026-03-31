@@ -85,9 +85,9 @@ func effectiveBucket(timeRange, bucket string) string {
 	case "6h":
 		return "1 MINUTE"
 	case "12h":
-		return "10 MINUTE"
+		return "5 MINUTE"
 	case "24h":
-		return "15 MINUTE"
+		return "10 MINUTE"
 	case "3d":
 		return "30 MINUTE"
 	case "7d":
@@ -111,9 +111,9 @@ func bucketForDuration(d time.Duration) string {
 	case d <= 6*time.Hour:
 		return "1 MINUTE"
 	case d <= 12*time.Hour:
-		return "10 MINUTE"
+		return "5 MINUTE"
 	case d <= 24*time.Hour:
-		return "15 MINUTE"
+		return "10 MINUTE"
 	case d <= 3*24*time.Hour:
 		return "30 MINUTE"
 	case d <= 7*24*time.Hour:
