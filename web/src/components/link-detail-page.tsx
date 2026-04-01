@@ -164,9 +164,9 @@ export function LinkDetailPage() {
             <LinkHealthTimeline data={metrics} />
             <LinkPacketLossChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
             <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
+            <LinkTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
             <LinkLatencyChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
             <LinkJitterChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
-            <LinkTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
           </div>
         )}
       </div>
