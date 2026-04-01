@@ -169,7 +169,7 @@ export function LinkJitterChart({ data, className, loading }: LinkJitterChartPro
         <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
           <span>Jitter</span>
         </div>
-        <div className="text-xs text-muted-foreground/60 py-6 text-center">No data for this time range</div>
+        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">No data for this time range</div>
       </div>
     )
   }

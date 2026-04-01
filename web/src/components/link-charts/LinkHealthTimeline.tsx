@@ -6,6 +6,22 @@ interface LinkHealthTimelineProps {
   className?: string
 }
 
+// Hard-drained: dark stripes over health color
+const hardDrainedStripeStyle: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, rgba(60,60,60,0.85), rgba(60,60,60,0.85) 5px, transparent 5px, transparent 7px)',
+}
+
+// Soft-drained: light/white stripes over health color
+const softDrainedStripeStyle: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.6), rgba(255,255,255,0.6) 5px, transparent 5px, transparent 7px)',
+}
+
+function getDrainStripeStyle(drainStatus?: string): React.CSSProperties | undefined {
+  if (drainStatus === 'hard-drained') return hardDrainedStripeStyle
+  if (drainStatus === 'soft-drained') return softDrainedStripeStyle
+  return undefined
+}
+
 const healthColors: Record<string, string> = {
   healthy: 'bg-green-500',
   degraded: 'bg-amber-500',
@@ -312,6 +328,7 @@ export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps)
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
                     }`}
+                    style={getDrainStripeStyle(bar.drainStatus)}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
