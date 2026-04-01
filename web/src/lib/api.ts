@@ -5025,11 +5025,24 @@ export interface DeviceMetricsTraffic {
   carrier_transitions: number
 }
 
+export interface DeviceInterfaceTraffic {
+  intf: string
+  link_pk?: string
+  link_code?: string
+  link_side?: string
+  user_pk?: string
+  in_bps: number
+  out_bps: number
+  max_in_bps: number
+  max_out_bps: number
+}
+
 export interface DeviceMetricsBucket {
   ts: string
   status?: DeviceMetricsStatus
   latency?: LinkMetricsLatency
   traffic?: DeviceMetricsTraffic
+  interfaces?: DeviceInterfaceTraffic[]
 }
 
 export interface DeviceMetricsResponse {

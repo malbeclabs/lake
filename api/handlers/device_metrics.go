@@ -33,9 +33,23 @@ type DeviceMetricsResponse struct {
 
 // DeviceMetricsBucket holds all metric categories for a single time bucket.
 type DeviceMetricsBucket struct {
-	TS      string                `json:"ts"`
-	Status  *DeviceMetricsStatus  `json:"status,omitempty"`
-	Traffic *DeviceMetricsTraffic `json:"traffic,omitempty"`
+	TS         string                       `json:"ts"`
+	Status     *DeviceMetricsStatus         `json:"status,omitempty"`
+	Traffic    *DeviceMetricsTraffic        `json:"traffic,omitempty"`
+	Interfaces []DeviceInterfaceTraffic     `json:"interfaces,omitempty"`
+}
+
+// DeviceInterfaceTraffic holds per-interface traffic for a single bucket.
+type DeviceInterfaceTraffic struct {
+	Intf      string  `json:"intf"`
+	LinkPK    string  `json:"link_pk,omitempty"`
+	LinkCode  string  `json:"link_code,omitempty"`
+	LinkSide  string  `json:"link_side,omitempty"`
+	UserPK    string  `json:"user_pk,omitempty"`
+	InBps     float64 `json:"in_bps"`
+	OutBps    float64 `json:"out_bps"`
+	MaxInBps  float64 `json:"max_in_bps"`
+	MaxOutBps float64 `json:"max_out_bps"`
 }
 
 // DeviceMetricsStatus represents health/drain/ISIS state for a bucket.
@@ -193,10 +207,11 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 	}
 
 	var (
-		meta          *statusDeviceMeta
-		intfRows      []interfaceRollupRow
-		statusChanges []EntityStatusChange
-		hasProbes     bool // whether any link connected to this device has probe data
+		meta            *statusDeviceMeta
+		intfRows        []interfaceRollupRow
+		perIntfRows     []interfaceRollupRow
+		statusChanges   []EntityStatusChange
+		hasProbes       bool // whether any link connected to this device has probe data
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -221,6 +236,21 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 			})
 			if err != nil {
 				return fmt.Errorf("device interface rollup: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Per-interface traffic breakdown
+	if include.Traffic {
+		g.Go(func() error {
+			var err error
+			perIntfRows, err = queryInterfaceRollup(gctx, db, params, interfaceRollupOpts{
+				GroupBy:   groupByDeviceIntf,
+				DevicePKs: []string{devicePK},
+			})
+			if err != nil {
+				return fmt.Errorf("device per-interface rollup: %w", err)
 			}
 			return nil
 		})
@@ -289,6 +319,39 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 		intfIndex[intfRows[i].BucketTS] = &intfRows[i]
 	}
 
+	// Index per-interface rows by bucket timestamp
+	perIntfIndex := make(map[time.Time][]interfaceRollupRow)
+	for _, r := range perIntfRows {
+		perIntfIndex[r.BucketTS] = append(perIntfIndex[r.BucketTS], r)
+	}
+
+	// Resolve link PKs to codes
+	linkCodes := make(map[string]string)
+	if len(perIntfRows) > 0 {
+		linkPKSet := make(map[string]struct{})
+		for _, r := range perIntfRows {
+			if r.LinkPK != "" {
+				linkPKSet[r.LinkPK] = struct{}{}
+			}
+		}
+		if len(linkPKSet) > 0 {
+			pks := make([]string, 0, len(linkPKSet))
+			for pk := range linkPKSet {
+				pks = append(pks, pk)
+			}
+			rows, err := db.Query(ctx, "SELECT pk, code FROM dz_links_current WHERE pk IN ($1)", pks)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var pk, code string
+					if err := rows.Scan(&pk, &code); err == nil {
+						linkCodes[pk] = code
+					}
+				}
+			}
+		}
+	}
+
 	isDrained := health.IsDrainedStatus(meta.Status)
 
 	// Build buckets
@@ -331,6 +394,27 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 				InDiscards:         row.InDiscards,
 				OutDiscards:        row.OutDiscards,
 				CarrierTransitions: row.CarrierTransitions,
+			}
+		}
+
+		// --- Per-interface traffic ---
+		if include.Traffic {
+			if intfRowsForBucket := perIntfIndex[bucketStart]; len(intfRowsForBucket) > 0 {
+				intfs := make([]DeviceInterfaceTraffic, 0, len(intfRowsForBucket))
+				for _, ir := range intfRowsForBucket {
+					intfs = append(intfs, DeviceInterfaceTraffic{
+						Intf:      ir.Intf,
+						LinkPK:    ir.LinkPK,
+						LinkCode:  linkCodes[ir.LinkPK],
+						LinkSide:  ir.LinkSide,
+						UserPK:    ir.UserPK,
+						InBps:     ir.AvgInBps,
+						OutBps:    ir.AvgOutBps,
+						MaxInBps:  ir.MaxInBps,
+						MaxOutBps: ir.MaxOutBps,
+					})
+				}
+				bucket.Interfaces = intfs
 			}
 		}
 
