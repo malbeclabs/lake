@@ -71,7 +71,7 @@ interface MergedBar {
   missingTraffic: boolean
 }
 
-function aggregateBar(group: LinkMetricsBucket[], bucketSeconds: number): MergedBar {
+function aggregateBar(group: LinkMetricsBucket[], bucketSeconds: number, latencyIncluded = true, trafficIncluded = true): MergedBar {
   let health = 'healthy'
   let collecting = false
   let maxLossPct = 0
@@ -98,8 +98,8 @@ function aggregateBar(group: LinkMetricsBucket[], bucketSeconds: number): Merged
 
     if (!b.status?.collecting) {
       nonCollectingCount++
-      if (!b.latency) missingLatency = true
-      if (!b.traffic) missingTraffic = true
+      if (latencyIncluded && !b.latency) missingLatency = true
+      if (trafficIncluded && !b.traffic) missingTraffic = true
     }
 
     if (b.latency) {
@@ -146,15 +146,28 @@ function aggregateBar(group: LinkMetricsBucket[], bucketSeconds: number): Merged
   }
 }
 
+// Check if any bucket in the dataset has latency/traffic data.
+// If none do, the field wasn't included in the request — don't flag as missing.
+function hasAnyLatency(buckets: LinkMetricsBucket[]): boolean {
+  return buckets.some(b => b.latency != null)
+}
+
+function hasAnyTraffic(buckets: LinkMetricsBucket[]): boolean {
+  return buckets.some(b => b.traffic != null)
+}
+
 function mergeBuckets(buckets: LinkMetricsBucket[], bucketSeconds: number, maxBars: number): MergedBar[] {
+  const latencyIncluded = hasAnyLatency(buckets)
+  const trafficIncluded = hasAnyTraffic(buckets)
+
   if (buckets.length <= maxBars) {
-    return buckets.map((b) => aggregateBar([b], bucketSeconds))
+    return buckets.map((b) => aggregateBar([b], bucketSeconds, latencyIncluded, trafficIncluded))
   }
 
   const groupSize = Math.ceil(buckets.length / maxBars)
   const bars: MergedBar[] = []
   for (let i = 0; i < buckets.length; i += groupSize) {
-    bars.push(aggregateBar(buckets.slice(i, i + groupSize), bucketSeconds))
+    bars.push(aggregateBar(buckets.slice(i, i + groupSize), bucketSeconds, latencyIncluded, trafficIncluded))
   }
   return bars
 }
