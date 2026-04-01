@@ -2,7 +2,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { fetchBulkLinkMetrics } from '@/lib/api'
+import { fetchBulkLinkMetrics, fetchLinkMetrics } from '@/lib/api'
 import type { LinkMetricsResponse } from '@/lib/api'
 import { LinkPacketLossChart as LinkPacketLossDetailChart } from '@/components/link-charts/LinkPacketLossChart'
 import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
@@ -279,10 +279,18 @@ interface LinkRowProps {
   derivedInfo: DerivedLinkInfo
   linksWithIssues?: Map<string, string[]>
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>
+  metricsTimeRange: string
 }
 
-function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap }: LinkRowProps) {
+function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, metricsTimeRange }: LinkRowProps) {
   const [expanded, setExpanded] = useState(false)
+
+  // Fetch full metrics (with latency) on expand for packet loss chart
+  const { data: fullMetrics, isFetching: metricsFetching } = useQuery({
+    queryKey: ['linkMetrics', derivedInfo.pk, { range: metricsTimeRange }],
+    queryFn: () => fetchLinkMetrics(derivedInfo.pk, { range: metricsTimeRange }),
+    enabled: expanded,
+  })
 
   const issueReasons = linksWithIssues
     ? (linksWithIssues.get(derivedInfo.code) ?? [])
@@ -366,22 +374,26 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap }: 
       {/* Expanded charts */}
       {expanded && (
         <div className="px-4 pb-4 pt-2 space-y-4">
+          {/* Packet loss chart — needs latency data from per-link fetch */}
+          {fullMetrics && (() => {
+            const hasLoss = fullMetrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
+            return hasLoss ? <LinkPacketLossDetailChart data={fullMetrics} loading={metricsFetching} className={cardClass} /> : null
+          })()}
+          {/* Interface issues chart — uses bulk data (has traffic) */}
           {(() => {
-            const hasLoss = linkMetrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
             const hasIssues = linkMetrics.buckets.some(b => b.traffic && (
               b.traffic.side_a_in_errors + b.traffic.side_a_out_errors + b.traffic.side_z_in_errors + b.traffic.side_z_out_errors > 0 ||
               b.traffic.side_a_in_fcs_errors + b.traffic.side_z_in_fcs_errors > 0 ||
               b.traffic.side_a_in_discards + b.traffic.side_a_out_discards + b.traffic.side_z_in_discards + b.traffic.side_z_out_discards > 0 ||
               b.traffic.side_a_carrier_transitions + b.traffic.side_z_carrier_transitions > 0
             ))
-            if (!hasLoss && !hasIssues) return null
-            return (
-              <>
-                {hasLoss && <LinkPacketLossDetailChart data={linkMetrics} loading={false} className={cardClass} />}
-                {hasIssues && <LinkInterfaceIssuesChart data={linkMetrics} loading={false} className={cardClass} />}
-              </>
-            )
+            return hasIssues ? <LinkInterfaceIssuesChart data={linkMetrics} loading={false} className={cardClass} /> : null
           })()}
+          {!fullMetrics && metricsFetching && (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -412,7 +424,7 @@ export function LinkStatusTimelines({
 
   const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['bulk-link-metrics', timeRange],
-    queryFn: () => fetchBulkLinkMetrics({ range: timeRange }),
+    queryFn: () => fetchBulkLinkMetrics({ range: timeRange, include: ['status', 'traffic'], hasIssues: true }),
     refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
@@ -673,6 +685,7 @@ export function LinkStatusTimelines({
             derivedInfo={derived}
             linksWithIssues={linksWithIssues}
             criticalityMap={criticalityMap}
+            metricsTimeRange={timeRange}
           />
         ))}
       </div>

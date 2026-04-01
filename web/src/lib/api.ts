@@ -4985,6 +4985,7 @@ export interface FetchLinkMetricsParams {
   endTime?: number
   bucket?: string
   include?: LinkMetricsInclude[]
+  hasIssues?: boolean
 }
 
 export async function fetchLinkMetrics(pk: string, params: FetchLinkMetricsParams = {}): Promise<LinkMetricsResponse> {
@@ -5013,6 +5014,7 @@ export async function fetchBulkLinkMetrics(params: FetchLinkMetricsParams = {}):
   if (params.endTime) qs.set('end_time', params.endTime.toString())
   if (params.bucket) qs.set('bucket', params.bucket)
   if (params.include) qs.set('include', params.include.join(','))
+  if (params.hasIssues) qs.set('has_issues', 'true')
   const res = await apiFetch(`/api/link-metrics${qs.toString() ? '?' + qs.toString() : ''}`)
   if (!res.ok) throw new Error('Failed to fetch bulk link metrics')
   return res.json()
@@ -5086,6 +5088,7 @@ export interface FetchDeviceMetricsParams {
   endTime?: number
   bucket?: string
   include?: DeviceMetricsInclude[]
+  hasIssues?: boolean
 }
 
 export async function fetchDeviceMetrics(pk: string, params: FetchDeviceMetricsParams = {}): Promise<DeviceMetricsResponse> {
@@ -5114,6 +5117,7 @@ export async function fetchBulkDeviceMetrics(params: FetchDeviceMetricsParams = 
   if (params.endTime) qs.set('end_time', params.endTime.toString())
   if (params.bucket) qs.set('bucket', params.bucket)
   if (params.include) qs.set('include', params.include.join(','))
+  if (params.hasIssues) qs.set('has_issues', 'true')
   const res = await apiFetch(`/api/device-metrics${qs.toString() ? '?' + qs.toString() : ''}`)
   if (!res.ok) throw new Error('Failed to fetch bulk device metrics')
   return res.json()

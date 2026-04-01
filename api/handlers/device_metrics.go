@@ -456,7 +456,8 @@ func isDefaultBulkDeviceMetricsRequest(r *http.Request) bool {
 	q := r.URL.Query()
 	inc := q.Get("include")
 	rng := q.Get("range")
-	return (inc == "" || inc == "all") && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == ""
+	incOK := inc == "" || inc == "all" || inc == "status,traffic" || inc == "status"
+	return incOK && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == "" && q.Get("has_issues") == ""
 }
 
 // GetBulkDeviceMetrics handles GET /api/device-metrics.
@@ -541,7 +542,29 @@ func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if q.Get("has_issues") == "true" {
+		filterBulkDeviceMetricsIssuesOnly(resp)
+	}
+
 	writeJSON(w, resp)
+}
+
+// filterBulkDeviceMetricsIssuesOnly removes devices that have no issues from the response.
+func filterBulkDeviceMetricsIssuesOnly(resp *BulkDeviceMetricsResponse) {
+	for pk, device := range resp.Devices {
+		hasIssue := false
+		for _, b := range device.Buckets {
+			if b.Status != nil && !b.Status.Collecting {
+				if b.Status.Health != "healthy" && b.Status.Health != "" {
+					hasIssue = true
+					break
+				}
+			}
+		}
+		if !hasIssue {
+			delete(resp.Devices, pk)
+		}
+	}
 }
 
 // FetchBulkDeviceMetricsData is the exported entry point for the page cache worker.
@@ -551,7 +574,7 @@ func (a *API) FetchBulkDeviceMetricsData(ctx context.Context) (*BulkDeviceMetric
 	startTime := now.Add(-duration)
 	params := parseBucketParamsCustom(startTime, now, 24)
 	params.TimeRange = "24h"
-	include := parseDeviceMetricsInclude("all")
+	include := parseDeviceMetricsInclude("status,traffic")
 	return a.fetchBulkDeviceMetrics(ctx, params, include)
 }
 

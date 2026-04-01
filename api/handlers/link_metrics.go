@@ -649,7 +649,10 @@ func isDefaultBulkLinkMetricsRequest(r *http.Request) bool {
 	q := r.URL.Query()
 	inc := q.Get("include")
 	rng := q.Get("range")
-	return (inc == "" || inc == "all") && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == ""
+	// Cache stores status+traffic (no latency) for 24h. Match requests that are
+	// compatible: either no include (all), status+traffic, or just status.
+	incOK := inc == "" || inc == "all" || inc == "status,traffic" || inc == "status"
+	return incOK && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == "" && q.Get("has_issues") == ""
 }
 
 // GetBulkLinkMetrics handles GET /api/link-metrics.
@@ -734,7 +737,30 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if q.Get("has_issues") == "true" {
+		filterBulkLinkMetricsIssuesOnly(resp)
+	}
+
 	writeJSON(w, resp)
+}
+
+// filterBulkLinkMetricsIssuesOnly removes links that have no issues from the response.
+// A link has issues if any non-collecting bucket has non-healthy status.
+func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
+	for pk, link := range resp.Links {
+		hasIssue := false
+		for _, b := range link.Buckets {
+			if b.Status != nil && !b.Status.Collecting {
+				if b.Status.Health != "healthy" && b.Status.Health != "" {
+					hasIssue = true
+					break
+				}
+			}
+		}
+		if !hasIssue {
+			delete(resp.Links, pk)
+		}
+	}
 }
 
 // FetchBulkLinkMetricsData is the exported entry point for the page cache worker.
@@ -744,7 +770,7 @@ func (a *API) FetchBulkLinkMetricsData(ctx context.Context) (*BulkLinkMetricsRes
 	startTime := now.Add(-duration)
 	params := parseBucketParamsCustom(startTime, now, 24)
 	params.TimeRange = "24h"
-	include := parseLinkMetricsInclude("all")
+	include := parseLinkMetricsInclude("status,traffic")
 	return a.fetchBulkLinkMetrics(ctx, params, include)
 }
 
