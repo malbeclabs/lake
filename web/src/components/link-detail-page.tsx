@@ -3,9 +3,10 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Cable, AlertCircle, ArrowLeft } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
-import { fetchLink, fetchLinkMetrics, type FetchLinkMetricsParams } from '@/lib/api'
+import { fetchLink, fetchLinkMetrics } from '@/lib/api'
 import { LinkInfoContent } from '@/components/shared/LinkInfoContent'
 import { linkDetailToInfo } from '@/components/shared/link-info-converters'
+import { toLinkMetricsParams } from '@/components/shared/metrics-params'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
 import { LinkPacketLossChart } from '@/components/link-charts/LinkPacketLossChart'
 import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
@@ -16,35 +17,6 @@ import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRan
 import type { TimeRange, BucketSize } from '@/components/topology/utils'
 import { bucketLabels, resolveAutoBucket, type TimeRangePreset } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-
-/** Convert a custom time string (yyyy-mm-dd-hh:mm:ss) to unix seconds. */
-function parseCustomTime(s: string): number | undefined {
-  // Format: 2026-03-28-14:30:00
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2}):(\d{2})$/)
-  if (!m) return undefined
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
-  return Math.floor(d.getTime() / 1000)
-}
-
-/** Convert TimeRange + BucketSize to FetchLinkMetricsParams. */
-function toMetricsParams(timeRange: TimeRange, bucket: BucketSize): FetchLinkMetricsParams {
-  const params: FetchLinkMetricsParams = {}
-  if (timeRange.preset === 'custom' && timeRange.from && timeRange.to) {
-    params.startTime = parseCustomTime(timeRange.from)
-    params.endTime = parseCustomTime(timeRange.to)
-  } else if (timeRange.preset !== 'custom') {
-    params.range = timeRange.preset
-  }
-  if (bucket && bucket !== 'auto') {
-    // Convert SQL interval format to short form: "5 MINUTE" → "5m"
-    const m = bucket.match(/^(\d+)\s+(SECOND|MINUTE|HOUR|DAY)$/)
-    if (m) {
-      const unit = { SECOND: 's', MINUTE: 'm', HOUR: 'h', DAY: 'd' }[m[2]] || ''
-      params.bucket = `${m[1]}${unit}`
-    }
-  }
-  return params
-}
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
@@ -62,7 +34,7 @@ export function LinkDetailPage() {
     enabled: !!pk,
   })
 
-  const metricsParams = useMemo(() => toMetricsParams(timeRange, bucket), [timeRange, bucket])
+  const metricsParams = useMemo(() => toLinkMetricsParams(timeRange, bucket), [timeRange, bucket])
 
   const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
     queryKey: ['linkMetrics', pk, metricsParams],

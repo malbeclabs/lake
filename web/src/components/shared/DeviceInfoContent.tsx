@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import type { DeviceInterface } from '@/lib/api'
-import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
-import { SingleDeviceStatusRow } from '@/components/single-device-status-row'
-import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRangeSelector'
-import type { TimeRange, BucketSize, TimeRangePreset } from '@/components/topology/utils'
-import { resolveAutoBucket, bucketLabels, timeRangeToString } from '@/components/topology/utils'
+import { fetchDeviceMetrics } from '@/lib/api'
+import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
+import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
+import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
+import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
+import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
+import type { TimeRange } from '@/components/topology/utils'
 
 // Shared device info type that both topology and device page can use
 export interface DeviceInfoData {
@@ -63,14 +66,17 @@ export function DeviceInfoContent({
   hideCharts = false,
 }: DeviceInfoContentProps) {
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
-  const [bucket, setBucket] = useState<BucketSize>('auto')
 
   const timeRange = controlledTimeRange ?? internalTimeRange
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
 
-  const effectiveBucketLabel = bucket === 'auto'
-    ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
-    : undefined
+  const metricsParams = useMemo(() => toDeviceMetricsParams(timeRange), [timeRange])
+
+  const { data: metrics, isFetching: metricsFetching } = useQuery({
+    queryKey: ['deviceMetrics', device.pk, metricsParams],
+    queryFn: () => fetchDeviceMetrics(device.pk, metricsParams),
+    enabled: !hideCharts,
+  })
 
   const cardClass = "rounded-lg border border-border p-4"
   const stats = [
@@ -148,26 +154,20 @@ export function DeviceInfoContent({
           </div>
         )}
 
-        {/* Time range and bucket selectors */}
+        {/* Time range selector */}
         {!hideCharts && (
           <div className="flex items-center justify-end gap-2">
-            <TrafficFilters
-              bucket={bucket}
-              onBucketChange={setBucket}
-              effectiveBucketLabel={effectiveBucketLabel}
-            />
             <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
           </div>
         )}
 
-        {/* Device Status History Timeline */}
-        {!hideStatusRow && (
-          <SingleDeviceStatusRow devicePk={device.pk} timeRange={timeRangeToString(timeRange)} />
-        )}
-
-        {/* Interface charts (traffic + health) */}
-        {!hideCharts && (
-          <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
+        {/* Charts from unified metrics endpoint */}
+        {!hideCharts && metrics && (
+          <div className="space-y-4">
+            {!hideStatusRow && <DeviceHealthTimeline data={metrics} />}
+            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+            <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
+          </div>
         )}
       </div>
     )
@@ -211,20 +211,19 @@ export function DeviceInfoContent({
         </div>
       )}
 
-      {/* Time range and bucket selectors (only shown when not controlled by parent and charts visible) */}
+      {/* Time range selector (only shown when not controlled by parent and charts visible) */}
       {!hideCharts && !controlledTimeRange && (
         <div className="flex items-center justify-end gap-2">
-          <TrafficFilters
-            bucket={bucket}
-            onBucketChange={setBucket}
-            effectiveBucketLabel={effectiveBucketLabel}
-          />
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
       )}
 
-      {!hideCharts && (
-        <InterfaceCharts entityType="device" entityPk={device.pk} timeRange={timeRange} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
+      {!hideCharts && metrics && (
+        <div className="space-y-4">
+          {!hideStatusRow && <DeviceHealthTimeline data={metrics} />}
+          <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+          <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
+        </div>
       )}
     </div>
   )

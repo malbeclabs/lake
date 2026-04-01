@@ -1,12 +1,17 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { InterfaceCharts } from '@/components/topology/InterfaceCharts'
-import { LatencyCharts } from '@/components/topology/LatencyCharts'
-import { LinkStatusCharts } from '@/components/topology/LinkStatusCharts'
-import { SingleLinkStatusRow } from '@/components/single-link-status-row'
+import { useQuery } from '@tanstack/react-query'
+import { fetchLinkMetrics } from '@/lib/api'
+import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
+import { LinkPacketLossChart } from '@/components/link-charts/LinkPacketLossChart'
+import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
+import { LinkTrafficChart } from '@/components/link-charts/LinkTrafficChart'
+import { LinkLatencyChart } from '@/components/link-charts/LinkLatencyChart'
+import { LinkJitterChart } from '@/components/link-charts/LinkJitterChart'
+import { toLinkMetricsParams } from '@/components/shared/metrics-params'
 import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange, BucketSize, TimeRangePreset } from '@/components/topology/utils'
-import { resolveAutoBucket, bucketLabels, timeRangeToString } from '@/components/topology/utils'
+import { resolveAutoBucket, bucketLabels } from '@/components/topology/utils'
 
 // Shared link info type that both topology and link page can use
 export interface LinkInfoData {
@@ -106,16 +111,13 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
 
   const [bucket, setBucket] = useState<BucketSize>('auto')
 
-  const interfaceLabels = useMemo(() => {
-    const map = new Map<string, string>()
-    if (link.sideAIfaceName) {
-      map.set(`A:${link.sideAIfaceName}`, `A: ${link.sideACode} · ${link.sideAIfaceName}`)
-    }
-    if (link.sideZIfaceName) {
-      map.set(`Z:${link.sideZIfaceName}`, `Z: ${link.sideZCode} · ${link.sideZIfaceName}`)
-    }
-    return map
-  }, [link.sideAIfaceName, link.sideACode, link.sideZIfaceName, link.sideZCode])
+  const metricsParams = useMemo(() => toLinkMetricsParams(timeRange, bucket), [timeRange, bucket])
+
+  const { data: metrics, isFetching: metricsFetching } = useQuery({
+    queryKey: ['linkMetrics', link.pk, metricsParams],
+    queryFn: () => fetchLinkMetrics(link.pk, metricsParams),
+    enabled: !hideCharts,
+  })
 
   const effectiveBucketLabel = bucket === 'auto'
     ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
@@ -250,17 +252,17 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
 
-        {/* Link Status History Timeline */}
-        <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
-
-        {/* Link status charts (packet loss, interface issues) */}
-        <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} className={cardClass} />
-
-        {/* Interface traffic charts */}
-        <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
-
-        {/* Latency charts */}
-        <LatencyCharts linkPk={link.pk} timeRange={timeRange} bucket={bucket} className={cardClass} />
+        {/* Charts from unified metrics endpoint */}
+        {metrics && (
+          <div className="space-y-4">
+            <LinkHealthTimeline data={metrics} />
+            <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} />
+            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+            <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
+            <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} />
+            <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} />
+          </div>
+        )}
       </div>
     )
   }
@@ -415,11 +417,6 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         </div>
       </div>
 
-      {/* Link Status History Timeline */}
-      {!hideStatusRow && (
-        <SingleLinkStatusRow linkPk={link.pk} timeRange={timeRangeToString(timeRange)} />
-      )}
-
       {/* Charts section */}
       {!hideCharts && (
         <>
@@ -435,14 +432,16 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             </div>
           )}
 
-          {/* Link status charts (packet loss, interface issues) */}
-          <LinkStatusCharts linkPk={link.pk} timeRange={timeRangeToString(timeRange)} bucket={bucket} className={cardClass} />
-
-          {/* Interface traffic charts */}
-          <InterfaceCharts entityType="link" entityPk={link.pk} timeRange={timeRange} interfaceLabels={interfaceLabels} bucket={bucket} onBucketChange={setBucket} className={cardClass} />
-
-          {/* Latency charts */}
-          <LatencyCharts linkPk={link.pk} timeRange={timeRange} bucket={bucket} className={cardClass} />
+          {metrics && (
+            <div className="space-y-4">
+              {!hideStatusRow && <LinkHealthTimeline data={metrics} />}
+              <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} />
+              <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+              <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
+              <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} />
+              <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} />
+            </div>
+          )}
         </>
       )}
     </div>

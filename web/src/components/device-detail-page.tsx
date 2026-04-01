@@ -3,34 +3,16 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw, Server, AlertCircle, ArrowLeft } from 'lucide-react'
 import { CopyableText } from '@/components/copyable-text'
-import { fetchDevice, fetchDeviceMetrics, type FetchDeviceMetricsParams } from '@/lib/api'
+import { fetchDevice, fetchDeviceMetrics } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
+import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
 import { DeviceTrafficChart } from '@/components/device-charts/DeviceTrafficChart'
 import { TimeRangeSelector } from '@/components/topology/TimeRangeSelector'
 import type { TimeRange } from '@/components/topology/utils'
-
-/** Convert a custom time string (yyyy-mm-dd-hh:mm:ss) to unix seconds. */
-function parseCustomTime(s: string): number | undefined {
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2}):(\d{2})$/)
-  if (!m) return undefined
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]))
-  return Math.floor(d.getTime() / 1000)
-}
-
-function toMetricsParams(timeRange: TimeRange): FetchDeviceMetricsParams {
-  const params: FetchDeviceMetricsParams = {}
-  if (timeRange.preset === 'custom' && timeRange.from && timeRange.to) {
-    params.startTime = parseCustomTime(timeRange.from)
-    params.endTime = parseCustomTime(timeRange.to)
-  } else if (timeRange.preset !== 'custom') {
-    params.range = timeRange.preset
-  }
-  return params
-}
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -59,7 +41,7 @@ export function DeviceDetailPage() {
     enabled: !!pk,
   })
 
-  const metricsParams = useMemo(() => toMetricsParams(timeRange), [timeRange])
+  const metricsParams = useMemo(() => toDeviceMetricsParams(timeRange), [timeRange])
 
   const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
     queryKey: ['deviceMetrics', pk, metricsParams],
