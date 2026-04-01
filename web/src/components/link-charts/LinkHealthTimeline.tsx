@@ -289,14 +289,14 @@ export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps)
         <div className="flex gap-[2px]">
           {bars.map((bar, index) => {
             const reasons = getReasons(bar, data.committed_rtt_us)
-            // Override health: ISIS down → 'down' (grey), missing data → 'degraded'
+            // Override health: ISIS down → 'down' (grey), missing latency → 'degraded'
             const displayHealth = bar.isisDown
               ? 'down'
-              : bar.health === 'healthy' && (bar.missingLatency || bar.missingTraffic)
+              : bar.health === 'healthy' && bar.missingLatency
                 ? 'degraded' : bar.health
             const prevBar = index > 0 ? bars[index - 1] : undefined
             const prevHealth = prevBar
-              ? (prevBar.isisDown ? 'down' : prevBar.health === 'healthy' && (prevBar.missingLatency || prevBar.missingTraffic) ? 'degraded' : prevBar.health)
+              ? (prevBar.isisDown ? 'down' : prevBar.health === 'healthy' && prevBar.missingLatency ? 'degraded' : prevBar.health)
               : undefined
             return (
               <div
