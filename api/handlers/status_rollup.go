@@ -807,7 +807,25 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 	`, bucketExpr, selectKeys, func() string {
 		if params.UseRaw {
 			rawBucketExpr := bucketIntervalExprFromParams("ic.event_ts", params)
-			return rawInterfaceSource(rawBucketExpr)
+			// Build inner WHERE for the raw subquery using raw column names.
+			// The outer whereClause uses aliased names (bucket_ts, link_pk, device_pk)
+			// which can't be pushed into the subquery by ClickHouse.
+			innerFilters := []string{"ic.event_ts >= $1"}
+			innerArgIdx := 2
+			if params.EndTime != nil {
+				innerFilters = append(innerFilters, fmt.Sprintf("ic.event_ts < $%d", innerArgIdx))
+				innerArgIdx++
+			}
+			if len(opts.LinkPKs) > 0 {
+				innerFilters = append(innerFilters, fmt.Sprintf("ic.link_pk IN ($%d)", innerArgIdx))
+				innerArgIdx++
+			}
+			if len(opts.DevicePKs) > 0 {
+				innerFilters = append(innerFilters, fmt.Sprintf("ic.device_pk IN ($%d)", innerArgIdx))
+				//nolint:ineffassign
+				innerArgIdx++
+			}
+			return rawInterfaceSource(rawBucketExpr, strings.Join(innerFilters, " AND "))
 		}
 		return "device_interface_rollup_5m FINAL"
 	}(), whereClause, groupKeys, havingClause, groupKeys)
@@ -866,7 +884,7 @@ func bucketIntervalExprFromParams(column string, params bucketParams) string {
 // device_interface_rollup_5m-equivalent columns from raw fact tables.
 // bucketExpr controls the bucketing granularity (e.g. "toStartOfInterval(ic.event_ts, INTERVAL 1 MINUTE, 'UTC')").
 // State uses current tables since ClickHouse doesn't support CTEs in subqueries.
-func rawInterfaceSource(bucketExpr string) string {
+func rawInterfaceSource(bucketExpr string, innerWhere string) string {
 	return fmt.Sprintf(`(
 		SELECT
 			%s AS bucket_ts,`, bucketExpr) + `
@@ -915,6 +933,7 @@ func rawInterfaceSource(bucketExpr string) string {
 			'' AS user_pk
 		FROM fact_dz_device_interface_counters ic
 		LEFT JOIN dz_devices_current dc ON ic.device_pk = dc.pk
+		WHERE ` + innerWhere + `
 		GROUP BY bucket_ts, ic.device_pk, ic.intf, status
 	)`
 }
