@@ -484,62 +484,21 @@ func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	include := parseDeviceMetricsInclude(q.Get("include"))
 
-	// Parse time range / custom window
 	timeRange := q.Get("range")
 	if timeRange == "" {
 		timeRange = "24h"
 	}
-	startTimeStr := q.Get("start_time")
-	endTimeStr := q.Get("end_time")
-	bucketStr := q.Get("bucket")
 
 	ctx, cancel := statusContext(r, 30*time.Second)
 	defer cancel()
 
-	// Compute bucket params
-	var params bucketParams
-	if startTimeStr != "" && endTimeStr != "" {
-		startUnix, err1 := strconv.ParseInt(startTimeStr, 10, 64)
-		endUnix, err2 := strconv.ParseInt(endTimeStr, 10, 64)
-		if err1 != nil || err2 != nil {
-			http.Error(w, "invalid start_time or end_time", http.StatusBadRequest)
-			return
+	requestedBuckets := 72
+	if b := q.Get("buckets"); b != "" {
+		if n, err := strconv.Atoi(b); err == nil && n > 0 {
+			requestedBuckets = n
 		}
-		startTime := time.Unix(startUnix, 0).UTC()
-		endTime := time.Unix(endUnix, 0).UTC()
-		params = parseBucketParamsCustom(startTime, endTime, 24)
-	} else {
-		now := time.Now().UTC()
-		duration := presetToDuration(timeRange)
-		startTime := now.Add(-duration)
-		params = parseBucketParamsCustom(startTime, now, 24)
-		params.TimeRange = timeRange
 	}
-
-	// Override bucket size if explicitly requested
-	if bucketStr != "" && bucketStr != "auto" {
-		interval, ok := parseBucketString(bucketStr)
-		if !ok {
-			http.Error(w, "invalid bucket value", http.StatusBadRequest)
-			return
-		}
-		secs := intervalToSeconds(interval)
-		var totalSecs int
-		if params.StartTime != nil && params.EndTime != nil {
-			totalSecs = int(params.EndTime.Sub(*params.StartTime).Seconds())
-		} else {
-			totalSecs = params.TotalMinutes * 60
-		}
-		count := totalSecs / secs
-		if count < 1 {
-			count = 1
-		}
-		params.BucketSeconds = secs
-		params.BucketMinutes = secs / 60
-		params.BucketInterval = interval
-		params.BucketCount = count
-		params.UseRaw = isRawBucket(interval)
-	}
+	params := parseBucketParams(timeRange, requestedBuckets)
 
 	resp, err := a.fetchBulkDeviceMetrics(ctx, params, include)
 	if err != nil {
@@ -575,11 +534,7 @@ func filterBulkDeviceMetricsIssuesOnly(resp *BulkDeviceMetricsResponse) {
 
 // FetchBulkDeviceMetricsData is the exported entry point for the page cache worker.
 func (a *API) FetchBulkDeviceMetricsData(ctx context.Context) (*BulkDeviceMetricsResponse, error) {
-	now := time.Now().UTC()
-	duration := presetToDuration("24h")
-	startTime := now.Add(-duration)
-	params := parseBucketParamsCustom(startTime, now, 24)
-	params.TimeRange = "24h"
+	params := parseBucketParams("24h", 72)
 	include := parseDeviceMetricsInclude("status,traffic")
 	return a.fetchBulkDeviceMetrics(ctx, params, include)
 }
