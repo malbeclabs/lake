@@ -336,7 +336,7 @@ export function DeviceStatusTimelines({
 
   const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['bulk-device-metrics', timeRange],
-    queryFn: () => fetchBulkDeviceMetrics({ range: timeRange, include: ['status', 'traffic'] }),
+    queryFn: () => fetchBulkDeviceMetrics({ range: timeRange }),
     refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,

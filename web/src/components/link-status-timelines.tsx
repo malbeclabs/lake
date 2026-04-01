@@ -412,7 +412,7 @@ export function LinkStatusTimelines({
 
   const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['bulk-link-metrics', timeRange],
-    queryFn: () => fetchBulkLinkMetrics({ range: timeRange, include: ['status', 'latency', 'traffic'] }),
+    queryFn: () => fetchBulkLinkMetrics({ range: timeRange }),
     refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
