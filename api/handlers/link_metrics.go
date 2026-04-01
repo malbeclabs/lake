@@ -122,6 +122,21 @@ type LinkMetricsTraffic struct {
 	UtilizationOutPct       float64 `json:"utilization_out_pct"`
 }
 
+// BulkLinkMetricsResponse wraps metrics for multiple links.
+type BulkLinkMetricsResponse struct {
+	TimeRange     string                          `json:"time_range"`
+	BucketSeconds int                             `json:"bucket_seconds"`
+	BucketCount   int                             `json:"bucket_count"`
+	Links         map[string]*LinkMetricsResponse `json:"links"`
+}
+
+// bulkIntfKey indexes interface rollup rows by (link_pk, bucket, side) for bulk queries.
+type bulkIntfKey struct {
+	linkPK   string
+	bucketTS time.Time
+	side     string
+}
+
 // --- Include flags ---
 
 type linkMetricsInclude struct {
@@ -624,4 +639,303 @@ func buildLinkMetricsTraffic(
 	}
 
 	return t
+}
+
+// --- Bulk handler ---
+
+// isDefaultBulkLinkMetricsRequest returns true when the request uses default parameters,
+// suitable for serving from the page cache.
+func isDefaultBulkLinkMetricsRequest(r *http.Request) bool {
+	q := r.URL.Query()
+	inc := q.Get("include")
+	rng := q.Get("range")
+	return (inc == "" || inc == "all") && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == ""
+}
+
+// GetBulkLinkMetrics handles GET /api/link-metrics.
+// It returns metrics for all links in a single response.
+func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
+	// Try page cache for default requests
+	if isMainnet(r.Context()) && isDefaultBulkLinkMetricsRequest(r) {
+		if data, err := a.readPageCache(r.Context(), "bulk_link_metrics"); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			_, _ = w.Write(data)
+			return
+		}
+	}
+
+	w.Header().Set("X-Cache", "MISS")
+
+	q := r.URL.Query()
+	include := parseLinkMetricsInclude(q.Get("include"))
+
+	// Parse time range / custom window
+	timeRange := q.Get("range")
+	if timeRange == "" {
+		timeRange = "24h"
+	}
+	startTimeStr := q.Get("start_time")
+	endTimeStr := q.Get("end_time")
+	bucketStr := q.Get("bucket")
+
+	ctx, cancel := statusContext(r, 30*time.Second)
+	defer cancel()
+
+	// Compute bucket params
+	var params bucketParams
+	if startTimeStr != "" && endTimeStr != "" {
+		startUnix, err1 := strconv.ParseInt(startTimeStr, 10, 64)
+		endUnix, err2 := strconv.ParseInt(endTimeStr, 10, 64)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "invalid start_time or end_time", http.StatusBadRequest)
+			return
+		}
+		startTime := time.Unix(startUnix, 0).UTC()
+		endTime := time.Unix(endUnix, 0).UTC()
+		params = parseBucketParamsCustom(startTime, endTime, 24)
+	} else {
+		now := time.Now().UTC()
+		duration := presetToDuration(timeRange)
+		startTime := now.Add(-duration)
+		params = parseBucketParamsCustom(startTime, now, 24)
+		params.TimeRange = timeRange
+	}
+
+	// Override bucket size if explicitly requested
+	if bucketStr != "" && bucketStr != "auto" {
+		interval, ok := parseBucketString(bucketStr)
+		if !ok {
+			http.Error(w, "invalid bucket value", http.StatusBadRequest)
+			return
+		}
+		secs := intervalToSeconds(interval)
+		var totalSecs int
+		if params.StartTime != nil && params.EndTime != nil {
+			totalSecs = int(params.EndTime.Sub(*params.StartTime).Seconds())
+		} else {
+			totalSecs = params.TotalMinutes * 60
+		}
+		count := totalSecs / secs
+		if count < 1 {
+			count = 1
+		}
+		params.BucketSeconds = secs
+		params.BucketMinutes = secs / 60
+		params.BucketInterval = interval
+		params.BucketCount = count
+		params.UseRaw = isRawBucket(interval)
+	}
+
+	resp, err := a.fetchBulkLinkMetrics(ctx, params, include)
+	if err != nil {
+		slog.Error("error fetching bulk link metrics", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, resp)
+}
+
+// FetchBulkLinkMetricsData is the exported entry point for the page cache worker.
+func (a *API) FetchBulkLinkMetricsData(ctx context.Context) (*BulkLinkMetricsResponse, error) {
+	now := time.Now().UTC()
+	duration := presetToDuration("24h")
+	startTime := now.Add(-duration)
+	params := parseBucketParamsCustom(startTime, now, 24)
+	params.TimeRange = "24h"
+	include := parseLinkMetricsInclude("all")
+	return a.fetchBulkLinkMetrics(ctx, params, include)
+}
+
+// fetchBulkLinkMetrics runs parallel queries for ALL links and assembles the bulk response.
+func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, include linkMetricsInclude) (*BulkLinkMetricsResponse, error) {
+	db := a.envDB(ctx)
+
+	var bucketDuration time.Duration
+	if params.BucketSeconds > 0 {
+		bucketDuration = time.Duration(params.BucketSeconds) * time.Second
+	} else {
+		bucketDuration = time.Duration(params.BucketMinutes) * time.Minute
+	}
+	now := time.Now().UTC()
+	if params.EndTime != nil {
+		now = *params.EndTime
+	}
+
+	var (
+		metaMap       map[string]*statusLinkMeta
+		linkRollupMap map[linkBucketKey]*linkRollupRow
+		intfRows      []interfaceRollupRow
+	)
+
+	g, gctx := errgroup.WithContext(ctx)
+
+	// Fetch all link metadata (no PK filter)
+	g.Go(func() error {
+		var err error
+		metaMap, err = queryStatusLinkMeta(gctx, db)
+		if err != nil {
+			return fmt.Errorf("bulk link metadata: %w", err)
+		}
+		return nil
+	})
+
+	// Latency/status rollup for all links (no PK filter)
+	if include.Latency || include.Status {
+		g.Go(func() error {
+			var err error
+			linkRollupMap, err = queryLinkRollup(gctx, db, params)
+			if err != nil {
+				return fmt.Errorf("bulk link rollup: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Traffic (interface rollup) for all links (no PK filter)
+	if include.Traffic {
+		g.Go(func() error {
+			var err error
+			intfRows, err = queryInterfaceRollup(gctx, db, params, interfaceRollupOpts{
+				GroupBy: groupByLinkSide,
+			})
+			if err != nil {
+				return fmt.Errorf("bulk interface rollup: %w", err)
+			}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	// Index interface rows by (link_pk, bucket, side)
+	bulkIntfIndex := make(map[bulkIntfKey]*interfaceRollupRow)
+	for i := range intfRows {
+		bk := bulkIntfKey{
+			linkPK:   intfRows[i].LinkPK,
+			bucketTS: intfRows[i].BucketTS,
+			side:     intfRows[i].LinkSide,
+		}
+		bulkIntfIndex[bk] = &intfRows[i]
+	}
+
+	bucketSecs := params.BucketSeconds
+	if bucketSecs == 0 {
+		bucketSecs = params.BucketMinutes * 60
+	}
+
+	// Build per-link responses
+	links := make(map[string]*LinkMetricsResponse, len(metaMap))
+	for linkPK, meta := range metaMap {
+		// Effective committed RTT
+		committedRtt := meta.CommittedRttUs
+		if meta.LinkType != "WAN" || meta.SideAMetro == meta.SideZMetro {
+			committedRtt = 0
+		}
+
+		// Extract per-link interface index subset for buildLinkMetricsStatus/Traffic
+		perLinkIntfIndex := make(map[linkMetricsSideKey]*interfaceRollupRow)
+		for bk, row := range bulkIntfIndex {
+			if bk.linkPK == linkPK {
+				perLinkIntfIndex[linkMetricsSideKey{bucketTS: bk.bucketTS, side: bk.side}] = row
+			}
+		}
+
+		// Build buckets
+		buckets := make([]LinkMetricsBucket, 0, params.BucketCount)
+		for i := params.BucketCount - 1; i >= 0; i-- {
+			var bucketStart time.Time
+			if params.StartTime != nil {
+				bucketStart = params.StartTime.Truncate(bucketDuration).Add(time.Duration(params.BucketCount-1-i) * bucketDuration)
+			} else {
+				bucketStart = now.Truncate(bucketDuration).Add(-time.Duration(i) * bucketDuration)
+			}
+			isCollecting := i == 0
+
+			bk := linkBucketKey{LinkPK: linkPK, BucketTS: bucketStart}
+			rollup := linkRollupMap[bk]
+
+			bucket := LinkMetricsBucket{
+				TS: bucketStart.Format(time.RFC3339),
+			}
+
+			if include.Status {
+				st := buildLinkMetricsStatus(rollup, meta, committedRtt, isCollecting, bucketStart, perLinkIntfIndex)
+				bucket.Status = &st
+			}
+
+			if include.Latency && rollup != nil && (rollup.ASamples > 0 || rollup.ZSamples > 0) {
+				bucket.Latency = &LinkMetricsLatency{
+					AAvgRttUs: rollup.AAvgRttUs,
+					AMinRttUs: rollup.AMinRttUs,
+					AP50RttUs: rollup.AP50RttUs,
+					AP90RttUs: rollup.AP90RttUs,
+					AP95RttUs: rollup.AP95RttUs,
+					AP99RttUs: rollup.AP99RttUs,
+					AMaxRttUs: rollup.AMaxRttUs,
+					ALossPct:  rollup.ALossPct,
+					ASamples:  rollup.ASamples,
+					ZAvgRttUs: rollup.ZAvgRttUs,
+					ZMinRttUs: rollup.ZMinRttUs,
+					ZP50RttUs: rollup.ZP50RttUs,
+					ZP90RttUs: rollup.ZP90RttUs,
+					ZP95RttUs: rollup.ZP95RttUs,
+					ZP99RttUs: rollup.ZP99RttUs,
+					ZMaxRttUs: rollup.ZMaxRttUs,
+					ZLossPct:  rollup.ZLossPct,
+					ZSamples:  rollup.ZSamples,
+
+					AAvgJitterUs: rollup.AAvgJitterUs,
+					AMinJitterUs: rollup.AMinJitterUs,
+					AP50JitterUs: rollup.AP50JitterUs,
+					AP90JitterUs: rollup.AP90JitterUs,
+					AP95JitterUs: rollup.AP95JitterUs,
+					AP99JitterUs: rollup.AP99JitterUs,
+					AMaxJitterUs: rollup.AMaxJitterUs,
+					ZAvgJitterUs: rollup.ZAvgJitterUs,
+					ZMinJitterUs: rollup.ZMinJitterUs,
+					ZP50JitterUs: rollup.ZP50JitterUs,
+					ZP90JitterUs: rollup.ZP90JitterUs,
+					ZP95JitterUs: rollup.ZP95JitterUs,
+					ZP99JitterUs: rollup.ZP99JitterUs,
+					ZMaxJitterUs: rollup.ZMaxJitterUs,
+				}
+			}
+
+			if include.Traffic {
+				traffic := buildLinkMetricsTraffic(bucketStart, perLinkIntfIndex, meta.BandwidthBps)
+				if traffic != nil {
+					bucket.Traffic = traffic
+				}
+			}
+
+			buckets = append(buckets, bucket)
+		}
+
+		links[linkPK] = &LinkMetricsResponse{
+			LinkPK:            meta.PK,
+			LinkCode:          meta.Code,
+			LinkType:          meta.LinkType,
+			ContributorCode:   meta.Contributor,
+			SideAMetro:        meta.SideAMetro,
+			SideZMetro:        meta.SideZMetro,
+			CommittedRttUs:    committedRtt,
+			CommittedJitterUs: meta.CommittedJitterUs,
+			BandwidthBps:      meta.BandwidthBps,
+			TimeRange:         params.TimeRange,
+			BucketSeconds:     bucketSecs,
+			BucketCount:       params.BucketCount,
+			Buckets:           buckets,
+		}
+	}
+
+	return &BulkLinkMetricsResponse{
+		TimeRange:     params.TimeRange,
+		BucketSeconds: bucketSecs,
+		BucketCount:   params.BucketCount,
+		Links:         links,
+	}, nil
 }

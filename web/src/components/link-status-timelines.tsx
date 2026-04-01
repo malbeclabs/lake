@@ -1,13 +1,12 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { fetchLinkHistory, fetchLinkMetrics } from '@/lib/api'
-import type { LinkHistory } from '@/lib/api'
+import { fetchBulkLinkMetrics } from '@/lib/api'
+import type { LinkMetricsResponse } from '@/lib/api'
 import { LinkPacketLossChart as LinkPacketLossDetailChart } from '@/components/link-charts/LinkPacketLossChart'
 import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
-import { StatusTimeline } from './status-timeline'
-import { getEffectiveStatus } from '@/lib/link-status'
+import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
 import { CriticalityBadge } from './criticality-badge'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
@@ -79,7 +78,123 @@ function formatBandwidth(bps: number): string {
   return `${bps} bps`
 }
 
-function LinkInfoPopover({ link, criticality }: { link: LinkHistory; criticality?: 'critical' | 'important' | 'redundant' }) {
+interface DerivedLinkInfo {
+  pk: string
+  code: string
+  linkType: string
+  contributor: string
+  sideAMetro: string
+  sideZMetro: string
+  bandwidthBps: number
+  committedRttUs: number
+  issueReasons: string[]
+  isDown: boolean
+  drainStatus: string
+  provisioning: boolean
+  health: string  // worst health across buckets
+}
+
+function deriveLinkInfo(metrics: LinkMetricsResponse): DerivedLinkInfo {
+  const issueReasons = new Set<string>()
+  let worstHealth = 'healthy'
+  let isDown = false
+  let drainStatus = ''
+  let provisioning = false
+
+  const healthPriority: Record<string, number> = {
+    unhealthy: 4,
+    down: 3,
+    degraded: 2,
+    no_data: 1,
+    healthy: 0,
+  }
+
+  for (const b of metrics.buckets) {
+    // Status-derived info
+    if (b.status) {
+      const bHealth = b.status.health || 'no_data'
+      if ((healthPriority[bHealth] ?? 0) > (healthPriority[worstHealth] ?? 0)) {
+        worstHealth = bHealth
+      }
+      if (b.status.isis_down) {
+        issueReasons.add('missing_adjacency')
+      }
+      if (b.status.drain_status) {
+        drainStatus = b.status.drain_status
+      }
+      if (b.status.provisioning) {
+        provisioning = true
+      }
+    }
+
+    // Latency-derived issues
+    if (b.latency) {
+      if (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0) {
+        issueReasons.add('packet_loss')
+      }
+      if (metrics.committed_rtt_us > 0) {
+        const avgRtt = (b.latency.a_avg_rtt_us + b.latency.z_avg_rtt_us) / 2
+        if (avgRtt > metrics.committed_rtt_us * 1.2) {
+          issueReasons.add('high_latency')
+        }
+      }
+    }
+
+    // Traffic-derived issues
+    if (b.traffic) {
+      const t = b.traffic
+      if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) {
+        issueReasons.add('interface_errors')
+      }
+      if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) {
+        issueReasons.add('fcs_errors')
+      }
+      if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) {
+        issueReasons.add('discards')
+      }
+      if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) {
+        issueReasons.add('carrier_transitions')
+      }
+      if (t.utilization_in_pct > 80 || t.utilization_out_pct > 80) {
+        issueReasons.add('high_utilization')
+      }
+    }
+
+    // No data detection: non-collecting bucket with no_data health
+    if (b.status && !b.status.collecting && b.status.health === 'no_data') {
+      issueReasons.add('no_data')
+    }
+  }
+
+  // Check if the link is down: look at the latest non-collecting bucket
+  for (let i = metrics.buckets.length - 1; i >= 0; i--) {
+    const b = metrics.buckets[i]
+    if (b.status && !b.status.collecting) {
+      if (b.status.health === 'down' || b.status.isis_down) {
+        isDown = true
+      }
+      break
+    }
+  }
+
+  return {
+    pk: metrics.link_pk,
+    code: metrics.link_code,
+    linkType: metrics.link_type,
+    contributor: metrics.contributor_code,
+    sideAMetro: metrics.side_a_metro,
+    sideZMetro: metrics.side_z_metro,
+    bandwidthBps: metrics.bandwidth_bps,
+    committedRttUs: metrics.committed_rtt_us,
+    issueReasons: Array.from(issueReasons),
+    isDown,
+    drainStatus,
+    provisioning,
+    health: worstHealth,
+  }
+}
+
+function LinkInfoPopover({ linkMetrics, criticality }: { linkMetrics: LinkMetricsResponse; criticality?: 'critical' | 'important' | 'redundant' }) {
   const [isOpen, setIsOpen] = useState(false)
 
   const criticalityInfo = {
@@ -119,31 +234,24 @@ function LinkInfoPopover({ link, criticality }: { link: LinkHistory; criticality
           <div className="space-y-2 text-xs">
             <div>
               <div className="text-muted-foreground">Route</div>
-              <div className="font-medium">{link.side_a_metro} — {link.side_z_metro}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">Devices</div>
-              <div className="font-mono text-[11px]">
-                <div>{link.side_a_device}</div>
-                <div>{link.side_z_device}</div>
-              </div>
+              <div className="font-medium">{linkMetrics.side_a_metro} — {linkMetrics.side_z_metro}</div>
             </div>
             <div className="flex gap-4">
               <div>
                 <div className="text-muted-foreground">Type</div>
-                <div className="font-medium">{link.link_type}</div>
+                <div className="font-medium">{linkMetrics.link_type}</div>
               </div>
-              {link.bandwidth_bps > 0 && (
+              {linkMetrics.bandwidth_bps > 0 && (
                 <div>
                   <div className="text-muted-foreground">Bandwidth</div>
-                  <div className="font-medium">{formatBandwidth(link.bandwidth_bps)}</div>
+                  <div className="font-medium">{formatBandwidth(linkMetrics.bandwidth_bps)}</div>
                 </div>
               )}
             </div>
-            {link.committed_rtt_us > 0 && (
+            {linkMetrics.committed_rtt_us > 0 && (
               <div>
                 <div className="text-muted-foreground">Committed RTT</div>
-                <div className="font-medium">{(link.committed_rtt_us / 1000).toFixed(2)} ms</div>
+                <div className="font-medium">{(linkMetrics.committed_rtt_us / 1000).toFixed(2)} ms</div>
               </div>
             )}
             {criticality && (
@@ -164,55 +272,24 @@ function LinkInfoPopover({ link, criticality }: { link: LinkHistory; criticality
   )
 }
 
-function useBucketCount() {
-  const [buckets, setBuckets] = useState(72)
-
-  useEffect(() => {
-    const updateBuckets = () => {
-      const width = window.innerWidth
-      if (width < 640) {
-        setBuckets(24) // mobile
-      } else if (width < 1024) {
-        setBuckets(48) // tablet
-      } else {
-        setBuckets(72) // desktop
-      }
-    }
-
-    updateBuckets()
-    window.addEventListener('resize', updateBuckets)
-    return () => window.removeEventListener('resize', updateBuckets)
-  }, [])
-
-  return buckets
-}
-
 const cardClass = "rounded-lg border border-border p-4"
 
 interface LinkRowProps {
-  link: LinkHistory
+  linkMetrics: LinkMetricsResponse
+  derivedInfo: DerivedLinkInfo
   linksWithIssues?: Map<string, string[]>
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>
-  bucketMinutes?: number
-  dataTimeRange?: string
-  metricsTimeRange: string
 }
 
-function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, dataTimeRange, metricsTimeRange }: LinkRowProps) {
+function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap }: LinkRowProps) {
   const [expanded, setExpanded] = useState(false)
 
-  const { data: metrics, isFetching: metricsFetching } = useQuery({
-    queryKey: ['linkMetrics', link.pk, { range: metricsTimeRange }],
-    queryFn: () => fetchLinkMetrics(link.pk, { range: metricsTimeRange }),
-    enabled: expanded,
-  })
-
   const issueReasons = linksWithIssues
-    ? (linksWithIssues.get(link.code) ?? [])
-    : (link.issue_reasons ?? [])
+    ? (linksWithIssues.get(derivedInfo.code) ?? [])
+    : derivedInfo.issueReasons
 
   return (
-    <div id={`link-row-${link.code}`} className="border-b border-border last:border-b-0">
+    <div id={`link-row-${derivedInfo.code}`} className="border-b border-border last:border-b-0">
       <div
         className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
         onClick={() => setExpanded(!expanded)}
@@ -226,26 +303,26 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
           {/* Link info */}
           <div className="flex-shrink-0 w-52 sm:w-60 lg:w-68">
             <div className="flex items-center gap-1.5">
-              <Link to={`/dz/links/${link.pk}`} state={{ backLabel: 'status' }} className="font-mono text-sm truncate hover:underline" title={link.code} onClick={(e) => e.stopPropagation()}>
-                {link.code}
+              <Link to={`/dz/links/${derivedInfo.pk}`} state={{ backLabel: 'status' }} className="font-mono text-sm truncate hover:underline" title={derivedInfo.code} onClick={(e) => e.stopPropagation()}>
+                {derivedInfo.code}
               </Link>
-              <LinkInfoPopover link={link} criticality={criticalityMap?.get(link.code)} />
-              {criticalityMap?.get(link.code) && criticalityMap.get(link.code) !== 'redundant' && (
-                <CriticalityBadge criticality={criticalityMap.get(link.code)!} />
+              <LinkInfoPopover linkMetrics={linkMetrics} criticality={criticalityMap?.get(derivedInfo.code)} />
+              {criticalityMap?.get(derivedInfo.code) && criticalityMap.get(derivedInfo.code) !== 'redundant' && (
+                <CriticalityBadge criticality={criticalityMap.get(derivedInfo.code)!} />
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {link.link_type}{link.contributor && ` · ${link.contributor}`} · {link.side_a_metro} ↔ {link.side_z_metro}
+              {derivedInfo.linkType}{derivedInfo.contributor && ` · ${derivedInfo.contributor}`} · {derivedInfo.sideAMetro} ↔ {derivedInfo.sideZMetro}
             </div>
-            {(link.is_down || link.drain_status || link.provisioning || issueReasons.length > 0) && (
+            {(derivedInfo.isDown || derivedInfo.drainStatus || derivedInfo.provisioning || issueReasons.length > 0) && (
               <div className="flex flex-wrap gap-1 mt-1">
-                {link.is_down && (
+                {derivedInfo.isDown && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">Down</span>
                 )}
-                {link.drain_status && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">{link.drain_status === 'hard-drained' ? 'Hard Drained' : 'Soft Drained'}</span>
+                {derivedInfo.drainStatus && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-gray-900/15 text-gray-900 dark:bg-gray-400/20 dark:text-gray-300">{derivedInfo.drainStatus === 'hard-drained' ? 'Hard Drained' : 'Soft Drained'}</span>
                 )}
-                {link.provisioning && (
+                {derivedInfo.provisioning && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-blue-500/15 text-blue-700 dark:bg-blue-400/20 dark:text-blue-300">Provisioning</span>
                 )}
                 {issueReasons.includes('packet_loss') && (
@@ -281,22 +358,17 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <StatusTimeline
-              hours={link.hours}
-              committedRttUs={link.committed_rtt_us}
-              bucketMinutes={bucketMinutes}
-              timeRange={dataTimeRange}
-            />
+            <LinkHealthTimeline data={linkMetrics} />
           </div>
         </div>
       </div>
 
-      {/* Expanded charts — aligned with the timeline column */}
+      {/* Expanded charts */}
       {expanded && (
         <div className="px-4 pb-4 pt-2 space-y-4">
-          {metrics && (() => {
-            const hasLoss = metrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
-            const hasIssues = metrics.buckets.some(b => b.traffic && (
+          {(() => {
+            const hasLoss = linkMetrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
+            const hasIssues = linkMetrics.buckets.some(b => b.traffic && (
               b.traffic.side_a_in_errors + b.traffic.side_a_out_errors + b.traffic.side_z_in_errors + b.traffic.side_z_out_errors > 0 ||
               b.traffic.side_a_in_fcs_errors + b.traffic.side_z_in_fcs_errors > 0 ||
               b.traffic.side_a_in_discards + b.traffic.side_a_out_discards + b.traffic.side_z_in_discards + b.traffic.side_z_out_discards > 0 ||
@@ -305,16 +377,11 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
             if (!hasLoss && !hasIssues) return null
             return (
               <>
-                {hasLoss && <LinkPacketLossDetailChart data={metrics} loading={metricsFetching} className={cardClass} />}
-                {hasIssues && <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />}
+                {hasLoss && <LinkPacketLossDetailChart data={linkMetrics} loading={false} className={cardClass} />}
+                {hasIssues && <LinkInterfaceIssuesChart data={linkMetrics} loading={false} className={cardClass} />}
               </>
             )
           })()}
-          {!metrics && metricsFetching && (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -342,104 +409,92 @@ export function LinkStatusTimelines({
     { value: '3d', label: '3d' },
     { value: '7d', label: '7d' },
   ]
-  const buckets = useBucketCount()
 
   const { data, isLoading, isPlaceholderData, error } = useQuery({
-    queryKey: ['link-history', timeRange, buckets],
-    queryFn: () => fetchLinkHistory(timeRange, buckets),
-    refetchInterval: 60_000, // Refresh every minute
+    queryKey: ['bulk-link-metrics', timeRange],
+    queryFn: () => fetchBulkLinkMetrics({ range: timeRange, include: ['status', 'latency', 'traffic'] }),
+    refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   })
 
+  // Convert the Record<string, LinkMetricsResponse> into an array with derived info
+  const linksArray = useMemo(() => {
+    if (!data?.links) return []
+    return Object.values(data.links).map(metrics => ({
+      metrics,
+      derived: deriveLinkInfo(metrics),
+    }))
+  }, [data?.links])
+
   // Helper to check if a link matches health filters
-  // Uses linksWithHealth (from filter time range) if provided, otherwise falls back to link's own hours
-  const linkMatchesHealthFilters = (link: LinkHistory): boolean => {
-    // If we have health data from the filter time range, use it
+  const linkMatchesHealthFilters = (derived: DerivedLinkInfo): boolean => {
     if (linksWithHealth && linksWithHealth.size > 0) {
-      const health = linksWithHealth.get(link.code)
+      const health = linksWithHealth.get(derived.code)
       if (health) {
-        // Map no_data and down to unhealthy for filter matching (not separate filter options)
         const filterHealth = (health === 'no_data' || health === 'down') ? 'unhealthy' : health
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return healthFilters.includes(filterHealth as any)
       }
-      // Link not in filter data - check if it exists in history
       return false
     }
 
-    // Fallback: check link's own hours data
-    if (!link.hours || link.hours.length === 0) return false
-    return link.hours.some(hour => {
-      const status = hour.status
-      if (status === 'healthy' && healthFilters.includes('healthy')) return true
-      if (status === 'degraded' && healthFilters.includes('degraded')) return true
-      if (status === 'unhealthy' && healthFilters.includes('unhealthy')) return true
-      if (status === 'no_data' && healthFilters.includes('unhealthy')) return true // no_data maps to unhealthy
-      return false
-    })
+    // Fallback: use worst health derived from buckets
+    const h = derived.health
+    if (h === 'healthy' && healthFilters.includes('healthy')) return true
+    if (h === 'degraded' && healthFilters.includes('degraded')) return true
+    if ((h === 'unhealthy' || h === 'no_data' || h === 'down') && healthFilters.includes('unhealthy')) return true
+    return false
   }
 
-  // Check which issue filters are selected
   const issueTypesSelected = issueFilters.filter(f => f !== 'no_issues')
   const noIssuesSelected = issueFilters.includes('no_issues')
   const noDataSelected = issueFilters.includes('no_data')
 
-  // Filter and sort links by recency of issues
   const filteredLinks = useMemo(() => {
-    if (!data?.links) return []
+    if (linksArray.length === 0) return []
 
-    // Filter by issue reasons (from filter time range if provided) AND health status
-    const filtered = data.links.filter(link => {
-      // Use linksWithIssues if provided - if link not in map, it has no issues in the filter time range
-      // Only fall back to link.issue_reasons if linksWithIssues is not provided at all
+    const filtered = linksArray.filter(({ metrics, derived }) => {
       const issueReasons = linksWithIssues && linksWithIssues.size > 0
-        ? (linksWithIssues.get(link.code) ?? [])
-        : (link.issue_reasons ?? [])
+        ? (linksWithIssues.get(derived.code) ?? [])
+        : derived.issueReasons
       const hasIssues = issueReasons.length > 0
 
       // When no_data filter is off, exclude links whose only issue is no_data
-      // UNLESS the link has non-healthy buckets (unhealthy/degraded from missing data)
       if (!noDataSelected && issueReasons.length === 1 && issueReasons[0] === 'no_data') {
-        const hasNonHealthyBuckets = link.hours?.some(h =>
-          !h.collecting && (h.status === 'unhealthy' || h.status === 'degraded')
+        const hasNonHealthyBuckets = metrics.buckets.some(b =>
+          b.status && !b.status.collecting && (b.status.health === 'unhealthy' || b.status.health === 'degraded')
         )
         if (!hasNonHealthyBuckets) {
           return false
         }
       }
 
-      // Hide currently drained links unless showDrained is enabled
-      if (link.drain_status && !showDrained) {
+      if (derived.drainStatus && !showDrained) {
         return false
       }
 
-      // Hide provisioning links unless showProvisioning is enabled
-      if (link.provisioning && !showProvisioning) {
+      if (derived.provisioning && !showProvisioning) {
         return false
       }
 
       const matchesIssue = hasIssues
         ? issueReasons.some(reason => issueTypesSelected.includes(reason)) ||
-          (issueReasons.length === 1 && issueReasons[0] === 'no_data' && link.hours?.some(h =>
-            !h.collecting && (h.status === 'unhealthy' || h.status === 'degraded')
+          (issueReasons.length === 1 && issueReasons[0] === 'no_data' && metrics.buckets.some(b =>
+            b.status && !b.status.collecting && (b.status.health === 'unhealthy' || b.status.health === 'degraded')
           ))
         : noIssuesSelected
 
-      // Must match at least one health filter
-      const matchesHealth = linkMatchesHealthFilters(link)
+      const matchesHealth = linkMatchesHealthFilters(derived)
 
       return matchesIssue && matchesHealth
     })
 
     // Sort by: 1) recent severity (worst in last 6 buckets), 2) overall worst severity,
     // 3) most recent issue timestamp, 4) total issue count, 5) alphabetical.
-    // Uses getEffectiveStatus to account for ISIS down, interface issues, and latency
-    // overages that aren't reflected in the raw status field.
-    // "Recent severity" ensures a link that's down right now sorts above one that had
-    // a brief issue 12 hours ago, even if both have the same worst-ever severity.
-    const statusSeverity = (status: string): number => {
-      switch (status) {
+    const statusSeverity = (health: string, isisDown: boolean): number => {
+      if (isisDown) return 3
+      switch (health) {
         case 'down':
         case 'unhealthy': return 3
         case 'degraded': return 2
@@ -451,20 +506,24 @@ export function LinkStatusTimelines({
     const RECENT_BUCKETS = 6
 
     return filtered.sort((a, b) => {
-      const getSortKey = (link: LinkHistory): { recent: number; worst: number; latestTs: string; count: number } => {
-        if (!link.hours) return { recent: 0, worst: 0, latestTs: '', count: 0 }
+      const getSortKey = (item: { metrics: LinkMetricsResponse }): { recent: number; worst: number; latestTs: string; count: number } => {
+        const buckets = item.metrics.buckets
+        if (!buckets || buckets.length === 0) return { recent: 0, worst: 0, latestTs: '', count: 0 }
         let worst = 0
         let recent = 0
         let latestTs = ''
         let count = 0
-        const recentStart = Math.max(0, link.hours.length - RECENT_BUCKETS)
-        for (let i = 0; i < link.hours.length; i++) {
-          const sev = statusSeverity(getEffectiveStatus(link.hours[i]))
+        const recentStart = Math.max(0, buckets.length - RECENT_BUCKETS)
+        for (let i = 0; i < buckets.length; i++) {
+          const bk = buckets[i]
+          const health = bk.status?.health ?? 'no_data'
+          const isisDown = bk.status?.isis_down ?? false
+          const sev = statusSeverity(health, isisDown)
           if (sev > 0) {
             count++
             if (sev > worst) worst = sev
             if (i >= recentStart && sev > recent) recent = sev
-            if (link.hours[i].hour > latestTs) latestTs = link.hours[i].hour
+            if (bk.ts > latestTs) latestTs = bk.ts
           }
         }
         return { recent, worst, latestTs, count }
@@ -473,29 +532,22 @@ export function LinkStatusTimelines({
       const aInfo = getSortKey(a)
       const bInfo = getSortKey(b)
 
-      // Recent severity first (what's happening now)
       if (aInfo.recent !== bInfo.recent) return bInfo.recent - aInfo.recent
-      // Overall worst severity
       if (aInfo.worst !== bInfo.worst) return bInfo.worst - aInfo.worst
-      // Most recent issue first (by timestamp, not index)
       if (aInfo.latestTs !== bInfo.latestTs) return aInfo.latestTs < bInfo.latestTs ? 1 : -1
-      // More total issues first
       if (aInfo.count !== bInfo.count) return bInfo.count - aInfo.count
-      // Alphabetical fallback
-      return a.code.localeCompare(b.code)
+      return a.derived.code.localeCompare(b.derived.code)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.links, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, showProvisioning, linksWithIssues, linksWithHealth])
+  }, [linksArray, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, showDrained, showProvisioning, linksWithIssues, linksWithHealth])
 
   const drainedCount = useMemo(() => {
-    if (!data?.links) return 0
-    return data.links.filter(link => link.drain_status).length
-  }, [data?.links])
+    return linksArray.filter(({ derived }) => derived.drainStatus).length
+  }, [linksArray])
 
   const provisioningCount = useMemo(() => {
-    if (!data?.links) return 0
-    return data.links.filter(link => link.provisioning).length
-  }, [data?.links])
+    return linksArray.filter(({ derived }) => derived.provisioning).length
+  }, [linksArray])
 
   const showSkeleton = useDelayedLoading(isLoading && !data)
 
@@ -517,7 +569,7 @@ export function LinkStatusTimelines({
       <div className="border border-border rounded-lg p-6 text-center">
         <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
         <div className="text-sm text-muted-foreground">
-          {data?.links.length === 0
+          {linksArray.length === 0
             ? 'No links available in the selected time range'
             : 'No links match the selected filters'}
         </div>
@@ -614,15 +666,13 @@ export function LinkStatusTimelines({
       </div>
 
       <div>
-        {filteredLinks.map((link) => (
+        {filteredLinks.map(({ metrics, derived }) => (
           <LinkRow
-            key={link.code}
-            link={link}
+            key={derived.code}
+            linkMetrics={metrics}
+            derivedInfo={derived}
             linksWithIssues={linksWithIssues}
             criticalityMap={criticalityMap}
-            bucketMinutes={data?.bucket_minutes}
-            dataTimeRange={data?.time_range}
-            metricsTimeRange={timeRange}
           />
         ))}
       </div>

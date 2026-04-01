@@ -511,6 +511,7 @@ func main() {
 		r.Get("/api/status/devices/{pk}/interface-history", api.GetDeviceInterfaceHistory)
 		r.Get("/api/status/devices/{pk}/history", api.GetSingleDeviceHistory)
 		r.Get("/api/status/links/{pk}/history", api.GetSingleLinkHistory)
+		r.Get("/api/link-metrics", api.GetBulkLinkMetrics)
 		r.Get("/api/link-metrics/{pk}", api.GetLinkMetrics)
 		r.Get("/api/device-metrics/{pk}", api.GetDeviceMetrics)
 		r.Get("/api/timeline", api.GetTimeline)

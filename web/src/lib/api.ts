@@ -4999,6 +4999,25 @@ export async function fetchLinkMetrics(pk: string, params: FetchLinkMetricsParam
   return res.json()
 }
 
+export interface BulkLinkMetricsResponse {
+  time_range: string
+  bucket_seconds: number
+  bucket_count: number
+  links: Record<string, LinkMetricsResponse>
+}
+
+export async function fetchBulkLinkMetrics(params: FetchLinkMetricsParams = {}): Promise<BulkLinkMetricsResponse> {
+  const qs = new URLSearchParams()
+  if (params.range) qs.set('range', params.range)
+  if (params.startTime) qs.set('start_time', params.startTime.toString())
+  if (params.endTime) qs.set('end_time', params.endTime.toString())
+  if (params.bucket) qs.set('bucket', params.bucket)
+  if (params.include) qs.set('include', params.include.join(','))
+  const res = await apiFetch(`/api/link-metrics${qs.toString() ? '?' + qs.toString() : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch bulk link metrics')
+  return res.json()
+}
+
 export interface DeviceMetricsStatus {
   health: string
   drain_status: string
