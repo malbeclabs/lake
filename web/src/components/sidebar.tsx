@@ -216,9 +216,6 @@ export function Sidebar() {
           <Link to="/incidents/links" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
             <ShieldAlert className="h-4 w-4" />
           </Link>
-          <Link to="/timeline" className={collapsedIconClass(isTimelineRoute)} title="Timeline">
-            <Clock className="h-4 w-4" />
-          </Link>
           <button
             onClick={(e) => {
               if (e.metaKey || e.ctrlKey) {
@@ -234,20 +231,6 @@ export function Sidebar() {
           >
             <MessageSquare className="h-4 w-4" />
           </button>
-          <button
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey) {
-                window.open('/query', '_blank')
-              } else {
-                navigate('/query')
-              }
-            }}
-            className={collapsedIconClass(isQueryRoute)}
-            title="Query"
-          >
-            <Database className="h-4 w-4" />
-          </button>
-
           {/* Divider */}
           <div className="w-6 border-t border-border/50 my-2" />
 
@@ -419,11 +402,6 @@ export function Sidebar() {
               <ShieldAlert className="h-4 w-4" />
               Incidents
             </Link>
-            <Link to="/timeline" className={navItemClass(isTimelineRoute)}>
-              <Clock className="h-4 w-4" />
-              Timeline
-            </Link>
-
             {/* Chat with inline sub-items */}
             <button
               onClick={(e) => {
@@ -455,40 +433,6 @@ export function Sidebar() {
                   New chat
                 </button>
                 <Link to="/chat/sessions" className={subNavItemClass(isChatSessions)}>
-                  History
-                </Link>
-              </>
-            )}
-
-            {/* Query with inline sub-items */}
-            <button
-              onClick={(e) => {
-                if (e.metaKey || e.ctrlKey) {
-                  window.open('/query', '_blank')
-                } else {
-                  navigate('/query')
-                }
-              }}
-              className={isQueryRoute ? navItemExpandedClass : navItemClass(false)}
-            >
-              <Database className="h-4 w-4" />
-              Query
-            </button>
-            {isQueryRoute && (
-              <>
-                <button
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey) {
-                      window.open('/query', '_blank')
-                    } else {
-                      navigate('/query')
-                    }
-                  }}
-                  className={subNavItemClass(!isQuerySessions && (location.pathname === '/query' || !!location.pathname.match(/^\/query\/[^/]+$/)))}
-                >
-                  New query
-                </button>
-                <Link to="/query/sessions" className={subNavItemClass(isQuerySessions)}>
                   History
                 </Link>
               </>

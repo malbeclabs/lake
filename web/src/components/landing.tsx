@@ -62,7 +62,7 @@ const pages = [
   },
   {
     title: 'DZ vs Internet',
-    description: 'Compare DZ and public internet performance',
+    description: 'DZ vs public internet performance',
     icon: ArrowRightLeft,
     href: '/performance/dz-vs-internet',
     color: 'text-orange-600 dark:text-orange-400',
@@ -88,10 +88,10 @@ export function Landing() {
   })
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-start px-8 pt-8 pb-4 overflow-auto">
-      <div className="flex-1 flex flex-col items-center justify-center w-full">
+    <div className="flex-1 flex flex-col items-center justify-start px-8 pt-12 pb-4 overflow-auto">
+      <div className="flex-1 flex flex-col items-center w-full">
       {/* Header */}
-      <div className="text-center mb-10">
+      <div className="text-center mb-8">
         <img
           src={resolvedTheme === 'dark' ? '/logoDark.svg' : '/logoLight.svg'}
           alt="DoubleZero"
@@ -103,7 +103,7 @@ export function Landing() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-10 gap-y-8 mb-10 max-w-5xl w-full">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-10 gap-y-8 mb-8 max-w-5xl w-full">
         {/* Row 1: Network Infrastructure */}
         <StatCard
           label="Contributors"

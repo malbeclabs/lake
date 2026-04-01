@@ -22,7 +22,6 @@ import { SessionHistory, type GenerationRecord } from '@/components/session-hist
 import { SessionsPage } from '@/components/sessions-page'
 import { ChatSessionsPage } from '@/components/chat-sessions-page'
 import { SimplifiedChatView } from '@/components/chat-view'
-import { Landing } from '@/components/landing'
 import { Sidebar } from '@/components/sidebar'
 import { SearchSpotlight } from '@/components/search-spotlight'
 import { TopologyPage } from '@/components/topology-page'
@@ -623,8 +622,8 @@ function AppContent() {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         <Routes>
-          {/* Landing page */}
-          <Route path="/" element={<Landing />} />
+          {/* Landing redirects to status */}
+          <Route path="/" element={<Navigate to="/status" replace />} />
 
           {/* Query routes */}
           <Route path="/query" element={<QueryRedirect />} />

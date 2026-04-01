@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import type { ChatMessage, ProcessingStep } from '@/lib/api'
 import { formatQuery } from '@/lib/format-query'
-import { ArrowUp, Square, Loader2, Copy, Check, ChevronDown, ChevronRight, ExternalLink, MessageCircle, CheckCircle2, XCircle, Brain, RotateCcw } from 'lucide-react'
+import { ArrowUp, Square, Loader2, Copy, Check, ChevronDown, ChevronRight, ExternalLink, MessageCircle, CheckCircle2, XCircle, Brain, RotateCcw, Cable, ArrowRight } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEnv } from '@/contexts/EnvContext'
@@ -814,15 +814,22 @@ export function Chat({ messages, isPending, processingSteps, streamError, onSend
                           onSendMessage(question)
                         }
                       }}
-                      className={`px-3 py-1.5 text-sm border rounded-full transition-colors ${
+                      className={`px-3 py-1 text-xs border rounded-full transition-colors ${
                         isQuotaDepleted
-                          ? 'border-border/50 text-muted-foreground/50 cursor-not-allowed'
-                          : 'border-border hover:bg-secondary hover:border-muted-foreground/30'
+                          ? 'border-border/50 text-muted-foreground/40 cursor-not-allowed'
+                          : 'border-border/60 text-muted-foreground/60 hover:bg-secondary hover:border-muted-foreground/30 hover:text-foreground'
                       }`}
                     >
                       {question}
                     </button>
                   ))}
+                </div>
+                <div className="mt-8">
+                  <a href="/docs/mcp" className="inline-flex items-center gap-2 px-4 py-2.5 text-sm border border-border rounded-full hover:bg-secondary hover:border-muted-foreground/30 transition-colors">
+                    <Cable className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                    <span>Connect your own AI</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  </a>
                 </div>
                 {/* Quota info for new chat */}
                 {(isQuotaDepleted || isQuotaLow) && (
@@ -1035,7 +1042,7 @@ export function Chat({ messages, isPending, processingSteps, streamError, onSend
                                   onSendMessage(question)
                                 }
                               }}
-                              className="px-3 py-1.5 text-sm border border-border rounded-full hover:bg-secondary hover:border-muted-foreground/30 transition-colors text-muted-foreground hover:text-foreground"
+                              className="px-3 py-1 text-xs border border-border/60 rounded-full hover:bg-secondary hover:border-muted-foreground/30 transition-colors text-muted-foreground/60 hover:text-foreground"
                             >
                               {question}
                             </button>

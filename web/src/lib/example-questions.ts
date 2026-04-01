@@ -4,17 +4,16 @@ const BASE_QUESTIONS = [
   'How is the network doing?',
   'Compare DZ to the public internet',
   'Which links have the highest utilization?',
-  'Show me link latency by metro pair',
   'Are there any links with packet loss?',
-  "What's the average RTT for DZ links?",
+  'Are any links degraded right now?',
+  "What's changed on the network this week?",
+  'Which contributors have the most capacity?',
 ]
 
 const SOLANA_QUESTIONS = [
   'How many Solana validators are on DZ?',
-  'What is the total stake connected to DZ?',
   'Which metros have the most validators?',
   'Which validators connected recently?',
-  'Which validators have the highest stake?',
   'Compare validator performance on vs off DZ',
 ]
 
@@ -22,7 +21,7 @@ const NEO4J_QUESTIONS = [
   'If the Hong Kong device goes down, what metros lose connectivity?',
   'What metros can I reach from Singapore?',
   'Show the paths between NYC and LON',
-  'Show me all devices and links connected to the Singapore device',
+  'Show me the fastest paths between metros',
 ]
 
 // Fisher-Yates shuffle, take first n
