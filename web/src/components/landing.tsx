@@ -1,21 +1,60 @@
-import { useMemo, useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
-import { ArrowUp } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  Activity,
+  Globe,
+  Gauge,
+  Route,
+  ShieldAlert,
+  MessageSquare,
+} from 'lucide-react'
 import { fetchStats } from '@/lib/api'
 import { StatCard } from '@/components/stat-card'
 import { useTheme } from '@/hooks/use-theme'
-import { useEnv } from '@/contexts/EnvContext'
-import { getExampleQuestions } from '@/lib/example-questions'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+
+const pages = [
+  {
+    title: 'Status',
+    description: 'Network health and device status',
+    icon: Activity,
+    href: '/status',
+  },
+  {
+    title: 'Topology',
+    description: 'Interactive map of the network',
+    icon: Globe,
+    href: '/topology/map',
+  },
+  {
+    title: 'Link Latency',
+    description: 'Latency between metro pairs',
+    icon: Gauge,
+    href: '/performance/link-latency',
+  },
+  {
+    title: 'Path Latency',
+    description: 'End-to-end path performance',
+    icon: Route,
+    href: '/performance/path-latency',
+  },
+  {
+    title: 'Incidents',
+    description: 'Active link and device incidents',
+    icon: ShieldAlert,
+    href: '/incidents/links',
+  },
+  {
+    title: 'Chat',
+    description: 'Ask questions about the network',
+    icon: MessageSquare,
+    href: '/chat',
+  },
+]
 
 export function Landing() {
   useDocumentTitle('Explore')
-  const navigate = useNavigate()
   const { resolvedTheme } = useTheme()
-  const { features } = useEnv()
-  const [input, setInput] = useState('')
-  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const { data: stats } = useQuery({
     queryKey: ['stats'],
@@ -23,34 +62,6 @@ export function Landing() {
     refetchInterval: 15_000,
     staleTime: 10_000,
   })
-
-  const exampleQuestions = useMemo(() => getExampleQuestions(features, 3), [features.solana, features.neo4j]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Only auto-focus on desktop to avoid scroll-to-input on mobile
-  useEffect(() => {
-    const isDesktop = window.matchMedia('(hover: hover) and (pointer: fine)').matches
-    if (isDesktop && inputRef.current) {
-      inputRef.current.focus()
-    }
-  }, [])
-
-  const handleStartChat = (question?: string) => {
-    const q = question || input.trim()
-    if (q) {
-      navigate(`/chat?q=${encodeURIComponent(q)}`)
-    } else {
-      navigate('/chat')
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      if (input.trim()) {
-        handleStartChat()
-      }
-    }
-  }
 
   return (
     <div className="flex-1 flex flex-col items-center justify-start px-8 pt-12 pb-4 overflow-auto">
@@ -130,57 +141,24 @@ export function Landing() {
         />
       </div>
 
-      {/* Prompt Input */}
-      <div className="w-full max-w-2xl">
-        <div className="relative rounded-[24px] border border-border bg-secondary overflow-hidden">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about the network..."
-            rows={1}
-            className="w-full bg-transparent px-4 pt-3.5 pb-2.5 pr-12 text-sm placeholder:text-muted-foreground focus:outline-none resize-none min-h-[44px] max-h-[200px] overflow-y-auto"
-            style={{ height: 'auto' }}
-            onInput={(e) => {
-              const target = e.target as HTMLTextAreaElement
-              target.style.height = 'auto'
-              target.style.height = Math.min(target.scrollHeight, 200) + 'px'
-            }}
-          />
-          <button
-            onClick={() => handleStartChat()}
-            disabled={!input.trim()}
-            className="absolute right-2 bottom-3 p-1.5 rounded-full bg-accent text-white hover:bg-accent-orange-100 disabled:bg-muted-foreground/30 disabled:cursor-not-allowed transition-colors"
+      {/* Navigation Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-w-5xl w-full">
+        {pages.map((page) => (
+          <Link
+            key={page.href}
+            to={page.href}
+            className="group rounded-xl border border-border bg-secondary/50 p-5 transition-colors hover:bg-secondary hover:border-muted-foreground/30"
           >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Example questions */}
-      <div className="mt-4 flex flex-wrap justify-center gap-2 max-w-xl">
-        {exampleQuestions.map((question) => (
-          <button
-            key={question}
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey) {
-                window.open(`/chat?q=${encodeURIComponent(question)}`, '_blank')
-              } else {
-                handleStartChat(question)
-              }
-            }}
-            className="px-3 py-1.5 text-sm border border-border rounded-full hover:bg-secondary hover:border-muted-foreground/30 transition-colors text-muted-foreground hover:text-foreground"
-          >
-            {question}
-          </button>
+            <page.icon className="h-5 w-5 text-muted-foreground mb-3 group-hover:text-foreground transition-colors" />
+            <div className="font-medium text-sm mb-1">{page.title}</div>
+            <div className="text-xs text-muted-foreground">{page.description}</div>
+          </Link>
         ))}
       </div>
       </div>
 
-      <div className="text-xs text-muted-foreground/60 text-center mt-auto pb-2 space-y-1">
-        <p>AI-generated responses may be incorrect. Do not share sensitive info. See <a href="/terms" className="underline hover:text-muted-foreground">Terms of Use</a>.</p>
-        <p><a href="/docs/mcp" className="underline hover:text-muted-foreground">Connect your own AI →</a></p>
+      <div className="text-xs text-muted-foreground/60 text-center mt-auto pb-2">
+        <a href="/docs/mcp" className="underline hover:text-muted-foreground">Connect your own AI →</a>
       </div>
     </div>
   )
