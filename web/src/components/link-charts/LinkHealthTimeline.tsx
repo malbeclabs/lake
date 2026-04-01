@@ -10,6 +10,7 @@ const healthColors: Record<string, string> = {
   healthy: 'bg-green-500',
   degraded: 'bg-amber-500',
   unhealthy: 'bg-red-500',
+  down: 'bg-gray-500 dark:bg-gray-700',
   no_data: 'bg-transparent border border-gray-200 dark:border-gray-700',
 }
 
@@ -17,6 +18,7 @@ const healthLabels: Record<string, string> = {
   healthy: 'Healthy',
   degraded: 'Degraded',
   unhealthy: 'Unhealthy',
+  down: 'Down',
   no_data: 'No Data',
 }
 
@@ -207,8 +209,8 @@ function formatTimeRange(ts: string, spanSeconds: number): string {
   return `${startDate} ${startTime} — ${endTime}`
 }
 
-const MAX_BARS = 64
-const MIN_BARS = 48
+const MAX_BARS = 96
+const MIN_BARS = 72
 
 export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
@@ -275,12 +277,14 @@ export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps)
         <div className="flex gap-[2px]">
           {bars.map((bar, index) => {
             const reasons = getReasons(bar, data.committed_rtt_us)
-            // Upgrade to degraded if missing data in any bucket
-            const displayHealth = bar.health === 'healthy' && (bar.missingLatency || bar.missingTraffic)
-              ? 'degraded' : bar.health
+            // Override health: ISIS down → 'down' (grey), missing data → 'degraded'
+            const displayHealth = bar.isisDown
+              ? 'down'
+              : bar.health === 'healthy' && (bar.missingLatency || bar.missingTraffic)
+                ? 'degraded' : bar.health
             const prevBar = index > 0 ? bars[index - 1] : undefined
             const prevHealth = prevBar
-              ? (prevBar.health === 'healthy' && (prevBar.missingLatency || prevBar.missingTraffic) ? 'degraded' : prevBar.health)
+              ? (prevBar.isisDown ? 'down' : prevBar.health === 'healthy' && (prevBar.missingLatency || prevBar.missingTraffic) ? 'degraded' : prevBar.health)
               : undefined
             return (
               <div
@@ -313,6 +317,7 @@ export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps)
                         displayHealth === 'healthy' ? 'text-green-600 dark:text-green-400' :
                         displayHealth === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
                         displayHealth === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
+                        displayHealth === 'down' ? 'text-gray-600 dark:text-gray-400' :
                         'text-muted-foreground'
                       }`}>
                         {healthLabels[displayHealth] || displayHealth}
