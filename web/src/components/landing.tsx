@@ -19,36 +19,42 @@ const pages = [
     description: 'Network health and device status',
     icon: Activity,
     href: '/status',
+    color: 'text-emerald-600 dark:text-emerald-400',
   },
   {
     title: 'Topology',
     description: 'Interactive map of the network',
     icon: Globe,
     href: '/topology/map',
+    color: 'text-blue-600 dark:text-blue-400',
   },
   {
     title: 'Link Latency',
-    description: 'Latency between metro pairs',
+    description: 'Latency across network links',
     icon: Gauge,
     href: '/performance/link-latency',
+    color: 'text-violet-600 dark:text-violet-400',
   },
   {
     title: 'Path Latency',
     description: 'End-to-end path performance',
     icon: Route,
     href: '/performance/path-latency',
+    color: 'text-amber-600 dark:text-amber-400',
   },
   {
     title: 'Incidents',
     description: 'Active link and device incidents',
     icon: ShieldAlert,
     href: '/incidents/links',
+    color: 'text-red-600 dark:text-red-400',
   },
   {
     title: 'Chat',
     description: 'Ask questions about the network',
     icon: MessageSquare,
     href: '/chat',
+    color: 'text-sky-600 dark:text-sky-400',
   },
 ]
 
@@ -149,7 +155,7 @@ export function Landing() {
             to={page.href}
             className="group rounded-xl border border-border bg-secondary/50 p-5 transition-colors hover:bg-secondary hover:border-muted-foreground/30"
           >
-            <page.icon className="h-5 w-5 text-muted-foreground mb-3 group-hover:text-foreground transition-colors" />
+            <page.icon className={`h-5 w-5 mb-3 ${page.color}`} />
             <div className="font-medium text-sm mb-1">{page.title}</div>
             <div className="text-xs text-muted-foreground">{page.description}</div>
           </Link>
