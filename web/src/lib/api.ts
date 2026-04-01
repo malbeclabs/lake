@@ -5070,6 +5070,7 @@ export interface DeviceMetricsResponse {
   device_type: string
   contributor_code: string
   metro: string
+  max_users: number
   time_range: string
   bucket_seconds: number
   bucket_count: number
@@ -5096,5 +5097,24 @@ export async function fetchDeviceMetrics(pk: string, params: FetchDeviceMetricsP
   if (params.include) qs.set('include', params.include.join(','))
   const res = await apiFetch(`/api/device-metrics/${encodeURIComponent(pk)}${qs.toString() ? '?' + qs.toString() : ''}`)
   if (!res.ok) throw new Error('Failed to fetch device metrics')
+  return res.json()
+}
+
+export interface BulkDeviceMetricsResponse {
+  time_range: string
+  bucket_seconds: number
+  bucket_count: number
+  devices: Record<string, DeviceMetricsResponse>
+}
+
+export async function fetchBulkDeviceMetrics(params: FetchDeviceMetricsParams = {}): Promise<BulkDeviceMetricsResponse> {
+  const qs = new URLSearchParams()
+  if (params.range) qs.set('range', params.range)
+  if (params.startTime) qs.set('start_time', params.startTime.toString())
+  if (params.endTime) qs.set('end_time', params.endTime.toString())
+  if (params.bucket) qs.set('bucket', params.bucket)
+  if (params.include) qs.set('include', params.include.join(','))
+  const res = await apiFetch(`/api/device-metrics${qs.toString() ? '?' + qs.toString() : ''}`)
+  if (!res.ok) throw new Error('Failed to fetch bulk device metrics')
   return res.json()
 }

@@ -2,10 +2,11 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { fetchDeviceHistory, fetchDeviceMetrics } from '@/lib/api'
-import type { DeviceHistory, DeviceHourStatus } from '@/lib/api'
-import { useDelayedLoading } from '@/hooks/use-delayed-loading'
+import { fetchBulkDeviceMetrics } from '@/lib/api'
+import type { DeviceMetricsResponse } from '@/lib/api'
+import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
+import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -60,7 +61,100 @@ interface DeviceStatusTimelinesProps {
   expandedDevicePk?: string                  // Device PK to auto-expand (from URL param)
 }
 
-function DeviceInfoPopover({ device }: { device: DeviceHistory }) {
+interface DerivedDeviceInfo {
+  pk: string
+  code: string
+  deviceType: string
+  contributor: string
+  metro: string
+  maxUsers: number
+  issueReasons: string[]
+  isDown: boolean
+  drainStatus: string
+  isisOverload: boolean
+  isisUnreachable: boolean
+  health: string  // worst health across buckets
+}
+
+function deriveDeviceInfo(metrics: DeviceMetricsResponse): DerivedDeviceInfo {
+  const issueReasons = new Set<string>()
+  let worstHealth = 'healthy'
+  let drainStatus = ''
+  let isisOverload = false
+  let isisUnreachable = false
+
+  const healthPriority: Record<string, number> = {
+    unhealthy: 4,
+    degraded: 3,
+    disabled: 2,
+    no_data: 1,
+    healthy: 0,
+  }
+
+  for (const b of metrics.buckets) {
+    if (b.status) {
+      const bHealth = b.status.health || 'no_data'
+      if ((healthPriority[bHealth] ?? 0) > (healthPriority[worstHealth] ?? 0)) {
+        worstHealth = bHealth
+      }
+      if (b.status.drain_status) {
+        drainStatus = b.status.drain_status
+        issueReasons.add('drained')
+      }
+      if (b.status.isis_overload) {
+        isisOverload = true
+        issueReasons.add('isis_overload')
+      }
+      if (b.status.isis_unreachable) {
+        isisUnreachable = true
+        issueReasons.add('isis_unreachable')
+      }
+      if (b.status.no_probes) {
+        issueReasons.add('no_probes')
+      }
+      if (!b.status.collecting && bHealth === 'no_data') {
+        issueReasons.add('no_data')
+      }
+    }
+
+    if (b.traffic) {
+      const t = b.traffic
+      if (t.in_errors + t.out_errors > 0) issueReasons.add('interface_errors')
+      if (t.in_fcs_errors > 0) issueReasons.add('fcs_errors')
+      if (t.in_discards + t.out_discards > 0) issueReasons.add('discards')
+      if (t.carrier_transitions > 0) issueReasons.add('carrier_transitions')
+    }
+  }
+
+  // Check if device is down: look at latest non-collecting bucket
+  let isDown = false
+  for (let i = metrics.buckets.length - 1; i >= 0; i--) {
+    const b = metrics.buckets[i]
+    if (b.status && !b.status.collecting) {
+      if (b.status.health === 'unhealthy' && b.status.no_probes) {
+        isDown = true
+      }
+      break
+    }
+  }
+
+  return {
+    pk: metrics.device_pk,
+    code: metrics.device_code,
+    deviceType: metrics.device_type,
+    contributor: metrics.contributor_code,
+    metro: metrics.metro,
+    maxUsers: metrics.max_users ?? 0,
+    issueReasons: Array.from(issueReasons),
+    isDown,
+    drainStatus,
+    isisOverload,
+    isisUnreachable,
+    health: worstHealth,
+  }
+}
+
+function DeviceInfoPopover({ deviceMetrics }: { deviceMetrics: DeviceMetricsResponse }) {
   const [isOpen, setIsOpen] = useState(false)
 
   return (
@@ -82,16 +176,16 @@ function DeviceInfoPopover({ device }: { device: DeviceHistory }) {
           <div className="space-y-2 text-xs">
             <div>
               <div className="text-muted-foreground">Metro</div>
-              <div className="font-medium">{device.metro || '—'}</div>
+              <div className="font-medium">{deviceMetrics.metro || '\u2014'}</div>
             </div>
             <div>
               <div className="text-muted-foreground">Type</div>
-              <div className="font-medium capitalize">{device.device_type?.replace(/_/g, ' ')}</div>
+              <div className="font-medium capitalize">{deviceMetrics.device_type?.replace(/_/g, ' ')}</div>
             </div>
-            {device.max_users > 0 && (
+            {(deviceMetrics.max_users ?? 0) > 0 && (
               <div>
                 <div className="text-muted-foreground">Max Users</div>
-                <div className="font-medium">{device.max_users}</div>
+                <div className="font-medium">{deviceMetrics.max_users}</div>
               </div>
             )}
           </div>
@@ -101,240 +195,16 @@ function DeviceInfoPopover({ device }: { device: DeviceHistory }) {
   )
 }
 
-// Status colors and labels for timeline
-const statusColors: Record<string, string> = {
-  healthy: 'bg-green-500',
-  degraded: 'bg-amber-500',
-  unhealthy: 'bg-red-500',
-  no_data: 'bg-transparent border border-gray-200 dark:border-gray-700',
-  disabled: 'bg-gray-500 dark:bg-gray-700',
-}
-
-const statusLabels: Record<string, string> = {
-  healthy: 'Healthy',
-  degraded: 'Degraded',
-  unhealthy: 'Unhealthy',
-  no_data: 'No Data',
-  disabled: 'Disabled',
-}
-
-function formatDate(isoString: string): string {
-  const date = new Date(isoString)
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-}
-
-function formatTimeRange(isoString: string, bucketMinutes: number = 60): string {
-  const start = new Date(isoString)
-  const end = new Date(start.getTime() + bucketMinutes * 60 * 1000)
-  const startTime = start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  const endTime = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  if (start.getDate() !== end.getDate()) {
-    return `${formatDate(isoString)} ${startTime} — ${formatDate(end.toISOString())} ${endTime}`
-  }
-  return `${formatDate(isoString)} ${startTime} — ${endTime}`
-}
-
-interface DeviceStatusTimelineProps {
-  hours: DeviceHourStatus[]
-  bucketMinutes?: number
-  timeRange?: string
-}
-
-function getEffectiveDeviceStatus(hour: DeviceHourStatus): string {
-  if (hour.status !== 'healthy' && hour.status !== 'degraded') {
-    // If already unhealthy/disabled/no_data, keep it
-    if (hour.isis_unreachable) return 'unhealthy'
-    return hour.status
-  }
-  // ISIS unreachable → unhealthy, overload → at least degraded
-  if (hour.isis_unreachable) return 'unhealthy'
-  if (hour.isis_overload && hour.status === 'healthy') return 'degraded'
-  return hour.status
-}
-
-function DeviceStatusTimeline({ hours, bucketMinutes = 60, timeRange = '24h' }: DeviceStatusTimelineProps) {
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-
-  const timeLabels: Record<string, string> = {
-    '1h': '1h ago',
-    '3h': '3h ago',
-    '6h': '6h ago',
-    '12h': '12h ago',
-    '24h': '24h ago',
-    '3d': '3d ago',
-    '7d': '7d ago',
-  }
-  const timeLabel = timeLabels[timeRange] || '24h ago'
-
-  return (
-    <div className="relative">
-      <div className="flex gap-[2px]">
-        {hours.map((hour, index) => {
-          const effectiveStatus = getEffectiveDeviceStatus(hour)
-          const prevStatus = index > 0 ? getEffectiveDeviceStatus(hours[index - 1]) : undefined
-          return (
-          <div
-            key={hour.hour}
-            className="relative flex-1 min-w-0"
-            onMouseEnter={() => setHoveredIndex(index)}
-            onMouseLeave={() => setHoveredIndex(null)}
-          >
-            <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
-              <div className={`absolute inset-0 ${
-                hour.collecting && effectiveStatus === 'no_data'
-                  ? (prevStatus && prevStatus !== 'no_data' ? statusColors[prevStatus] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
-                  : statusColors[effectiveStatus]
-              }`} />
-              {hour.collecting && (effectiveStatus !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
-              )}
-            </div>
-
-            {/* Tooltip */}
-            {hoveredIndex === index && (
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50">
-                <div className="bg-popover border border-border rounded-lg shadow-lg p-3 whitespace-nowrap text-sm">
-                  <div className="font-medium mb-1">
-                    {formatTimeRange(hour.hour, bucketMinutes)}
-                  </div>
-                  <div className={`text-xs mb-2 ${
-                    effectiveStatus === 'healthy' ? 'text-green-600 dark:text-green-400' :
-                    effectiveStatus === 'degraded' ? 'text-amber-600 dark:text-amber-400' :
-                    effectiveStatus === 'unhealthy' ? 'text-red-600 dark:text-red-400' :
-                    'text-muted-foreground'
-                  }`}>
-                    {statusLabels[effectiveStatus]}
-                    {hour.collecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
-                  </div>
-                  {hour.status !== 'no_data' && (
-                    <div className="space-y-1 text-muted-foreground">
-                      {(hour.in_errors > 0 || hour.out_errors > 0) && (
-                        <div className="flex justify-between gap-4">
-                          <span>Errors:</span>
-                          <span className="font-mono">
-                            {(hour.in_errors + hour.out_errors).toLocaleString()}
-                            <span className="text-xs ml-1">
-                              (in: {hour.in_errors.toLocaleString()}, out: {hour.out_errors.toLocaleString()})
-                            </span>
-                          </span>
-                        </div>
-                      )}
-                      {hour.in_fcs_errors > 0 && (
-                        <div className="flex justify-between gap-4">
-                          <span>FCS Errors:</span>
-                          <span className="font-mono">{hour.in_fcs_errors.toLocaleString()}</span>
-                        </div>
-                      )}
-                      {(hour.in_discards > 0 || hour.out_discards > 0) && (
-                        <div className="flex justify-between gap-4">
-                          <span>Discards:</span>
-                          <span className="font-mono">
-                            {(hour.in_discards + hour.out_discards).toLocaleString()}
-                            <span className="text-xs ml-1">
-                              (in: {hour.in_discards.toLocaleString()}, out: {hour.out_discards.toLocaleString()})
-                            </span>
-                          </span>
-                        </div>
-                      )}
-                      {hour.carrier_transitions > 0 && (
-                        <div className="flex justify-between gap-4">
-                          <span>Carrier Transitions:</span>
-                          <span className="font-mono">{hour.carrier_transitions.toLocaleString()}</span>
-                        </div>
-                      )}
-                      {hour.max_users > 0 && (
-                        <div className="flex justify-between gap-4">
-                          <span>Utilization:</span>
-                          <span className="font-mono">
-                            {hour.utilization_pct.toFixed(1)}%
-                            <span className="text-xs ml-1">
-                              ({hour.current_users}/{hour.max_users})
-                            </span>
-                          </span>
-                        </div>
-                      )}
-                      {hour.no_probes && (
-                        <div className="flex justify-between gap-4">
-                          <span className="text-red-500">Not sending latency probes</span>
-                        </div>
-                      )}
-                      {hour.isis_overload && (
-                        <div className="flex justify-between gap-4">
-                          <span className="text-red-500">ISIS Overload</span>
-                        </div>
-                      )}
-                      {hour.isis_unreachable && (
-                        <div className="flex justify-between gap-4">
-                          <span className="text-red-500">ISIS Unreachable</span>
-                        </div>
-                      )}
-                      {hour.in_errors === 0 && hour.out_errors === 0 &&
-                       hour.in_fcs_errors === 0 &&
-                       hour.in_discards === 0 && hour.out_discards === 0 &&
-                       hour.carrier_transitions === 0 && !hour.no_probes && hour.max_users === 0 &&
-                       !hour.isis_overload && !hour.isis_unreachable && (
-                        <div className="text-xs">No issues detected</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                {/* Arrow */}
-                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-[1px]">
-                  <div className="border-8 border-transparent border-t-border" />
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 border-[7px] border-transparent border-t-popover" />
-                </div>
-              </div>
-            )}
-          </div>
-          )
-        })}
-      </div>
-
-      {/* Time labels */}
-      <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
-        <span>{timeLabel}</span>
-        <span>Now</span>
-      </div>
-    </div>
-  )
-}
-
-function useBucketCount() {
-  const [buckets, setBuckets] = useState(72)
-
-  useEffect(() => {
-    const updateBuckets = () => {
-      const width = window.innerWidth
-      if (width < 640) {
-        setBuckets(24) // mobile
-      } else if (width < 1024) {
-        setBuckets(48) // tablet
-      } else {
-        setBuckets(72) // desktop
-      }
-    }
-
-    updateBuckets()
-    window.addEventListener('resize', updateBuckets)
-    return () => window.removeEventListener('resize', updateBuckets)
-  }, [])
-
-  return buckets
-}
-
 const cardClass = "rounded-lg border border-border p-4"
 
-// Device row component with expand/collapse
 interface DeviceRowProps {
-  device: DeviceHistory
+  deviceMetrics: DeviceMetricsResponse
+  derivedInfo: DerivedDeviceInfo
   devicesWithIssues?: Map<string, string[]>
-  bucketMinutes?: number
-  dataTimeRange?: string
-  metricsTimeRange: string
   initiallyExpanded?: boolean
 }
 
-function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, metricsTimeRange, initiallyExpanded = false }: DeviceRowProps) {
+function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExpanded = false }: DeviceRowProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded)
 
   // Expand when initiallyExpanded prop changes to true
@@ -344,18 +214,12 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, me
     }
   }, [initiallyExpanded])
 
-  const { data: metrics, isFetching: metricsFetching } = useQuery({
-    queryKey: ['deviceMetrics', device.pk, { range: metricsTimeRange }],
-    queryFn: () => fetchDeviceMetrics(device.pk, { range: metricsTimeRange }),
-    enabled: expanded,
-  })
-
   const issueReasons = devicesWithIssues && devicesWithIssues.size > 0
-    ? (devicesWithIssues.get(device.code) ?? [])
-    : (device.issue_reasons ?? [])
+    ? (devicesWithIssues.get(derivedInfo.code) ?? [])
+    : derivedInfo.issueReasons
 
   return (
-    <div id={`device-row-${device.pk}`} className="border-b border-border last:border-b-0">
+    <div id={`device-row-${derivedInfo.pk}`} className="border-b border-border last:border-b-0">
       <div
         className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
         onClick={() => setExpanded(!expanded)}
@@ -374,17 +238,17 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, me
           <div className="flex-shrink-0 w-44">
             <div className="flex items-center gap-1.5">
               <Link
-                to={`/dz/devices/${device.pk}`}
+                to={`/dz/devices/${derivedInfo.pk}`}
                 className="font-mono text-sm truncate hover:underline"
-                title={device.code}
+                title={derivedInfo.code}
                 onClick={(e) => e.stopPropagation()}
               >
-                {device.code}
+                {derivedInfo.code}
               </Link>
-              <DeviceInfoPopover device={device} />
+              <DeviceInfoPopover deviceMetrics={deviceMetrics} />
             </div>
             <div className="text-xs text-muted-foreground">
-              {device.contributor}{device.metro && ` · ${device.metro}`}
+              {derivedInfo.contributor}{derivedInfo.metro && ` \u00b7 ${derivedInfo.metro}`}
             </div>
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
@@ -428,33 +292,24 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, me
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <DeviceStatusTimeline
-              hours={device.hours}
-              bucketMinutes={bucketMinutes}
-              timeRange={dataTimeRange}
-            />
+            <DeviceHealthTimeline data={deviceMetrics} />
           </div>
         </div>
       </div>
 
-      {/* Expanded charts — aligned with the timeline column */}
+      {/* Expanded charts */}
       {expanded && (
         <div className="px-4 pb-4 pt-2 space-y-4">
-          {metrics && (() => {
-            const hasIssues = metrics.buckets.some(b => b.traffic && (
+          {(() => {
+            const hasIssues = deviceMetrics.buckets.some(b => b.traffic && (
               b.traffic.in_errors + b.traffic.out_errors > 0 ||
               b.traffic.in_fcs_errors > 0 ||
               b.traffic.in_discards + b.traffic.out_discards > 0 ||
               b.traffic.carrier_transitions > 0
             ))
             if (!hasIssues) return null
-            return <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+            return <DeviceInterfaceIssuesChart data={deviceMetrics} loading={false} className={cardClass} />
           })()}
-          {!metrics && metricsFetching && (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -478,20 +333,28 @@ export function DeviceStatusTimelines({
     { value: '3d', label: '3d' },
     { value: '7d', label: '7d' },
   ]
-  const buckets = useBucketCount()
 
   const { data, isLoading, isPlaceholderData, error } = useQuery({
-    queryKey: ['device-history', timeRange, buckets],
-    queryFn: () => fetchDeviceHistory(timeRange, buckets),
-    refetchInterval: 60_000, // Refresh every minute
+    queryKey: ['bulk-device-metrics', timeRange],
+    queryFn: () => fetchBulkDeviceMetrics({ range: timeRange, include: ['status', 'traffic'] }),
+    refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   })
 
+  // Convert the Record<string, DeviceMetricsResponse> into an array with derived info
+  const devicesArray = useMemo(() => {
+    if (!data?.devices) return []
+    return Object.values(data.devices).map(metrics => ({
+      metrics,
+      derived: deriveDeviceInfo(metrics),
+    }))
+  }, [data?.devices])
+
   // Helper to check if a device matches health filters
-  const deviceMatchesHealthFilters = (device: DeviceHistory): boolean => {
+  const deviceMatchesHealthFilters = (derived: DerivedDeviceInfo): boolean => {
     if (devicesWithHealth && devicesWithHealth.size > 0) {
-      const health = devicesWithHealth.get(device.code)
+      const health = devicesWithHealth.get(derived.code)
       if (health) {
         const filterHealth = health === 'no_data' ? 'unhealthy' : health
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -500,17 +363,13 @@ export function DeviceStatusTimelines({
       return false
     }
 
-    // Fallback: check device's own hours data
-    if (!device.hours || device.hours.length === 0) return false
-    return device.hours.some(hour => {
-      const status = hour.status
-      if (status === 'healthy' && healthFilters.includes('healthy')) return true
-      if (status === 'degraded' && healthFilters.includes('degraded')) return true
-      if (status === 'unhealthy' && healthFilters.includes('unhealthy')) return true
-      if (status === 'disabled' && healthFilters.includes('disabled')) return true
-      if (status === 'no_data' && healthFilters.includes('unhealthy')) return true
-      return false
-    })
+    // Fallback: use worst health derived from buckets
+    const h = derived.health
+    if (h === 'healthy' && healthFilters.includes('healthy')) return true
+    if (h === 'degraded' && healthFilters.includes('degraded')) return true
+    if ((h === 'unhealthy' || h === 'no_data') && healthFilters.includes('unhealthy')) return true
+    if (h === 'disabled' && healthFilters.includes('disabled')) return true
+    return false
   }
 
   // Check which issue filters are selected
@@ -519,12 +378,12 @@ export function DeviceStatusTimelines({
 
   // Filter and sort devices by recency of issues
   const filteredDevices = useMemo(() => {
-    if (!data?.devices) return []
+    if (devicesArray.length === 0) return []
 
-    const filtered = data.devices.filter(device => {
+    const filtered = devicesArray.filter(({ derived }) => {
       const issueReasons = devicesWithIssues && devicesWithIssues.size > 0
-        ? (devicesWithIssues.get(device.code) ?? [])
-        : (device.issue_reasons ?? [])
+        ? (devicesWithIssues.get(derived.code) ?? [])
+        : derived.issueReasons
       const hasIssues = issueReasons.length > 0
 
       // Devices with only no_data or no_probes are shown based on health filter (no separate issue toggle)
@@ -535,14 +394,15 @@ export function DeviceStatusTimelines({
           ? issueReasons.some(reason => issueTypesSelected.includes(reason))
           : noIssuesSelected
 
-      const matchesHealth = deviceMatchesHealthFilters(device)
+      const matchesHealth = deviceMatchesHealthFilters(derived)
 
       return matchesIssue && matchesHealth
     })
 
-    // Sort by: 1) most recent issue, 2) severity of that issue, 3) total issue count, 4) alphabetical
-    const statusSeverity = (status: string): number => {
-      switch (status) {
+    // Sort by: 1) recent severity (worst in last 6 buckets), 2) overall worst severity,
+    // 3) most recent issue timestamp, 4) total issue count, 5) alphabetical.
+    const statusSeverity = (health: string): number => {
+      switch (health) {
         case 'unhealthy': return 4
         case 'degraded': return 3
         case 'disabled': return 2
@@ -551,37 +411,42 @@ export function DeviceStatusTimelines({
       }
     }
 
+    const RECENT_BUCKETS = 6
+
     return filtered.sort((a, b) => {
-      const getLatestIssue = (device: DeviceHistory): { index: number; severity: number } => {
-        if (!device.hours) return { index: -1, severity: 0 }
-        for (let i = device.hours.length - 1; i >= 0; i--) {
-          const sev = statusSeverity(device.hours[i].status)
-          if (sev > 0) return { index: i, severity: sev }
+      const getSortKey = (item: { metrics: DeviceMetricsResponse }): { recent: number; worst: number; latestTs: string; count: number } => {
+        const buckets = item.metrics.buckets
+        if (!buckets || buckets.length === 0) return { recent: 0, worst: 0, latestTs: '', count: 0 }
+        let worst = 0
+        let recent = 0
+        let latestTs = ''
+        let count = 0
+        const recentStart = Math.max(0, buckets.length - RECENT_BUCKETS)
+        for (let i = 0; i < buckets.length; i++) {
+          const bk = buckets[i]
+          const health = bk.status?.health ?? 'no_data'
+          const sev = statusSeverity(health)
+          if (sev > 0) {
+            count++
+            if (sev > worst) worst = sev
+            if (i >= recentStart && sev > recent) recent = sev
+            if (bk.ts > latestTs) latestTs = bk.ts
+          }
         }
-        return { index: -1, severity: 0 }
+        return { recent, worst, latestTs, count }
       }
 
-      const issueCount = (device: DeviceHistory): number => {
-        if (!device.hours) return 0
-        return device.hours.filter(h => statusSeverity(h.status) > 0).length
-      }
+      const aInfo = getSortKey(a)
+      const bInfo = getSortKey(b)
 
-      const aIssue = getLatestIssue(a)
-      const bIssue = getLatestIssue(b)
-
-      // Most recent issue first
-      if (aIssue.index !== bIssue.index) return bIssue.index - aIssue.index
-      // Higher severity first
-      if (aIssue.severity !== bIssue.severity) return bIssue.severity - aIssue.severity
-      // More total issues first
-      const aCount = issueCount(a)
-      const bCount = issueCount(b)
-      if (aCount !== bCount) return bCount - aCount
-      // Alphabetical fallback
-      return a.code.localeCompare(b.code)
+      if (aInfo.recent !== bInfo.recent) return bInfo.recent - aInfo.recent
+      if (aInfo.worst !== bInfo.worst) return bInfo.worst - aInfo.worst
+      if (aInfo.latestTs !== bInfo.latestTs) return aInfo.latestTs < bInfo.latestTs ? 1 : -1
+      if (aInfo.count !== bInfo.count) return bInfo.count - aInfo.count
+      return a.derived.code.localeCompare(b.derived.code)
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.devices, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, devicesWithIssues, devicesWithHealth])
+  }, [devicesArray, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, devicesWithIssues, devicesWithHealth])
 
   const showSkeleton = useDelayedLoading(isLoading && !data)
 
@@ -603,7 +468,7 @@ export function DeviceStatusTimelines({
       <div className="border border-border rounded-lg p-6 text-center">
         <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
         <div className="text-sm text-muted-foreground">
-          {data?.devices.length === 0
+          {devicesArray.length === 0
             ? 'No devices available in the selected time range'
             : 'No devices match the selected filters'}
         </div>
@@ -668,15 +533,13 @@ export function DeviceStatusTimelines({
       </div>
 
       <div>
-        {filteredDevices.map((device) => (
+        {filteredDevices.map(({ metrics, derived }) => (
           <DeviceRow
-            key={device.code}
-            device={device}
+            key={derived.code}
+            deviceMetrics={metrics}
+            derivedInfo={derived}
             devicesWithIssues={devicesWithIssues}
-            bucketMinutes={data?.bucket_minutes}
-            dataTimeRange={data?.time_range}
-            metricsTimeRange={timeRange}
-            initiallyExpanded={device.pk === expandedDevicePk}
+            initiallyExpanded={derived.pk === expandedDevicePk}
           />
         ))}
       </div>

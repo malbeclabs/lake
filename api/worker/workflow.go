@@ -91,6 +91,9 @@ func (a *Activities) entries() []cacheEntry {
 		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
 		}},
+		{"bulk device metrics", "bulk_device_metrics", func(ctx context.Context) (any, error) {
+			return api.FetchBulkDeviceMetricsData(ctx)
+		}},
 	}
 }
 

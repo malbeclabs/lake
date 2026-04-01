@@ -513,6 +513,7 @@ func main() {
 		r.Get("/api/status/links/{pk}/history", api.GetSingleLinkHistory)
 		r.Get("/api/link-metrics", api.GetBulkLinkMetrics)
 		r.Get("/api/link-metrics/{pk}", api.GetLinkMetrics)
+		r.Get("/api/device-metrics", api.GetBulkDeviceMetrics)
 		r.Get("/api/device-metrics/{pk}", api.GetDeviceMetrics)
 		r.Get("/api/timeline", api.GetTimeline)
 		r.Get("/api/timeline/bounds", api.GetTimelineBounds)
