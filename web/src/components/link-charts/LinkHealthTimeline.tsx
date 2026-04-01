@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
 
 interface LinkHealthTimelineProps {
@@ -209,17 +209,29 @@ function formatTimeRange(ts: string, spanSeconds: number): string {
   return `${startDate} ${startTime} — ${endTime}`
 }
 
-const MAX_BARS = 96
-const MIN_BARS = 72
+// Target ~8px per bar (including 2px gap), with floor/ceiling
+const BAR_WIDTH_PX = 8
+const MIN_BARS = 48
+const MAX_BARS = 192
 
 export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const [maxBars, setMaxBars] = useState(MAX_BARS)
+  const [observer] = useState(() => new ResizeObserver(([entry]) => {
+    const width = entry.contentRect.width
+    const count = Math.floor(width / BAR_WIDTH_PX)
+    setMaxBars(Math.max(MIN_BARS, Math.min(MAX_BARS, count)))
+  }))
+  const containerRef = useCallback((el: HTMLDivElement | null) => {
+    observer.disconnect()
+    if (el) observer.observe(el)
+  }, [observer])
 
   const bars = useMemo(() => {
-    const merged = mergeBuckets(data.buckets, data.bucket_seconds, MAX_BARS)
+    const merged = mergeBuckets(data.buckets, data.bucket_seconds, maxBars)
     markTrailingCollecting(merged)
     return merged
-  }, [data.buckets, data.bucket_seconds])
+  }, [data.buckets, data.bucket_seconds, maxBars])
 
   // Detect issue badges across all buckets
   const badges = useMemo(() => {
@@ -272,7 +284,7 @@ export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps)
   if (bars.length === 0) return null
 
   return (
-    <div className={className}>
+    <div ref={containerRef} className={className}>
       <div className="relative">
         <div className="flex gap-[2px]">
           {bars.map((bar, index) => {
