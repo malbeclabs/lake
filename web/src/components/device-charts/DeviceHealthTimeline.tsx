@@ -4,6 +4,7 @@ import type { DeviceMetricsResponse, DeviceMetricsBucket } from '@/lib/api'
 interface DeviceHealthTimelineProps {
   data: DeviceMetricsResponse
   className?: string
+  hideBadges?: boolean
 }
 
 const healthColors: Record<string, string> = {
@@ -190,7 +191,7 @@ function useContainerBars() {
   return { containerRef, maxBars }
 }
 
-export function DeviceHealthTimeline({ data, className }: DeviceHealthTimelineProps) {
+export function DeviceHealthTimeline({ data, className, hideBadges }: DeviceHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const { containerRef, maxBars } = useContainerBars()
 
@@ -320,7 +321,7 @@ export function DeviceHealthTimeline({ data, className }: DeviceHealthTimelinePr
         </div>
       </div>
 
-      {badges.length > 0 && (
+      {!hideBadges && badges.length > 0 && (
         <div className="flex gap-1.5 mt-2 flex-wrap">
           {badges.map((badge) => (
             <span

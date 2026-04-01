@@ -4,6 +4,7 @@ import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
 interface LinkHealthTimelineProps {
   data: LinkMetricsResponse
   className?: string
+  hideBadges?: boolean
 }
 
 // Hard-drained: dark stripes over health color
@@ -248,7 +249,7 @@ function useContainerBars() {
   return { containerRef, maxBars }
 }
 
-export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps) {
+export function LinkHealthTimeline({ data, className, hideBadges }: LinkHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const { containerRef, maxBars } = useContainerBars()
 
@@ -391,7 +392,7 @@ export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps)
       </div>
 
       {/* Issue badges */}
-      {badges.length > 0 && (
+      {!hideBadges && badges.length > 0 && (
         <div className="flex gap-1.5 mt-2 flex-wrap">
           {badges.map((badge) => (
             <span

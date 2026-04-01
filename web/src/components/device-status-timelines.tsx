@@ -292,7 +292,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <DeviceHealthTimeline data={deviceMetrics} />
+            <DeviceHealthTimeline data={deviceMetrics} hideBadges />
           </div>
         </div>
       </div>

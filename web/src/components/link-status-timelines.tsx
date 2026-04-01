@@ -358,7 +358,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap }: 
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <LinkHealthTimeline data={linkMetrics} />
+            <LinkHealthTimeline data={linkMetrics} hideBadges />
           </div>
         </div>
       </div>
