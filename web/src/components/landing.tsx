@@ -3,10 +3,14 @@ import { Link } from 'react-router-dom'
 import {
   Activity,
   Globe,
+  Network,
   Gauge,
   Route,
   ShieldAlert,
   MessageSquare,
+  Cable,
+  ArrowRight,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { fetchStats } from '@/lib/api'
 import { StatCard } from '@/components/stat-card'
@@ -27,6 +31,13 @@ const pages = [
     icon: Globe,
     href: '/topology/map',
     color: 'text-blue-600 dark:text-blue-400',
+  },
+  {
+    title: 'Traffic',
+    description: 'Bandwidth and interface utilization',
+    icon: Network,
+    href: '/traffic/overview',
+    color: 'text-teal-600 dark:text-teal-400',
   },
   {
     title: 'Link Latency',
@@ -50,6 +61,13 @@ const pages = [
     color: 'text-red-600 dark:text-red-400',
   },
   {
+    title: 'DZ vs Internet',
+    description: 'Compare DZ and public internet performance',
+    icon: ArrowRightLeft,
+    href: '/performance/dz-vs-internet',
+    color: 'text-orange-600 dark:text-orange-400',
+  },
+  {
     title: 'Chat',
     description: 'Ask questions about the network',
     icon: MessageSquare,
@@ -70,10 +88,10 @@ export function Landing() {
   })
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-start px-8 pt-12 pb-4 overflow-auto">
+    <div className="flex-1 flex flex-col items-center justify-start px-8 pt-8 pb-4 overflow-auto">
       <div className="flex-1 flex flex-col items-center justify-center w-full">
       {/* Header */}
-      <div className="text-center mb-16">
+      <div className="text-center mb-10">
         <img
           src={resolvedTheme === 'dark' ? '/logoDark.svg' : '/logoLight.svg'}
           alt="DoubleZero"
@@ -85,7 +103,7 @@ export function Landing() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-10 gap-y-8 mb-16 max-w-5xl w-full">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-10 gap-y-8 mb-10 max-w-5xl w-full">
         {/* Row 1: Network Infrastructure */}
         <StatCard
           label="Contributors"
@@ -155,16 +173,26 @@ export function Landing() {
             to={page.href}
             className="group rounded-xl border border-border bg-secondary/50 p-5 transition-colors hover:bg-secondary hover:border-muted-foreground/30"
           >
-            <page.icon className={`h-5 w-5 mb-3 ${page.color}`} />
+            <div className="flex items-center justify-between mb-3">
+              <page.icon className={`h-5 w-5 ${page.color}`} />
+              <ArrowRight className="h-4 w-4 text-muted-foreground/0 group-hover:text-muted-foreground transition-colors" />
+            </div>
             <div className="font-medium text-sm mb-1">{page.title}</div>
             <div className="text-xs text-muted-foreground">{page.description}</div>
           </Link>
         ))}
+        <Link
+          to="/docs/mcp"
+          className="group rounded-xl border border-border bg-secondary/50 p-5 transition-colors hover:bg-secondary hover:border-muted-foreground/30"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <Cable className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground/0 group-hover:text-muted-foreground transition-colors" />
+          </div>
+          <div className="font-medium text-sm mb-1">Connect Your Own AI</div>
+          <div className="text-xs text-muted-foreground">Query DoubleZero data via MCP</div>
+        </Link>
       </div>
-      </div>
-
-      <div className="text-xs text-muted-foreground/60 text-center mt-auto pb-2">
-        <a href="/docs/mcp" className="underline hover:text-muted-foreground">Connect your own AI →</a>
       </div>
     </div>
   )
