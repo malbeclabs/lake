@@ -293,34 +293,28 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
 
       {/* Expanded charts — aligned with the timeline column */}
       {expanded && (
-        <div className="px-4 pb-4 pt-0">
-          <div className="flex items-start gap-4">
-            <div className="flex-shrink-0 w-5" />
-            <div className="flex-shrink-0 w-52 sm:w-60 lg:w-68" />
-            <div className="flex-1 min-w-0 space-y-4">
-              {metrics && (() => {
-                const hasLoss = metrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
-                const hasIssues = metrics.buckets.some(b => b.traffic && (
-                  b.traffic.side_a_in_errors + b.traffic.side_a_out_errors + b.traffic.side_z_in_errors + b.traffic.side_z_out_errors > 0 ||
-                  b.traffic.side_a_in_fcs_errors + b.traffic.side_z_in_fcs_errors > 0 ||
-                  b.traffic.side_a_in_discards + b.traffic.side_a_out_discards + b.traffic.side_z_in_discards + b.traffic.side_z_out_discards > 0 ||
-                  b.traffic.side_a_carrier_transitions + b.traffic.side_z_carrier_transitions > 0
-                ))
-                if (!hasLoss && !hasIssues) return null
-                return (
-                  <>
-                    {hasLoss && <LinkPacketLossDetailChart data={metrics} loading={metricsFetching} className={cardClass} />}
-                    {hasIssues && <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />}
-                  </>
-                )
-              })()}
-              {!metrics && metricsFetching && (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              )}
+        <div className="px-4 pb-4 pt-2 space-y-4">
+          {metrics && (() => {
+            const hasLoss = metrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
+            const hasIssues = metrics.buckets.some(b => b.traffic && (
+              b.traffic.side_a_in_errors + b.traffic.side_a_out_errors + b.traffic.side_z_in_errors + b.traffic.side_z_out_errors > 0 ||
+              b.traffic.side_a_in_fcs_errors + b.traffic.side_z_in_fcs_errors > 0 ||
+              b.traffic.side_a_in_discards + b.traffic.side_a_out_discards + b.traffic.side_z_in_discards + b.traffic.side_z_out_discards > 0 ||
+              b.traffic.side_a_carrier_transitions + b.traffic.side_z_carrier_transitions > 0
+            ))
+            if (!hasLoss && !hasIssues) return null
+            return (
+              <>
+                {hasLoss && <LinkPacketLossDetailChart data={metrics} loading={metricsFetching} className={cardClass} />}
+                {hasIssues && <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />}
+              </>
+            )
+          })()}
+          {!metrics && metricsFetching && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

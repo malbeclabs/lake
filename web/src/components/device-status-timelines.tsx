@@ -439,28 +439,22 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, me
 
       {/* Expanded charts — aligned with the timeline column */}
       {expanded && (
-        <div className="px-4 pb-4 pt-0">
-          <div className="flex items-start gap-4">
-            <div className="flex-shrink-0 w-5" />
-            <div className="flex-shrink-0 w-44" />
-            <div className="flex-1 min-w-0 space-y-4">
-              {metrics && (() => {
-                const hasIssues = metrics.buckets.some(b => b.traffic && (
-                  b.traffic.in_errors + b.traffic.out_errors > 0 ||
-                  b.traffic.in_fcs_errors > 0 ||
-                  b.traffic.in_discards + b.traffic.out_discards > 0 ||
-                  b.traffic.carrier_transitions > 0
-                ))
-                if (!hasIssues) return null
-                return <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
-              })()}
-              {!metrics && metricsFetching && (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              )}
+        <div className="px-4 pb-4 pt-2 space-y-4">
+          {metrics && (() => {
+            const hasIssues = metrics.buckets.some(b => b.traffic && (
+              b.traffic.in_errors + b.traffic.out_errors > 0 ||
+              b.traffic.in_fcs_errors > 0 ||
+              b.traffic.in_discards + b.traffic.out_discards > 0 ||
+              b.traffic.carrier_transitions > 0
+            ))
+            if (!hasIssues) return null
+            return <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+          })()}
+          {!metrics && metricsFetching && (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>
