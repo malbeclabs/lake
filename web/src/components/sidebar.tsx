@@ -5,7 +5,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   MessageSquare,
-  Database,
   Globe,
   Activity,
   ArrowUpCircle,
@@ -16,7 +15,6 @@ import {
   Building2,
   Landmark,
   Radio,
-  Clock,
   Search,
   Route,
   Map,
@@ -54,12 +52,9 @@ export function Sidebar() {
 
   // Route detection
   const isStatusRoute = location.pathname.startsWith('/status')
-  const isTimelineRoute = location.pathname === '/timeline'
   const isIncidentsRoute = location.pathname.startsWith('/incidents')
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
-  const isQueryRoute = location.pathname.startsWith('/query')
-  const isQuerySessions = location.pathname === '/query/sessions'
   const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
   const isPerformanceRoute = location.pathname.startsWith('/performance')
   const isTrafficRoute = location.pathname.startsWith('/traffic')
