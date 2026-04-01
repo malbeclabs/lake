@@ -1,12 +1,11 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import uPlot from 'uplot'
-import { useUPlotChart } from '@/hooks/use-uplot-chart'
-import { fetchDeviceHistory, fetchDeviceInterfaceHistory } from '@/lib/api'
+import { fetchDeviceHistory, fetchDeviceMetrics } from '@/lib/api'
 import type { DeviceHistory, DeviceHourStatus } from '@/lib/api'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
+import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
@@ -323,405 +322,7 @@ function useBucketCount() {
   return buckets
 }
 
-// Color palette for interfaces (distinct colors)
-const INTERFACE_COLORS = [
-  '#3b82f6', // blue-500
-  '#10b981', // emerald-500
-  '#f59e0b', // amber-500
-  '#ef4444', // red-500
-  '#8b5cf6', // violet-500
-  '#ec4899', // pink-500
-  '#06b6d4', // cyan-500
-  '#84cc16', // lime-500
-  '#f97316', // orange-500
-  '#6366f1', // indigo-500
-]
-
-type MetricType = 'errors' | 'fcs_errors' | 'discards' | 'carrier'
-
-const METRIC_CONFIG: Record<MetricType, { label: string; color: string }> = {
-  errors: { label: 'Errors', color: '#d946ef' },
-  fcs_errors: { label: 'FCS Errors', color: '#ea580c' },
-  discards: { label: 'Discards', color: '#f43f5e' },
-  carrier: { label: 'Carrier Transitions', color: '#f97316' },
-}
-
-// Interface toggle button with popover for link info
-interface InterfaceToggleButtonProps {
-  intf: {
-    interface_name: string
-    link_pk?: string
-    link_code?: string
-    link_type?: string
-    link_side?: string
-  }
-  isEnabled: boolean
-  color: string
-  onToggle: () => void
-  onHoverChange?: (hovered: boolean) => void
-}
-
-function InterfaceToggleButton({ intf, isEnabled, color, onToggle, onHoverChange }: InterfaceToggleButtonProps) {
-  const [showPopover, setShowPopover] = useState(false)
-  const hasLinkInfo = intf.link_code || intf.link_type
-
-  return (
-    <div className="relative">
-      <button
-        onClick={onToggle}
-        onMouseEnter={() => { if (hasLinkInfo) setShowPopover(true); onHoverChange?.(true) }}
-        onMouseLeave={() => { setShowPopover(false); onHoverChange?.(false) }}
-        className={`w-full px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 text-left ${
-          isEnabled
-            ? 'bg-background border-current shadow-sm'
-            : 'bg-muted/50 border-transparent text-muted-foreground hover:bg-muted'
-        }`}
-        style={isEnabled ? { borderColor: color, color } : undefined}
-      >
-        <span
-          className="w-2 h-2 rounded-full flex-shrink-0"
-          style={{ backgroundColor: isEnabled ? color : 'currentColor', opacity: isEnabled ? 1 : 0.3 }}
-        />
-        <span className="truncate">{intf.interface_name}</span>
-      </button>
-      {showPopover && hasLinkInfo && (
-        <div
-          className="absolute left-full top-0 ml-2 z-50 bg-popover border border-border rounded-lg shadow-lg p-2 whitespace-nowrap text-xs"
-          onMouseEnter={() => setShowPopover(true)}
-          onMouseLeave={() => setShowPopover(false)}
-        >
-          <div className="space-y-1">
-            {intf.link_code && (
-              <div>
-                <span className="text-muted-foreground">Link: </span>
-                <span className="font-medium">{intf.link_code}</span>
-              </div>
-            )}
-            {intf.link_type && (
-              <div>
-                <span className="text-muted-foreground">Type: </span>
-                <span>{intf.link_type}</span>
-              </div>
-            )}
-            {intf.link_side && (
-              <div>
-                <span className="text-muted-foreground">Side: </span>
-                <span>{intf.link_side}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-interface InterfaceIssueChartProps {
-  devicePk: string
-  timeRange: string
-  buckets: number
-  controlsWidth?: string
-}
-
-function InterfaceIssueChart({ devicePk, timeRange, buckets, controlsWidth = 'w-44' }: InterfaceIssueChartProps) {
-  const chartRef = useRef<HTMLDivElement>(null)
-  const [enabledInterfaces, setEnabledInterfaces] = useState<Set<string>>(new Set())
-  const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
-  const [initialized, setInitialized] = useState(false)
-  const [hoveredMetric, setHoveredMetric] = useState<MetricType | null>(null)
-  const [hoveredInterface, setHoveredInterface] = useState<string | null>(null)
-
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['device-interface-history', devicePk, timeRange, buckets],
-    queryFn: () => fetchDeviceInterfaceHistory(devicePk, timeRange, buckets),
-    staleTime: 30_000,
-  })
-
-  // Filter interfaces that have any issues
-  const interfacesWithIssues = useMemo(() => {
-    if (!data?.interfaces) return []
-    return data.interfaces.filter(intf =>
-      intf.hours.some(h => h.in_errors > 0 || h.out_errors > 0 || h.in_fcs_errors > 0 || h.in_discards > 0 || h.out_discards > 0 || h.carrier_transitions > 0)
-    )
-  }, [data?.interfaces])
-
-  // Initialize enabled interfaces to all when data loads
-  useEffect(() => {
-    if (interfacesWithIssues.length > 0 && !initialized) {
-      setEnabledInterfaces(new Set(interfacesWithIssues.map(i => i.interface_name)))
-      setInitialized(true)
-    }
-  }, [interfacesWithIssues, initialized])
-
-  // Determine which metrics have data across all interfaces
-  const availableMetrics = useMemo(() => {
-    const metrics: Set<MetricType> = new Set()
-    for (const intf of interfacesWithIssues) {
-      for (const h of intf.hours) {
-        if (h.in_errors > 0 || h.out_errors > 0) metrics.add('errors')
-        if (h.in_fcs_errors > 0) metrics.add('fcs_errors')
-        if (h.in_discards > 0 || h.out_discards > 0) metrics.add('discards')
-        if (h.carrier_transitions > 0) metrics.add('carrier')
-      }
-    }
-    return metrics
-  }, [interfacesWithIssues])
-
-  // Build color map for interfaces
-  const interfaceColorMap = useMemo(() => {
-    const map: Record<string, string> = {}
-    interfacesWithIssues.forEach((intf, idx) => {
-      map[intf.interface_name] = INTERFACE_COLORS[idx % INTERFACE_COLORS.length]
-    })
-    return map
-  }, [interfacesWithIssues])
-
-  const toggleInterface = (name: string) => {
-    setEnabledInterfaces(prev => {
-      const next = new Set(prev)
-      if (next.has(name)) {
-        next.delete(name)
-      } else {
-        next.add(name)
-      }
-      return next
-    })
-  }
-
-  const toggleMetric = (metric: MetricType) => {
-    setEnabledMetrics(prev => {
-      const next = new Set(prev)
-      if (next.has(metric)) {
-        next.delete(metric)
-      } else {
-        next.add(metric)
-      }
-      return next
-    })
-  }
-
-  // Transform data for uPlot — must be before early returns (rules of hooks)
-  type LineInfo = { key: string; metric: MetricType; intfName: string; color: string; dash?: number[] }
-
-  const { uplotData, uplotSeries, seriesMap } = useMemo(() => {
-    if (interfacesWithIssues.length === 0 || !data?.interfaces?.[0]?.hours) {
-      return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[], seriesMap: new Map<number, LineInfo>() }
-    }
-
-    const timestamps = data.interfaces[0].hours.map(h => new Date(h.hour).getTime() / 1000)
-
-    const lineInfos: LineInfo[] = []
-    const columns: (number | null)[][] = []
-
-    for (const intf of interfacesWithIssues) {
-      const color = interfaceColorMap[intf.interface_name]
-      // errors in/out
-      lineInfos.push({ key: `${intf.interface_name}_errors_in`, metric: 'errors', intfName: intf.interface_name, color })
-      columns.push(intf.hours.map(h => h.in_errors || 0))
-      lineInfos.push({ key: `${intf.interface_name}_errors_out`, metric: 'errors', intfName: intf.interface_name, color })
-      columns.push(intf.hours.map(h => h.out_errors ? -h.out_errors : 0))
-      // fcs_errors
-      lineInfos.push({ key: `${intf.interface_name}_fcs_errors`, metric: 'fcs_errors', intfName: intf.interface_name, color, dash: [8, 3] })
-      columns.push(intf.hours.map(h => h.in_fcs_errors || 0))
-      // discards in/out
-      lineInfos.push({ key: `${intf.interface_name}_discards_in`, metric: 'discards', intfName: intf.interface_name, color, dash: [5, 5] })
-      columns.push(intf.hours.map(h => h.in_discards || 0))
-      lineInfos.push({ key: `${intf.interface_name}_discards_out`, metric: 'discards', intfName: intf.interface_name, color, dash: [5, 5] })
-      columns.push(intf.hours.map(h => h.out_discards ? -h.out_discards : 0))
-      // carrier
-      lineInfos.push({ key: `${intf.interface_name}_carrier`, metric: 'carrier', intfName: intf.interface_name, color, dash: [2, 2] })
-      columns.push(intf.hours.map(h => h.carrier_transitions || 0))
-    }
-
-    const series: uPlot.Series[] = [
-      {}, // x-axis
-      ...lineInfos.map(info => ({
-        label: info.key,
-        stroke: info.color,
-        width: 1.5,
-        dash: info.dash,
-        points: { show: false },
-      })),
-    ]
-
-    const map = new Map<number, LineInfo>()
-    lineInfos.forEach((info, i) => map.set(i + 1, info))
-
-    return {
-      uplotData: [timestamps, ...columns] as uPlot.AlignedData,
-      uplotSeries: series,
-      seriesMap: map,
-    }
-  }, [interfacesWithIssues, interfaceColorMap, data?.interfaces])
-
-  const axes = useMemo((): uPlot.Axis[] => [
-    {},
-    {
-      values: (_u: uPlot, vals: number[]) => vals.map(v => {
-        const abs = Math.abs(v)
-        if (abs === 0) return '0'
-        return abs >= 1000 ? `${(abs/1000).toFixed(0)}k` : abs.toString()
-      }),
-    },
-  ], [])
-
-  const { plotRef } = useUPlotChart({
-    containerRef: chartRef,
-    data: uplotData,
-    series: uplotSeries,
-    height: 128,
-    axes,
-  })
-
-  // Sync toggle state to series visibility
-  useLayoutEffect(() => {
-    const u = plotRef.current
-    if (!u) return
-    for (const [idx, info] of seriesMap) {
-      const shouldShow = enabledMetrics.has(info.metric) && enabledInterfaces.has(info.intfName) && availableMetrics.has(info.metric)
-      if (u.series[idx]?.show !== shouldShow) {
-        u.setSeries(idx, { show: shouldShow })
-      }
-    }
-  })
-
-  // Sync hover opacity
-  useLayoutEffect(() => {
-    const u = plotRef.current
-    if (!u) return
-    let changed = false
-    for (const [idx, info] of seriesMap) {
-      let alpha = 1
-      if (hoveredMetric || hoveredInterface) {
-        const metricMatch = !hoveredMetric || hoveredMetric === info.metric
-        const intfMatch = !hoveredInterface || hoveredInterface === info.intfName
-        alpha = (metricMatch && intfMatch) ? 1 : 0.15
-      }
-      if (u.series[idx]?.alpha !== alpha) {
-        u.series[idx].alpha = alpha
-        changed = true
-      }
-    }
-    if (changed) u.redraw()
-  })
-
-  if (isLoading) {
-    return (
-      <>
-        <div className={`flex-shrink-0 ${controlsWidth}`} />
-        <div className="flex-1 flex items-center justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mr-2" />
-          <span className="text-sm text-muted-foreground">Loading interface history...</span>
-        </div>
-      </>
-    )
-  }
-
-  if (error || !data) {
-    return (
-      <>
-        <div className={`flex-shrink-0 ${controlsWidth}`} />
-        <div className="flex-1 text-center py-4 text-sm text-muted-foreground">
-          Unable to load interface history
-        </div>
-      </>
-    )
-  }
-
-  if (data.interfaces.length === 0) {
-    return (
-      <>
-        <div className={`flex-shrink-0 ${controlsWidth}`} />
-        <div className="flex-1 text-center py-4 text-sm text-muted-foreground">
-          No interface data available
-        </div>
-      </>
-    )
-  }
-
-  if (interfacesWithIssues.length === 0) {
-    return (
-      <>
-        <div className={`flex-shrink-0 ${controlsWidth}`} />
-        <div className="flex-1 text-center py-4 text-sm text-muted-foreground">
-          No interface issues in this time range
-        </div>
-      </>
-    )
-  }
-
-  return (
-    <>
-      {/* Controls on left */}
-      <div className={`flex-shrink-0 ${controlsWidth} space-y-3`}>
-        {/* Metric toggles */}
-        <div className="space-y-1.5">
-          <span className="text-xs text-muted-foreground">Metrics</span>
-          <div className="flex flex-col gap-1">
-            {(['errors', 'fcs_errors', 'discards', 'carrier'] as MetricType[]).map(metric => {
-              if (!availableMetrics.has(metric)) return null
-              const config = METRIC_CONFIG[metric]
-              const isEnabled = enabledMetrics.has(metric)
-              const dashArray = metric === 'errors' ? undefined : metric === 'fcs_errors' ? '8 3' : metric === 'discards' ? '5 5' : '2 2'
-              return (
-                <button
-                  key={metric}
-                  onClick={() => toggleMetric(metric)}
-                  onMouseEnter={() => setHoveredMetric(metric)}
-                  onMouseLeave={() => setHoveredMetric(null)}
-                  className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
-                    isEnabled
-                      ? 'bg-background border-foreground/20 text-foreground shadow-sm'
-                      : 'bg-muted/50 border-transparent text-muted-foreground hover:bg-muted'
-                  }`}
-                >
-                  <svg width="12" height="2" style={{ opacity: isEnabled ? 1 : 0.3 }}>
-                    <line
-                      x1="0"
-                      y1="1"
-                      x2="12"
-                      y2="1"
-                      stroke={isEnabled ? config.color : 'currentColor'}
-                      strokeWidth="2"
-                      strokeDasharray={dashArray}
-                    />
-                  </svg>
-                  {config.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Interface toggles */}
-        <div className="space-y-1.5">
-          <span className="text-xs text-muted-foreground">Interfaces</span>
-          <div className="flex flex-col gap-1">
-            {interfacesWithIssues.map(intf => {
-              const isEnabled = enabledInterfaces.has(intf.interface_name)
-              const color = interfaceColorMap[intf.interface_name]
-              return (
-                <InterfaceToggleButton
-                  key={intf.interface_name}
-                  intf={intf}
-                  isEnabled={isEnabled}
-                  color={color}
-                  onToggle={() => toggleInterface(intf.interface_name)}
-                  onHoverChange={(hovered) => setHoveredInterface(hovered ? intf.interface_name : null)}
-                />
-              )
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Chart on right */}
-      <div className="flex-1 min-w-0">
-        <div ref={chartRef} className="h-32" />
-      </div>
-    </>
-  )
-}
+const cardClass = "rounded-lg border border-border p-4"
 
 // Device row component with expand/collapse
 interface DeviceRowProps {
@@ -729,12 +330,11 @@ interface DeviceRowProps {
   devicesWithIssues?: Map<string, string[]>
   bucketMinutes?: number
   dataTimeRange?: string
-  buckets: number
-  timeRange: string
+  metricsTimeRange: string
   initiallyExpanded?: boolean
 }
 
-function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, buckets, timeRange, initiallyExpanded = false }: DeviceRowProps) {
+function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, metricsTimeRange, initiallyExpanded = false }: DeviceRowProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded)
 
   // Expand when initiallyExpanded prop changes to true
@@ -744,29 +344,29 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
     }
   }, [initiallyExpanded])
 
+  const { data: metrics, isFetching: metricsFetching } = useQuery({
+    queryKey: ['deviceMetrics', device.pk, { range: metricsTimeRange }],
+    queryFn: () => fetchDeviceMetrics(device.pk, { range: metricsTimeRange }),
+    enabled: expanded,
+  })
+
   const issueReasons = devicesWithIssues && devicesWithIssues.size > 0
     ? (devicesWithIssues.get(device.code) ?? [])
     : (device.issue_reasons ?? [])
 
-  const hasIssues = issueReasons.length > 0
-
   return (
     <div id={`device-row-${device.pk}`} className="border-b border-border last:border-b-0">
       <div
-        className={`px-4 py-3 transition-colors ${hasIssues ? 'cursor-pointer hover:bg-muted/30' : ''}`}
-        onClick={hasIssues ? () => setExpanded(!expanded) : undefined}
+        className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
+        onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-start gap-4">
           {/* Expand/collapse indicator */}
           <div className="flex-shrink-0 w-5 pt-0.5">
-            {hasIssues ? (
-              expanded ? (
-                <ChevronUp className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              )
+            {expanded ? (
+              <ChevronUp className="h-4 w-4 text-muted-foreground" />
             ) : (
-              <div className="w-4" />
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
             )}
           </div>
 
@@ -837,19 +437,29 @@ function DeviceRow({ device, devicesWithIssues, bucketMinutes, dataTimeRange, bu
         </div>
       </div>
 
-      {/* Expanded content with chart */}
-      {expanded && hasIssues && (
+      {/* Expanded charts — aligned with the timeline column */}
+      {expanded && (
         <div className="px-4 pb-4 pt-0">
-          <div className="flex items-stretch gap-4">
-            {/* Spacer for chevron */}
+          <div className="flex items-start gap-4">
             <div className="flex-shrink-0 w-5" />
-            {/* Chart component with controls on left, chart aligned with timeline */}
-            <InterfaceIssueChart
-              devicePk={device.pk}
-              timeRange={timeRange}
-              buckets={buckets}
-              controlsWidth="w-44"
-            />
+            <div className="flex-shrink-0 w-44" />
+            <div className="flex-1 min-w-0 space-y-4">
+              {metrics && (() => {
+                const hasIssues = metrics.buckets.some(b => b.traffic && (
+                  b.traffic.in_errors + b.traffic.out_errors > 0 ||
+                  b.traffic.in_fcs_errors > 0 ||
+                  b.traffic.in_discards + b.traffic.out_discards > 0 ||
+                  b.traffic.carrier_transitions > 0
+                ))
+                if (!hasIssues) return null
+                return <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
+              })()}
+              {!metrics && metricsFetching && (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1071,8 +681,7 @@ export function DeviceStatusTimelines({
             devicesWithIssues={devicesWithIssues}
             bucketMinutes={data?.bucket_minutes}
             dataTimeRange={data?.time_range}
-            buckets={buckets}
-            timeRange={timeRange}
+            metricsTimeRange={timeRange}
             initiallyExpanded={device.pk === expandedDevicePk}
           />
         ))}

@@ -1,11 +1,11 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import uPlot from 'uplot'
-import { useUPlotChart } from '@/hooks/use-uplot-chart'
-import { fetchLinkHistory } from '@/lib/api'
-import type { LinkHistory, LinkHourStatus } from '@/lib/api'
+import { fetchLinkHistory, fetchLinkMetrics } from '@/lib/api'
+import type { LinkHistory } from '@/lib/api'
+import { LinkPacketLossChart as LinkPacketLossDetailChart } from '@/components/link-charts/LinkPacketLossChart'
+import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
 import { StatusTimeline } from './status-timeline'
 import { getEffectiveStatus } from '@/lib/link-status'
 import { CriticalityBadge } from './criticality-badge'
@@ -187,440 +187,7 @@ function useBucketCount() {
   return buckets
 }
 
-// Check if link has interface issues in any bucket
-function hasInterfaceIssues(hours: LinkHourStatus[]): boolean {
-  return hours.some(h =>
-    (h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
-    (h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0 ||
-    (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 ||
-    (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0 ||
-    (h.side_a_carrier_transitions ?? 0) > 0 || (h.side_z_carrier_transitions ?? 0) > 0
-  )
-}
-
-// Check if link has packet loss in any bucket
-function hasPacketLoss(hours: LinkHourStatus[]): boolean {
-  return hours.some(h => h.avg_loss_pct > 0)
-}
-
-type MetricType = 'errors' | 'fcs_errors' | 'discards' | 'carrier'
-
-const METRIC_CONFIG: Record<MetricType, { label: string; dashArray?: string }> = {
-  errors: { label: 'Errors', dashArray: undefined },
-  fcs_errors: { label: 'FCS Errors', dashArray: '8 3' },
-  discards: { label: 'Discards', dashArray: '5 5' },
-  carrier: { label: 'Carrier Transitions', dashArray: '2 2' },
-}
-
-// Colors for side A and side Z
-const SIDE_COLORS = {
-  A: '#3b82f6', // blue
-  Z: '#10b981', // emerald
-}
-
-interface LinkInterfaceChartProps {
-  hours: LinkHourStatus[]
-  bucketMinutes: number
-  controlsWidth?: string
-}
-
-function LinkInterfaceChart({ hours, controlsWidth = 'w-32' }: LinkInterfaceChartProps) {
-  const chartRef = useRef<HTMLDivElement>(null)
-  const [enabledMetrics, setEnabledMetrics] = useState<Set<MetricType>>(new Set(['errors', 'fcs_errors', 'discards', 'carrier']))
-  const [enabledSides, setEnabledSides] = useState<Set<'A' | 'Z'>>(new Set(['A', 'Z']))
-  const [hoveredMetric, setHoveredMetric] = useState<MetricType | null>(null)
-  const [hoveredSide, setHoveredSide] = useState<'A' | 'Z' | null>(null)
-
-  // Determine which metrics have data
-  const availableMetrics = useMemo(() => {
-    const metrics: Set<MetricType> = new Set()
-    for (const h of hours) {
-      if ((h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
-          (h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0) {
-        metrics.add('errors')
-      }
-      if ((h.side_a_in_fcs_errors ?? 0) > 0 || (h.side_z_in_fcs_errors ?? 0) > 0) {
-        metrics.add('fcs_errors')
-      }
-      if ((h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 ||
-          (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0) {
-        metrics.add('discards')
-      }
-      if ((h.side_a_carrier_transitions ?? 0) > 0 || (h.side_z_carrier_transitions ?? 0) > 0) {
-        metrics.add('carrier')
-      }
-    }
-    return metrics
-  }, [hours])
-
-  // Determine which sides have data
-  const availableSides = useMemo(() => {
-    const sides: Set<'A' | 'Z'> = new Set()
-    for (const h of hours) {
-      if ((h.side_a_in_errors ?? 0) > 0 || (h.side_a_out_errors ?? 0) > 0 ||
-          (h.side_a_in_fcs_errors ?? 0) > 0 ||
-          (h.side_a_in_discards ?? 0) > 0 || (h.side_a_out_discards ?? 0) > 0 ||
-          (h.side_a_carrier_transitions ?? 0) > 0) {
-        sides.add('A')
-      }
-      if ((h.side_z_in_errors ?? 0) > 0 || (h.side_z_out_errors ?? 0) > 0 ||
-          (h.side_z_in_fcs_errors ?? 0) > 0 ||
-          (h.side_z_in_discards ?? 0) > 0 || (h.side_z_out_discards ?? 0) > 0 ||
-          (h.side_z_carrier_transitions ?? 0) > 0) {
-        sides.add('Z')
-      }
-    }
-    return sides
-  }, [hours])
-
-  const toggleMetric = (metric: MetricType) => {
-    setEnabledMetrics(prev => {
-      const next = new Set(prev)
-      if (next.has(metric)) next.delete(metric)
-      else next.add(metric)
-      return next
-    })
-  }
-
-  const toggleSide = (side: 'A' | 'Z') => {
-    setEnabledSides(prev => {
-      const next = new Set(prev)
-      if (next.has(side)) next.delete(side)
-      else next.add(side)
-      return next
-    })
-  }
-
-  type LineInfo = { metric: MetricType; side: 'A' | 'Z' }
-
-  // Build columnar data for ALL possible lines (all sides x metrics x directions)
-  const { uplotData, uplotSeries, seriesMap } = useMemo(() => {
-    const timestamps = hours.map(h => new Date(h.hour).getTime() / 1000)
-    const lineInfos: LineInfo[] = []
-    const columns: (number | null)[][] = []
-
-    for (const side of ['A', 'Z'] as const) {
-      // errors in/out
-      lineInfos.push({ metric: 'errors', side })
-      columns.push(hours.map(h => side === 'A' ? (h.side_a_in_errors ?? 0) : (h.side_z_in_errors ?? 0)))
-      lineInfos.push({ metric: 'errors', side })
-      columns.push(hours.map(h => -(side === 'A' ? (h.side_a_out_errors ?? 0) : (h.side_z_out_errors ?? 0))))
-      // fcs_errors (in only)
-      lineInfos.push({ metric: 'fcs_errors', side })
-      columns.push(hours.map(h => side === 'A' ? (h.side_a_in_fcs_errors ?? 0) : (h.side_z_in_fcs_errors ?? 0)))
-      // discards in/out
-      lineInfos.push({ metric: 'discards', side })
-      columns.push(hours.map(h => side === 'A' ? (h.side_a_in_discards ?? 0) : (h.side_z_in_discards ?? 0)))
-      lineInfos.push({ metric: 'discards', side })
-      columns.push(hours.map(h => -(side === 'A' ? (h.side_a_out_discards ?? 0) : (h.side_z_out_discards ?? 0))))
-      // carrier
-      lineInfos.push({ metric: 'carrier', side })
-      columns.push(hours.map(h => side === 'A' ? (h.side_a_carrier_transitions ?? 0) : (h.side_z_carrier_transitions ?? 0)))
-    }
-
-    const series: uPlot.Series[] = [
-      {}, // x-axis
-      ...lineInfos.map((info, i) => {
-        // Determine which side block we're in to get color
-        const color = SIDE_COLORS[info.side]
-        // Determine dash pattern from metric
-        let dash: number[] | undefined
-        if (info.metric === 'fcs_errors') dash = [8, 3]
-        else if (info.metric === 'discards') dash = [5, 5]
-        else if (info.metric === 'carrier') dash = [2, 2]
-        return {
-          label: `line_${i}`,
-          stroke: color,
-          width: 1.5,
-          dash,
-          points: { show: false },
-          show: true,
-        } as uPlot.Series
-      }),
-    ]
-
-    const map = new Map<number, LineInfo>()
-    lineInfos.forEach((info, i) => map.set(i + 1, info))
-
-    return {
-      uplotData: [timestamps, ...columns] as uPlot.AlignedData,
-      uplotSeries: series,
-      seriesMap: map,
-    }
-  }, [hours])
-
-  const axes = useMemo((): uPlot.Axis[] => [
-    {},
-    {
-      values: (_u: uPlot, vals: number[]) => vals.map(v => {
-        const abs = Math.abs(v)
-        if (abs === 0) return '0'
-        return abs >= 1000 ? `${(abs / 1000).toFixed(0)}k` : abs.toString()
-      }),
-    },
-  ], [])
-
-  const { plotRef } = useUPlotChart({
-    containerRef: chartRef,
-    data: uplotData,
-    series: uplotSeries,
-    height: 128,
-    axes,
-  })
-
-  // Sync toggle state to series visibility
-  useEffect(() => {
-    const u = plotRef.current
-    if (!u) return
-    for (const [idx, info] of seriesMap) {
-      const shouldShow = enabledMetrics.has(info.metric) && enabledSides.has(info.side) && availableMetrics.has(info.metric)
-      if (u.series[idx]?.show !== shouldShow) {
-        u.setSeries(idx, { show: shouldShow })
-      }
-    }
-  })
-
-  // Sync hover opacity
-  useLayoutEffect(() => {
-    const u = plotRef.current
-    if (!u) return
-    let changed = false
-    for (const [idx, info] of seriesMap) {
-      let alpha = 1
-      if (hoveredMetric || hoveredSide) {
-        const metricMatch = !hoveredMetric || hoveredMetric === info.metric
-        const sideMatch = !hoveredSide || hoveredSide === info.side
-        alpha = (metricMatch && sideMatch) ? 1 : 0.15
-      }
-      const s = u.series[idx]
-      if (s && (s as uPlot.Series & { alpha?: number }).alpha !== alpha) {
-        ;(s as uPlot.Series & { alpha?: number }).alpha = alpha
-        changed = true
-      }
-    }
-    if (changed) u.redraw()
-  })
-
-  return (
-    <>
-      {/* Controls */}
-      <div className={`flex-shrink-0 ${controlsWidth} space-y-3`}>
-        <div className="space-y-1.5">
-          <span className="text-xs text-muted-foreground">Metrics</span>
-          <div className="flex flex-wrap gap-1">
-            {(['errors', 'fcs_errors', 'discards', 'carrier'] as MetricType[]).map(metric => {
-              if (!availableMetrics.has(metric)) return null
-              const config = METRIC_CONFIG[metric]
-              const isEnabled = enabledMetrics.has(metric)
-              return (
-                <button
-                  key={metric}
-                  onClick={() => toggleMetric(metric)}
-                  onMouseEnter={() => setHoveredMetric(metric)}
-                  onMouseLeave={() => setHoveredMetric(null)}
-                  className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
-                    isEnabled
-                      ? 'bg-background border-foreground/20 text-foreground shadow-sm'
-                      : 'bg-muted/50 border-transparent text-muted-foreground hover:bg-muted'
-                  }`}
-                >
-                  <svg width="12" height="2" style={{ opacity: isEnabled ? 1 : 0.3 }}>
-                    <line x1="0" y1="1" x2="12" y2="1" stroke="currentColor" strokeWidth="2" strokeDasharray={config.dashArray} />
-                  </svg>
-                  {config.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <span className="text-xs text-muted-foreground">Sides</span>
-          <div className="flex flex-wrap gap-1">
-            {(['A', 'Z'] as const).map(side => {
-              if (!availableSides.has(side)) return null
-              const isEnabled = enabledSides.has(side)
-              return (
-                <button
-                  key={side}
-                  onClick={() => toggleSide(side)}
-                  onMouseEnter={() => setHoveredSide(side)}
-                  onMouseLeave={() => setHoveredSide(null)}
-                  className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
-                    isEnabled
-                      ? 'bg-background border-current shadow-sm'
-                      : 'bg-muted/50 border-transparent text-muted-foreground hover:bg-muted'
-                  }`}
-                  style={isEnabled ? { borderColor: SIDE_COLORS[side], color: SIDE_COLORS[side] } : undefined}
-                >
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: isEnabled ? SIDE_COLORS[side] : 'currentColor', opacity: isEnabled ? 1 : 0.3 }} />
-                  Side {side}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div className="flex-1 min-w-0 h-32">
-        <div ref={chartRef} className="w-full h-full" />
-      </div>
-    </>
-  )
-}
-
-interface LinkPacketLossChartProps {
-  hours: LinkHourStatus[]
-  bucketMinutes: number
-  controlsWidth?: string
-}
-
-function LinkPacketLossChart({ hours, controlsWidth = 'w-32' }: LinkPacketLossChartProps) {
-  const chartRef = useRef<HTMLDivElement>(null)
-  const [enabledSeries, setEnabledSeries] = useState<Set<'total' | 'A' | 'Z'>>(new Set(['total', 'A', 'Z']))
-  const [hoveredSeries, setHoveredSeries] = useState<'total' | 'A' | 'Z' | null>(null)
-
-  // Check which series have data
-  const availableSeries = useMemo(() => {
-    const series: Set<'total' | 'A' | 'Z'> = new Set()
-    for (const h of hours) {
-      if (h.avg_loss_pct > 0) series.add('total')
-      if ((h.side_a_loss_pct ?? 0) > 0) series.add('A')
-      if ((h.side_z_loss_pct ?? 0) > 0) series.add('Z')
-    }
-    return series
-  }, [hours])
-
-  const toggleSeries = (series: 'total' | 'A' | 'Z') => {
-    setEnabledSeries(prev => {
-      const next = new Set(prev)
-      if (next.has(series)) next.delete(series)
-      else next.add(series)
-      return next
-    })
-  }
-
-  const SERIES_CONFIG = {
-    total: { color: '#a855f7', label: 'Average' }, // purple
-    A: { color: SIDE_COLORS.A, label: 'Side A' },
-    Z: { color: SIDE_COLORS.Z, label: 'Side Z' },
-  }
-
-  type LossSeriesKey = 'total' | 'A' | 'Z'
-  const seriesKeys: LossSeriesKey[] = ['total', 'A', 'Z']
-
-  // Build columnar uPlot data
-  const { uplotData, uplotSeries } = useMemo(() => {
-    const timestamps = hours.map(h => new Date(h.hour).getTime() / 1000)
-    const total = hours.map(h => h.status === 'no_data' ? null : h.avg_loss_pct)
-    const sideA = hours.map(h => h.status === 'no_data' ? null : (h.side_a_loss_pct ?? 0))
-    const sideZ = hours.map(h => h.status === 'no_data' ? null : (h.side_z_loss_pct ?? 0))
-
-    const series: uPlot.Series[] = [
-      {}, // x-axis
-      { label: 'total', stroke: SERIES_CONFIG.total.color, width: 2, points: { show: false }, show: true },
-      { label: 'sideA', stroke: SERIES_CONFIG.A.color, width: 1.5, dash: [5, 5], points: { show: false }, show: true },
-      { label: 'sideZ', stroke: SERIES_CONFIG.Z.color, width: 1.5, dash: [5, 5], points: { show: false }, show: true },
-    ]
-
-    return {
-      uplotData: [timestamps, total, sideA, sideZ] as uPlot.AlignedData,
-      uplotSeries: series,
-    }
-  }, [hours, SERIES_CONFIG.total.color, SERIES_CONFIG.A.color, SERIES_CONFIG.Z.color])
-
-  const axes = useMemo((): uPlot.Axis[] => [
-    {},
-    { values: (_u: uPlot, vals: number[]) => vals.map(v => `${v.toFixed(1)}%`) },
-  ], [])
-
-  const scales = useMemo((): uPlot.Scales => ({
-    x: { time: true },
-    y: { auto: false, range: [0, 100] },
-  }), [])
-
-  const { plotRef } = useUPlotChart({
-    containerRef: chartRef,
-    data: uplotData,
-    series: uplotSeries,
-    height: 128,
-    axes,
-    scales,
-  })
-
-  // Sync toggle state to series visibility
-  useEffect(() => {
-    const u = plotRef.current
-    if (!u) return
-    for (let i = 0; i < seriesKeys.length; i++) {
-      const key = seriesKeys[i]
-      const seriesIdx = i + 1
-      const shouldShow = enabledSeries.has(key) && (key === 'total' || availableSeries.has(key))
-      if (u.series[seriesIdx]?.show !== shouldShow) {
-        u.setSeries(seriesIdx, { show: shouldShow })
-      }
-    }
-  })
-
-  // Sync hover opacity
-  useLayoutEffect(() => {
-    const u = plotRef.current
-    if (!u) return
-    let changed = false
-    for (let i = 0; i < seriesKeys.length; i++) {
-      const key = seriesKeys[i]
-      const seriesIdx = i + 1
-      let alpha = 1
-      if (hoveredSeries) {
-        alpha = hoveredSeries === key ? 1 : 0.15
-      }
-      const s = u.series[seriesIdx]
-      if (s && (s as uPlot.Series & { alpha?: number }).alpha !== alpha) {
-        ;(s as uPlot.Series & { alpha?: number }).alpha = alpha
-        changed = true
-      }
-    }
-    if (changed) u.redraw()
-  })
-
-  return (
-    <>
-      {/* Controls */}
-      <div className={`flex-shrink-0 ${controlsWidth} space-y-1.5`}>
-        <span className="text-xs text-muted-foreground">Series</span>
-        <div className="flex flex-wrap gap-1">
-          {(['total', 'A', 'Z'] as const).map(series => {
-            if (series !== 'total' && !availableSeries.has(series)) return null
-            const config = SERIES_CONFIG[series]
-            const isEnabled = enabledSeries.has(series)
-            return (
-              <button
-                key={series}
-                onClick={() => toggleSeries(series)}
-                onMouseEnter={() => setHoveredSeries(series)}
-                onMouseLeave={() => setHoveredSeries(null)}
-                className={`px-2 py-1 text-xs rounded border transition-colors flex items-center gap-1.5 ${
-                  isEnabled
-                    ? 'bg-background border-current shadow-sm'
-                    : 'bg-muted/50 border-transparent text-muted-foreground hover:bg-muted'
-                }`}
-                style={isEnabled ? { borderColor: config.color, color: config.color } : undefined}
-              >
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: isEnabled ? config.color : 'currentColor', opacity: isEnabled ? 1 : 0.3 }} />
-                {config.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div className="flex-1 min-w-0 h-32">
-        <div ref={chartRef} className="w-full h-full" />
-      </div>
-    </>
-  )
-}
+const cardClass = "rounded-lg border border-border p-4"
 
 interface LinkRowProps {
   link: LinkHistory
@@ -628,33 +195,32 @@ interface LinkRowProps {
   criticalityMap?: Map<string, 'critical' | 'important' | 'redundant'>
   bucketMinutes?: number
   dataTimeRange?: string
+  metricsTimeRange: string
 }
 
-function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, dataTimeRange }: LinkRowProps) {
+function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, dataTimeRange, metricsTimeRange }: LinkRowProps) {
   const [expanded, setExpanded] = useState(false)
+
+  const { data: metrics, isFetching: metricsFetching } = useQuery({
+    queryKey: ['linkMetrics', link.pk, { range: metricsTimeRange }],
+    queryFn: () => fetchLinkMetrics(link.pk, { range: metricsTimeRange }),
+    enabled: expanded,
+  })
 
   const issueReasons = linksWithIssues
     ? (linksWithIssues.get(link.code) ?? [])
     : (link.issue_reasons ?? [])
 
-  const showInterfaceChart = hasInterfaceIssues(link.hours)
-  const showPacketLossChart = hasPacketLoss(link.hours)
-  const hasExpandableContent = showInterfaceChart || showPacketLossChart
-
   return (
     <div id={`link-row-${link.code}`} className="border-b border-border last:border-b-0">
       <div
-        className={`px-4 py-3 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30' : ''}`}
-        onClick={hasExpandableContent ? () => setExpanded(!expanded) : undefined}
+        className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
+        onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-start gap-4">
           {/* Expand/collapse indicator */}
           <div className="flex-shrink-0 w-5 pt-0.5">
-            {hasExpandableContent ? (
-              expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <div className="w-4" />
-            )}
+            {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
           </div>
 
           {/* Link info */}
@@ -725,33 +291,36 @@ function LinkRow({ link, linksWithIssues, criticalityMap, bucketMinutes = 60, da
         </div>
       </div>
 
-      {/* Expanded charts */}
-      {expanded && hasExpandableContent && (
-        <div className="px-4 pb-4 pt-0 space-y-4">
-          {showPacketLossChart && (
-            <div>
-              <div className="flex items-start gap-4 mb-2">
-                <div className="flex-shrink-0 w-5" />
-                <div className="text-xs font-medium text-muted-foreground">Packet Loss</div>
-              </div>
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-5" />
-                <LinkPacketLossChart hours={link.hours} bucketMinutes={bucketMinutes} controlsWidth="w-52 sm:w-60 lg:w-68" />
-              </div>
+      {/* Expanded charts — aligned with the timeline column */}
+      {expanded && (
+        <div className="px-4 pb-4 pt-0">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0 w-5" />
+            <div className="flex-shrink-0 w-52 sm:w-60 lg:w-68" />
+            <div className="flex-1 min-w-0 space-y-4">
+              {metrics && (() => {
+                const hasLoss = metrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
+                const hasIssues = metrics.buckets.some(b => b.traffic && (
+                  b.traffic.side_a_in_errors + b.traffic.side_a_out_errors + b.traffic.side_z_in_errors + b.traffic.side_z_out_errors > 0 ||
+                  b.traffic.side_a_in_fcs_errors + b.traffic.side_z_in_fcs_errors > 0 ||
+                  b.traffic.side_a_in_discards + b.traffic.side_a_out_discards + b.traffic.side_z_in_discards + b.traffic.side_z_out_discards > 0 ||
+                  b.traffic.side_a_carrier_transitions + b.traffic.side_z_carrier_transitions > 0
+                ))
+                if (!hasLoss && !hasIssues) return null
+                return (
+                  <>
+                    {hasLoss && <LinkPacketLossDetailChart data={metrics} loading={metricsFetching} className={cardClass} />}
+                    {hasIssues && <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />}
+                  </>
+                )
+              })()}
+              {!metrics && metricsFetching && (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              )}
             </div>
-          )}
-          {showInterfaceChart && (
-            <div>
-              <div className="flex items-start gap-4 mb-2">
-                <div className="flex-shrink-0 w-5" />
-                <div className="text-xs font-medium text-muted-foreground">Interface Issues</div>
-              </div>
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-5" />
-                <LinkInterfaceChart hours={link.hours} bucketMinutes={bucketMinutes} controlsWidth="w-52 sm:w-60 lg:w-68" />
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
     </div>
@@ -1059,6 +628,7 @@ export function LinkStatusTimelines({
             criticalityMap={criticalityMap}
             bucketMinutes={data?.bucket_minutes}
             dataTimeRange={data?.time_range}
+            metricsTimeRange={timeRange}
           />
         ))}
       </div>
