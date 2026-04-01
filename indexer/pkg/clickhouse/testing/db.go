@@ -253,7 +253,8 @@ func isRetryableContainerStartErr(err error) bool {
 		strings.Contains(s, "timeout") ||
 		strings.Contains(s, "context deadline exceeded") ||
 		strings.Contains(s, "/containers/") && strings.Contains(s, "json") ||
-		strings.Contains(s, "Get \"http://%2Fvar%2Frun%2Fdocker.sock")
+		strings.Contains(s, "Get \"http://%2Fvar%2Frun%2Fdocker.sock") ||
+		strings.Contains(s, "unexpected HTTP status")
 }
 
 func isRetryableConnectionErr(err error) bool {
