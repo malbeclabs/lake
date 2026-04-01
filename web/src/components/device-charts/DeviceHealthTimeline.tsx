@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback, useLayoutEffect } from 'react'
 import type { DeviceMetricsResponse, DeviceMetricsBucket } from '@/lib/api'
 
 interface DeviceHealthTimelineProps {
@@ -112,10 +112,7 @@ function mergeBuckets(buckets: DeviceMetricsBucket[], bucketSeconds: number, max
     return buckets.map((b) => aggregateBar([b], bucketSeconds))
   }
 
-  let groupSize = Math.ceil(buckets.length / maxBars)
-  while (groupSize > 1 && Math.ceil(buckets.length / groupSize) < MIN_BARS) {
-    groupSize--
-  }
+  const groupSize = Math.ceil(buckets.length / maxBars)
   const bars: MergedBar[] = []
   for (let i = 0; i < buckets.length; i += groupSize) {
     bars.push(aggregateBar(buckets.slice(i, i + groupSize), bucketSeconds))
@@ -168,17 +165,40 @@ function formatTimeRange(ts: string, spanSeconds: number): string {
   return `${startDate} ${startTime} — ${endTime}`
 }
 
-const MAX_BARS = 64
-const MIN_BARS = 48
+const BAR_WIDTH_PX = 8
+const MIN_BARS = 24
+const MAX_BARS = 192
+
+function useContainerBars() {
+  const [maxBars, setMaxBars] = useState(MAX_BARS)
+  const [el, setEl] = useState<HTMLDivElement | null>(null)
+  const containerRef = useCallback((node: HTMLDivElement | null) => setEl(node), [])
+
+  useLayoutEffect(() => {
+    if (!el) return
+    const measure = () => {
+      const width = el.getBoundingClientRect().width
+      const count = Math.floor(width / BAR_WIDTH_PX)
+      setMaxBars(Math.max(MIN_BARS, Math.min(MAX_BARS, count)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [el])
+
+  return { containerRef, maxBars }
+}
 
 export function DeviceHealthTimeline({ data, className }: DeviceHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const { containerRef, maxBars } = useContainerBars()
 
   const bars = useMemo(() => {
-    const merged = mergeBuckets(data.buckets, data.bucket_seconds, MAX_BARS)
+    const merged = mergeBuckets(data.buckets, data.bucket_seconds, maxBars)
     markTrailingCollecting(merged)
     return merged
-  }, [data.buckets, data.bucket_seconds])
+  }, [data.buckets, data.bucket_seconds, maxBars])
 
   const badges = useMemo(() => {
     const found = new Set<string>()
@@ -226,7 +246,7 @@ export function DeviceHealthTimeline({ data, className }: DeviceHealthTimelinePr
   if (bars.length === 0) return null
 
   return (
-    <div className={className}>
+    <div ref={containerRef} className={className}>
       <div className="relative">
         <div className="flex gap-[2px]">
           {bars.map((bar, index) => {

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useLayoutEffect } from 'react'
 import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
 
 interface LinkHealthTimelineProps {
@@ -150,10 +150,7 @@ function mergeBuckets(buckets: LinkMetricsBucket[], bucketSeconds: number, maxBa
     return buckets.map((b) => aggregateBar([b], bucketSeconds))
   }
 
-  let groupSize = Math.ceil(buckets.length / maxBars)
-  while (groupSize > 1 && Math.ceil(buckets.length / groupSize) < MIN_BARS) {
-    groupSize--
-  }
+  const groupSize = Math.ceil(buckets.length / maxBars)
   const bars: MergedBar[] = []
   for (let i = 0; i < buckets.length; i += groupSize) {
     bars.push(aggregateBar(buckets.slice(i, i + groupSize), bucketSeconds))
@@ -225,23 +222,35 @@ function formatTimeRange(ts: string, spanSeconds: number): string {
   return `${startDate} ${startTime} — ${endTime}`
 }
 
-// Target ~8px per bar (including 2px gap), with floor/ceiling
+// Target ~6px per bar (including 2px gap), with floor/ceiling
 const BAR_WIDTH_PX = 8
-const MIN_BARS = 48
+const MIN_BARS = 24
 const MAX_BARS = 192
+
+function useContainerBars() {
+  const [maxBars, setMaxBars] = useState(MAX_BARS)
+  const [el, setEl] = useState<HTMLDivElement | null>(null)
+  const containerRef = useCallback((node: HTMLDivElement | null) => setEl(node), [])
+
+  useLayoutEffect(() => {
+    if (!el) return
+    const measure = () => {
+      const width = el.getBoundingClientRect().width
+      const count = Math.floor(width / BAR_WIDTH_PX)
+      setMaxBars(Math.max(MIN_BARS, Math.min(MAX_BARS, count)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [el])
+
+  return { containerRef, maxBars }
+}
 
 export function LinkHealthTimeline({ data, className }: LinkHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-  const [maxBars, setMaxBars] = useState(MAX_BARS)
-  const [observer] = useState(() => new ResizeObserver(([entry]) => {
-    const width = entry.contentRect.width
-    const count = Math.floor(width / BAR_WIDTH_PX)
-    setMaxBars(Math.max(MIN_BARS, Math.min(MAX_BARS, count)))
-  }))
-  const containerRef = useCallback((el: HTMLDivElement | null) => {
-    observer.disconnect()
-    if (el) observer.observe(el)
-  }, [observer])
+  const { containerRef, maxBars } = useContainerBars()
 
   const bars = useMemo(() => {
     const merged = mergeBuckets(data.buckets, data.bucket_seconds, maxBars)
