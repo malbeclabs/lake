@@ -645,22 +645,27 @@ func buildLinkMetricsTraffic(
 
 // isDefaultBulkLinkMetricsRequest returns true when the request uses default parameters,
 // suitable for serving from the page cache.
-func isDefaultBulkLinkMetricsRequest(r *http.Request) bool {
+// bulkLinkMetricsCacheKey returns the cache key if this request is cacheable, or "" if not.
+func bulkLinkMetricsCacheKey(r *http.Request) string {
 	q := r.URL.Query()
 	inc := q.Get("include")
 	rng := q.Get("range")
-	// Cache stores status+traffic (no latency) for 24h. Match requests that are
-	// compatible: either no include (all), status+traffic, or just status.
 	incOK := inc == "" || inc == "all" || inc == "status,traffic" || inc == "status"
-	return incOK && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == "" && q.Get("has_issues") == ""
+	if !incOK || (rng != "" && rng != "24h") || q.Get("start_time") != "" || q.Get("end_time") != "" || q.Get("bucket") != "" {
+		return ""
+	}
+	if q.Get("has_issues") == "true" {
+		return "bulk_link_metrics_issues"
+	}
+	return "bulk_link_metrics"
 }
 
 // GetBulkLinkMetrics handles GET /api/link-metrics.
 // It returns metrics for all links in a single response.
 func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 	// Try page cache for default requests
-	if isMainnet(r.Context()) && isDefaultBulkLinkMetricsRequest(r) {
-		if data, err := a.readPageCache(r.Context(), "bulk_link_metrics"); err == nil {
+	if cacheKey := bulkLinkMetricsCacheKey(r); cacheKey != "" && isMainnet(r.Context()) {
+		if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -772,6 +777,16 @@ func (a *API) FetchBulkLinkMetricsData(ctx context.Context) (*BulkLinkMetricsRes
 	params.TimeRange = "24h"
 	include := parseLinkMetricsInclude("status,traffic")
 	return a.fetchBulkLinkMetrics(ctx, params, include)
+}
+
+// FetchBulkLinkMetricsIssuesData is the page cache variant that only includes links with issues.
+func (a *API) FetchBulkLinkMetricsIssuesData(ctx context.Context) (*BulkLinkMetricsResponse, error) {
+	resp, err := a.FetchBulkLinkMetricsData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filterBulkLinkMetricsIssuesOnly(resp)
+	return resp, nil
 }
 
 // fetchBulkLinkMetrics runs parallel queries for ALL links and assembles the bulk response.

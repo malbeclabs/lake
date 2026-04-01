@@ -452,20 +452,26 @@ type BulkDeviceMetricsResponse struct {
 
 // isDefaultBulkDeviceMetricsRequest returns true when the request uses default parameters,
 // suitable for serving from the page cache.
-func isDefaultBulkDeviceMetricsRequest(r *http.Request) bool {
+func bulkDeviceMetricsCacheKey(r *http.Request) string {
 	q := r.URL.Query()
 	inc := q.Get("include")
 	rng := q.Get("range")
 	incOK := inc == "" || inc == "all" || inc == "status,traffic" || inc == "status"
-	return incOK && (rng == "" || rng == "24h") && q.Get("start_time") == "" && q.Get("end_time") == "" && q.Get("bucket") == "" && q.Get("has_issues") == ""
+	if !incOK || (rng != "" && rng != "24h") || q.Get("start_time") != "" || q.Get("end_time") != "" || q.Get("bucket") != "" {
+		return ""
+	}
+	if q.Get("has_issues") == "true" {
+		return "bulk_device_metrics_issues"
+	}
+	return "bulk_device_metrics"
 }
 
 // GetBulkDeviceMetrics handles GET /api/device-metrics.
 // It returns metrics for all devices in a single response.
 func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	// Try page cache for default requests
-	if isMainnet(r.Context()) && isDefaultBulkDeviceMetricsRequest(r) {
-		if data, err := a.readPageCache(r.Context(), "bulk_device_metrics"); err == nil {
+	if cacheKey := bulkDeviceMetricsCacheKey(r); cacheKey != "" && isMainnet(r.Context()) {
+		if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			_, _ = w.Write(data)
@@ -576,6 +582,16 @@ func (a *API) FetchBulkDeviceMetricsData(ctx context.Context) (*BulkDeviceMetric
 	params.TimeRange = "24h"
 	include := parseDeviceMetricsInclude("status,traffic")
 	return a.fetchBulkDeviceMetrics(ctx, params, include)
+}
+
+// FetchBulkDeviceMetricsIssuesData is the page cache variant that only includes devices with issues.
+func (a *API) FetchBulkDeviceMetricsIssuesData(ctx context.Context) (*BulkDeviceMetricsResponse, error) {
+	resp, err := a.FetchBulkDeviceMetricsData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filterBulkDeviceMetricsIssuesOnly(resp)
+	return resp, nil
 }
 
 // fetchBulkDeviceMetrics runs parallel queries for ALL devices and assembles the bulk response.
