@@ -327,19 +327,40 @@ export function ShredsSeatsPage() {
           }
         />
 
-        <div className="flex items-center gap-4 mb-3">
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" checked={showActive} onChange={() => toggleParam('active', showActive, true)} className="rounded" />
-            Show active
-          </label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" checked={showInactive} onChange={() => toggleParam('inactive', showInactive)} className="rounded" />
-            Show inactive
-          </label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" checked={showClosed} onChange={() => toggleParam('closed', showClosed)} className="rounded" />
-            Show closed
-          </label>
+        <div className="flex items-center gap-2 mb-3">
+          <button
+            onClick={() => toggleParam('active', showActive, true)}
+            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              showActive
+                ? 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20'
+                : 'bg-muted text-muted-foreground border-border opacity-50'
+            }`}
+          >
+            <div className={`h-1.5 w-1.5 rounded-full ${showActive ? 'bg-green-500' : 'bg-muted-foreground'}`} />
+            Active
+          </button>
+          <button
+            onClick={() => toggleParam('inactive', showInactive)}
+            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              showInactive
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                : 'bg-muted text-muted-foreground border-border opacity-50'
+            }`}
+          >
+            <div className={`h-1.5 w-1.5 rounded-full ${showInactive ? 'bg-amber-500' : 'bg-muted-foreground'}`} />
+            Inactive
+          </button>
+          <button
+            onClick={() => toggleParam('closed', showClosed)}
+            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              showClosed
+                ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
+                : 'bg-muted text-muted-foreground border-border opacity-50'
+            }`}
+          >
+            <div className={`h-1.5 w-1.5 rounded-full ${showClosed ? 'bg-red-500' : 'bg-muted-foreground'}`} />
+            Closed
+          </button>
         </div>
 
         <div className="border border-border rounded-lg overflow-hidden bg-card">
