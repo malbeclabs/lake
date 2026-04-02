@@ -7,7 +7,6 @@ import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
 import { LinkPacketLossChart as LinkPacketLossDetailChart } from '@/components/link-charts/LinkPacketLossChart'
 import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
-import { CriticalityBadge } from './criticality-badge'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
 function Skeleton({ className }: { className?: string }) {
