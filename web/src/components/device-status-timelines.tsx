@@ -224,7 +224,6 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
     const recent = new Set<string>()
     const cutoff = Date.now() / 1000 - 30 * 60 // last 30 minutes
     for (const b of deviceMetrics.buckets) {
-      if (b.status?.collecting) continue
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
       if (b.traffic) {
@@ -273,7 +272,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
   const currentStatus = useMemo(() => {
     for (let i = deviceMetrics.buckets.length - 1; i >= 0; i--) {
       const b = deviceMetrics.buckets[i]
-      if (b.status && !b.status.collecting) return b.status
+      if (b.status) return b.status
     }
     return null
   }, [deviceMetrics])

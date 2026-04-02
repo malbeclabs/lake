@@ -328,7 +328,6 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
     const recent = new Set<string>()
     const cutoff = Date.now() / 1000 - 30 * 60 // last 30 minutes
     for (const b of linkMetrics.buckets) {
-      if (b.status?.collecting) continue
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
       addBucketIssues(b, recent)
@@ -354,11 +353,11 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
 
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
-  // Current health from latest non-collecting bucket
+  // Current status from latest bucket (including collecting)
   const currentStatus = useMemo(() => {
     for (let i = linkMetrics.buckets.length - 1; i >= 0; i--) {
       const b = linkMetrics.buckets[i]
-      if (b.status && !b.status.collecting) return b.status
+      if (b.status) return b.status
     }
     return null
   }, [linkMetrics])
