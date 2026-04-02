@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
+import { useMemo, useRef, useState, useCallback } from 'react'
 import uPlot from 'uplot'
 import { Loader2 } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
@@ -136,10 +136,6 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     onCursorIdx: handleCursorIdx,
     drawHooks,
   })
-
-  useEffect(() => {
-    plotRef.current?.redraw()
-  }, [highlightTimeRange, plotRef])
 
   useUPlotLegendSync(plotRef, legend, seriesKeys)
 

@@ -118,9 +118,13 @@ export function LinkPacketLossChart({ data, className, loading, highlightTimeRan
     drawHooks,
   })
 
-  // Redraw when highlight range changes
+  // Redraw when highlight range changes (skip if chart not yet initialized)
+  const prevHighlightRef = useRef(highlightTimeRange)
   useEffect(() => {
-    plotRef.current?.redraw()
+    if (prevHighlightRef.current !== highlightTimeRange) {
+      prevHighlightRef.current = highlightTimeRange
+      plotRef.current?.redraw()
+    }
   }, [highlightTimeRange, plotRef])
 
   useUPlotLegendSync(plotRef, legend, seriesKeys)

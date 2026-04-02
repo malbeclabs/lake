@@ -89,7 +89,7 @@ export function useUPlotChart({
         },
       },
       hooks: {
-        draw: [
+        draw: drawHooksRef.current ? [
           (u: uPlot) => {
             if (drawHooksRef.current) {
               for (const hook of drawHooksRef.current) {
@@ -97,7 +97,7 @@ export function useUPlotChart({
               }
             }
           },
-        ],
+        ] : [],
         setCursor: [
           (u) => {
             const idx = u.cursor.idx
