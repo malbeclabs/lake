@@ -176,7 +176,6 @@ function ClientSeatsTab() {
               <th className="px-4 py-3 font-medium text-right"><SortButton field="active_epoch" label="Active Epoch" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
               <th className="px-4 py-3 font-medium"><SortButton field="funder" label="Funder" handleSort={handleSort} SortIcon={SortIcon} /></th>
               <th className="px-4 py-3 font-medium text-right"><SortButton field="balance" label="Balance (USDC)" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
-              <th className="px-4 py-3 font-medium text-right">Override</th>
             </tr>
           </thead>
           <tbody>
@@ -202,13 +201,10 @@ function ClientSeatsTab() {
                 <td className="px-4 py-3 text-sm tabular-nums text-right">
                   {seat.total_usdc_balance > 0 ? `$${(seat.total_usdc_balance / 1e6).toFixed(2)}` : <span className="text-muted-foreground">—</span>}
                 </td>
-                <td className="px-4 py-3 text-sm text-right">
-                  {seat.has_price_override ? <span className="text-amber-500">${seat.override_usdc_price_dollars}</span> : <span className="text-muted-foreground">—</span>}
-                </td>
               </tr>
             ))}
             {sorted.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No client seats found</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No client seats found</td></tr>
             )}
           </tbody>
         </table>
