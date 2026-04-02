@@ -355,20 +355,30 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
 
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
-  // Current status from latest bucket (including collecting)
-  const currentStatus = useMemo(() => {
-    for (let i = linkMetrics.buckets.length - 1; i >= 0; i--) {
-      const b = linkMetrics.buckets[i]
-      if (b.status) return b.status
+  // Worst health in recent window (last 30 min) for left border indicator
+  const recentHealth = useMemo(() => {
+    const cutoff = nowMinutes * 60 - 30 * 60
+    let worstHealth = 'healthy'
+    let isisDown = false
+    const priority: Record<string, number> = { unhealthy: 3, degraded: 2, no_data: 1, healthy: 0 }
+    for (const b of linkMetrics.buckets) {
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < cutoff) continue
+      if (b.status) {
+        if (b.status.isis_down) isisDown = true
+        const h = b.status.health || 'healthy'
+        if ((priority[h] ?? 0) > (priority[worstHealth] ?? 0)) worstHealth = h
+      }
     }
-    return null
-  }, [linkMetrics])
+    return { health: worstHealth, isisDown }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkMetrics, nowMinutes])
 
-  const leftBorderColor = currentStatus?.isis_down
+  const leftBorderColor = recentHealth.isisDown
     ? 'border-l-gray-500'
-    : currentStatus?.health === 'unhealthy'
+    : recentHealth.health === 'unhealthy'
       ? 'border-l-red-500'
-      : currentStatus?.health === 'degraded'
+      : recentHealth.health === 'degraded'
         ? 'border-l-amber-500'
         : 'border-l-transparent'
 

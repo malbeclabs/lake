@@ -271,19 +271,29 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
-  const currentStatus = useMemo(() => {
-    for (let i = deviceMetrics.buckets.length - 1; i >= 0; i--) {
-      const b = deviceMetrics.buckets[i]
-      if (b.status) return b.status
+  const recentHealth = useMemo(() => {
+    const cutoff = nowMinutes * 60 - 30 * 60
+    let worstHealth = 'healthy'
+    let isisIssue = false
+    const priority: Record<string, number> = { unhealthy: 3, degraded: 2, no_data: 1, healthy: 0 }
+    for (const b of deviceMetrics.buckets) {
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < cutoff) continue
+      if (b.status) {
+        if (b.status.isis_overload || b.status.isis_unreachable) isisIssue = true
+        const h = b.status.health || 'healthy'
+        if ((priority[h] ?? 0) > (priority[worstHealth] ?? 0)) worstHealth = h
+      }
     }
-    return null
-  }, [deviceMetrics])
+    return { health: worstHealth, isisIssue }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceMetrics, nowMinutes])
 
-  const leftBorderColor = currentStatus?.isis_overload || currentStatus?.isis_unreachable
+  const leftBorderColor = recentHealth.isisIssue
     ? 'border-l-gray-500'
-    : currentStatus?.health === 'unhealthy'
+    : recentHealth.health === 'unhealthy'
       ? 'border-l-red-500'
-      : currentStatus?.health === 'degraded'
+      : recentHealth.health === 'degraded'
         ? 'border-l-amber-500'
         : 'border-l-transparent'
 
