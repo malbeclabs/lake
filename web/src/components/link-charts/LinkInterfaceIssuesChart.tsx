@@ -115,6 +115,8 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
 
   const highlightTimeRangeRef = useRef(highlightTimeRange)
   highlightTimeRangeRef.current = highlightTimeRange
+  const isDarkRef = useRef(isDark)
+  isDarkRef.current = isDark
 
   const drawHooks = useMemo(() => [(u: uPlot) => {
     const range = highlightTimeRangeRef.current
@@ -126,7 +128,7 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     const top = u.bbox.top
     const height = u.bbox.height
     ctx.save()
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.12)'
+    ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
     ctx.fillRect(left, top, right - left, height)
     ctx.restore()
   }], [])
