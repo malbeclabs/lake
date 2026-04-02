@@ -261,10 +261,12 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
     return issues
   }, [hoveredTimeRange, deviceMetrics])
 
-  const badgeOpacity = (issue: string) => {
-    if (hoveredIssues) return hoveredIssues.has(issue) ? 'opacity-100' : 'opacity-30'
-    return recentIssues.has(issue) ? 'opacity-100' : 'opacity-30'
+  const isBadgeActive = (issue: string) => {
+    if (hoveredIssues) return hoveredIssues.has(issue)
+    return recentIssues.has(issue)
   }
+
+  const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
   return (
     <div id={`device-row-${derivedInfo.pk}`} className="border-b border-border last:border-b-0">
@@ -301,38 +303,38 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {issueReasons.includes('interface_errors') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('interface_errors')} bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('interface_errors') ? 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400' : dimBadgeClass}`}>
                     Interface Errors
                   </span>
                 )}
                 {issueReasons.includes('fcs_errors') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('fcs_errors')}`} style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('fcs_errors') ? '' : dimBadgeClass}`} style={isBadgeActive('fcs_errors') ? { backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' } : undefined}>
                     FCS Errors
                   </span>
                 )}
                 {issueReasons.includes('discards') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('discards')} bg-rose-500/15 text-rose-600 dark:text-rose-400`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('discards') ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400' : dimBadgeClass}`}>
                     Discards
                   </span>
                 )}
                 {issueReasons.includes('carrier_transitions') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('carrier_transitions')} bg-orange-500/15 text-orange-600 dark:text-orange-400`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('carrier_transitions') ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400' : dimBadgeClass}`}>
                     Carrier Transitions
                   </span>
                 )}
                 {issueReasons.includes('drained') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('drained')} bg-slate-500/15 text-slate-600 dark:text-slate-400`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('drained') ? 'bg-slate-500/15 text-slate-600 dark:text-slate-400' : dimBadgeClass}`}>
                     Drained
                   </span>
                 )}
                 {issueReasons.includes('no_data') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('no_data')}`} style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('no_data') ? '' : dimBadgeClass}`} style={isBadgeActive('no_data') ? { backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' } : undefined}>No Data</span>
                 )}
                 {issueReasons.includes('isis_overload') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('isis_overload')} bg-red-600/15 text-red-700 dark:text-red-400`}>ISIS Overload</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('isis_overload') ? 'bg-red-600/15 text-red-700 dark:text-red-400' : dimBadgeClass}`}>ISIS Overload</span>
                 )}
                 {issueReasons.includes('isis_unreachable') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('isis_unreachable')} bg-red-800/15 text-red-800 dark:text-red-400`}>ISIS Unreachable</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('isis_unreachable') ? 'bg-red-800/15 text-red-800 dark:text-red-400' : dimBadgeClass}`}>ISIS Unreachable</span>
                 )}
               </div>
             )}

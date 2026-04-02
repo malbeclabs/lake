@@ -347,10 +347,12 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
     return issues
   }, [hoveredTimeRange, linkMetrics])
 
-  const badgeOpacity = (issue: string) => {
-    if (hoveredIssues) return hoveredIssues.has(issue) ? 'opacity-100' : 'opacity-30'
-    return recentIssues.has(issue) ? 'opacity-100' : 'opacity-30'
+  const isBadgeActive = (issue: string) => {
+    if (hoveredIssues) return hoveredIssues.has(issue)
+    return recentIssues.has(issue)
   }
+
+  const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
   return (
     <div id={`link-row-${derivedInfo.code}`} className="border-b border-border last:border-b-0">
@@ -390,31 +392,31 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-blue-500/15 text-blue-700 dark:bg-blue-400/20 dark:text-blue-300">Provisioning</span>
                 )}
                 {issueReasons.includes('packet_loss') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('packet_loss')}`} style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' }}>Loss</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('packet_loss') ? '' : dimBadgeClass}`} style={isBadgeActive('packet_loss') ? { backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' } : undefined}>Loss</span>
                 )}
                 {issueReasons.includes('high_latency') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('high_latency')}`} style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#2563eb' }}>High Latency</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('high_latency') ? '' : dimBadgeClass}`} style={isBadgeActive('high_latency') ? { backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#2563eb' } : undefined}>High Latency</span>
                 )}
                 {issueReasons.includes('high_utilization') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('high_utilization')}`} style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#4f46e5' }}>High Utilization</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('high_utilization') ? '' : dimBadgeClass}`} style={isBadgeActive('high_utilization') ? { backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#4f46e5' } : undefined}>High Utilization</span>
                 )}
                 {issueReasons.includes('no_data') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('no_data')}`} style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('no_data') ? '' : dimBadgeClass}`} style={isBadgeActive('no_data') ? { backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' } : undefined}>No Data</span>
                 )}
                 {issueReasons.includes('interface_errors') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('interface_errors')}`} style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('interface_errors') ? '' : dimBadgeClass}`} style={isBadgeActive('interface_errors') ? { backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' } : undefined}>Errors</span>
                 )}
                 {issueReasons.includes('fcs_errors') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('fcs_errors')}`} style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>FCS Errors</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('fcs_errors') ? '' : dimBadgeClass}`} style={isBadgeActive('fcs_errors') ? { backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' } : undefined}>FCS Errors</span>
                 )}
                 {issueReasons.includes('discards') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('discards')}`} style={{ backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' }}>Discards</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('discards') ? '' : dimBadgeClass}`} style={isBadgeActive('discards') ? { backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' } : undefined}>Discards</span>
                 )}
                 {issueReasons.includes('carrier_transitions') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('carrier_transitions')}`} style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04' }}>Carrier Transitions</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('carrier_transitions') ? '' : dimBadgeClass}`} style={isBadgeActive('carrier_transitions') ? { backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04' } : undefined}>Carrier Transitions</span>
                 )}
                 {issueReasons.includes('missing_adjacency') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity bg-rose-600/15 text-rose-700 dark:text-rose-400 ${badgeOpacity('missing_adjacency')}`}>ISIS Down</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('missing_adjacency') ? 'bg-rose-600/15 text-rose-700 dark:text-rose-400' : dimBadgeClass}`}>ISIS Down</span>
                 )}
               </div>
             )}
