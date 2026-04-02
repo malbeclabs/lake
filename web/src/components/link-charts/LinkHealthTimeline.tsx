@@ -315,6 +315,61 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
     return Array.from(found)
   }, [data.buckets])
 
+  // Recent badges: active in last 30 minutes
+  const recentBadges = useMemo(() => {
+    const recent = new Set<string>()
+    const cutoff = Date.now() / 1000 - 30 * 60
+    for (const b of data.buckets) {
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < cutoff) continue
+      if (b.status?.reasons) {
+        for (const r of b.status.reasons) {
+          if (r.includes('packet loss')) recent.add('Loss')
+          if (r.includes('latency')) recent.add('Latency')
+          if (r.includes('interface error')) recent.add('Errors')
+          if (r.includes('discard')) recent.add('Discards')
+          if (r.includes('carrier')) recent.add('Carrier')
+        }
+      }
+      if (b.traffic) {
+        const t = b.traffic
+        if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) recent.add('Errors')
+        if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) recent.add('FCS')
+        if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) recent.add('Discards')
+        if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) recent.add('Carrier')
+      }
+      if (b.status?.isis_down) recent.add('ISIS Down')
+    }
+    return recent
+  }, [data.buckets])
+
+  // Hovered bar badges
+  const hoveredBarBadges = useMemo(() => {
+    const activeIdx = hoveredIndex ?? highlightedBarIndex
+    if (activeIdx == null || activeIdx < 0 || activeIdx >= bars.length) return null
+    const bar = bars[activeIdx]
+    const active = new Set<string>()
+    if (bar.maxLossPct > 0) active.add('Loss')
+    if (bar.totalErrors > 0) active.add('Errors')
+    if (bar.totalFcsErrors > 0) active.add('FCS')
+    if (bar.totalDiscards > 0) active.add('Discards')
+    if (bar.totalCarrier > 0) active.add('Carrier')
+    if (bar.isisDown) active.add('ISIS Down')
+    // Also check server reasons
+    for (const r of bar.serverReasons) {
+      if (r.includes('packet loss')) active.add('Loss')
+      if (r.includes('interface error')) active.add('Errors')
+      if (r.includes('discard')) active.add('Discards')
+      if (r.includes('carrier')) active.add('Carrier')
+    }
+    return active
+  }, [hoveredIndex, highlightedBarIndex, bars])
+
+  const isBadgeActive = (badge: string) => {
+    if (hoveredBarBadges) return hoveredBarBadges.has(badge)
+    return recentBadges.has(badge)
+  }
+
   // Time labels
   const labels = useMemo(() => {
     const rangeMap: Record<string, string> = {
@@ -443,7 +498,7 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
           {badges.map((badge) => (
             <span
               key={badge}
-              className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${isBadgeActive(badge) ? 'bg-muted text-muted-foreground' : 'bg-muted-foreground/10 text-muted-foreground/40'}`}
             >
               {badge}
             </span>
