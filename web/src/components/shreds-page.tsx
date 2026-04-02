@@ -68,7 +68,7 @@ function SortButton<T extends string>({ field, label, align, handleSort, SortIco
 
 // --- Client Seats Page ---
 
-type SeatSortField = 'device_code' | 'client_ip' | 'tenure_epochs' | 'active_epoch' | 'funder' | 'escrow_count'
+type SeatSortField = 'device_code' | 'client_ip' | 'tenure_epochs' | 'active_epoch' | 'funder' | 'balance' | 'escrow_count'
 
 function ClientSeatsTab() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -122,6 +122,7 @@ function ClientSeatsTab() {
         case 'tenure_epochs': cmp = a.tenure_epochs - b.tenure_epochs; break
         case 'active_epoch': cmp = Number(a.active_epoch) - Number(b.active_epoch); break
         case 'funder': cmp = a.funding_authority_key.localeCompare(b.funding_authority_key); break
+        case 'balance': cmp = a.total_usdc_balance - b.total_usdc_balance; break
         case 'escrow_count': cmp = a.escrow_count - b.escrow_count; break
       }
       return sortDirection === 'asc' ? cmp : -cmp
@@ -174,7 +175,7 @@ function ClientSeatsTab() {
               <th className="px-4 py-3 font-medium text-right"><SortButton field="tenure_epochs" label="Tenure" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
               <th className="px-4 py-3 font-medium text-right"><SortButton field="active_epoch" label="Active Epoch" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
               <th className="px-4 py-3 font-medium"><SortButton field="funder" label="Funder" handleSort={handleSort} SortIcon={SortIcon} /></th>
-              <th className="px-4 py-3 font-medium text-right"><SortButton field="escrow_count" label="Escrows" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="balance" label="Balance (USDC)" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
               <th className="px-4 py-3 font-medium text-right">Override</th>
             </tr>
           </thead>
@@ -198,7 +199,9 @@ function ClientSeatsTab() {
                 <td className="px-4 py-3 font-mono text-xs" title={seat.funding_authority_key}>
                   {truncatePK(seat.funding_authority_key)}
                 </td>
-                <td className="px-4 py-3 text-sm tabular-nums text-right">{seat.escrow_count}</td>
+                <td className="px-4 py-3 text-sm tabular-nums text-right">
+                  {seat.total_usdc_balance > 0 ? `$${(seat.total_usdc_balance / 1e6).toFixed(2)}` : <span className="text-muted-foreground">—</span>}
+                </td>
                 <td className="px-4 py-3 text-sm text-right">
                   {seat.has_price_override ? <span className="text-amber-500">${seat.override_usdc_price_dollars}</span> : <span className="text-muted-foreground">—</span>}
                 </td>
