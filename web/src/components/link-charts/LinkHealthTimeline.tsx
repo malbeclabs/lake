@@ -495,14 +495,25 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
       {/* Issue badges */}
       {!hideBadges && badges.length > 0 && (
         <div className="flex gap-1.5 mt-2 flex-wrap">
-          {badges.map((badge) => (
+          {badges.map((badge) => {
+            const dimClass = 'bg-muted-foreground/10 text-muted-foreground/40'
+            const colorMap: Record<string, string> = {
+              'Loss': 'bg-purple-500/15 text-purple-700 dark:text-purple-400',
+              'Errors': 'bg-red-500/15 text-red-700 dark:text-red-400',
+              'FCS': 'bg-orange-500/15 text-orange-700 dark:text-orange-400',
+              'Discards': 'bg-teal-500/15 text-teal-700 dark:text-teal-400',
+              'Carrier': 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400',
+              'ISIS Down': 'bg-rose-500/15 text-rose-700 dark:text-rose-400',
+            }
+            return (
             <span
               key={badge}
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${isBadgeActive(badge) ? 'bg-muted text-muted-foreground' : 'bg-muted-foreground/10 text-muted-foreground/40'}`}
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${isBadgeActive(badge) ? (colorMap[badge] ?? 'bg-muted text-muted-foreground') : dimClass}`}
             >
               {badge}
             </span>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

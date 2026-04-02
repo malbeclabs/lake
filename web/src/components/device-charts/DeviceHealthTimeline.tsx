@@ -388,14 +388,25 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
 
       {!hideBadges && badges.length > 0 && (
         <div className="flex gap-1.5 mt-2 flex-wrap">
-          {badges.map((badge) => (
+          {badges.map((badge) => {
+            const dimClass = 'bg-muted-foreground/10 text-muted-foreground/40'
+            const colorMap: Record<string, string> = {
+              'Errors': 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400',
+              'FCS': 'bg-orange-500/15 text-orange-700 dark:text-orange-400',
+              'Discards': 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
+              'Carrier': 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+              'ISIS Overload': 'bg-red-600/15 text-red-700 dark:text-red-400',
+              'ISIS Unreachable': 'bg-red-800/15 text-red-800 dark:text-red-400',
+            }
+            return (
             <span
               key={badge}
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${isBadgeActive(badge) ? 'bg-muted text-muted-foreground' : 'bg-muted-foreground/10 text-muted-foreground/40'}`}
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-all ${isBadgeActive(badge) ? (colorMap[badge] ?? 'bg-muted text-muted-foreground') : dimClass}`}
             >
               {badge}
             </span>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>
