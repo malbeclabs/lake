@@ -326,9 +326,11 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
 
   const recentIssues = useMemo(() => {
     const recent = new Set<string>()
-    const nonCollecting = linkMetrics.buckets.filter(b => !b.status?.collecting)
-    const tail = nonCollecting.slice(-6)
-    for (const b of tail) {
+    const cutoff = Date.now() / 1000 - 30 * 60 // last 30 minutes
+    for (const b of linkMetrics.buckets) {
+      if (b.status?.collecting) continue
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < cutoff) continue
       addBucketIssues(b, recent)
     }
     return recent

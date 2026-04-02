@@ -222,9 +222,11 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
   const recentIssues = useMemo(() => {
     const recent = new Set<string>()
-    const nonCollecting = deviceMetrics.buckets.filter(b => !b.status?.collecting)
-    const tail = nonCollecting.slice(-6)
-    for (const b of tail) {
+    const cutoff = Date.now() / 1000 - 30 * 60 // last 30 minutes
+    for (const b of deviceMetrics.buckets) {
+      if (b.status?.collecting) continue
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < cutoff) continue
       if (b.traffic) {
         const t = b.traffic
         if (t.in_errors + t.out_errors > 0) recent.add('interface_errors')
@@ -233,7 +235,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
         if (t.carrier_transitions > 0) recent.add('carrier_transitions')
       }
       if (b.status?.drain_status) recent.add('drained')
-      if (b.status && !b.status.collecting && b.status.health === 'no_data') recent.add('no_data')
+      if (b.status && b.status.health === 'no_data') recent.add('no_data')
       if (b.status?.isis_overload) recent.add('isis_overload')
       if (b.status?.isis_unreachable) recent.add('isis_unreachable')
     }
