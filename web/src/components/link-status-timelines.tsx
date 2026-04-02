@@ -354,8 +354,23 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
 
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
+  // Current health from latest non-collecting bucket
+  const currentHealth = useMemo(() => {
+    for (let i = linkMetrics.buckets.length - 1; i >= 0; i--) {
+      const b = linkMetrics.buckets[i]
+      if (b.status && !b.status.collecting) return b.status.health
+    }
+    return 'healthy'
+  }, [linkMetrics])
+
+  const leftBorderColor = currentHealth === 'unhealthy' || currentHealth === 'down'
+    ? 'border-l-red-500'
+    : currentHealth === 'degraded'
+      ? 'border-l-amber-500'
+      : 'border-l-transparent'
+
   return (
-    <div id={`link-row-${derivedInfo.code}`} className="border-b border-border last:border-b-0">
+    <div id={`link-row-${derivedInfo.code}`} className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}>
       <div
         className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
         onClick={() => setExpanded(!expanded)}

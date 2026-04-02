@@ -270,8 +270,22 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
+  const currentHealth = useMemo(() => {
+    for (let i = deviceMetrics.buckets.length - 1; i >= 0; i--) {
+      const b = deviceMetrics.buckets[i]
+      if (b.status && !b.status.collecting) return b.status.health
+    }
+    return 'healthy'
+  }, [deviceMetrics])
+
+  const leftBorderColor = currentHealth === 'unhealthy' || currentHealth === 'down'
+    ? 'border-l-red-500'
+    : currentHealth === 'degraded'
+      ? 'border-l-amber-500'
+      : 'border-l-transparent'
+
   return (
-    <div id={`device-row-${derivedInfo.pk}`} className="border-b border-border last:border-b-0">
+    <div id={`device-row-${derivedInfo.pk}`} className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}>
       <div
         className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
         onClick={() => setExpanded(!expanded)}
