@@ -34,7 +34,7 @@ type Config struct {
 
 	// Views and stores for activity execution.
 	Serviceability *dzsvc.View
-	Shreds         *dzshreds.View     // optional
+	Shreds         *dzshreds.View // optional
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // optional
 	GraphStore     *dzgraph.Store     // optional

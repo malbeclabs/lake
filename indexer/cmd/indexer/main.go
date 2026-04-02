@@ -22,7 +22,7 @@ import (
 
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
-	"github.com/malbeclabs/doublezero/sdk/shreds/go"
+	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
