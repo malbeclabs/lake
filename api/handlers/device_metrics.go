@@ -492,13 +492,11 @@ func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := statusContext(r, 30*time.Second)
 	defer cancel()
 
-	requestedBuckets := 72
-	if b := q.Get("buckets"); b != "" {
-		if n, err := strconv.Atoi(b); err == nil && n > 0 {
-			requestedBuckets = n
-		}
-	}
-	params := parseBucketParams(timeRange, requestedBuckets)
+	now := time.Now().UTC()
+	duration := presetToDuration(timeRange)
+	startTime := now.Add(-duration)
+	params := parseBucketParamsCustom(startTime, now, 24)
+	params.TimeRange = timeRange
 
 	resp, err := a.fetchBulkDeviceMetrics(ctx, params, include)
 	if err != nil {
@@ -534,7 +532,11 @@ func filterBulkDeviceMetricsIssuesOnly(resp *BulkDeviceMetricsResponse) {
 
 // FetchBulkDeviceMetricsData is the exported entry point for the page cache worker.
 func (a *API) FetchBulkDeviceMetricsData(ctx context.Context) (*BulkDeviceMetricsResponse, error) {
-	params := parseBucketParams("24h", 72)
+	now := time.Now().UTC()
+	duration := presetToDuration("24h")
+	startTime := now.Add(-duration)
+	params := parseBucketParamsCustom(startTime, now, 24)
+	params.TimeRange = "24h"
 	include := parseDeviceMetricsInclude("status,traffic")
 	return a.fetchBulkDeviceMetrics(ctx, params, include)
 }

@@ -686,16 +686,12 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := statusContext(r, 30*time.Second)
 	defer cancel()
 
-	// Use the same bucket params as the status page — coarse bucketing
-	// from rollup tables, not the high-resolution parseBucketParamsCustom
-	// used for single-link detail views.
-	requestedBuckets := 72
-	if b := q.Get("buckets"); b != "" {
-		if n, err := strconv.Atoi(b); err == nil && n > 0 {
-			requestedBuckets = n
-		}
-	}
-	params := parseBucketParams(timeRange, requestedBuckets)
+	var params bucketParams
+	now := time.Now().UTC()
+	duration := presetToDuration(timeRange)
+	startTime := now.Add(-duration)
+	params = parseBucketParamsCustom(startTime, now, 24)
+	params.TimeRange = timeRange
 
 	resp, err := a.fetchBulkLinkMetrics(ctx, params, include)
 	if err != nil {
@@ -732,7 +728,11 @@ func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
 
 // FetchBulkLinkMetricsData is the exported entry point for the page cache worker.
 func (a *API) FetchBulkLinkMetricsData(ctx context.Context) (*BulkLinkMetricsResponse, error) {
-	params := parseBucketParams("24h", 72)
+	now := time.Now().UTC()
+	duration := presetToDuration("24h")
+	startTime := now.Add(-duration)
+	params := parseBucketParamsCustom(startTime, now, 24)
+	params.TimeRange = "24h"
 	include := parseLinkMetricsInclude("status,traffic")
 	return a.fetchBulkLinkMetrics(ctx, params, include)
 }
