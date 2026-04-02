@@ -370,16 +370,25 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
         ? 'border-l-amber-500'
         : 'border-l-transparent'
 
+  // Has expandable content: packet loss or interface issues
+  const hasExpandableContent = issueReasons.some(r =>
+    r === 'packet_loss' || r === 'interface_errors' || r === 'fcs_errors' || r === 'discards' || r === 'carrier_transitions'
+  )
+
   return (
     <div id={`link-row-${derivedInfo.code}`} className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}>
       <div
-        className="px-4 py-3 transition-colors cursor-pointer hover:bg-muted/30"
-        onClick={() => setExpanded(!expanded)}
+        className={`px-4 py-3 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30' : ''}`}
+        onClick={hasExpandableContent ? () => setExpanded(!expanded) : undefined}
       >
         <div className="flex items-start gap-4">
           {/* Expand/collapse indicator */}
           <div className="flex-shrink-0 w-5 pt-0.5">
-            {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+            {hasExpandableContent ? (
+              expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <div className="w-4" />
+            )}
           </div>
 
           {/* Link info */}
