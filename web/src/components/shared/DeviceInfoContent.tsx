@@ -65,6 +65,9 @@ export function DeviceInfoContent({
   hideStatusRow = false,
   hideCharts = false,
 }: DeviceInfoContentProps) {
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
+
   const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
 
   const timeRange = controlledTimeRange ?? internalTimeRange
@@ -164,9 +167,9 @@ export function DeviceInfoContent({
         {/* Charts from unified metrics endpoint */}
         {!hideCharts && metrics && (
           <div className="space-y-4">
-            {!hideStatusRow && <DeviceHealthTimeline data={metrics} />}
-            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
-            <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
+            {!hideStatusRow && <DeviceHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />}
+            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
           </div>
         )}
       </div>
@@ -220,9 +223,9 @@ export function DeviceInfoContent({
 
       {!hideCharts && metrics && (
         <div className="space-y-4">
-          {!hideStatusRow && <DeviceHealthTimeline data={metrics} />}
-          <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
-          <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
+          {!hideStatusRow && <DeviceHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />}
+          <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+          <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
         </div>
       )}
     </div>

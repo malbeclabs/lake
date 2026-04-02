@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
 import uPlot from 'uplot'
 import { Loader2 } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
@@ -14,6 +14,8 @@ interface LinkLatencyChartProps {
   data: LinkMetricsResponse
   className?: string
   loading?: boolean
+  highlightTimeRange?: { start: number; end: number } | null
+  onCursorTime?: (time: number | null) => void
 }
 
 type AggMode = 'avg' | 'p50' | 'p90' | 'p95' | 'p99' | 'min' | 'max'
@@ -37,13 +39,20 @@ function getRttValue(latency: Record<string, number>, side: 'a' | 'z', mode: Agg
   return (latency as Record<string, number>)[field] ?? 0
 }
 
-export function LinkLatencyChart({ data, className, loading }: LinkLatencyChartProps) {
+export function LinkLatencyChart({ data, className, loading, highlightTimeRange, onCursorTime }: LinkLatencyChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const handleCursorIdx = useCallback((idx: number | null) => setHoveredIdx(idx), [])
+  const uPlotDataRef = useRef<uPlot.AlignedData>([[]])
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIdx(idx)
+    if (onCursorTime) {
+      const ts = idx != null ? (uPlotDataRef.current[0] as number[])?.[idx] ?? null : null
+      onCursorTime(ts)
+    }
+  }, [onCursorTime])
   const [aggMode, setAggMode] = useState<AggMode>('avg')
 
   // Colors
@@ -121,6 +130,28 @@ export function LinkLatencyChart({ data, className, loading }: LinkLatencyChartP
     return items
   }, [aToZColor, zToAColor, committedColor, hasCommittedRtt])
 
+  uPlotDataRef.current = uPlotData
+
+  const highlightTimeRangeRef = useRef(highlightTimeRange)
+  highlightTimeRangeRef.current = highlightTimeRange
+  const isDarkRef = useRef(isDark)
+  isDarkRef.current = isDark
+
+  const drawHooks = useMemo(() => [(u: uPlot) => {
+    const range = highlightTimeRangeRef.current
+    if (!range) return
+    const ctx = u.ctx
+    const left = u.valToPos(range.start, 'x', true)
+    const right = u.valToPos(range.end, 'x', true)
+    if (left == null || right == null) return
+    const top = u.bbox.top
+    const height = u.bbox.height
+    ctx.save()
+    ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
+    ctx.fillRect(left, top, right - left, height)
+    ctx.restore()
+  }], [])
+
   const { plotRef } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
@@ -129,7 +160,17 @@ export function LinkLatencyChart({ data, className, loading }: LinkLatencyChartP
     axes,
     scales,
     onCursorIdx: handleCursorIdx,
+    drawHooks,
   })
+
+  // Redraw when highlight range changes
+  const prevHighlightRef = useRef(highlightTimeRange)
+  useEffect(() => {
+    if (prevHighlightRef.current !== highlightTimeRange) {
+      prevHighlightRef.current = highlightTimeRange
+      plotRef.current?.redraw()
+    }
+  }, [highlightTimeRange, plotRef])
 
   useUPlotLegendSync(plotRef, legend, seriesKeys)
 

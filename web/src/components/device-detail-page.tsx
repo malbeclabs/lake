@@ -34,6 +34,8 @@ export function DeviceDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
   const { data: device, isLoading, error } = useQuery({
     queryKey: ['device', pk],
@@ -170,9 +172,9 @@ export function DeviceDetailPage() {
         )}
         {metrics && (
           <div className="space-y-4">
-            <DeviceHealthTimeline data={metrics} />
-            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
-            <DeviceTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
+            <DeviceHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
+            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <DeviceTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
           </div>
         )}
       </div>

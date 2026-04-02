@@ -109,6 +109,9 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
   // Check if we have directional latency data
   const hasDirectionalData = link.latencyAtoZUs > 0 || link.latencyZtoAUs > 0
 
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
+
   const [bucket, setBucket] = useState<BucketSize>('auto')
 
   const metricsParams = useMemo(() => toLinkMetricsParams(timeRange, bucket), [timeRange, bucket])
@@ -255,12 +258,12 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         {/* Charts from unified metrics endpoint */}
         {metrics && (
           <div className="space-y-4">
-            <LinkHealthTimeline data={metrics} />
-            <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} />
-            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
-            <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
-            <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} />
-            <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} />
+            <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
+            <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
           </div>
         )}
       </div>
@@ -434,12 +437,12 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
 
           {metrics && (
             <div className="space-y-4">
-              {!hideStatusRow && <LinkHealthTimeline data={metrics} />}
-              <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} />
-              <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} />
-              <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} />
-              <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} />
-              <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} />
+              {!hideStatusRow && <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />}
+              <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+              <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+              <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+              <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+              <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
             </div>
           )}
         </>

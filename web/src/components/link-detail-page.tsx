@@ -23,6 +23,8 @@ export function LinkDetailPage() {
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [bucket, setBucket] = useState<BucketSize>('auto')
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
   const effectiveBucketLabel = bucket === 'auto'
     ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
@@ -133,12 +135,12 @@ export function LinkDetailPage() {
         )}
         {metrics && (
           <div className="space-y-4">
-            <LinkHealthTimeline data={metrics} />
-            <LinkPacketLossChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
-            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
-            <LinkTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
-            <LinkLatencyChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
-            <LinkJitterChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" />
+            <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
+            <LinkPacketLossChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkLatencyChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkJitterChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
           </div>
         )}
       </div>

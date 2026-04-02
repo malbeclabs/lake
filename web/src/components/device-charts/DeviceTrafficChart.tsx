@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
 import uPlot from 'uplot'
 import { Loader2 } from 'lucide-react'
+import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
@@ -11,6 +12,8 @@ interface DeviceTrafficChartProps {
   data: DeviceMetricsResponse
   className?: string
   loading?: boolean
+  highlightTimeRange?: { start: number; end: number } | null
+  onCursorTime?: (time: number | null) => void
 }
 
 type AggMode = 'avg' | 'peak'
@@ -63,12 +66,23 @@ interface CategoryChartProps {
   bucketSeconds: number
   /** Traffic filter controls (only shown on last chart) */
   filters?: React.ReactNode
+  highlightTimeRange?: { start: number; end: number } | null
+  onCursorTime?: (time: number | null) => void
 }
 
-function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, aggMode, loading, className, bucketSeconds, filters }: CategoryChartProps) {
+function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, aggMode, loading, className, bucketSeconds, filters, highlightTimeRange, onCursorTime }: CategoryChartProps) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
   const chartRef = useRef<HTMLDivElement>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const handleCursorIdx = useCallback((idx: number | null) => setHoveredIdx(idx), [])
+  const uPlotDataRef = useRef<uPlot.AlignedData>([[]])
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIdx(idx)
+    if (onCursorTime) {
+      const ts = idx != null ? (uPlotDataRef.current[0] as number[])?.[idx] ?? null : null
+      onCursorTime(ts)
+    }
+  }, [onCursorTime])
 
   const legend = useChartLegend()
 
@@ -121,6 +135,28 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
     return { uPlotData: arrays as uPlot.AlignedData, uPlotSeries: series, seriesKeys: keys }
   }, [bucketTimestamps, interfaces, dataMap, aggMode])
 
+  uPlotDataRef.current = uPlotData
+
+  const highlightTimeRangeRef = useRef(highlightTimeRange)
+  highlightTimeRangeRef.current = highlightTimeRange
+  const isDarkRef = useRef(isDark)
+  isDarkRef.current = isDark
+
+  const drawHooks = useMemo(() => [(u: uPlot) => {
+    const range = highlightTimeRangeRef.current
+    if (!range) return
+    const ctx = u.ctx
+    const left = u.valToPos(range.start, 'x', true)
+    const right = u.valToPos(range.end, 'x', true)
+    if (left == null || right == null) return
+    const top = u.bbox.top
+    const height = u.bbox.height
+    ctx.save()
+    ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
+    ctx.fillRect(left, top, right - left, height)
+    ctx.restore()
+  }], [])
+
   const { plotRef } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
@@ -129,7 +165,17 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
     axes,
     scales,
     onCursorIdx: handleCursorIdx,
+    drawHooks,
   })
+
+  // Redraw when highlight range changes
+  const prevHighlightRef = useRef(highlightTimeRange)
+  useEffect(() => {
+    if (prevHighlightRef.current !== highlightTimeRange) {
+      prevHighlightRef.current = highlightTimeRange
+      plotRef.current?.redraw()
+    }
+  }, [highlightTimeRange, plotRef])
 
   useUPlotLegendSync(plotRef, legend, seriesKeys)
 
@@ -253,7 +299,7 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
   )
 }
 
-export function DeviceTrafficChart({ data, className, loading }: DeviceTrafficChartProps) {
+export function DeviceTrafficChart({ data, className, loading, highlightTimeRange, onCursorTime }: DeviceTrafficChartProps) {
   const [aggMode, setAggMode] = useState<AggMode>('avg')
 
   // Collect all interface data across buckets, classify, and build lookup
@@ -337,6 +383,8 @@ export function DeviceTrafficChart({ data, className, loading }: DeviceTrafficCh
           className={className}
           bucketSeconds={data.bucket_seconds}
           filters={idx === categories.length - 1 ? filters : undefined}
+          highlightTimeRange={highlightTimeRange}
+          onCursorTime={onCursorTime}
         />
       ))}
     </div>
