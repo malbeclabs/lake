@@ -4718,6 +4718,8 @@ export interface ShredClientSeat {
   pk: string
   device_key: string
   device_code: string
+  metro_pk: string
+  metro_code: string
   client_ip: string
   tenure_epochs: number
   funded_epoch: number

@@ -110,6 +110,8 @@ type ShredClientSeatItem struct {
 	PK                       string `json:"pk"`
 	DeviceKey                string `json:"device_key"`
 	DeviceCode               string `json:"device_code"`
+	MetroPK                  string `json:"metro_pk"`
+	MetroCode                string `json:"metro_code"`
 	ClientIP                 string `json:"client_ip"`
 	TenureEpochs             uint16 `json:"tenure_epochs"`
 	FundedEpoch              uint64 `json:"funded_epoch"`
@@ -146,6 +148,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT
 			s.pk, s.device_key, COALESCE(d.code, '') as device_code,
+			COALESCE(d.metro_pk, '') as metro_pk, COALESCE(m.code, '') as metro_code,
 			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
 			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
 			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
@@ -155,6 +158,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			COALESCE(u.status, '') as user_status
 		FROM dim_dz_shred_client_seats_current s
 		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
+		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
 		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
 		ORDER BY s.active_epoch DESC
@@ -176,7 +180,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s ShredClientSeatItem
 		if err := rows.Scan(
-			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
+			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
+			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
 			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
 			&s.FundingAuthorityKey,
 			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus,

@@ -204,9 +204,10 @@ function ErrorState({ message }: { message: string }) {
 
 // --- Seats Page ---
 
-const seatFilterFields = ['device', 'ip', 'funder', 'tenure', 'epoch', 'balance']
+const seatFilterFields = ['device', 'metro', 'ip', 'funder', 'tenure', 'epoch', 'balance']
 const seatFieldPrefixes = [
   { prefix: 'device:', description: 'Filter by device code' },
+  { prefix: 'metro:', description: 'Filter by metro code' },
   { prefix: 'ip:', description: 'Filter by client IP' },
   { prefix: 'funder:', description: 'Filter by funder key' },
   { prefix: 'tenure:', description: 'Filter by tenure (e.g., >1)' },
@@ -220,12 +221,14 @@ function matchesSeatFilter(seat: ShredClientSeat, filter: string): boolean {
 
   if (field === 'all') {
     return (seat.device_code || seat.device_key).toLowerCase().includes(needle)
+      || (seat.metro_code || seat.metro_pk).toLowerCase().includes(needle)
       || seat.client_ip.includes(needle)
       || seat.funding_authority_key.toLowerCase().includes(needle)
   }
 
   switch (field) {
     case 'device': return (seat.device_code || seat.device_key).toLowerCase().includes(needle)
+    case 'metro': return (seat.metro_code || seat.metro_pk).toLowerCase().includes(needle)
     case 'ip': return seat.client_ip.includes(needle)
     case 'funder': return seat.funding_authority_key.toLowerCase().includes(needle)
     case 'tenure': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(seat.tenure_epochs, nf) : false }
@@ -295,6 +298,7 @@ export function ShredsSeatsPage() {
       let cmp = 0
       switch (sortField) {
         case 'device': cmp = (a.device_code || a.device_key).localeCompare(b.device_code || b.device_key); break
+        case 'metro': cmp = (a.metro_code || a.metro_pk).localeCompare(b.metro_code || b.metro_pk); break
         case 'ip': cmp = a.client_ip.localeCompare(b.client_ip); break
         case 'tenure': cmp = a.tenure_epochs - b.tenure_epochs; break
         case 'active_epoch': cmp = Number(a.active_epoch) - Number(b.active_epoch); break
@@ -369,6 +373,7 @@ export function ShredsSeatsPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <SortHeader field="device" label="Device" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
+                  <SortHeader field="metro" label="Metro" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
                   <SortHeader field="ip" label="Client IP" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
                   <SortHeader field="tenure" label="Tenure" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
                   <SortHeader field="active_epoch" label="Active Epoch" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
@@ -383,6 +388,13 @@ export function ShredsSeatsPage() {
                       <Link to={`/dz/devices/${seat.device_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={seat.device_key}>
                         {seat.device_code || truncatePK(seat.device_key)}
                       </Link>
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {seat.metro_pk ? (
+                        <Link to={`/dz/metros/${seat.metro_pk}`} className="text-blue-500 hover:underline font-mono text-xs" title={seat.metro_pk}>
+                          {seat.metro_code || truncatePK(seat.metro_pk)}
+                        </Link>
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm font-mono">
                       {seat.user_pk ? (
@@ -402,7 +414,7 @@ export function ShredsSeatsPage() {
                   </tr>
                 ))}
                 {sorted.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No seats found</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No seats found</td></tr>
                 )}
               </tbody>
             </table>
