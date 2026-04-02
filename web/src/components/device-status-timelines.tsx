@@ -206,6 +206,8 @@ interface DeviceRowProps {
 
 function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExpanded = false }: DeviceRowProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
   // Expand when initiallyExpanded prop changes to true
   useEffect(() => {
@@ -217,6 +219,52 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
   const issueReasons = devicesWithIssues && devicesWithIssues.size > 0
     ? (devicesWithIssues.get(derivedInfo.code) ?? [])
     : derivedInfo.issueReasons
+
+  const recentIssues = useMemo(() => {
+    const recent = new Set<string>()
+    const nonCollecting = deviceMetrics.buckets.filter(b => !b.status?.collecting)
+    const tail = nonCollecting.slice(-6)
+    for (const b of tail) {
+      if (b.traffic) {
+        const t = b.traffic
+        if (t.in_errors + t.out_errors > 0) recent.add('interface_errors')
+        if (t.in_fcs_errors > 0) recent.add('fcs_errors')
+        if (t.in_discards + t.out_discards > 0) recent.add('discards')
+        if (t.carrier_transitions > 0) recent.add('carrier_transitions')
+      }
+      if (b.status?.drain_status) recent.add('drained')
+      if (b.status && !b.status.collecting && b.status.health === 'no_data') recent.add('no_data')
+      if (b.status?.isis_overload) recent.add('isis_overload')
+      if (b.status?.isis_unreachable) recent.add('isis_unreachable')
+    }
+    return recent
+  }, [deviceMetrics])
+
+  const hoveredIssues = useMemo(() => {
+    if (!hoveredTimeRange) return null
+    const issues = new Set<string>()
+    for (const b of deviceMetrics.buckets) {
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < hoveredTimeRange.start || ts >= hoveredTimeRange.end) continue
+      if (b.traffic) {
+        const t = b.traffic
+        if (t.in_errors + t.out_errors > 0) issues.add('interface_errors')
+        if (t.in_fcs_errors > 0) issues.add('fcs_errors')
+        if (t.in_discards + t.out_discards > 0) issues.add('discards')
+        if (t.carrier_transitions > 0) issues.add('carrier_transitions')
+      }
+      if (b.status?.drain_status) issues.add('drained')
+      if (b.status && b.status.health === 'no_data') issues.add('no_data')
+      if (b.status?.isis_overload) issues.add('isis_overload')
+      if (b.status?.isis_unreachable) issues.add('isis_unreachable')
+    }
+    return issues
+  }, [hoveredTimeRange, deviceMetrics])
+
+  const badgeOpacity = (issue: string) => {
+    if (hoveredIssues) return hoveredIssues.has(issue) ? 'opacity-100' : 'opacity-30'
+    return recentIssues.has(issue) ? 'opacity-100' : 'opacity-30'
+  }
 
   return (
     <div id={`device-row-${derivedInfo.pk}`} className="border-b border-border last:border-b-0">
@@ -253,38 +301,38 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {issueReasons.includes('interface_errors') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('interface_errors')} bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400`}>
                     Interface Errors
                   </span>
                 )}
                 {issueReasons.includes('fcs_errors') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('fcs_errors')}`} style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>
                     FCS Errors
                   </span>
                 )}
                 {issueReasons.includes('discards') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('discards')} bg-rose-500/15 text-rose-600 dark:text-rose-400`}>
                     Discards
                   </span>
                 )}
                 {issueReasons.includes('carrier_transitions') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-orange-500/15 text-orange-600 dark:text-orange-400">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('carrier_transitions')} bg-orange-500/15 text-orange-600 dark:text-orange-400`}>
                     Carrier Transitions
                   </span>
                 )}
                 {issueReasons.includes('drained') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-slate-500/15 text-slate-600 dark:text-slate-400">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('drained')} bg-slate-500/15 text-slate-600 dark:text-slate-400`}>
                     Drained
                   </span>
                 )}
                 {issueReasons.includes('no_data') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('no_data')}`} style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
                 )}
                 {issueReasons.includes('isis_overload') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-600/15 text-red-700 dark:text-red-400">ISIS Overload</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('isis_overload')} bg-red-600/15 text-red-700 dark:text-red-400`}>ISIS Overload</span>
                 )}
                 {issueReasons.includes('isis_unreachable') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-800/15 text-red-800 dark:text-red-400">ISIS Unreachable</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('isis_unreachable')} bg-red-800/15 text-red-800 dark:text-red-400`}>ISIS Unreachable</span>
                 )}
               </div>
             )}
@@ -292,7 +340,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <DeviceHealthTimeline data={deviceMetrics} hideBadges />
+            <DeviceHealthTimeline data={deviceMetrics} hideBadges onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
           </div>
         </div>
       </div>
@@ -308,7 +356,7 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
               b.traffic.carrier_transitions > 0
             ))
             if (!hasIssues) return null
-            return <DeviceInterfaceIssuesChart data={deviceMetrics} loading={false} className={cardClass} />
+            return <DeviceInterfaceIssuesChart data={deviceMetrics} loading={false} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
           })()}
         </div>
       )}

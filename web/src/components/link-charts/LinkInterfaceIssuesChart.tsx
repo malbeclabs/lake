@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
 import uPlot from 'uplot'
 import { Loader2 } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
@@ -14,6 +14,8 @@ interface LinkInterfaceIssuesChartProps {
   data: LinkMetricsResponse
   className?: string
   loading?: boolean
+  highlightTimeRange?: { start: number; end: number } | null
+  onCursorTime?: (time: number | null) => void
 }
 
 function formatCount(value: number): string {
@@ -22,13 +24,20 @@ function formatCount(value: number): string {
   return value.toString()
 }
 
-export function LinkInterfaceIssuesChart({ data, className, loading }: LinkInterfaceIssuesChartProps) {
+export function LinkInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime }: LinkInterfaceIssuesChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const handleCursorIdx = useCallback((idx: number | null) => setHoveredIdx(idx), [])
+  const uPlotDataRef = useRef<uPlot.AlignedData>([[]])
+  const handleCursorIdx = useCallback((idx: number | null) => {
+    setHoveredIdx(idx)
+    if (onCursorTime) {
+      const ts = idx != null ? (uPlotDataRef.current[0] as number[])?.[idx] ?? null : null
+      onCursorTime(ts)
+    }
+  }, [onCursorTime])
 
   // Colors matching LinkStatusCharts
   const errorColor = isDark ? '#ef4444' : '#dc2626'
@@ -102,6 +111,26 @@ export function LinkInterfaceIssuesChart({ data, className, loading }: LinkInter
 
   const seriesKeys = ['errors', 'fcs', 'discards', 'carrier']
 
+  uPlotDataRef.current = uPlotData
+
+  const highlightTimeRangeRef = useRef(highlightTimeRange)
+  highlightTimeRangeRef.current = highlightTimeRange
+
+  const drawHooks = useMemo(() => [(u: uPlot) => {
+    const range = highlightTimeRangeRef.current
+    if (!range) return
+    const ctx = u.ctx
+    const left = u.valToPos(range.start, 'x', true)
+    const right = u.valToPos(range.end, 'x', true)
+    if (left == null || right == null) return
+    const top = u.bbox.top
+    const height = u.bbox.height
+    ctx.save()
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'
+    ctx.fillRect(left, top, right - left, height)
+    ctx.restore()
+  }], [])
+
   const { plotRef } = useUPlotChart({
     containerRef: chartRef,
     data: uPlotData,
@@ -110,7 +139,13 @@ export function LinkInterfaceIssuesChart({ data, className, loading }: LinkInter
     axes,
     scales,
     onCursorIdx: handleCursorIdx,
+    drawHooks,
   })
+
+  // Redraw when highlight range changes
+  useEffect(() => {
+    plotRef.current?.redraw()
+  }, [highlightTimeRange, plotRef])
 
   useUPlotLegendSync(plotRef, legend, seriesKeys)
 

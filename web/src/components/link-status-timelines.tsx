@@ -284,6 +284,8 @@ interface LinkRowProps {
 
 function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, metricsTimeRange }: LinkRowProps) {
   const [expanded, setExpanded] = useState(false)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
   // Fetch full metrics (with latency) on expand for packet loss chart
   const { data: fullMetrics, isFetching: metricsFetching } = useQuery({
@@ -295,6 +297,60 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
   const issueReasons = linksWithIssues
     ? (linksWithIssues.get(derivedInfo.code) ?? [])
     : derivedInfo.issueReasons
+
+  const recentIssues = useMemo(() => {
+    const recent = new Set<string>()
+    const nonCollecting = linkMetrics.buckets.filter(b => !b.status?.collecting)
+    const tail = nonCollecting.slice(-6)
+    for (const b of tail) {
+      if (b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0)) recent.add('packet_loss')
+      if (linkMetrics.committed_rtt_us > 0 && b.latency) {
+        const avgRtt = (b.latency.a_avg_rtt_us + b.latency.z_avg_rtt_us) / 2
+        if (avgRtt > linkMetrics.committed_rtt_us * 1.2) recent.add('high_latency')
+      }
+      if (b.traffic) {
+        const t = b.traffic
+        if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) recent.add('interface_errors')
+        if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) recent.add('fcs_errors')
+        if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) recent.add('discards')
+        if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) recent.add('carrier_transitions')
+        if (t.utilization_in_pct > 80 || t.utilization_out_pct > 80) recent.add('high_utilization')
+      }
+      if (b.status && !b.status.collecting && b.status.health === 'no_data') recent.add('no_data')
+      if (b.status?.isis_down) recent.add('missing_adjacency')
+    }
+    return recent
+  }, [linkMetrics])
+
+  const hoveredIssues = useMemo(() => {
+    if (!hoveredTimeRange) return null
+    const issues = new Set<string>()
+    for (const b of linkMetrics.buckets) {
+      const ts = new Date(b.ts).getTime() / 1000
+      if (ts < hoveredTimeRange.start || ts >= hoveredTimeRange.end) continue
+      if (b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0)) issues.add('packet_loss')
+      if (linkMetrics.committed_rtt_us > 0 && b.latency) {
+        const avgRtt = (b.latency.a_avg_rtt_us + b.latency.z_avg_rtt_us) / 2
+        if (avgRtt > linkMetrics.committed_rtt_us * 1.2) issues.add('high_latency')
+      }
+      if (b.traffic) {
+        const t = b.traffic
+        if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) issues.add('interface_errors')
+        if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) issues.add('fcs_errors')
+        if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) issues.add('discards')
+        if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) issues.add('carrier_transitions')
+        if (t.utilization_in_pct > 80 || t.utilization_out_pct > 80) issues.add('high_utilization')
+      }
+      if (b.status && b.status.health === 'no_data') issues.add('no_data')
+      if (b.status?.isis_down) issues.add('missing_adjacency')
+    }
+    return issues
+  }, [hoveredTimeRange, linkMetrics])
+
+  const badgeOpacity = (issue: string) => {
+    if (hoveredIssues) return hoveredIssues.has(issue) ? 'opacity-100' : 'opacity-30'
+    return recentIssues.has(issue) ? 'opacity-100' : 'opacity-30'
+  }
 
   return (
     <div id={`link-row-${derivedInfo.code}`} className="border-b border-border last:border-b-0">
@@ -334,31 +390,31 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                   <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-blue-500/15 text-blue-700 dark:bg-blue-400/20 dark:text-blue-300">Provisioning</span>
                 )}
                 {issueReasons.includes('packet_loss') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' }}>Loss</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('packet_loss')}`} style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#9333ea' }}>Loss</span>
                 )}
                 {issueReasons.includes('high_latency') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#2563eb' }}>High Latency</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('high_latency')}`} style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#2563eb' }}>High Latency</span>
                 )}
                 {issueReasons.includes('high_utilization') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#4f46e5' }}>High Utilization</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('high_utilization')}`} style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#4f46e5' }}>High Utilization</span>
                 )}
                 {issueReasons.includes('no_data') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('no_data')}`} style={{ backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' }}>No Data</span>
                 )}
                 {issueReasons.includes('interface_errors') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('interface_errors')}`} style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#dc2626' }}>Errors</span>
                 )}
                 {issueReasons.includes('fcs_errors') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>FCS Errors</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('fcs_errors')}`} style={{ backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' }}>FCS Errors</span>
                 )}
                 {issueReasons.includes('discards') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' }}>Discards</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('discards')}`} style={{ backgroundColor: 'rgba(20, 184, 166, 0.15)', color: '#0d9488' }}>Discards</span>
                 )}
                 {issueReasons.includes('carrier_transitions') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04' }}>Carrier Transitions</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity ${badgeOpacity('carrier_transitions')}`} style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', color: '#ca8a04' }}>Carrier Transitions</span>
                 )}
                 {issueReasons.includes('missing_adjacency') && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-600/15 text-rose-700 dark:text-rose-400">ISIS Down</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-opacity bg-rose-600/15 text-rose-700 dark:text-rose-400 ${badgeOpacity('missing_adjacency')}`}>ISIS Down</span>
                 )}
               </div>
             )}
@@ -366,7 +422,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <LinkHealthTimeline data={linkMetrics} hideBadges />
+            <LinkHealthTimeline data={linkMetrics} hideBadges onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
           </div>
         </div>
       </div>
@@ -377,7 +433,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
           {/* Packet loss chart — needs latency data from per-link fetch */}
           {fullMetrics && (() => {
             const hasLoss = fullMetrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
-            return hasLoss ? <LinkPacketLossDetailChart data={fullMetrics} loading={metricsFetching} className={cardClass} /> : null
+            return hasLoss ? <LinkPacketLossDetailChart data={fullMetrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} /> : null
           })()}
           {/* Interface issues chart — uses bulk data (has traffic) */}
           {(() => {
@@ -387,7 +443,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
               b.traffic.side_a_in_discards + b.traffic.side_a_out_discards + b.traffic.side_z_in_discards + b.traffic.side_z_out_discards > 0 ||
               b.traffic.side_a_carrier_transitions + b.traffic.side_z_carrier_transitions > 0
             ))
-            return hasIssues ? <LinkInterfaceIssuesChart data={linkMetrics} loading={false} className={cardClass} /> : null
+            return hasIssues ? <LinkInterfaceIssuesChart data={linkMetrics} loading={false} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} /> : null
           })()}
           {!fullMetrics && metricsFetching && (
             <div className="flex justify-center py-4">

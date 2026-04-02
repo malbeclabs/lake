@@ -12,6 +12,7 @@ export interface UseUPlotChartOptions {
   scales?: uPlot.Scales
   onCursorIdx?: (idx: number | null) => void
   onFocusSeries?: (seriesIdx: number | null) => void
+  drawHooks?: Array<(u: uPlot) => void>
 }
 
 export function useUPlotChart({
@@ -23,6 +24,7 @@ export function useUPlotChart({
   scales,
   onCursorIdx,
   onFocusSeries,
+  drawHooks,
 }: UseUPlotChartOptions): { plotRef: MutableRefObject<uPlot | null> } {
   const plotRef = useRef<uPlot | null>(null)
   const { resolvedTheme } = useTheme()
@@ -30,6 +32,8 @@ export function useUPlotChart({
   onCursorIdxRef.current = onCursorIdx
   const onFocusSeriesRef = useRef(onFocusSeries)
   onFocusSeriesRef.current = onFocusSeries
+  const drawHooksRef = useRef(drawHooks)
+  drawHooksRef.current = drawHooks
 
   useEffect(() => {
     const container = containerRef.current
@@ -85,6 +89,15 @@ export function useUPlotChart({
         },
       },
       hooks: {
+        draw: [
+          (u: uPlot) => {
+            if (drawHooksRef.current) {
+              for (const hook of drawHooksRef.current) {
+                hook(u)
+              }
+            }
+          },
+        ],
         setCursor: [
           (u) => {
             const idx = u.cursor.idx

@@ -5,6 +5,8 @@ interface DeviceHealthTimelineProps {
   data: DeviceMetricsResponse
   className?: string
   hideBadges?: boolean
+  onBarHover?: (range: { start: number; end: number } | null) => void
+  highlightedTime?: number | null  // unix seconds
 }
 
 const healthColors: Record<string, string> = {
@@ -191,7 +193,7 @@ function useContainerBars() {
   return { containerRef, maxBars }
 }
 
-export function DeviceHealthTimeline({ data, className, hideBadges }: DeviceHealthTimelineProps) {
+export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, highlightedTime }: DeviceHealthTimelineProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const { containerRef, maxBars } = useContainerBars()
 
@@ -200,6 +202,15 @@ export function DeviceHealthTimeline({ data, className, hideBadges }: DeviceHeal
     markTrailingCollecting(merged)
     return merged
   }, [data.buckets, data.bucket_seconds, maxBars])
+
+  const highlightedBarIndex = useMemo(() => {
+    if (highlightedTime == null) return null
+    return bars.findIndex(bar => {
+      const start = new Date(bar.ts).getTime() / 1000
+      const end = start + bar.spanSeconds
+      return highlightedTime >= start && highlightedTime < end
+    })
+  }, [highlightedTime, bars])
 
   const badges = useMemo(() => {
     const found = new Set<string>()
@@ -262,8 +273,17 @@ export function DeviceHealthTimeline({ data, className, hideBadges }: DeviceHeal
               <div
                 key={bar.ts}
                 className="relative flex-1 min-w-0"
-                onMouseEnter={() => setHoveredIndex(index)}
-                onMouseLeave={() => setHoveredIndex(null)}
+                onMouseEnter={() => {
+                  setHoveredIndex(index)
+                  onBarHover?.({
+                    start: new Date(bar.ts).getTime() / 1000,
+                    end: new Date(bar.ts).getTime() / 1000 + bar.spanSeconds,
+                  })
+                }}
+                onMouseLeave={() => {
+                  setHoveredIndex(null)
+                  onBarHover?.(null)
+                }}
               >
                 <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
                   <div
@@ -271,7 +291,7 @@ export function DeviceHealthTimeline({ data, className, hideBadges }: DeviceHeal
                       bar.collecting && displayHealth === 'no_data'
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
-                    }`}
+                    } ${highlightedBarIndex === index ? 'ring-1 ring-white/60' : ''}`}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
