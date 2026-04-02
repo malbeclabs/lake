@@ -376,7 +376,7 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
                       bar.collecting && displayHealth === 'no_data'
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
-                    } ${highlightedBarIndex === index ? 'ring-1 ring-white/60' : ''}`}
+                    } ${highlightedBarIndex === index ? 'ring-2 ring-foreground/70' : ''}`}
                     style={getDrainStripeStyle(bar.drainStatus)}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
