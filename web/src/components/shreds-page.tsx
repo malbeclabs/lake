@@ -204,7 +204,7 @@ function ErrorState({ message }: { message: string }) {
 
 // --- Seats Page ---
 
-const seatFilterFields = ['device', 'metro', 'ip', 'funder', 'tenure', 'epoch', 'balance']
+const seatFilterFields = ['device', 'metro', 'ip', 'funder', 'tenure', 'epoch', 'balance', 'prepaid']
 const seatFieldPrefixes = [
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro code' },
@@ -213,7 +213,13 @@ const seatFieldPrefixes = [
   { prefix: 'tenure:', description: 'Filter by tenure (e.g., >1)' },
   { prefix: 'epoch:', description: 'Filter by active epoch (e.g., =950)' },
   { prefix: 'balance:', description: 'Filter by USDC balance (e.g., >0)' },
+  { prefix: 'prepaid:', description: 'Filter by prepaid epochs (e.g., >5)' },
 ]
+
+function prepaidEpochs(seat: ShredClientSeat): number {
+  if (seat.price_per_epoch_dollars <= 0 || seat.total_usdc_balance === 0) return 0
+  return Math.floor((seat.total_usdc_balance / 1e6) / seat.price_per_epoch_dollars)
+}
 
 function matchesSeatFilter(seat: ShredClientSeat, filter: string): boolean {
   const { field, value } = parseFilter(filter, seatFilterFields)
@@ -234,6 +240,7 @@ function matchesSeatFilter(seat: ShredClientSeat, filter: string): boolean {
     case 'tenure': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(seat.tenure_epochs, nf) : false }
     case 'epoch': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(seat.active_epoch, nf) : false }
     case 'balance': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(seat.total_usdc_balance / 1e6, nf) : false }
+    case 'prepaid': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(prepaidEpochs(seat), nf) : false }
     default: return true
   }
 }
@@ -304,6 +311,7 @@ export function ShredsSeatsPage() {
         case 'active_epoch': cmp = Number(a.active_epoch) - Number(b.active_epoch); break
         case 'funder': cmp = a.funding_authority_key.localeCompare(b.funding_authority_key); break
         case 'balance': cmp = a.total_usdc_balance - b.total_usdc_balance; break
+        case 'prepaid': cmp = prepaidEpochs(a) - prepaidEpochs(b); break
         default: cmp = Number(a.active_epoch) - Number(b.active_epoch); break
       }
       return ps.sortDirection === 'asc' ? cmp : -cmp
@@ -379,6 +387,7 @@ export function ShredsSeatsPage() {
                   <SortHeader field="active_epoch" label="Active Epoch" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
                   <SortHeader field="funder" label="Funder" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
                   <SortHeader field="balance" label="Balance (USDC)" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
+                  <SortHeader field="prepaid" label="Prepaid Epochs" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
                 </tr>
               </thead>
               <tbody>
@@ -411,10 +420,17 @@ export function ShredsSeatsPage() {
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {seat.total_usdc_balance > 0 ? `$${(seat.total_usdc_balance / 1e6).toFixed(2)}` : <span className="text-muted-foreground">—</span>}
                     </td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-right">
+                      {(() => {
+                        const epochs = prepaidEpochs(seat)
+                        if (epochs <= 0) return <span className="text-muted-foreground">—</span>
+                        return epochs
+                      })()}
+                    </td>
                   </tr>
                 ))}
                 {sorted.length === 0 && (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No seats found</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No seats found</td></tr>
                 )}
               </tbody>
             </table>

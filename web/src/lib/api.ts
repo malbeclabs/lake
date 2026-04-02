@@ -4728,6 +4728,7 @@ export interface ShredClientSeat {
   override_usdc_price_dollars: number
   escrow_count: number
   total_usdc_balance: number
+  price_per_epoch_dollars: number
   funding_authority_key: string
   user_pk: string
   user_owner_pubkey: string

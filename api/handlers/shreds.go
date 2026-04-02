@@ -120,6 +120,7 @@ type ShredClientSeatItem struct {
 	OverrideUSDCPriceDollars uint16 `json:"override_usdc_price_dollars"`
 	EscrowCount              uint32 `json:"escrow_count"`
 	TotalUSDCBalance         uint64 `json:"total_usdc_balance"`
+	PricePerEpochDollars     int32  `json:"price_per_epoch_dollars"`
 	FundingAuthorityKey      string `json:"funding_authority_key"`
 	UserPK                   string `json:"user_pk"`
 	UserOwnerPubkey          string `json:"user_owner_pubkey"`
@@ -152,6 +153,10 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			s.client_ip, s.tenure_epochs, s.funded_epoch, s.active_epoch,
 			s.has_price_override, s.override_usdc_price_dollars, s.escrow_count,
 			COALESCE(eb.total_usdc_balance, 0) as total_usdc_balance,
+			CASE
+				WHEN s.has_price_override = 1 THEN toInt32(s.override_usdc_price_dollars)
+				ELSE toInt32(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt32(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
+			END as price_per_epoch_dollars,
 			s.funding_authority_key,
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(u.owner_pubkey, '') as user_owner_pubkey,
@@ -159,6 +164,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		FROM dim_dz_shred_client_seats_current s
 		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dim_dz_shred_metro_histories_current mh ON mh.exchange_key = d.metro_pk
+		LEFT JOIN dim_dz_shred_device_histories_current dh ON dh.device_key = s.device_key
 		LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
 		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
 		ORDER BY s.active_epoch DESC
@@ -183,7 +190,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
 			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
 			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
-			&s.FundingAuthorityKey,
+			&s.PricePerEpochDollars, &s.FundingAuthorityKey,
 			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus,
 		); err != nil {
 			logError("shred client seats row scan failed", "error", err)
