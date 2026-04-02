@@ -281,12 +281,19 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
   }, [data.buckets, data.bucket_seconds, maxBars])
 
   const highlightedBarIndex = useMemo(() => {
-    if (highlightedTime == null) return null
-    return bars.findIndex(bar => {
-      const start = new Date(bar.ts).getTime() / 1000
-      const end = start + bar.spanSeconds
-      return highlightedTime >= start && highlightedTime < end
-    })
+    if (highlightedTime == null) return -1
+    // Find bar containing the time, or closest bar
+    let bestIdx = -1
+    let bestDist = Infinity
+    for (let i = 0; i < bars.length; i++) {
+      const start = new Date(bars[i].ts).getTime() / 1000
+      const end = start + bars[i].spanSeconds
+      if (highlightedTime >= start && highlightedTime < end) return i
+      const mid = start + bars[i].spanSeconds / 2
+      const dist = Math.abs(highlightedTime - mid)
+      if (dist < bestDist) { bestDist = dist; bestIdx = i }
+    }
+    return bestDist < bars[0]?.spanSeconds ? bestIdx : -1
   }, [highlightedTime, bars])
 
   // Detect issue badges across all buckets
