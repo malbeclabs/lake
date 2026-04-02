@@ -70,6 +70,7 @@ interface MergedBar {
   hasLatency: boolean
   hasTraffic: boolean
   missingLatency: boolean
+  serverReasons: string[]
   missingTraffic: boolean
 }
 
@@ -145,6 +146,7 @@ function aggregateBar(group: LinkMetricsBucket[], bucketSeconds: number, latency
     hasTraffic,
     missingLatency: missingLatency && nonCollectingCount > 0,
     missingTraffic: missingTraffic && nonCollectingCount > 0,
+    serverReasons: Array.from(new Set(group.flatMap(b => b.status?.reasons ?? []))),
   }
 }
 
@@ -196,6 +198,10 @@ function markTrailingCollecting(bars: MergedBar[]): void {
 }
 
 function getReasons(bar: MergedBar, committedRttUs: number): string[] {
+  // Use server-provided reasons when available (covers latency-only scenarios
+  // where the client doesn't have latency data in the response)
+  if (bar.serverReasons.length > 0) return bar.serverReasons
+
   const reasons: string[] = []
 
   if (bar.isisDown) reasons.push('ISIS down')

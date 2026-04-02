@@ -44,11 +44,12 @@ type LinkMetricsBucket struct {
 
 // LinkMetricsStatus represents health/drain/provisioning state for a bucket.
 type LinkMetricsStatus struct {
-	Health       string `json:"health"`
-	DrainStatus  string `json:"drain_status"`
-	Provisioning bool   `json:"provisioning"`
-	ISISDown     bool   `json:"isis_down"`
-	Collecting   bool   `json:"collecting"`
+	Health       string   `json:"health"`
+	DrainStatus  string   `json:"drain_status"`
+	Provisioning bool     `json:"provisioning"`
+	ISISDown     bool     `json:"isis_down"`
+	Collecting   bool     `json:"collecting"`
+	Reasons      []string `json:"reasons,omitempty"`
 }
 
 // LinkMetricsLatency holds per-direction latency and jitter percentiles.
@@ -569,12 +570,52 @@ func buildLinkMetricsStatus(
 		statusStr = "degraded"
 	}
 
+	// Build human-readable reasons
+	var reasons []string
+	if isisDown {
+		reasons = append(reasons, "ISIS down")
+	}
+	if lossPct >= 25 {
+		reasons = append(reasons, fmt.Sprintf("Severe packet loss (%.1f%%)", lossPct))
+	} else if lossPct >= 1 {
+		reasons = append(reasons, fmt.Sprintf("Moderate packet loss (%.1f%%)", lossPct))
+	} else if lossPct > 0 {
+		reasons = append(reasons, fmt.Sprintf("Minor packet loss (%.2f%%)", lossPct))
+	}
+	if committedRtt > 0 && avgLatency > 0 {
+		overPct := ((avgLatency - committedRtt) / committedRtt) * 100
+		if overPct >= 20 {
+			reasons = append(reasons, fmt.Sprintf("High latency (%d%% over SLA)", int(overPct)))
+		}
+	}
+	if hasIssues {
+		var parts []string
+		if totalErrors > 0 {
+			parts = append(parts, fmt.Sprintf("%d interface errors", totalErrors))
+		}
+		if totalDiscards > 0 {
+			parts = append(parts, fmt.Sprintf("%d discards", totalDiscards))
+		}
+		if totalCarrier > 0 {
+			parts = append(parts, fmt.Sprintf("%d carrier transitions", totalCarrier))
+		}
+		if len(parts) > 0 {
+			reasons = append(reasons, strings.Join(parts, ", "))
+		}
+	}
+	if drainStatus != "" && (rollup.ASamples == 0) != (rollup.ZSamples == 0) {
+		// One-sided, already handled above
+	} else if (rollup.ASamples == 0) != (rollup.ZSamples == 0) {
+		reasons = append(reasons, "One-sided reporting")
+	}
+
 	return LinkMetricsStatus{
 		Health:       statusStr,
 		DrainStatus:  drainStatus,
 		Provisioning: provisioning,
 		ISISDown:     isisDown,
 		Collecting:   isCollecting,
+		Reasons:      reasons,
 	}
 }
 

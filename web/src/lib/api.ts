@@ -4883,6 +4883,7 @@ export interface LinkMetricsStatus {
   provisioning: boolean
   isis_down: boolean
   collecting: boolean
+  reasons?: string[]
 }
 
 export interface LinkMetricsLatency {
