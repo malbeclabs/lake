@@ -126,7 +126,7 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     const top = u.bbox.top
     const height = u.bbox.height
     ctx.save()
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.12)'
     ctx.fillRect(left, top, right - left, height)
     ctx.restore()
   }], [])
