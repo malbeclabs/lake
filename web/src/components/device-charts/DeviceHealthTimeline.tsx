@@ -278,7 +278,7 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
             return (
               <div
                 key={bar.ts}
-                className={`relative flex-1 min-w-0 ${highlightedBarIndex === index ? 'ring-2 ring-foreground/60 rounded-sm z-10' : ''}`}
+                className={`relative flex-1 min-w-0 ${highlightedBarIndex === index ? 'rounded-sm z-10 shadow-[0_0_6px_1px_rgba(255,255,255,0.4)] dark:shadow-[0_0_6px_1px_rgba(255,255,255,0.35)]' : ''}`}
                 onMouseEnter={() => {
                   setHoveredIndex(index)
                   onBarHover?.({
