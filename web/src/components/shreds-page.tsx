@@ -22,10 +22,53 @@ function truncatePK(pk: string) {
 
 // --- Overview Section ---
 
+// --- Shared sort helpers ---
+
+type SortDirection = 'asc' | 'desc'
+
+function useSort<T extends string>(defaultField: T, defaultDir: SortDirection = 'desc') {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sortField = (searchParams.get('sort') || defaultField) as T
+  const sortDirection = (searchParams.get('dir') || defaultDir) as SortDirection
+
+  const handleSort = useCallback((field: T) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (sortField === field) { p.set('dir', sortDirection === 'asc' ? 'desc' : 'asc') }
+      else { p.set('sort', field); p.set('dir', 'desc') }
+      return p
+    })
+  }, [sortField, sortDirection, setSearchParams])
+
+  const SortIcon = useCallback(({ field }: { field: T }) => {
+    if (sortField !== field) return null
+    return sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+  }, [sortField, sortDirection])
+
+  const sortAria = useCallback((field: T) => {
+    if (sortField !== field) return 'none' as const
+    return sortDirection === 'asc' ? 'ascending' as const : 'descending' as const
+  }, [sortField, sortDirection])
+
+  return { sortField, sortDirection, handleSort, SortIcon, sortAria }
+}
+
+function SortButton<T extends string>({ field, label, align, handleSort, SortIcon }: {
+  field: T; label: string; align?: 'right'; handleSort: (f: T) => void; SortIcon: React.FC<{ field: T }>
+}) {
+  return (
+    <button
+      className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end w-full' : ''}`}
+      onClick={() => handleSort(field)}
+    >
+      {label} <SortIcon field={field} />
+    </button>
+  )
+}
+
 // --- Client Seats Page ---
 
-type SeatSortField = 'client_ip' | 'tenure_epochs' | 'active_epoch' | 'escrow_count'
-type SortDirection = 'asc' | 'desc'
+type SeatSortField = 'device_code' | 'client_ip' | 'tenure_epochs' | 'active_epoch' | 'funder' | 'escrow_count'
 
 function ClientSeatsTab() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -40,8 +83,7 @@ function ClientSeatsTab() {
     })
   }, [setSearchParams])
 
-  const sortField = (searchParams.get('sort') || 'active_epoch') as SeatSortField
-  const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
+  const { sortField, sortDirection, handleSort, SortIcon } = useSort<SeatSortField>('active_epoch')
   const showActive = searchParams.get('active') !== '0'
   const showInactive = searchParams.get('inactive') === '1'
   const showClosed = searchParams.get('closed') === '1'
@@ -75,9 +117,11 @@ function ClientSeatsTab() {
     return [...filtered].sort((a, b) => {
       let cmp = 0
       switch (sortField) {
+        case 'device_code': cmp = (a.device_code || a.device_key).localeCompare(b.device_code || b.device_key); break
         case 'client_ip': cmp = a.client_ip.localeCompare(b.client_ip); break
         case 'tenure_epochs': cmp = a.tenure_epochs - b.tenure_epochs; break
         case 'active_epoch': cmp = Number(a.active_epoch) - Number(b.active_epoch); break
+        case 'funder': cmp = a.funding_authority_key.localeCompare(b.funding_authority_key); break
         case 'escrow_count': cmp = a.escrow_count - b.escrow_count; break
       }
       return sortDirection === 'asc' ? cmp : -cmp
@@ -85,20 +129,6 @@ function ClientSeatsTab() {
   }, [filtered, sortField, sortDirection])
 
   const paged = useMemo(() => sorted.slice(offset, offset + PAGE_SIZE), [sorted, offset])
-
-  const handleSort = (field: SeatSortField) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (sortField === field) { p.set('dir', sortDirection === 'asc' ? 'desc' : 'asc') }
-      else { p.set('sort', field); p.set('dir', 'desc') }
-      return p
-    })
-  }
-
-  const SortIcon = ({ field }: { field: SeatSortField }) => {
-    if (sortField !== field) return null
-    return sortDirection === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-  }
 
   const toggleParam = useCallback((key: string, current: boolean, defaultOn = false) => {
     setSearchParams(prev => {
@@ -139,20 +169,12 @@ function ClientSeatsTab() {
           <table className="w-full">
             <thead>
               <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                <th className="px-4 py-3 font-medium">Device</th>
-                <th className="px-4 py-3 font-medium">
-                  <button className="inline-flex items-center gap-1" onClick={() => handleSort('client_ip')}>Client IP <SortIcon field="client_ip" /></button>
-              </th>
-              <th className="px-4 py-3 font-medium text-right">
-                <button className="inline-flex items-center gap-1 justify-end w-full" onClick={() => handleSort('tenure_epochs')}>Tenure <SortIcon field="tenure_epochs" /></button>
-              </th>
-              <th className="px-4 py-3 font-medium text-right">
-                <button className="inline-flex items-center gap-1 justify-end w-full" onClick={() => handleSort('active_epoch')}>Active Epoch <SortIcon field="active_epoch" /></button>
-              </th>
-              <th className="px-4 py-3 font-medium">Funder</th>
-              <th className="px-4 py-3 font-medium text-right">
-                <button className="inline-flex items-center gap-1 justify-end w-full" onClick={() => handleSort('escrow_count')}>Escrows <SortIcon field="escrow_count" /></button>
-              </th>
+              <th className="px-4 py-3 font-medium"><SortButton field="device_code" label="Device" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium"><SortButton field="client_ip" label="Client IP" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="tenure_epochs" label="Tenure" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="active_epoch" label="Active Epoch" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium"><SortButton field="funder" label="Funder" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="escrow_count" label="Escrows" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
               <th className="px-4 py-3 font-medium text-right">Override</th>
             </tr>
           </thead>
@@ -196,6 +218,8 @@ function ClientSeatsTab() {
 
 // --- Device Histories Tab ---
 
+type DeviceSortField = 'device_code' | 'metro_code' | 'granted_seats' | 'available_seats'
+
 function DeviceHistoriesTab() {
   const [searchParams, setSearchParams] = useSearchParams()
   const page = parseInt(searchParams.get('page') || '1')
@@ -209,6 +233,8 @@ function DeviceHistoriesTab() {
     })
   }, [setSearchParams])
 
+  const { sortField, sortDirection, handleSort, SortIcon } = useSort<DeviceSortField>('granted_seats')
+
   const { data, isLoading } = useQuery({
     queryKey: ['shred-device-histories', 'all'],
     queryFn: () => fetchAllPaginated(fetchShredDeviceHistories, PAGE_SIZE),
@@ -217,8 +243,17 @@ function DeviceHistoriesTab() {
 
   const sorted = useMemo(() => {
     if (!data?.items) return []
-    return [...data.items].sort((a, b) => b.active_granted_seats - a.active_granted_seats)
-  }, [data])
+    return [...data.items].sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case 'device_code': cmp = (a.device_code || a.device_key).localeCompare(b.device_code || b.device_key); break
+        case 'metro_code': cmp = (a.metro_code || a.metro_exchange_key).localeCompare(b.metro_code || b.metro_exchange_key); break
+        case 'granted_seats': cmp = a.active_granted_seats - b.active_granted_seats; break
+        case 'available_seats': cmp = a.active_total_available_seats - b.active_total_available_seats; break
+      }
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [data, sortField, sortDirection])
 
   const paged = useMemo(() => sorted.slice(offset, offset + PAGE_SIZE), [sorted, offset])
 
@@ -232,10 +267,10 @@ function DeviceHistoriesTab() {
         <table className="w-full">
           <thead>
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
-              <th className="px-4 py-3 font-medium">Device</th>
-              <th className="px-4 py-3 font-medium">Metro</th>
-              <th className="px-4 py-3 font-medium text-right">Granted Seats</th>
-              <th className="px-4 py-3 font-medium text-right">Available Seats</th>
+              <th className="px-4 py-3 font-medium"><SortButton field="device_code" label="Device" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium"><SortButton field="metro_code" label="Metro" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="granted_seats" label="Granted Seats" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="available_seats" label="Available Seats" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
             </tr>
           </thead>
           <tbody>
@@ -268,6 +303,8 @@ function DeviceHistoriesTab() {
 
 // --- Metro Histories Tab ---
 
+type MetroSortField = 'metro_code' | 'devices' | 'price'
+
 function MetroHistoriesTab() {
   const [searchParams, setSearchParams] = useSearchParams()
   const page = parseInt(searchParams.get('page') || '1')
@@ -281,6 +318,8 @@ function MetroHistoriesTab() {
     })
   }, [setSearchParams])
 
+  const { sortField, sortDirection, handleSort, SortIcon } = useSort<MetroSortField>('devices')
+
   const { data, isLoading } = useQuery({
     queryKey: ['shred-metro-histories', 'all'],
     queryFn: () => fetchAllPaginated(fetchShredMetroHistories, PAGE_SIZE),
@@ -289,8 +328,16 @@ function MetroHistoriesTab() {
 
   const sorted = useMemo(() => {
     if (!data?.items) return []
-    return [...data.items].sort((a, b) => b.total_initialized_devices - a.total_initialized_devices)
-  }, [data])
+    return [...data.items].sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case 'metro_code': cmp = (a.metro_code || a.exchange_key).localeCompare(b.metro_code || b.exchange_key); break
+        case 'devices': cmp = a.total_initialized_devices - b.total_initialized_devices; break
+        case 'price': cmp = a.current_usdc_price_dollars - b.current_usdc_price_dollars; break
+      }
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [data, sortField, sortDirection])
 
   const paged = useMemo(() => sorted.slice(offset, offset + PAGE_SIZE), [sorted, offset])
 
@@ -304,9 +351,9 @@ function MetroHistoriesTab() {
         <table className="w-full">
           <thead>
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
-              <th className="px-4 py-3 font-medium">Metro</th>
-              <th className="px-4 py-3 font-medium text-right">Devices</th>
-              <th className="px-4 py-3 font-medium text-right">Price (USDC)</th>
+              <th className="px-4 py-3 font-medium"><SortButton field="metro_code" label="Metro" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="devices" label="Devices" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="price" label="Price (USDC)" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
             </tr>
           </thead>
           <tbody>
@@ -334,18 +381,34 @@ function MetroHistoriesTab() {
 
 // --- Funders Tab ---
 
+type FunderSortField = 'funder' | 'active_seats' | 'inactive_seats' | 'closed_seats'
+
 function FundersTab() {
+  const { sortField, sortDirection, handleSort, SortIcon } = useSort<FunderSortField>('active_seats')
+
   const { data, isLoading } = useQuery({
     queryKey: ['shred-funders'],
     queryFn: fetchShredFunders,
     refetchInterval: 30000,
   })
 
+  const sorted = useMemo(() => {
+    if (!data) return []
+    return [...data].sort((a, b) => {
+      let cmp = 0
+      switch (sortField) {
+        case 'funder': cmp = a.funding_authority_key.localeCompare(b.funding_authority_key); break
+        case 'active_seats': cmp = a.active_seats - b.active_seats; break
+        case 'inactive_seats': cmp = a.inactive_seats - b.inactive_seats; break
+        case 'closed_seats': cmp = a.closed_seats - b.closed_seats; break
+      }
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [data, sortField, sortDirection])
+
   if (isLoading) {
     return <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
   }
-
-  const funders = data ?? []
 
   return (
     <div className="border border-border rounded-lg overflow-hidden bg-card">
@@ -353,14 +416,14 @@ function FundersTab() {
         <table className="w-full">
           <thead>
             <tr className="text-sm text-left text-muted-foreground border-b border-border">
-              <th className="px-4 py-3 font-medium">Funder</th>
-              <th className="px-4 py-3 font-medium text-right">Active Seats</th>
-              <th className="px-4 py-3 font-medium text-right">Inactive Seats</th>
-              <th className="px-4 py-3 font-medium text-right">Closed Seats</th>
+              <th className="px-4 py-3 font-medium"><SortButton field="funder" label="Funder" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="active_seats" label="Active Seats" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="inactive_seats" label="Inactive Seats" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
+              <th className="px-4 py-3 font-medium text-right"><SortButton field="closed_seats" label="Closed Seats" align="right" handleSort={handleSort} SortIcon={SortIcon} /></th>
             </tr>
           </thead>
           <tbody>
-            {funders.map((f) => (
+            {sorted.map((f) => (
               <tr key={f.funding_authority_key} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
                 <td className="px-4 py-3 font-mono text-xs" title={f.funding_authority_key}>{truncatePK(f.funding_authority_key)}</td>
                 <td className="px-4 py-3 text-sm tabular-nums text-right">{f.active_seats}</td>
@@ -372,7 +435,7 @@ function FundersTab() {
                 </td>
               </tr>
             ))}
-            {funders.length === 0 && (
+            {sorted.length === 0 && (
               <tr><td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">No funders found</td></tr>
             )}
           </tbody>
