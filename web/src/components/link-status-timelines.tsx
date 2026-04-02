@@ -564,6 +564,11 @@ export function LinkStatusTimelines({
         return false
       }
 
+      // Drained/provisioning links pass when their toggle is on, regardless of issue/health filters
+      if ((derived.drainStatus && showDrained) || (derived.provisioning && showProvisioning)) {
+        return true
+      }
+
       const matchesIssue = hasIssues
         ? issueReasons.some(reason => issueTypesSelected.includes(reason)) ||
           (issueReasons.length === 1 && issueReasons[0] === 'no_data' && metrics.buckets.some(b =>
