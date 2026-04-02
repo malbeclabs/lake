@@ -515,16 +515,21 @@ func (a *API) GetBulkDeviceMetrics(w http.ResponseWriter, r *http.Request) {
 // filterBulkDeviceMetricsIssuesOnly removes devices that have no issues from the response.
 func filterBulkDeviceMetricsIssuesOnly(resp *BulkDeviceMetricsResponse) {
 	for pk, device := range resp.Devices {
-		hasIssue := false
+		keep := false
 		for _, b := range device.Buckets {
-			if b.Status != nil && !b.Status.Collecting {
-				if b.Status.Health != "healthy" && b.Status.Health != "" {
-					hasIssue = true
-					break
-				}
+			if b.Status == nil {
+				continue
+			}
+			if b.Status.DrainStatus != "" {
+				keep = true
+				break
+			}
+			if !b.Status.Collecting && b.Status.Health != "healthy" && b.Status.Health != "" {
+				keep = true
+				break
 			}
 		}
-		if !hasIssue {
+		if !keep {
 			delete(resp.Devices, pk)
 		}
 	}

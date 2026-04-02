@@ -749,19 +749,24 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // filterBulkLinkMetricsIssuesOnly removes links that have no issues from the response.
-// A link has issues if any non-collecting bucket has non-healthy status.
+// Keeps links with non-healthy buckets, or that are currently drained/provisioning.
 func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
 	for pk, link := range resp.Links {
-		hasIssue := false
+		keep := false
 		for _, b := range link.Buckets {
-			if b.Status != nil && !b.Status.Collecting {
-				if b.Status.Health != "healthy" && b.Status.Health != "" {
-					hasIssue = true
-					break
-				}
+			if b.Status == nil {
+				continue
+			}
+			if b.Status.DrainStatus != "" || b.Status.Provisioning {
+				keep = true
+				break
+			}
+			if !b.Status.Collecting && b.Status.Health != "healthy" && b.Status.Health != "" {
+				keep = true
+				break
 			}
 		}
-		if !hasIssue {
+		if !keep {
 			delete(resp.Links, pk)
 		}
 	}
