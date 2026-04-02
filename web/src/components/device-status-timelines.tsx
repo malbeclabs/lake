@@ -278,11 +278,13 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
     return 'healthy'
   }, [deviceMetrics])
 
-  const leftBorderColor = currentHealth === 'unhealthy' || currentHealth === 'down'
-    ? 'border-l-red-500'
-    : currentHealth === 'degraded'
-      ? 'border-l-amber-500'
-      : 'border-l-transparent'
+  const leftBorderColor = currentHealth === 'down'
+    ? 'border-l-gray-500'
+    : currentHealth === 'unhealthy'
+      ? 'border-l-red-500'
+      : currentHealth === 'degraded'
+        ? 'border-l-amber-500'
+        : 'border-l-transparent'
 
   return (
     <div id={`device-row-${derivedInfo.pk}`} className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}>
