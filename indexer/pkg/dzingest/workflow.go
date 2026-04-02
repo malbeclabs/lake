@@ -52,8 +52,9 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			logger.Error("serviceability refresh failed", "error", err)
 		}
 
-		// Run telemetry latency, ISIS sync, and graph sync in parallel.
+		// Run telemetry latency, shreds, ISIS sync, and graph sync in parallel.
 		telemLatencyFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshTelemetryLatency)
+		shredsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShreds)
 		isisSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncISIS)
 		graphSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncGraph)
 
@@ -68,6 +69,12 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				return ctx.Err()
 			}
 			logger.Error("telemetry latency refresh failed", "error", err)
+		}
+		if err := shredsFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Error("shreds refresh failed", "error", err)
 		}
 		if err := isisSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {

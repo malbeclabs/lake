@@ -10,6 +10,7 @@ import (
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
@@ -23,6 +24,7 @@ type Indexer struct {
 	cfg Config
 
 	svc           *dzsvc.View
+	shreds        *dzshreds.View
 	graphStore    *dzgraph.Store
 	telemLatency  *dztelemlatency.View
 	telemUsage    *dztelemusage.View
@@ -77,6 +79,21 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create serviceability view: %w", err)
+	}
+
+	// Initialize shreds subscription view (optional, mainnet-beta + testnet only)
+	var shredsView *dzshreds.View
+	if cfg.ShredsRPC != nil {
+		shredsView, err = dzshreds.NewView(dzshreds.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			ShredsRPC:       cfg.ShredsRPC,
+			RefreshInterval: cfg.RefreshInterval,
+			ClickHouse:      cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create shreds view: %w", err)
+		}
 	}
 
 	// Initialize telemetry view
@@ -211,6 +228,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		cfg: cfg,
 
 		svc:           svcView,
+		shreds:        shredsView,
 		graphStore:    graphStore,
 		telemLatency:  telemView,
 		telemUsage:    telemetryUsageView,
@@ -291,6 +309,11 @@ func (i *Indexer) ISISSource() isis.Source {
 // ISISStore returns the ISIS ClickHouse store, or nil if not configured.
 func (i *Indexer) ISISStore() *isis.Store {
 	return i.isisStore
+}
+
+// Shreds returns the shreds subscription view, or nil if not configured.
+func (i *Indexer) Shreds() *dzshreds.View {
+	return i.shreds
 }
 
 // ValidatorsApp returns the validators.app view, or nil if not configured.

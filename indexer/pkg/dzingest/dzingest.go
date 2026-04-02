@@ -17,6 +17,7 @@ import (
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
@@ -33,6 +34,7 @@ type Config struct {
 
 	// Views and stores for activity execution.
 	Serviceability *dzsvc.View
+	Shreds         *dzshreds.View     // optional
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // optional
 	GraphStore     *dzgraph.Store     // optional
@@ -72,6 +74,7 @@ func Start(ctx context.Context, cfg Config) error {
 		IngestionLog:   cfg.IngestionLog,
 		Network:        cfg.Network,
 		Serviceability: cfg.Serviceability,
+		Shreds:         cfg.Shreds,
 		TelemLatency:   cfg.TelemLatency,
 		TelemUsage:     cfg.TelemUsage,
 		GraphStore:     cfg.GraphStore,

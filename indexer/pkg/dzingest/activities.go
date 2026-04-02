@@ -8,6 +8,7 @@ import (
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
@@ -19,6 +20,7 @@ type Activities struct {
 	IngestionLog   *ingestionlog.Writer
 	Network        string
 	Serviceability *dzsvc.View
+	Shreds         *dzshreds.View     // nil when shreds is not configured
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // nil when InfluxDB is not configured
 	GraphStore     *dzgraph.Store     // nil when Neo4j is not configured
@@ -33,6 +35,22 @@ func (a *Activities) RefreshServiceability(ctx context.Context) error {
 		result, err := a.Serviceability.Refresh(ctx)
 		if err != nil {
 			return result, fmt.Errorf("serviceability refresh: %w", err)
+		}
+		return result, nil
+	})
+}
+
+// RefreshShreds fetches shred subscription program state from RPC
+// and writes it to ClickHouse dimension tables. No-op if shreds is not configured.
+func (a *Activities) RefreshShreds(ctx context.Context) error {
+	if a.Shreds == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshShreds", a.Network)
+		return nil
+	}
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshShreds", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.Shreds.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("shreds refresh: %w", err)
 		}
 		return result, nil
 	})

@@ -22,6 +22,7 @@ import (
 
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
+	"github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
@@ -294,6 +295,19 @@ func run() error {
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 
+	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
+	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
+	shredsEnabled := *dzEnvFlag != config.EnvDevnet
+	var shredsClient *shreds.Client
+	if shredsEnabled {
+		shredsRPCURL := networkConfig.LedgerPublicRPCURL
+		if *dzEnvFlag == config.EnvMainnetBeta {
+			shredsRPCURL = networkConfig.SolanaRPCURL
+		}
+		shredsClient = shreds.New(shreds.NewRPCClient(shredsRPCURL), shreds.ProgramID)
+		log.Info("shreds subscription client initialized", "env", *dzEnvFlag, "rpc_url", shredsRPCURL)
+	}
+
 	var solanaRPC sol.SolanaRPC
 	if solanaEnabled {
 		solanaRPCClient := rpc.NewWithRetries(solanaNetworkConfig.RPCURL, nil)
@@ -489,7 +503,7 @@ func run() error {
 
 	// Initialize indexer (creates views but does not start refresh loops —
 	// Temporal workflows handle scheduling).
-	idx, err := indexer.New(ctx, indexer.Config{
+	idxCfg := indexer.Config{
 		DZEnv:            *dzEnvFlag,
 		Logger:           log,
 		Clock:            clockwork.NewRealClock(),
@@ -549,7 +563,11 @@ func run() error {
 
 		// Readiness configuration
 		SkipReadyWait: *skipReadyWaitFlag,
-	})
+	}
+	if shredsClient != nil {
+		idxCfg.ShredsRPC = shredsClient
+	}
+	idx, err := indexer.New(ctx, idxCfg)
 	if err != nil {
 		return fmt.Errorf("failed to create indexer: %w", err)
 	}
@@ -594,6 +612,7 @@ func run() error {
 				IngestionLog:   ingestionLogWriter,
 				Network:        *dzEnvFlag,
 				Serviceability: idx.Serviceability(),
+				Shreds:         idx.Shreds(),
 				TelemLatency:   idx.TelemLatency(),
 				TelemUsage:     idx.TelemUsage(),
 				GraphStore:     idx.GraphStore(),
@@ -840,6 +859,13 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
 
+	// Shreds subscription client (testnet only, not devnet).
+	var shredsClient *shreds.Client
+	if env != config.EnvDevnet {
+		shredsClient = shreds.New(shreds.NewRPCClient(networkConfig.LedgerPublicRPCURL), shreds.ProgramID)
+		log.Info("shreds subscription client initialized", "env", env)
+	}
+
 	// Initialize InfluxDB client for device usage (optional).
 	var influxDBClient dztelemusage.InfluxDBClient
 	if cfg.influxURL != "" && cfg.influxToken != "" && cfg.influxBucket != "" {
@@ -851,7 +877,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		log.Info("device usage (InfluxDB) client initialized", "bucket", cfg.influxBucket)
 	}
 
-	idx, err := indexer.New(ctx, indexer.Config{
+	secondaryIdxCfg := indexer.Config{
 		DZEnv:            env,
 		Logger:           log,
 		Clock:            clockwork.NewRealClock(),
@@ -883,7 +909,11 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		ISISEnabled:  cfg.isisS3Bucket != "",
 		ISISS3Bucket: cfg.isisS3Bucket,
 		ISISS3Region: cfg.isisS3Region,
-	})
+	}
+	if shredsClient != nil {
+		secondaryIdxCfg.ShredsRPC = shredsClient
+	}
+	idx, err := indexer.New(ctx, secondaryIdxCfg)
 	if err != nil {
 		return fmt.Errorf("failed to create indexer for %s: %w", env, err)
 	}
@@ -909,6 +939,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		IngestionLog:   secondaryIngestionLog,
 		Network:        env,
 		Serviceability: idx.Serviceability(),
+		Shreds:         idx.Shreds(),
 		TelemLatency:   idx.TelemLatency(),
 		TelemUsage:     idx.TelemUsage(),
 		GraphStore:     idx.GraphStore(),

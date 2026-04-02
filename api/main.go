@@ -554,6 +554,11 @@ func main() {
 		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
+		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
+		r.Get("/api/dz/shreds/client-seats", api.GetShredClientSeats)
+		r.Get("/api/dz/shreds/device-histories", api.GetShredDeviceHistories)
+		r.Get("/api/dz/shreds/metro-histories", api.GetShredMetroHistories)
+		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 

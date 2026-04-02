@@ -11,6 +11,7 @@ import (
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
+	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
@@ -50,6 +51,9 @@ type Config struct {
 	DeviceUsageInfluxBucket      string
 	DeviceUsageInfluxQueryWindow time.Duration
 	ReadyIncludesDeviceUsage     bool // If true, the indexer also waits for the device usage view to be ready.
+
+	// Shreds subscription configuration (optional, mainnet-beta + testnet only).
+	ShredsRPC dzshreds.ShredsRPC
 
 	// Solana configuration.
 	SolanaRPC sol.SolanaRPC

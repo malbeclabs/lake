@@ -32,6 +32,7 @@ import {
   BookOpen,
   Trophy,
   ArrowRightLeft,
+  Coins,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -88,6 +89,11 @@ export function Sidebar() {
   const isTenantsRoute = location.pathname === '/dz/tenants'
   const isUsersRoute = location.pathname === '/dz/users'
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
+  const isShredsRoute = location.pathname.startsWith('/dz/shreds')
+  const isShredsSeatsRoute = location.pathname === '/dz/shreds/seats'
+  const isShredsFundersRoute = location.pathname === '/dz/shreds/funders'
+  const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
+  const isShredsMetrosRoute = location.pathname === '/dz/shreds/metros'
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isScoreboardRoute = location.pathname === '/dz/edge/scoreboard'
   const isValidatorsRoute = location.pathname === '/solana/validators'
@@ -482,6 +488,26 @@ export function Sidebar() {
               <ShieldCheck className="h-4 w-4" />
               Publisher Check
             </Link>
+            <Link to="/dz/shreds/seats" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Coins className="h-4 w-4" />
+              Shred Subscriptions
+            </Link>
+            {isShredsRoute && (
+              <>
+                <Link to="/dz/shreds/seats" className={subNavItemClass(isShredsSeatsRoute)}>
+                  Seats
+                </Link>
+                <Link to="/dz/shreds/funders" className={subNavItemClass(isShredsFundersRoute)}>
+                  Funders
+                </Link>
+                <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
+                  Devices
+                </Link>
+                <Link to="/dz/shreds/metros" className={subNavItemClass(isShredsMetrosRoute)}>
+                  Metros
+                </Link>
+              </>
+            )}
             {isInternalUser && (
               <Link to="/dz/edge/scoreboard" className={navItemClass(isScoreboardRoute)}>
                 <Trophy className="h-4 w-4" />
