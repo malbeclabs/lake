@@ -355,19 +355,19 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
   // Current health from latest non-collecting bucket
-  const currentHealth = useMemo(() => {
+  const currentStatus = useMemo(() => {
     for (let i = linkMetrics.buckets.length - 1; i >= 0; i--) {
       const b = linkMetrics.buckets[i]
-      if (b.status && !b.status.collecting) return b.status.health
+      if (b.status && !b.status.collecting) return b.status
     }
-    return 'healthy'
+    return null
   }, [linkMetrics])
 
-  const leftBorderColor = currentHealth === 'down'
+  const leftBorderColor = currentStatus?.isis_down
     ? 'border-l-gray-500'
-    : currentHealth === 'unhealthy'
+    : currentStatus?.health === 'unhealthy'
       ? 'border-l-red-500'
-      : currentHealth === 'degraded'
+      : currentStatus?.health === 'degraded'
         ? 'border-l-amber-500'
         : 'border-l-transparent'
 

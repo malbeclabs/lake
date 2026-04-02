@@ -270,19 +270,19 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
   const dimBadgeClass = 'bg-muted-foreground/10 text-muted-foreground/50'
 
-  const currentHealth = useMemo(() => {
+  const currentStatus = useMemo(() => {
     for (let i = deviceMetrics.buckets.length - 1; i >= 0; i--) {
       const b = deviceMetrics.buckets[i]
-      if (b.status && !b.status.collecting) return b.status.health
+      if (b.status && !b.status.collecting) return b.status
     }
-    return 'healthy'
+    return null
   }, [deviceMetrics])
 
-  const leftBorderColor = currentHealth === 'down'
+  const leftBorderColor = currentStatus?.isis_overload || currentStatus?.isis_unreachable
     ? 'border-l-gray-500'
-    : currentHealth === 'unhealthy'
+    : currentStatus?.health === 'unhealthy'
       ? 'border-l-red-500'
-      : currentHealth === 'degraded'
+      : currentStatus?.health === 'degraded'
         ? 'border-l-amber-500'
         : 'border-l-transparent'
 
