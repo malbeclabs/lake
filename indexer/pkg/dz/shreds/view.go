@@ -56,12 +56,12 @@ type PaymentEscrowRow struct {
 }
 
 type MetroHistoryRow struct {
-	PK                       string
-	ExchangeKey              string
-	IsCurrentPriceFinalized  bool
-	TotalInitializedDevices  uint16
-	CurrentEpoch             uint64
-	CurrentUSDCPriceDollars  uint16
+	PK                      string
+	ExchangeKey             string
+	IsCurrentPriceFinalized bool
+	TotalInitializedDevices uint16
+	CurrentEpoch            uint64
+	CurrentUSDCPriceDollars uint16
 }
 
 type DeviceHistoryRow struct {
@@ -87,20 +87,20 @@ type ValidatorClientRewardsRow struct {
 }
 
 type ShredDistributionRow struct {
-	PK                                string
-	SubscriptionEpoch                 uint64
-	AssociatedDZEpoch                 uint64
-	DeviceCount                       uint16
-	ClientSeatCount                   uint16
-	ValidatorRewardsProportion        uint16
-	TotalPublishingValidators         uint32
-	CollectedUSDCPayments             uint64
-	Collected2ZConvertedFromUSDC      uint64
-	DistributedValidatorRewardsCount  uint32
+	PK                                 string
+	SubscriptionEpoch                  uint64
+	AssociatedDZEpoch                  uint64
+	DeviceCount                        uint16
+	ClientSeatCount                    uint16
+	ValidatorRewardsProportion         uint16
+	TotalPublishingValidators          uint32
+	CollectedUSDCPayments              uint64
+	Collected2ZConvertedFromUSDC       uint64
+	DistributedValidatorRewardsCount   uint32
 	DistributedContributorRewardsCount uint32
-	DistributedValidator2ZAmount      uint64
-	DistributedContributor2ZAmount    uint64
-	Burned2ZAmount                    uint64
+	DistributedValidator2ZAmount       uint64
+	DistributedContributor2ZAmount     uint64
+	Burned2ZAmount                     uint64
 }
 
 // ShredsRPC abstracts the shreds SDK client for testing.

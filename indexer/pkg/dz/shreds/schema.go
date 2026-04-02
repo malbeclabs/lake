@@ -289,13 +289,13 @@ func (s *ShredDistributionSchema) GetPrimaryKey(d ShredDistributionRow) string {
 }
 
 var (
-	executionControllerSchema  = &ExecutionControllerSchema{}
-	clientSeatSchema           = &ClientSeatSchema{}
-	paymentEscrowSchema        = &PaymentEscrowSchema{}
-	metroHistorySchema         = &MetroHistorySchema{}
-	deviceHistorySchema        = &DeviceHistorySchema{}
+	executionControllerSchema    = &ExecutionControllerSchema{}
+	clientSeatSchema             = &ClientSeatSchema{}
+	paymentEscrowSchema          = &PaymentEscrowSchema{}
+	metroHistorySchema           = &MetroHistorySchema{}
+	deviceHistorySchema          = &DeviceHistorySchema{}
 	validatorClientRewardsSchema = &ValidatorClientRewardsSchema{}
-	shredDistributionSchema    = &ShredDistributionSchema{}
+	shredDistributionSchema      = &ShredDistributionSchema{}
 )
 
 func NewExecutionControllerDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
