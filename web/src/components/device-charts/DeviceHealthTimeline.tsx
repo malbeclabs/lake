@@ -278,7 +278,7 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
             return (
               <div
                 key={bar.ts}
-                className="relative flex-1 min-w-0"
+                className={`relative flex-1 min-w-0 ${highlightedBarIndex === index ? 'ring-2 ring-foreground/60 rounded-sm z-10' : ''}`}
                 onMouseEnter={() => {
                   setHoveredIndex(index)
                   onBarHover?.({
@@ -297,7 +297,7 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
                       bar.collecting && displayHealth === 'no_data'
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
-                    } ${highlightedBarIndex === index ? 'ring-2 ring-foreground/70' : ''}`}
+                    }`}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />

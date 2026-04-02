@@ -364,7 +364,7 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
             return (
               <div
                 key={bar.ts}
-                className="relative flex-1 min-w-0"
+                className={`relative flex-1 min-w-0 ${highlightedBarIndex === index ? 'ring-2 ring-foreground/60 rounded-sm z-10' : ''}`}
                 onMouseEnter={() => {
                   setHoveredIndex(index)
                   onBarHover?.({
@@ -383,7 +383,7 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
                       bar.collecting && displayHealth === 'no_data'
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
-                    } ${highlightedBarIndex === index ? 'ring-2 ring-foreground/70' : ''}`}
+                    }`}
                     style={getDrainStripeStyle(bar.drainStatus)}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
