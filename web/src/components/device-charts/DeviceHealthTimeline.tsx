@@ -235,9 +235,10 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
   }, [data.buckets])
 
   // Recent badges: active in last 30 minutes
+  const nowMinutes = Math.floor(Date.now() / 60000)
   const recentBadges = useMemo(() => {
     const recent = new Set<string>()
-    const cutoff = Date.now() / 1000 - 30 * 60
+    const cutoff = nowMinutes * 60 - 30 * 60
     for (const b of data.buckets) {
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
@@ -252,7 +253,8 @@ export function DeviceHealthTimeline({ data, className, hideBadges, onBarHover, 
       if (b.status?.isis_unreachable) recent.add('ISIS Unreachable')
     }
     return recent
-  }, [data.buckets])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.buckets, nowMinutes])
 
   const hoveredBarBadges = useMemo(() => {
     const activeIdx = hoveredIndex ?? highlightedBarIndex

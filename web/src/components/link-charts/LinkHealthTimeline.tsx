@@ -316,9 +316,11 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
   }, [data.buckets])
 
   // Recent badges: active in last 30 minutes
+  // Use a coarse timestamp (floored to minutes) so this doesn't change every render
+  const nowMinutes = Math.floor(Date.now() / 60000)
   const recentBadges = useMemo(() => {
     const recent = new Set<string>()
-    const cutoff = Date.now() / 1000 - 30 * 60
+    const cutoff = nowMinutes * 60 - 30 * 60
     for (const b of data.buckets) {
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
@@ -341,7 +343,8 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
       if (b.status?.isis_down) recent.add('ISIS Down')
     }
     return recent
-  }, [data.buckets])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.buckets, nowMinutes])
 
   // Hovered bar badges
   const hoveredBarBadges = useMemo(() => {

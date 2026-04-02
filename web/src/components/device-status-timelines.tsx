@@ -220,9 +220,10 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
     ? (devicesWithIssues.get(derivedInfo.code) ?? [])
     : derivedInfo.issueReasons
 
+  const nowMinutes = Math.floor(Date.now() / 60000)
   const recentIssues = useMemo(() => {
     const recent = new Set<string>()
-    const cutoff = Date.now() / 1000 - 30 * 60 // last 30 minutes
+    const cutoff = nowMinutes * 60 - 30 * 60
     for (const b of deviceMetrics.buckets) {
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
@@ -239,7 +240,8 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
       if (b.status?.isis_unreachable) recent.add('isis_unreachable')
     }
     return recent
-  }, [deviceMetrics])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceMetrics, nowMinutes])
 
   const hoveredIssues = useMemo(() => {
     if (!hoveredTimeRange) return null

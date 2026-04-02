@@ -33,10 +33,10 @@ type DeviceMetricsResponse struct {
 
 // DeviceMetricsBucket holds all metric categories for a single time bucket.
 type DeviceMetricsBucket struct {
-	TS         string                       `json:"ts"`
-	Status     *DeviceMetricsStatus         `json:"status,omitempty"`
-	Traffic    *DeviceMetricsTraffic        `json:"traffic,omitempty"`
-	Interfaces []DeviceInterfaceTraffic     `json:"interfaces,omitempty"`
+	TS         string                   `json:"ts"`
+	Status     *DeviceMetricsStatus     `json:"status,omitempty"`
+	Traffic    *DeviceMetricsTraffic    `json:"traffic,omitempty"`
+	Interfaces []DeviceInterfaceTraffic `json:"interfaces,omitempty"`
 }
 
 // DeviceInterfaceTraffic holds per-interface traffic for a single bucket.
@@ -206,11 +206,11 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 	}
 
 	var (
-		meta            *statusDeviceMeta
-		intfRows        []interfaceRollupRow
-		perIntfRows     []interfaceRollupRow
-		statusChanges   []EntityStatusChange
-		hasProbes       bool // whether any link connected to this device has probe data
+		meta          *statusDeviceMeta
+		intfRows      []interfaceRollupRow
+		perIntfRows   []interfaceRollupRow
+		statusChanges []EntityStatusChange
+		hasProbes     bool // whether any link connected to this device has probe data
 	)
 
 	g, gctx := errgroup.WithContext(ctx)

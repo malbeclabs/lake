@@ -192,6 +192,15 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
   const hasAnyData = uPlotData[0].length > 0 && uPlotData.slice(1).some(
     (s) => (s as (number | null)[]).some((v) => v != null))
 
+  // Active interfaces: those with any non-null in or out data
+  const activeInterfaces = useMemo(() => {
+    return interfaces.filter((_, i) => {
+      const inSeries = uPlotData[i * 2 + 1] as (number | null)[]
+      const outSeries = uPlotData[i * 2 + 2] as (number | null)[]
+      return (inSeries?.some((v) => v != null) || outSeries?.some((v) => v != null))
+    })
+  }, [interfaces, uPlotData])
+
   if (!hasAnyData) {
     return (
       <div className={className}>
@@ -202,15 +211,6 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
       </div>
     )
   }
-
-  // Active interfaces: those with any non-null in or out data
-  const activeInterfaces = useMemo(() => {
-    return interfaces.filter((_, i) => {
-      const inSeries = uPlotData[i * 2 + 1] as (number | null)[]
-      const outSeries = uPlotData[i * 2 + 2] as (number | null)[]
-      return (inSeries?.some((v) => v != null) || outSeries?.some((v) => v != null))
-    })
-  }, [interfaces, uPlotData])
 
   return (
     <div className={`${className ?? ''} group/chart`}>

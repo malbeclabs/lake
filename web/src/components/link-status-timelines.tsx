@@ -324,16 +324,18 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
     ? (linksWithIssues.get(derivedInfo.code) ?? [])
     : derivedInfo.issueReasons
 
+  const nowMinutes = Math.floor(Date.now() / 60000)
   const recentIssues = useMemo(() => {
     const recent = new Set<string>()
-    const cutoff = Date.now() / 1000 - 30 * 60 // last 30 minutes
+    const cutoff = nowMinutes * 60 - 30 * 60
     for (const b of linkMetrics.buckets) {
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
       addBucketIssues(b, recent)
     }
     return recent
-  }, [linkMetrics])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkMetrics, nowMinutes])
 
   const hoveredIssues = useMemo(() => {
     if (!hoveredTimeRange) return null
