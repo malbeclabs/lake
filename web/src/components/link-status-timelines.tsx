@@ -410,9 +410,6 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
                 {derivedInfo.code}
               </Link>
               <LinkInfoPopover linkMetrics={linkMetrics} criticality={criticalityMap?.get(derivedInfo.code)} />
-              {criticalityMap?.get(derivedInfo.code) && criticalityMap.get(derivedInfo.code) !== 'redundant' && (
-                <CriticalityBadge criticality={criticalityMap.get(derivedInfo.code)!} />
-              )}
             </div>
             <div className="text-xs text-muted-foreground">
               {derivedInfo.linkType}{derivedInfo.contributor && ` · ${derivedInfo.contributor}`} · {derivedInfo.sideAMetro} ↔ {derivedInfo.sideZMetro}
