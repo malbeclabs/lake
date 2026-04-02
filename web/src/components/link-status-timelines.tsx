@@ -3,7 +3,7 @@ import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
 import { fetchBulkLinkMetrics, fetchLinkMetrics } from '@/lib/api'
-import type { LinkMetricsResponse } from '@/lib/api'
+import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
 import { LinkPacketLossChart as LinkPacketLossDetailChart } from '@/components/link-charts/LinkPacketLossChart'
 import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
@@ -272,6 +272,32 @@ function LinkInfoPopover({ linkMetrics, criticality }: { linkMetrics: LinkMetric
   )
 }
 
+// Map server-provided reasons and traffic data to badge issue keys.
+function addBucketIssues(b: LinkMetricsBucket, issues: Set<string>) {
+  // Use server reasons (covers latency-based issues even without latency data)
+  if (b.status?.reasons) {
+    for (const r of b.status.reasons) {
+      if (r.includes('packet loss')) issues.add('packet_loss')
+      if (r.includes('latency')) issues.add('high_latency')
+      if (r.includes('interface error')) issues.add('interface_errors')
+      if (r.includes('discard')) issues.add('discards')
+      if (r.includes('carrier')) issues.add('carrier_transitions')
+      if (r.includes('One-sided')) issues.add('no_data')
+    }
+  }
+  // Also check traffic data directly (for FCS errors and utilization not in reasons)
+  if (b.traffic) {
+    const t = b.traffic
+    if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) issues.add('interface_errors')
+    if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) issues.add('fcs_errors')
+    if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) issues.add('discards')
+    if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) issues.add('carrier_transitions')
+    if (t.utilization_in_pct > 80 || t.utilization_out_pct > 80) issues.add('high_utilization')
+  }
+  if (b.status && !b.status.collecting && b.status.health === 'no_data') issues.add('no_data')
+  if (b.status?.isis_down) issues.add('missing_adjacency')
+}
+
 const cardClass = "rounded-lg border border-border p-4"
 
 interface LinkRowProps {
@@ -303,21 +329,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
     const nonCollecting = linkMetrics.buckets.filter(b => !b.status?.collecting)
     const tail = nonCollecting.slice(-6)
     for (const b of tail) {
-      if (b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0)) recent.add('packet_loss')
-      if (linkMetrics.committed_rtt_us > 0 && b.latency) {
-        const avgRtt = (b.latency.a_avg_rtt_us + b.latency.z_avg_rtt_us) / 2
-        if (avgRtt > linkMetrics.committed_rtt_us * 1.2) recent.add('high_latency')
-      }
-      if (b.traffic) {
-        const t = b.traffic
-        if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) recent.add('interface_errors')
-        if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) recent.add('fcs_errors')
-        if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) recent.add('discards')
-        if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) recent.add('carrier_transitions')
-        if (t.utilization_in_pct > 80 || t.utilization_out_pct > 80) recent.add('high_utilization')
-      }
-      if (b.status && !b.status.collecting && b.status.health === 'no_data') recent.add('no_data')
-      if (b.status?.isis_down) recent.add('missing_adjacency')
+      addBucketIssues(b, recent)
     }
     return recent
   }, [linkMetrics])
@@ -328,21 +340,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
     for (const b of linkMetrics.buckets) {
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < hoveredTimeRange.start || ts >= hoveredTimeRange.end) continue
-      if (b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0)) issues.add('packet_loss')
-      if (linkMetrics.committed_rtt_us > 0 && b.latency) {
-        const avgRtt = (b.latency.a_avg_rtt_us + b.latency.z_avg_rtt_us) / 2
-        if (avgRtt > linkMetrics.committed_rtt_us * 1.2) issues.add('high_latency')
-      }
-      if (b.traffic) {
-        const t = b.traffic
-        if (t.side_a_in_errors + t.side_a_out_errors + t.side_z_in_errors + t.side_z_out_errors > 0) issues.add('interface_errors')
-        if (t.side_a_in_fcs_errors + t.side_z_in_fcs_errors > 0) issues.add('fcs_errors')
-        if (t.side_a_in_discards + t.side_a_out_discards + t.side_z_in_discards + t.side_z_out_discards > 0) issues.add('discards')
-        if (t.side_a_carrier_transitions + t.side_z_carrier_transitions > 0) issues.add('carrier_transitions')
-        if (t.utilization_in_pct > 80 || t.utilization_out_pct > 80) issues.add('high_utilization')
-      }
-      if (b.status && b.status.health === 'no_data') issues.add('no_data')
-      if (b.status?.isis_down) issues.add('missing_adjacency')
+      addBucketIssues(b, issues)
     }
     return issues
   }, [hoveredTimeRange, linkMetrics])
