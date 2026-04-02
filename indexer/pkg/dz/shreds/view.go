@@ -14,6 +14,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
+	"golang.org/x/sync/errgroup"
 )
 
 // Row types for ClickHouse dimension tables.
@@ -246,48 +247,60 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("fetch execution controller: %w", err)
 	}
 
-	// Fetch all batch-fetchable account types.
-	clientSeats, err := v.cfg.ShredsRPC.FetchAllClientSeats(ctx)
-	if err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
-		return result, fmt.Errorf("fetch client seats: %w", err)
-	}
+	// Fetch all batch-fetchable account types in parallel.
+	var (
+		clientSeats      []shreds.KeyedClientSeat
+		paymentEscrows   []shreds.KeyedPaymentEscrow
+		metroHistories   []shreds.KeyedMetroHistory
+		deviceHistories  []shreds.KeyedDeviceHistory
+		validatorRewards []shreds.KeyedValidatorClientRewards
+		distributions    []ShredDistributionRow
+	)
 
-	paymentEscrows, err := v.cfg.ShredsRPC.FetchAllPaymentEscrows(ctx)
-	if err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
-		return result, fmt.Errorf("fetch payment escrows: %w", err)
-	}
-
-	metroHistories, err := v.cfg.ShredsRPC.FetchAllMetroHistories(ctx)
-	if err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
-		return result, fmt.Errorf("fetch metro histories: %w", err)
-	}
-
-	deviceHistories, err := v.cfg.ShredsRPC.FetchAllDeviceHistories(ctx)
-	if err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
-		return result, fmt.Errorf("fetch device histories: %w", err)
-	}
-
-	validatorRewards, err := v.cfg.ShredsRPC.FetchAllValidatorClientRewards(ctx)
-	if err != nil {
-		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
-		return result, fmt.Errorf("fetch validator client rewards: %w", err)
-	}
-
-	// Fetch the current epoch's shred distribution.
-	var distributions []ShredDistributionRow
-	if ec.CurrentSubscriptionEpoch > 0 {
-		dist, err := v.cfg.ShredsRPC.FetchShredDistribution(ctx, ec.CurrentSubscriptionEpoch)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		clientSeats, err = v.cfg.ShredsRPC.FetchAllClientSeats(gctx)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		paymentEscrows, err = v.cfg.ShredsRPC.FetchAllPaymentEscrows(gctx)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		metroHistories, err = v.cfg.ShredsRPC.FetchAllMetroHistories(gctx)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		deviceHistories, err = v.cfg.ShredsRPC.FetchAllDeviceHistories(gctx)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		validatorRewards, err = v.cfg.ShredsRPC.FetchAllValidatorClientRewards(gctx)
+		return err
+	})
+	g.Go(func() error {
+		if ec.CurrentSubscriptionEpoch == 0 {
+			return nil
+		}
+		dist, err := v.cfg.ShredsRPC.FetchShredDistribution(gctx, ec.CurrentSubscriptionEpoch)
 		if err != nil {
 			// Distribution may not exist yet for the current epoch; log and continue.
 			v.log.Warn("shreds: failed to fetch current distribution, skipping",
 				"epoch", ec.CurrentSubscriptionEpoch, "error", err)
-		} else {
-			distributions = []ShredDistributionRow{convertShredDistribution(dist)}
+			return nil
 		}
+		distributions = []ShredDistributionRow{convertShredDistribution(dist)}
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
+		return result, fmt.Errorf("fetch shreds accounts: %w", err)
 	}
 
 	v.log.Debug("shreds: fetched program data",
@@ -298,6 +311,16 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"validator_rewards", len(validatorRewards),
 		"distributions", len(distributions),
 	)
+
+	// Validate that we received data — empty responses would tombstone all existing entities.
+	if len(metroHistories) == 0 {
+		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no metro histories (possible RPC issue)")
+	}
+	if len(deviceHistories) == 0 {
+		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no device histories (possible RPC issue)")
+	}
 
 	// Convert and write each entity type.
 	ecRows := []ExecutionControllerRow{convertExecutionController(ec)}
