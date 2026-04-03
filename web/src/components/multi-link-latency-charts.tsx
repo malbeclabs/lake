@@ -377,7 +377,7 @@ export function MultiLinkLatencyCharts({
 
   const directionToggle = (
     <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
-      {([['combined', 'A+Z'], ['a_to_z', 'A→Z'], ['z_to_a', 'Z→A']] as [Direction, string][]).map(([d, label]) => (
+      {([['combined', 'A↔Z'], ['a_to_z', 'A→Z'], ['z_to_a', 'Z→A']] as [Direction, string][]).map(([d, label]) => (
         <button
           key={d}
           onClick={() => setDirection(d)}
@@ -424,6 +424,10 @@ export function MultiLinkLatencyCharts({
 
   return (
     <div className={`space-y-4 ${className || ''}`}>
+      <div className="flex items-center justify-end gap-2">
+        {directionToggle}
+        {modeToggle}
+      </div>
       {/* RTT */}
       <div className="border border-border rounded-lg bg-card overflow-hidden group/chart">
         <div className="flex items-center gap-3 px-4 py-3">
@@ -432,19 +436,14 @@ export function MultiLinkLatencyCharts({
           </button>
           <span className="text-xs text-muted-foreground uppercase tracking-wider">Round-Trip Time</span>
           <RefreshButton fetching={isFetching} onClick={refresh} />
-          <div className="flex-1" />
-          {directionToggle}
-          {modeToggle}
         </div>
         <div className="h-0.5 w-full overflow-hidden">
           {isFetching && <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />}
         </div>
-        {rttOpen && (
-          <div className="px-4 pb-4">
-            <div ref={rttChartRef} className="h-[180px]" onClick={(e) => handleChartClick(rttPlotRef, rttChart.keys, rttLegend, e)} />
-            <LegendPanel series={rttLegendSeries} legend={rttLegend} values={rttDisplayValues} maxValues={rttMaxValues} hoveredTime={rttHoveredTime} height={rttLegendHeight} onResize={setRttLegendHeight} />
-          </div>
-        )}
+        <div className={`px-4 pb-4 ${rttOpen ? '' : 'hidden'}`}>
+          <div ref={rttChartRef} className="h-[180px]" onClick={(e) => handleChartClick(rttPlotRef, rttChart.keys, rttLegend, e)} />
+          <LegendPanel series={rttLegendSeries} legend={rttLegend} values={rttDisplayValues} maxValues={rttMaxValues} hoveredTime={rttHoveredTime} height={rttLegendHeight} onResize={setRttLegendHeight} />
+        </div>
       </div>
 
       {/* Jitter */}
@@ -460,12 +459,10 @@ export function MultiLinkLatencyCharts({
         <div className="h-0.5 w-full overflow-hidden">
           {isFetching && <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />}
         </div>
-        {jitterOpen && (
-          <div className="px-4 pb-4">
-            <div ref={jitterChartRef} className="h-36" onClick={(e) => handleChartClick(jitterPlotRef, jitterChart.keys, jitterLegend, e)} />
-            <LegendPanel series={jitterLegendSeries} legend={jitterLegend} values={jitterDisplayValues} maxValues={jitterMaxValues} hoveredTime={jitterHoveredTime} height={jitterLegendHeight} onResize={setJitterLegendHeight} />
-          </div>
-        )}
+        <div className={`px-4 pb-4 ${jitterOpen ? '' : 'hidden'}`}>
+          <div ref={jitterChartRef} className="h-36" onClick={(e) => handleChartClick(jitterPlotRef, jitterChart.keys, jitterLegend, e)} />
+          <LegendPanel series={jitterLegendSeries} legend={jitterLegend} values={jitterDisplayValues} maxValues={jitterMaxValues} hoveredTime={jitterHoveredTime} height={jitterLegendHeight} onResize={setJitterLegendHeight} />
+        </div>
       </div>
 
       {/* Loss */}
@@ -482,12 +479,10 @@ export function MultiLinkLatencyCharts({
           <div className="h-0.5 w-full overflow-hidden">
             {isFetching && <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />}
           </div>
-          {lossOpen && (
-            <div className="px-4 pb-4">
-              <div ref={lossChartRef} className="h-[120px]" onClick={(e) => handleChartClick(lossPlotRef, lossChart.keys, lossLegend, e)} />
-              <LegendPanel series={lossLegendSeries} legend={lossLegend} values={lossDisplayValues} maxValues={lossMaxValues} hoveredTime={lossHoveredTime} height={lossLegendHeight} onResize={setLossLegendHeight} />
-            </div>
-          )}
+          <div className={`px-4 pb-4 ${lossOpen ? '' : 'hidden'}`}>
+            <div ref={lossChartRef} className="h-[120px]" onClick={(e) => handleChartClick(lossPlotRef, lossChart.keys, lossLegend, e)} />
+            <LegendPanel series={lossLegendSeries} legend={lossLegend} values={lossDisplayValues} maxValues={lossMaxValues} hoveredTime={lossHoveredTime} height={lossLegendHeight} onResize={setLossLegendHeight} />
+          </div>
         </div>
       )}
     </div>

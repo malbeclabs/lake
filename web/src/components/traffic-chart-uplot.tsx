@@ -146,7 +146,7 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
       const label = typeof u.series[i].label === 'string' ? u.series[i].label as string : ''
       const seriesKey = label.replace(new RegExp(` (${inLabel}|${outLabel})$`), '')
       const isMatch = key === null || seriesKey === key
-      u.series[i].alpha = isMatch ? 1 : 0
+      u.series[i].alpha = isMatch ? 1 : 0.15
     }
     u.redraw()
   }, [stacked, inLabel, outLabel])

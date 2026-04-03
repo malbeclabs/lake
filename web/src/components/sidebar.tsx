@@ -82,12 +82,12 @@ export function Sidebar() {
   const isTrafficInterfaces = location.pathname === '/traffic/interfaces'
 
   // Entity routes
-  const isDevicesRoute = location.pathname === '/dz/devices'
-  const isLinksRoute = location.pathname === '/dz/links'
-  const isMetrosRoute = location.pathname === '/dz/metros'
-  const isContributorsRoute = location.pathname === '/dz/contributors'
-  const isTenantsRoute = location.pathname === '/dz/tenants'
-  const isUsersRoute = location.pathname === '/dz/users'
+  const isDevicesRoute = location.pathname.startsWith('/dz/devices')
+  const isLinksRoute = location.pathname.startsWith('/dz/links')
+  const isMetrosRoute = location.pathname.startsWith('/dz/metros')
+  const isContributorsRoute = location.pathname.startsWith('/dz/contributors')
+  const isTenantsRoute = location.pathname.startsWith('/dz/tenants')
+  const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds')
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/seats'
@@ -96,8 +96,8 @@ export function Sidebar() {
   const isShredsMetrosRoute = location.pathname === '/dz/shreds/metros'
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isScoreboardRoute = location.pathname === '/dz/edge/scoreboard'
-  const isValidatorsRoute = location.pathname === '/solana/validators'
-  const isGossipNodesRoute = location.pathname === '/solana/gossip-nodes'
+  const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
+  const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
 
   const [isCollapsed, setIsCollapsed] = useState(() => {
