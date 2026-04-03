@@ -376,11 +376,7 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 		intfIndex[sk] = &intfRows[i]
 	}
 
-	// Effective committed RTT (zero for non-WAN or same-metro)
 	committedRtt := meta.CommittedRttUs
-	if meta.LinkType != "WAN" || meta.SideAMetro == meta.SideZMetro {
-		committedRtt = 0
-	}
 
 	// Build buckets
 	buckets := make([]LinkMetricsBucket, 0, params.BucketCount)
@@ -875,11 +871,7 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 	// Build per-link responses
 	links := make(map[string]*LinkMetricsResponse, len(metaMap))
 	for linkPK, meta := range metaMap {
-		// Effective committed RTT
 		committedRtt := meta.CommittedRttUs
-		if meta.LinkType != "WAN" || meta.SideAMetro == meta.SideZMetro {
-			committedRtt = 0
-		}
 
 		// Extract per-link interface index subset for buildLinkMetricsStatus/Traffic
 		perLinkIntfIndex := make(map[linkMetricsSideKey]*interfaceRollupRow)
