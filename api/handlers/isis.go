@@ -1744,16 +1744,8 @@ func (a *API) GetMetroPathLatency(w http.ResponseWriter, r *http.Request) {
 // FetchMetroPathLatencyData fetches metro path latency data for the given optimization strategy.
 // Used by both the handler and the cache.
 func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*MetroPathLatencyResponse, error) {
-	if a.Neo4jClient == nil {
-		return nil, fmt.Errorf("neo4j not available")
-	}
-
 	start := time.Now()
 
-	// Load the in-memory topology graph using committed latency from link topology.
-	// This uses Device-Link-Device (CONNECTS) relationships with committed_rtt_ns
-	// as edge weights, which gives accurate latency values (unlike ISIS_ADJACENT
-	// metrics which can be artificially low on transit switches).
 	g, err := a.loadTopologyGraph(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
@@ -3147,46 +3139,13 @@ func (a *API) GetMetroDevicePaths(w http.ResponseWriter, r *http.Request) {
 			for i := range response.DevicePairs {
 				response.DevicePairs[i].BestPath = multiPathResp.Paths[i]
 			}
-
-			// Recalculate latency stats using measured latency where available
-			if len(response.DevicePairs) > 0 {
-				var totalMeasured float64
-				var measuredCount int
-				response.MinLatencyMs = 0
-				response.MaxLatencyMs = 0
-
-				for i, pair := range response.DevicePairs {
-					latencyMs := pair.BestPath.MeasuredLatencyMs
-					if latencyMs == 0 {
-						latencyMs = float64(pair.BestPath.TotalMetric) / 1000.0
-					}
-					if i == 0 || latencyMs < response.MinLatencyMs {
-						response.MinLatencyMs = latencyMs
-					}
-					if latencyMs > response.MaxLatencyMs {
-						response.MaxLatencyMs = latencyMs
-					}
-					totalMeasured += latencyMs
-					measuredCount++
-				}
-
-				if measuredCount > 0 {
-					response.AvgLatencyMs = totalMeasured / float64(measuredCount)
-				}
-			}
 		}
 	}
 
-	// Sort device pairs by latency
+	// Sort device pairs by committed/override metric
 	slices.SortFunc(response.DevicePairs, func(a, b MetroDevicePairPath) int {
-		aLatency := a.BestPath.MeasuredLatencyMs
-		if aLatency == 0 {
-			aLatency = float64(a.BestPath.TotalMetric)
-		}
-		bLatency := b.BestPath.MeasuredLatencyMs
-		if bLatency == 0 {
-			bLatency = float64(b.BestPath.TotalMetric)
-		}
+		aLatency := float64(a.BestPath.TotalMetric)
+		bLatency := float64(b.BestPath.TotalMetric)
 		if aLatency < bLatency {
 			return -1
 		}

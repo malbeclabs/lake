@@ -191,7 +191,7 @@ export function MetroPathModePanel({
 
                 <div className="max-h-48 overflow-y-auto space-y-0.5">
                   {pathsResult.devicePairs.map((pair, index) => {
-                    const latencyMs = pair.bestPath.measuredLatencyMs || pair.bestPath.totalMetric / 1000
+                    const latencyMs = pair.bestPath.totalMetric / 1000
                     const bgColor = getLatencyColor(
                       latencyMs,
                       pathsResult.minLatencyMs,
@@ -295,7 +295,7 @@ function SinglePathView({
   compact?: boolean
 }) {
   const color = isDark ? PATH_COLORS[colorIndex % PATH_COLORS.length].dark : PATH_COLORS[colorIndex % PATH_COLORS.length].light
-  const latencyMs = pair.bestPath.measuredLatencyMs || pair.bestPath.totalMetric / 1000
+  const latencyMs = pair.bestPath.totalMetric / 1000
 
   return (
     <div
@@ -316,7 +316,7 @@ function SinglePathView({
           const isLastHop = i === pair.bestPath.path.length - 1
           // Edge latency is stored on the DESTINATION hop, so look at next hop for latency from this hop
           const nextHop = !isLastHop ? pair.bestPath.path[i + 1] : null
-          const hopLatencyMs = nextHop?.edgeMeasuredMs ?? (nextHop?.edgeMetric ? nextHop.edgeMetric / 1000 : null)
+          const hopLatencyMs = nextHop?.edgeMetric ? nextHop.edgeMetric / 1000 : null
 
           return (
             <div key={hop.devicePK} className="flex items-center gap-1">

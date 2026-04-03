@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/malbeclabs/lake/api/metrics"
 )
 
 // Graph types for in-memory shortest path computation.
@@ -37,76 +39,103 @@ type kspPath struct {
 	TotalMetric uint32
 }
 
-// loadTopologyGraph loads the device/link topology from Neo4j into memory.
-// Edge weights use committed_rtt_ns (converted to microseconds) as the metric.
+// loadTopologyGraph loads the device/link topology from ClickHouse into memory.
+// Edge weights use isis_delay_override_ns (if set) or committed_rtt_ns, converted
+// to microseconds, as the metric.
 func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
-	session := a.neo4jSession(ctx)
-	defer session.Close(ctx)
-
 	g := &kspGraph{
 		Adj:   make(map[string][]kspEdge),
 		Nodes: make(map[string]kspNodeInfo),
 	}
 
-	// Load all links with committed latency and device/metro info.
-	// Links are bidirectional, so we add edges in both directions.
-	edgeCypher := `
-		MATCH (a:Device)-[:CONNECTS]-(l:Link)-[:CONNECTS]-(b:Device)
-		WHERE a.pk < b.pk AND l.status = 'activated'
-		OPTIONAL MATCH (a)-[:LOCATED_IN]->(mA:Metro)
-		OPTIONAL MATCH (b)-[:LOCATED_IN]->(mB:Metro)
-		RETURN a.pk AS a_pk, b.pk AS b_pk,
-		       l.committed_rtt_ns AS committed_rtt_ns,
-		       coalesce(l.bandwidth, 0) AS bandwidth_bps,
-		       a.code AS a_code, a.status AS a_status, a.device_type AS a_type,
-		       mA.pk AS a_metro_pk, mA.code AS a_metro_code,
-		       b.code AS b_code, b.status AS b_status, b.device_type AS b_type,
-		       mB.pk AS b_metro_pk, mB.code AS b_metro_code
+	query := `
+		SELECT
+			l.side_a_pk AS a_pk,
+			l.side_z_pk AS b_pk,
+			l.committed_rtt_ns AS committed_rtt_ns,
+			l.isis_delay_override_ns AS isis_delay_override_ns,
+			COALESCE(l.bandwidth_bps, 0) AS bandwidth_bps,
+			da.pk AS a_device_pk,
+			da.code AS a_code,
+			da.status AS a_status,
+			da.device_type AS a_type,
+			COALESCE(ma.pk, '') AS a_metro_pk,
+			COALESCE(ma.code, '') AS a_metro_code,
+			dz.pk AS b_device_pk,
+			dz.code AS b_code,
+			dz.status AS b_status,
+			dz.device_type AS b_type,
+			COALESCE(mz.pk, '') AS b_metro_pk,
+			COALESCE(mz.code, '') AS b_metro_code
+		FROM dz_links_current l
+		JOIN dz_devices_current da ON l.side_a_pk = da.pk
+		JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
+		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
+		WHERE l.status = 'activated'
 	`
 
-	result, err := session.Run(ctx, edgeCypher, nil)
+	start := time.Now()
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("loading topology graph: %w", err)
 	}
+	defer rows.Close()
 
-	records, err := result.Collect(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("collecting topology graph: %w", err)
-	}
+	var edgeCount int
+	for rows.Next() {
+		var (
+			aPK, bPK                       string
+			committedNs, overrideNs        int64
+			bwBps                          int64
+			aDevicePK, aCode, aStatus, aType string
+			aMetroPK, aMetroCode           string
+			bDevicePK, bCode, bStatus, bType string
+			bMetroPK, bMetroCode           string
+		)
+		if err := rows.Scan(
+			&aPK, &bPK,
+			&committedNs, &overrideNs, &bwBps,
+			&aDevicePK, &aCode, &aStatus, &aType, &aMetroPK, &aMetroCode,
+			&bDevicePK, &bCode, &bStatus, &bType, &bMetroPK, &bMetroCode,
+		); err != nil {
+			return nil, fmt.Errorf("scanning topology row: %w", err)
+		}
 
-	for _, rec := range records {
-		aPK := asString(recGet(rec, "a_pk"))
-		bPK := asString(recGet(rec, "b_pk"))
-		// Convert committed_rtt_ns to microseconds for uint32 metric
-		committedNs := asInt64(recGet(rec, "committed_rtt_ns"))
-		metric := uint32(committedNs / 1000)
+		// Use isis_delay_override_ns when set, otherwise committed_rtt_ns
+		metricNs := committedNs
+		if overrideNs > 0 {
+			metricNs = overrideNs
+		}
+		metric := uint32(metricNs / 1000)
 		if metric == 0 {
 			metric = 1
 		}
-		bwBps := uint64(asInt64(recGet(rec, "bandwidth_bps")))
 
 		// Bidirectional edges
-		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{To: bPK, Metric: metric, BandwidthBps: bwBps})
-		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{To: aPK, Metric: metric, BandwidthBps: bwBps})
+		g.Adj[aPK] = append(g.Adj[aPK], kspEdge{To: bPK, Metric: metric, BandwidthBps: uint64(bwBps)})
+		g.Adj[bPK] = append(g.Adj[bPK], kspEdge{To: aPK, Metric: metric, BandwidthBps: uint64(bwBps)})
+		edgeCount++
 
 		if _, ok := g.Nodes[aPK]; !ok {
 			g.Nodes[aPK] = kspNodeInfo{
-				PK:         aPK,
-				Code:       asString(recGet(rec, "a_code")),
-				Status:     asString(recGet(rec, "a_status")),
-				DeviceType: asString(recGet(rec, "a_type")),
-				MetroPK:    asString(recGet(rec, "a_metro_pk")),
-				MetroCode:  asString(recGet(rec, "a_metro_code")),
+				PK:         aDevicePK,
+				Code:       aCode,
+				Status:     aStatus,
+				DeviceType: aType,
+				MetroPK:    aMetroPK,
+				MetroCode:  aMetroCode,
 			}
 		}
 		if _, ok := g.Nodes[bPK]; !ok {
 			g.Nodes[bPK] = kspNodeInfo{
-				PK:         bPK,
-				Code:       asString(recGet(rec, "b_code")),
-				Status:     asString(recGet(rec, "b_status")),
-				DeviceType: asString(recGet(rec, "b_type")),
-				MetroPK:    asString(recGet(rec, "b_metro_pk")),
-				MetroCode:  asString(recGet(rec, "b_metro_code")),
+				PK:         bDevicePK,
+				Code:       bCode,
+				Status:     bStatus,
+				DeviceType: bType,
+				MetroPK:    bMetroPK,
+				MetroCode:  bMetroCode,
 			}
 		}
 	}
@@ -130,14 +159,8 @@ func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 		})
 	}
 
-	slog.Info("loaded topology graph", "nodes", len(g.Nodes), "edges", len(records))
+	slog.Info("loaded topology graph", "nodes", len(g.Nodes), "edges", edgeCount)
 	return g, nil
-}
-
-// recGet is a helper to extract a value from a neo4j record by key.
-func recGet(rec interface{ Get(string) (any, bool) }, key string) any {
-	v, _ := rec.Get(key)
-	return v
 }
 
 // dijkstra finds the shortest path from source to target using edge metrics,
