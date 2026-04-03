@@ -378,6 +378,12 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 
 	committedRtt := meta.CommittedRttUs
 
+	// For health classification, only consider latency on inter-metro WAN links
+	healthCommittedRtt := committedRtt
+	if meta.LinkType != "WAN" || meta.SideAMetro == meta.SideZMetro {
+		healthCommittedRtt = 0
+	}
+
 	// Build buckets
 	buckets := make([]LinkMetricsBucket, 0, params.BucketCount)
 	for i := params.BucketCount - 1; i >= 0; i-- {
@@ -398,7 +404,7 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 
 		// --- Status ---
 		if include.Status {
-			st := buildLinkMetricsStatus(rollup, meta, committedRtt, isCollecting, bucketStart, intfIndex)
+			st := buildLinkMetricsStatus(rollup, meta, healthCommittedRtt, isCollecting, bucketStart, intfIndex)
 			bucket.Status = &st
 		}
 
@@ -873,6 +879,12 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 	for linkPK, meta := range metaMap {
 		committedRtt := meta.CommittedRttUs
 
+		// For health classification, only consider latency on inter-metro WAN links
+		healthCommittedRtt := committedRtt
+		if meta.LinkType != "WAN" || meta.SideAMetro == meta.SideZMetro {
+			healthCommittedRtt = 0
+		}
+
 		// Extract per-link interface index subset for buildLinkMetricsStatus/Traffic
 		perLinkIntfIndex := make(map[linkMetricsSideKey]*interfaceRollupRow)
 		for bk, row := range bulkIntfIndex {
@@ -900,7 +912,7 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			}
 
 			if include.Status {
-				st := buildLinkMetricsStatus(rollup, meta, committedRtt, isCollecting, bucketStart, perLinkIntfIndex)
+				st := buildLinkMetricsStatus(rollup, meta, healthCommittedRtt, isCollecting, bucketStart, perLinkIntfIndex)
 				bucket.Status = &st
 			}
 
