@@ -27,6 +27,7 @@ import (
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/metrodb"
+	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/malbeclabs/doublezero/tools/solana/pkg/rpc"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
@@ -299,12 +300,14 @@ func run() error {
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
 	shredsEnabled := *dzEnvFlag != config.EnvDevnet
 	var shredsClient *shreds.Client
+	var shredsRawRPC *solanarpc.Client
 	if shredsEnabled {
 		shredsRPCURL := networkConfig.LedgerPublicRPCURL
 		if *dzEnvFlag == config.EnvMainnetBeta {
 			shredsRPCURL = networkConfig.SolanaRPCURL
 		}
-		shredsClient = shreds.New(shreds.NewRPCClient(shredsRPCURL), shreds.ProgramID)
+		shredsRawRPC = shreds.NewRPCClient(shredsRPCURL)
+		shredsClient = shreds.New(shredsRawRPC, shreds.ProgramID)
 		log.Info("shreds subscription client initialized", "env", *dzEnvFlag, "rpc_url", shredsRPCURL)
 	}
 
@@ -566,6 +569,8 @@ func run() error {
 	}
 	if shredsClient != nil {
 		idxCfg.ShredsRPC = shredsClient
+		idxCfg.ShredsRawRPC = shredsRawRPC
+		idxCfg.ShredsProgramID = shreds.ProgramID
 	}
 	idx, err := indexer.New(ctx, idxCfg)
 	if err != nil {
@@ -861,8 +866,10 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
+	var secondaryShredsRawRPC *solanarpc.Client
 	if env != config.EnvDevnet {
-		shredsClient = shreds.New(shreds.NewRPCClient(networkConfig.LedgerPublicRPCURL), shreds.ProgramID)
+		secondaryShredsRawRPC = shreds.NewRPCClient(networkConfig.LedgerPublicRPCURL)
+		shredsClient = shreds.New(secondaryShredsRawRPC, shreds.ProgramID)
 		log.Info("shreds subscription client initialized", "env", env)
 	}
 
@@ -912,6 +919,8 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	}
 	if shredsClient != nil {
 		secondaryIdxCfg.ShredsRPC = shredsClient
+		secondaryIdxCfg.ShredsRawRPC = secondaryShredsRawRPC
+		secondaryIdxCfg.ShredsProgramID = shreds.ProgramID
 	}
 	idx, err := indexer.New(ctx, secondaryIdxCfg)
 	if err != nil {

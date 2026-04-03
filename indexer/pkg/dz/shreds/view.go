@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/jonboulle/clockwork"
 	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
@@ -104,21 +106,24 @@ type ShredDistributionRow struct {
 	Burned2ZAmount                     uint64
 }
 
-// ShredsRPC abstracts the shreds SDK client for testing.
+// ShredsRPC abstracts the shreds SDK client for singleton account fetches.
 type ShredsRPC interface {
 	FetchExecutionController(ctx context.Context) (*shreds.ExecutionController, error)
-	FetchAllClientSeats(ctx context.Context) ([]shreds.KeyedClientSeat, error)
-	FetchAllPaymentEscrows(ctx context.Context) ([]shreds.KeyedPaymentEscrow, error)
-	FetchAllMetroHistories(ctx context.Context) ([]shreds.KeyedMetroHistory, error)
-	FetchAllDeviceHistories(ctx context.Context) ([]shreds.KeyedDeviceHistory, error)
-	FetchAllValidatorClientRewards(ctx context.Context) ([]shreds.KeyedValidatorClientRewards, error)
 	FetchShredDistribution(ctx context.Context, subscriptionEpoch uint64) (*shreds.ShredDistribution, error)
+}
+
+// ShredsRawRPC provides low-level RPC access for batch-fetching all program accounts
+// in a single call.
+type ShredsRawRPC interface {
+	GetProgramAccountsWithOpts(ctx context.Context, publicKey solana.PublicKey, opts *rpc.GetProgramAccountsOpts) (rpc.GetProgramAccountsResult, error)
 }
 
 type ViewConfig struct {
 	Logger          *slog.Logger
 	Clock           clockwork.Clock
 	ShredsRPC       ShredsRPC
+	ShredsRawRPC    ShredsRawRPC
+	ProgramID       solana.PublicKey
 	RefreshInterval time.Duration
 	ClickHouse      clickhouse.Client
 }
@@ -129,6 +134,12 @@ func (cfg *ViewConfig) Validate() error {
 	}
 	if cfg.ShredsRPC == nil {
 		return errors.New("shreds rpc is required")
+	}
+	if cfg.ShredsRawRPC == nil {
+		return errors.New("shreds raw rpc is required")
+	}
+	if cfg.ProgramID.IsZero() {
+		return errors.New("program id is required")
 	}
 	if cfg.ClickHouse == nil {
 		return errors.New("clickhouse connection is required")
@@ -247,41 +258,21 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("fetch execution controller: %w", err)
 	}
 
-	// Fetch all batch-fetchable account types in parallel.
+	// Fetch all program accounts in a single RPC call and optionally fetch the
+	// current distribution in parallel.
 	var (
-		clientSeats      []shreds.KeyedClientSeat
-		paymentEscrows   []shreds.KeyedPaymentEscrow
-		metroHistories   []shreds.KeyedMetroHistory
-		deviceHistories  []shreds.KeyedDeviceHistory
-		validatorRewards []shreds.KeyedValidatorClientRewards
-		distributions    []ShredDistributionRow
+		allAccounts   *allProgramAccounts
+		distributions []ShredDistributionRow
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		var err error
-		clientSeats, err = v.cfg.ShredsRPC.FetchAllClientSeats(gctx)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		paymentEscrows, err = v.cfg.ShredsRPC.FetchAllPaymentEscrows(gctx)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		metroHistories, err = v.cfg.ShredsRPC.FetchAllMetroHistories(gctx)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		deviceHistories, err = v.cfg.ShredsRPC.FetchAllDeviceHistories(gctx)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		validatorRewards, err = v.cfg.ShredsRPC.FetchAllValidatorClientRewards(gctx)
-		return err
+		allAccounts, err = fetchAllProgramAccounts(gctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID)
+		if err != nil {
+			return fmt.Errorf("fetch all program accounts: %w", err)
+		}
+		return nil
 	})
 	g.Go(func() error {
 		if ec.CurrentSubscriptionEpoch == 0 {
@@ -302,6 +293,12 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		metrics.ViewRefreshTotal.WithLabelValues("shreds", "error").Inc()
 		return result, fmt.Errorf("fetch shreds accounts: %w", err)
 	}
+
+	clientSeats := allAccounts.ClientSeats
+	paymentEscrows := allAccounts.PaymentEscrows
+	metroHistories := allAccounts.MetroHistories
+	deviceHistories := allAccounts.DeviceHistories
+	validatorRewards := allAccounts.ValidatorRewards
 
 	v.log.Debug("shreds: fetched program data",
 		"client_seats", len(clientSeats),
@@ -516,5 +513,5 @@ func convertShredDistribution(d *shreds.ShredDistribution) ShredDistributionRow 
 	}
 }
 
-// Compile-time check that *shreds.Client implements ShredsRPC.
+// Compile-time checks.
 var _ ShredsRPC = (*shreds.Client)(nil)

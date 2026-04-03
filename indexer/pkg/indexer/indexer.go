@@ -88,6 +88,8 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			Logger:          cfg.Logger,
 			Clock:           cfg.Clock,
 			ShredsRPC:       cfg.ShredsRPC,
+			ShredsRawRPC:    cfg.ShredsRawRPC,
+			ProgramID:       cfg.ShredsProgramID,
 			RefreshInterval: cfg.RefreshInterval,
 			ClickHouse:      cfg.ClickHouse,
 		})
