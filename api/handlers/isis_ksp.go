@@ -86,13 +86,13 @@ func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 	var edgeCount int
 	for rows.Next() {
 		var (
-			aPK, bPK                       string
-			committedNs, overrideNs        int64
-			bwBps                          int64
+			aPK, bPK                         string
+			committedNs, overrideNs          int64
+			bwBps                            int64
 			aDevicePK, aCode, aStatus, aType string
-			aMetroPK, aMetroCode           string
+			aMetroPK, aMetroCode             string
 			bDevicePK, bCode, bStatus, bType string
-			bMetroPK, bMetroCode           string
+			bMetroPK, bMetroCode             string
 		)
 		if err := rows.Scan(
 			&aPK, &bPK,
