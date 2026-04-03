@@ -120,7 +120,7 @@ type ShredClientSeatItem struct {
 	OverrideUSDCPriceDollars uint16 `json:"override_usdc_price_dollars"`
 	EscrowCount              uint32 `json:"escrow_count"`
 	TotalUSDCBalance         uint64 `json:"total_usdc_balance"`
-	PricePerEpochDollars     int32  `json:"price_per_epoch_dollars"`
+	PricePerEpochDollars     int64  `json:"price_per_epoch_dollars"`
 	FundingAuthorityKey      string `json:"funding_authority_key"`
 	UserPK                   string `json:"user_pk"`
 	UserOwnerPubkey          string `json:"user_owner_pubkey"`
