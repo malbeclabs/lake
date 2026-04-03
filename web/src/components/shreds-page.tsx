@@ -312,7 +312,6 @@ export function ShredsSeatsPage() {
         case 'funder': cmp = a.funding_authority_key.localeCompare(b.funding_authority_key); break
         case 'balance': cmp = a.total_usdc_balance - b.total_usdc_balance; break
         case 'prepaid': cmp = prepaidEpochs(a) - prepaidEpochs(b); break
-        default: cmp = Number(a.active_epoch) - Number(b.active_epoch); break
       }
       return ps.sortDirection === 'asc' ? cmp : -cmp
     })
@@ -501,7 +500,6 @@ export function ShredsDevicesPage() {
         case 'metro': cmp = (a.metro_code || a.metro_exchange_key).localeCompare(b.metro_code || b.metro_exchange_key); break
         case 'granted': cmp = a.active_granted_seats - b.active_granted_seats; break
         case 'available': cmp = a.active_total_available_seats - b.active_total_available_seats; break
-        default: cmp = a.active_granted_seats - b.active_granted_seats; break
       }
       return ps.sortDirection === 'asc' ? cmp : -cmp
     })
@@ -624,7 +622,6 @@ export function ShredsMetrosPage() {
         case 'metro': cmp = (a.metro_code || a.exchange_key).localeCompare(b.metro_code || b.exchange_key); break
         case 'devices': cmp = a.total_initialized_devices - b.total_initialized_devices; break
         case 'price': cmp = a.current_usdc_price_dollars - b.current_usdc_price_dollars; break
-        default: cmp = a.total_initialized_devices - b.total_initialized_devices; break
       }
       return ps.sortDirection === 'asc' ? cmp : -cmp
     })
@@ -742,7 +739,6 @@ export function ShredsFundersPage() {
         case 'active': cmp = a.active_seats - b.active_seats; break
         case 'inactive': cmp = a.inactive_seats - b.inactive_seats; break
         case 'closed': cmp = a.closed_seats - b.closed_seats; break
-        default: cmp = a.active_seats - b.active_seats; break
       }
       return ps.sortDirection === 'asc' ? cmp : -cmp
     })
