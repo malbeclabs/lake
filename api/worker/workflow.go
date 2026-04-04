@@ -44,9 +44,6 @@ func (a *Activities) entries() []cacheEntry {
 			}
 			return resp, nil
 		}},
-		{"timeline", "timeline", func(ctx context.Context) (any, error) {
-			return api.FetchDefaultTimelineData(ctx), nil
-		}},
 		{"incidents", "incidents", func(ctx context.Context) (any, error) {
 			resp := api.FetchDefaultIncidentsData(ctx)
 			if resp == nil {
