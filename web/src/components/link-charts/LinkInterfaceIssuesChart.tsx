@@ -56,7 +56,7 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
   ], [])
 
   const { uPlotData, uPlotSeries } = useMemo(() => {
-    const buckets = data.buckets.filter((b) => !b.status?.collecting)
+    const buckets = data.buckets
     if (buckets.length === 0) {
       return { uPlotData: [[]] as uPlot.AlignedData, uPlotSeries: [] as uPlot.Series[] }
     }
