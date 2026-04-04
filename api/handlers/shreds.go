@@ -127,18 +127,20 @@ type ShredClientSeatItem struct {
 	UserPK                   string `json:"user_pk"`
 	UserOwnerPubkey          string `json:"user_owner_pubkey"`
 	UserStatus               string `json:"user_status"`
+	LastActivity             string `json:"last_activity"`
 }
 
 var seatSortFields = map[string]string{
-	"seat":         "s.pk",
-	"device":       "device_code",
-	"metro":        "metro_code",
-	"ip":           "s.client_ip",
-	"tenure":       "s.tenure_epochs",
-	"active_epoch": "s.active_epoch",
-	"funder":       "s.funding_authority_key",
-	"balance":      "total_usdc_balance",
-	"prepaid":      "price_per_epoch_dollars",
+	"seat":          "s.pk",
+	"device":        "device_code",
+	"metro":         "metro_code",
+	"ip":            "s.client_ip",
+	"tenure":        "s.tenure_epochs",
+	"active_epoch":  "s.active_epoch",
+	"funder":        "s.funding_authority_key",
+	"balance":       "total_usdc_balance",
+	"prepaid":       "price_per_epoch_dollars",
+	"last_activity": "last_activity",
 }
 
 var seatFilterFields = map[string]FilterFieldConfig{
@@ -237,6 +239,11 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
 			FROM dim_dz_shred_payment_escrows_current
 			GROUP BY client_seat_key
+		),
+		last_events AS (
+			SELECT client_seat_pk, max(event_ts) as last_activity
+			FROM fact_dz_shred_escrow_events FINAL
+			GROUP BY client_seat_pk
 		)
 		SELECT
 			s.pk, s.device_key, COALESCE(d.code, '') as device_code,
@@ -251,7 +258,8 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			s.funding_authority_key,
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(u.owner_pubkey, '') as user_owner_pubkey,
-			COALESCE(u.status, '') as user_status
+			COALESCE(u.status, '') as user_status,
+			COALESCE(toString(le.last_activity), '') as last_activity
 		FROM dim_dz_shred_client_seats_current s
 		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -259,6 +267,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dim_dz_shred_device_histories_current dh ON dh.device_key = s.device_key
 		ANY LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
 		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
+		LEFT JOIN last_events le ON le.client_seat_pk = s.pk
 	` + whereSQL + ` ` + orderBy + ` LIMIT ? OFFSET ?`
 	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
 
@@ -281,7 +290,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
 			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
 			&s.PricePerEpochDollars, &s.FundingAuthorityKey,
-			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus,
+			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &s.LastActivity,
 		); err != nil {
 			logError("shred client seats row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
-import { Loader2, Coins, AlertCircle, ChevronDown, ChevronUp, X, ExternalLink, Filter } from 'lucide-react'
+import { useSearchParams, useNavigate, Link } from 'react-router-dom'
+import { Loader2, Coins, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter } from 'lucide-react'
 import {
   fetchAllPaginated,
   fetchShredClientSeats,
@@ -14,6 +14,7 @@ import {
   type ShredMetroHistory,
   type ShredFunder,
 } from '@/lib/api'
+import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
@@ -224,13 +225,14 @@ function prepaidEpochs(seat: ShredClientSeat): number {
 
 export function ShredsSeatsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
 
   // Pagination from URL.
   const page = parseInt(searchParams.get('page') || '1')
   const offset = (page - 1) * PAGE_SIZE
 
   // Sort from URL.
-  const sortBy = searchParams.get('sort') || 'active_epoch'
+  const sortBy = searchParams.get('sort') || 'last_activity'
   const sortDir = (searchParams.get('dir') || 'desc') as SortDirection
 
   // Status toggles from URL.
@@ -392,16 +394,16 @@ export function ShredsSeatsPage() {
                   <SortHeader field="funder" label="Funder" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="balance" label="Balance (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="prepaid" label="Prepaid Epochs" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <th className="px-4 py-3 font-medium w-0" />
+                  <SortHeader field="last_activity" label="Last Activity" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>
                 {items.map((seat) => (
-                  <tr key={seat.pk} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
+                  <tr key={seat.pk} className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors" onClick={(e) => handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)}>
                     <td className="px-4 py-3 font-mono text-xs" title={seat.pk}>
                       {truncatePK(seat.pk)}
                     </td>
-                    <td className="px-4 py-3 text-sm">
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
                       <Link to={`/dz/devices/${seat.device_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={seat.device_key}>
                         {seat.device_code || truncatePK(seat.device_key)}
                       </Link>
@@ -438,9 +440,10 @@ export function ShredsSeatsPage() {
                     <td className="px-4 py-3">
                       <Link
                         to={`/dz/shreds/activity?search=seat:${seat.pk}`}
-                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
                       >
-                        Activity
+                        {seat.last_activity ? new Date(seat.last_activity).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '\u2014'}
+                        <ChevronRight className="h-3 w-3" />
                       </Link>
                     </td>
                   </tr>
@@ -1131,7 +1134,7 @@ export function ShredsEscrowEventsPage() {
                 {items.map((e) => (
                   <tr key={`${e.tx_signature}-${e.event_type}-${e.escrow_pk}`} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                      {new Date(e.event_ts).toLocaleString()}
+                      {new Date(e.event_ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border ${eventTypeBadgeColors[e.event_type] || eventTypeBadgeColors.unknown}`}>

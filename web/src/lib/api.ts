@@ -4733,6 +4733,7 @@ export interface ShredClientSeat {
   user_pk: string
   user_owner_pubkey: string
   user_status: string
+  last_activity: string
 }
 
 export interface FetchShredClientSeatsParams {
