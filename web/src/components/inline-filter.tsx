@@ -209,9 +209,9 @@ export function InlineFilter({
         break
       case 'Enter': {
         e.preventDefault()
-        const indexToUse = selectedIndex >= 0 ? selectedIndex : 0
-        if (indexToUse < items.length) {
-          const item = items[indexToUse]
+        if (selectedIndex >= 0 && selectedIndex < items.length) {
+          // User explicitly selected an item with arrow keys.
+          const item = items[selectedIndex]
           if (item.type === 'prefix') {
             setQuery(item.prefix)
           } else if (item.type === 'field-value') {
@@ -220,6 +220,7 @@ export function InlineFilter({
             commitFilter(query.trim())
           }
         } else if (query.trim()) {
+          // No item selected — commit the raw text as a substring filter.
           commitFilter(query.trim())
         }
         break
