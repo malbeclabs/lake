@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
-import { Loader2, Coins, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter } from 'lucide-react'
+import { Loader2, Coins, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check } from 'lucide-react'
 import {
   fetchAllPaginated,
   fetchShredClientSeats,
@@ -181,6 +181,19 @@ function FilterActions({ searchFilters, removeFilter, clearAllFilters, setLiveFi
         onLiveFilterChange={setLiveFilter}
       />
     </>
+  )
+}
+
+function CopyIcon({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+      className="inline-flex items-center justify-center h-4 w-4 text-muted-foreground opacity-0 group-hover/cell:opacity-100 hover:text-foreground transition-opacity cursor-pointer"
+      title={copied ? 'Copied!' : 'Copy'}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+    </button>
   )
 }
 
@@ -400,8 +413,11 @@ export function ShredsSeatsPage() {
               <tbody>
                 {items.map((seat) => (
                   <tr key={seat.pk} className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors" onClick={(e) => handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)}>
-                    <td className="px-4 py-3 font-mono text-xs" title={seat.pk}>
-                      {truncatePK(seat.pk)}
+                    <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.pk}>
+                      <span className="inline-flex items-center gap-1">
+                        {truncatePK(seat.pk)}
+                        <CopyIcon text={seat.pk} />
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm whitespace-nowrap">
                       <Link to={`/dz/devices/${seat.device_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={seat.device_key}>
@@ -415,17 +431,23 @@ export function ShredsSeatsPage() {
                         </Link>
                       ) : <span className="text-muted-foreground">{'\u2014'}</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm font-mono">
-                      {seat.user_pk ? (
-                        <Link to={`/dz/users/${seat.user_pk}`} className="text-blue-500 hover:underline" title={seat.user_pk}>
-                          {seat.client_ip}
-                        </Link>
-                      ) : seat.client_ip}
+                    <td className="px-4 py-3 text-sm font-mono group/cell">
+                      <span className="inline-flex items-center gap-1">
+                        {seat.user_pk ? (
+                          <Link to={`/dz/users/${seat.user_pk}`} className="text-blue-500 hover:underline" title={seat.user_pk}>
+                            {seat.client_ip}
+                          </Link>
+                        ) : seat.client_ip}
+                        <CopyIcon text={seat.client_ip} />
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">{seat.tenure_epochs}</td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">{seat.active_epoch}</td>
-                    <td className="px-4 py-3 font-mono text-xs" title={seat.funding_authority_key}>
-                      {truncatePK(seat.funding_authority_key)}
+                    <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.funding_authority_key}>
+                      <span className="inline-flex items-center gap-1">
+                        {truncatePK(seat.funding_authority_key)}
+                        <CopyIcon text={seat.funding_authority_key} />
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {`$${(seat.total_usdc_balance / 1e6).toFixed(2)}`}
