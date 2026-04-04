@@ -9,6 +9,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
@@ -20,7 +21,8 @@ type Activities struct {
 	IngestionLog   *ingestionlog.Writer
 	Network        string
 	Serviceability *dzsvc.View
-	Shreds         *dzshreds.View // nil when shreds is not configured
+	Shreds         *dzshreds.View       // nil when shreds is not configured
+	EscrowEvents   *escrowevents.View   // nil when shreds is not configured
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // nil when InfluxDB is not configured
 	GraphStore     *dzgraph.Store     // nil when Neo4j is not configured
@@ -115,6 +117,22 @@ func (a *Activities) SyncISIS(ctx context.Context) error {
 			return result, fmt.Errorf("isis sync: %w", err)
 		}
 		return result, a.ISISStore.Sync(ctx, lsps)
+	})
+}
+
+// RefreshShredEscrowEvents fetches on-chain transaction history for payment escrows
+// and writes parsed events to ClickHouse. No-op if shreds is not configured.
+func (a *Activities) RefreshShredEscrowEvents(ctx context.Context) error {
+	if a.EscrowEvents == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshShredEscrowEvents", a.Network)
+		return nil
+	}
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshShredEscrowEvents", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.EscrowEvents.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("escrow events refresh: %w", err)
+		}
+		return result, nil
 	})
 }
 

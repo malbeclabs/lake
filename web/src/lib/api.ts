@@ -4735,8 +4735,30 @@ export interface ShredClientSeat {
   user_status: string
 }
 
-export async function fetchShredClientSeats(limit = 100, offset = 0): Promise<PaginatedResponse<ShredClientSeat>> {
-  const res = await fetchWithRetry(`/api/dz/shreds/client-seats?limit=${limit}&offset=${offset}`)
+export interface FetchShredClientSeatsParams {
+  limit?: number
+  offset?: number
+  sortBy?: string
+  sortDir?: 'asc' | 'desc'
+  status?: string
+  filters?: string[]
+}
+
+export async function fetchShredClientSeats(
+  params: FetchShredClientSeatsParams = {},
+): Promise<PaginatedResponse<ShredClientSeat>> {
+  const q = new URLSearchParams()
+  if (params.limit) q.set('limit', String(params.limit))
+  if (params.offset) q.set('offset', String(params.offset))
+  if (params.sortBy) q.set('sort_by', params.sortBy)
+  if (params.sortDir) q.set('sort_dir', params.sortDir)
+  if (params.status) q.set('status', params.status)
+  if (params.filters) {
+    for (const f of params.filters) {
+      q.append('filters', f)
+    }
+  }
+  const res = await fetchWithRetry(`/api/dz/shreds/client-seats?${q}`)
   if (!res.ok) {
     throw new Error('Failed to fetch shred client seats')
   }
@@ -4800,6 +4822,58 @@ export async function fetchShredFunders(): Promise<ShredFunder[]> {
   const res = await fetchWithRetry('/api/dz/shreds/funders')
   if (!res.ok) {
     throw new Error('Failed to fetch shred funders')
+  }
+  return res.json()
+}
+
+// Escrow Events
+export interface ShredEscrowEvent {
+  event_ts: string
+  escrow_pk: string
+  client_seat_pk: string
+  tx_signature: string
+  slot: number
+  event_type: string
+  amount_usdc: number | null
+  balance_after_usdc: number | null
+  epoch: number | null
+  status: string
+  signer: string
+  solscan_url: string
+}
+
+export interface FetchShredEscrowEventsParams {
+  limit?: number
+  offset?: number
+  sortBy?: string
+  sortDir?: 'asc' | 'desc'
+  range?: string
+  startTime?: number
+  endTime?: number
+  filters?: string[]
+  includeInternal?: boolean
+}
+
+export async function fetchShredEscrowEvents(
+  params: FetchShredEscrowEventsParams = {},
+): Promise<PaginatedResponse<ShredEscrowEvent>> {
+  const q = new URLSearchParams()
+  if (params.limit) q.set('limit', String(params.limit))
+  if (params.offset) q.set('offset', String(params.offset))
+  if (params.sortBy) q.set('sort_by', params.sortBy)
+  if (params.sortDir) q.set('sort_dir', params.sortDir)
+  if (params.range) q.set('range', params.range)
+  if (params.startTime) q.set('start_time', String(params.startTime))
+  if (params.endTime) q.set('end_time', String(params.endTime))
+  if (params.filters) {
+    for (const f of params.filters) {
+      q.append('filters', f)
+    }
+  }
+  if (params.includeInternal) q.set('include_internal', 'true')
+  const res = await fetchWithRetry(`/api/dz/shreds/escrow-events?${q}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch shred escrow events')
   }
   return res.json()
 }

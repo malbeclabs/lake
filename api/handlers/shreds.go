@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/malbeclabs/lake/api/handlers/dberror"
@@ -127,20 +129,109 @@ type ShredClientSeatItem struct {
 	UserStatus               string `json:"user_status"`
 }
 
+var seatSortFields = map[string]string{
+	"seat":         "s.pk",
+	"device":       "device_code",
+	"metro":        "metro_code",
+	"ip":           "s.client_ip",
+	"tenure":       "s.tenure_epochs",
+	"active_epoch": "s.active_epoch",
+	"funder":       "s.funding_authority_key",
+	"balance":      "total_usdc_balance",
+	"prepaid":      "price_per_epoch_dollars",
+}
+
+var seatFilterFields = map[string]FilterFieldConfig{
+	"seat":    {Column: "s.pk", Type: FieldTypeText},
+	"device":  {Column: "COALESCE(d.code, s.device_key)", Type: FieldTypeText},
+	"metro":   {Column: "COALESCE(m.code, '')", Type: FieldTypeText},
+	"ip":      {Column: "s.client_ip", Type: FieldTypeText},
+	"funder":  {Column: "s.funding_authority_key", Type: FieldTypeText},
+	"tenure":  {Column: "s.tenure_epochs", Type: FieldTypeNumeric},
+	"epoch":   {Column: "s.active_epoch", Type: FieldTypeNumeric},
+	"balance": {Column: "COALESCE(eb.total_usdc_balance, 0)", Type: FieldTypeNumeric},
+}
+
 func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "active_epoch", seatSortFields)
+	filters := ParseFilters(r)
+
+	// Status filter: active, inactive, closed (comma-separated).
+	statusParam := r.URL.Query().Get("status")
+
 	start := time.Now()
 
+	// Build WHERE clause.
+	var whereClauses []string
+	var whereArgs []any
+
+	filterClause, filterArgs := filters.BuildFilterClause(seatFilterFields)
+	if filterClause != "" {
+		whereClauses = append(whereClauses, filterClause)
+		whereArgs = append(whereArgs, filterArgs...)
+	}
+
+	// Status filtering requires current Solana epoch.
+	if statusParam != "" {
+		var solanaEpoch int64
+		_ = a.envDB(ctx).QueryRow(ctx, `SELECT max(epoch) FROM solana_vote_accounts_current`).Scan(&solanaEpoch)
+
+		statuses := make(map[string]bool)
+		for _, s := range splitCSV(statusParam) {
+			statuses[s] = true
+		}
+
+		var statusOr []string
+		if statuses["active"] {
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0)")
+			whereArgs = append(whereArgs, solanaEpoch)
+		}
+		if statuses["inactive"] {
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0)")
+			whereArgs = append(whereArgs, solanaEpoch)
+		}
+		if statuses["closed"] {
+			statusOr = append(statusOr, "(s.escrow_count = 0)")
+		}
+		if len(statusOr) > 0 {
+			whereClauses = append(whereClauses, "("+strings.Join(statusOr, " OR ")+")")
+		}
+	}
+
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// Count query.
+	countQuery := `
+		WITH escrow_balances AS (
+			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
+			FROM dim_dz_shred_payment_escrows_current
+			GROUP BY client_seat_key
+		)
+		SELECT count(*)
+		FROM dim_dz_shred_client_seats_current s
+		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
+		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+		LEFT JOIN dim_dz_shred_metro_histories_current mh ON mh.exchange_key = d.metro_pk
+		LEFT JOIN dim_dz_shred_device_histories_current dh ON dh.device_key = s.device_key
+		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
+	` + whereSQL
+
 	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, `SELECT count(*) FROM dim_dz_shred_client_seats_current`).Scan(&total); err != nil {
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
 		logError("shred client seats count failed", "error", err)
 		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 
+	// Data query.
+	orderBy := sort.OrderByClause(seatSortFields)
 	query := `
 		WITH escrow_balances AS (
 			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
@@ -168,11 +259,10 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dim_dz_shred_device_histories_current dh ON dh.device_key = s.device_key
 		LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
 		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
-		ORDER BY s.active_epoch DESC
-		LIMIT ? OFFSET ?
-	`
+	` + whereSQL + ` ` + orderBy + ` LIMIT ? OFFSET ?`
+	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -436,6 +526,191 @@ func (a *API) GetShredFunders(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(items); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+// ShredEscrowEventItem represents a payment escrow event.
+type ShredEscrowEventItem struct {
+	EventTS          string  `json:"event_ts"`
+	EscrowPK         string  `json:"escrow_pk"`
+	ClientSeatPK     string  `json:"client_seat_pk"`
+	TxSignature      string  `json:"tx_signature"`
+	Slot             uint64  `json:"slot"`
+	EventType        string  `json:"event_type"`
+	AmountUSDC       *int64  `json:"amount_usdc"`
+	BalanceAfterUSDC *int64  `json:"balance_after_usdc"`
+	Epoch            *uint64 `json:"epoch"`
+	Status           string  `json:"status"`
+	Signer           string  `json:"signer"`
+	SolscanURL       string  `json:"solscan_url"`
+}
+
+// escrowEventExcludedSigners are internal/test accounts excluded by default.
+var escrowEventExcludedSigners = []string{
+	"DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan",
+}
+
+var escrowEventSortFields = map[string]string{
+	"time":    "event_ts",
+	"type":    "event_type",
+	"amount":  "amount_usdc",
+	"balance": "balance_after_usdc",
+	"epoch":   "epoch",
+	"slot":    "slot",
+}
+
+var escrowEventFilterFields = map[string]FilterFieldConfig{
+	"type":   {Column: "event_type", Type: FieldTypeText},
+	"escrow": {Column: "escrow_pk", Type: FieldTypeText},
+	"seat":   {Column: "client_seat_pk", Type: FieldTypeText},
+	"status": {Column: "status", Type: FieldTypeText},
+	"epoch":  {Column: "epoch", Type: FieldTypeNumeric},
+	"signer": {Column: "signer", Type: FieldTypeText},
+}
+
+// splitCSV splits a comma-separated string into trimmed non-empty values.
+func splitCSV(s string) []string {
+	var result []string
+	for _, v := range strings.Split(s, ",") {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// parseTimeRangeDuration converts a preset time range string to a duration.
+func parseTimeRangeDuration(rangeStr string) time.Duration {
+	switch rangeStr {
+	case "1h":
+		return 1 * time.Hour
+	case "6h":
+		return 6 * time.Hour
+	case "12h":
+		return 12 * time.Hour
+	case "24h":
+		return 24 * time.Hour
+	case "3d":
+		return 3 * 24 * time.Hour
+	case "7d":
+		return 7 * 24 * time.Hour
+	case "14d":
+		return 14 * 24 * time.Hour
+	case "30d":
+		return 30 * 24 * time.Hour
+	default:
+		return 7 * 24 * time.Hour // default to 7d
+	}
+}
+
+func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "time", escrowEventSortFields)
+	filters := ParseFilters(r)
+
+	// Time range: preset (range=7d) or custom (start_time=X&end_time=Y as unix seconds).
+	var startTime, endTime time.Time
+	now := time.Now().UTC()
+
+	rangeParam := r.URL.Query().Get("range")
+	startTimeParam := r.URL.Query().Get("start_time")
+	endTimeParam := r.URL.Query().Get("end_time")
+
+	if startTimeParam != "" && endTimeParam != "" {
+		if st, err := strconv.ParseInt(startTimeParam, 10, 64); err == nil {
+			startTime = time.Unix(st, 0).UTC()
+		}
+		if et, err := strconv.ParseInt(endTimeParam, 10, 64); err == nil {
+			endTime = time.Unix(et, 0).UTC()
+		}
+	}
+	if startTime.IsZero() || endTime.IsZero() {
+		if rangeParam == "" {
+			rangeParam = "7d"
+		}
+		endTime = now
+		startTime = now.Add(-parseTimeRangeDuration(rangeParam))
+	}
+
+	start := time.Now()
+
+	// Build WHERE clause.
+	whereClause := ` WHERE event_ts >= ? AND event_ts <= ?`
+	whereArgs := []any{startTime, endTime}
+
+	filterClause, filterArgs := filters.BuildFilterClause(escrowEventFilterFields)
+	if filterClause != "" {
+		whereClause += ` AND ` + filterClause
+		whereArgs = append(whereArgs, filterArgs...)
+	}
+
+	// Exclude internal/test signers unless include_internal=true.
+	if r.URL.Query().Get("include_internal") != "true" && len(escrowEventExcludedSigners) > 0 {
+		for _, signer := range escrowEventExcludedSigners {
+			whereClause += ` AND signer != ?`
+			whereArgs = append(whereArgs, signer)
+		}
+	}
+
+	// Count query.
+	countQuery := `SELECT count(*) FROM fact_dz_shred_escrow_events FINAL` + whereClause
+	var total uint64
+	if err := a.envDB(ctx).QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
+		logError("shred escrow events count failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+
+	// Data query.
+	orderBy := sort.OrderByClause(escrowEventSortFields)
+	query := `
+		SELECT
+			event_ts, escrow_pk, client_seat_pk, tx_signature, slot,
+			event_type, amount_usdc, balance_after_usdc, epoch, status, signer
+		FROM fact_dz_shred_escrow_events FINAL
+	` + whereClause + ` ` + orderBy + ` LIMIT ? OFFSET ?`
+	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, queryArgs...)
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	if err != nil {
+		logError("shred escrow events query failed", "error", err)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []ShredEscrowEventItem
+	for rows.Next() {
+		var e ShredEscrowEventItem
+		var eventTS time.Time
+		if err := rows.Scan(
+			&eventTS, &e.EscrowPK, &e.ClientSeatPK, &e.TxSignature, &e.Slot,
+			&e.EventType, &e.AmountUSDC, &e.BalanceAfterUSDC, &e.Epoch, &e.Status, &e.Signer,
+		); err != nil {
+			logError("shred escrow events row scan failed", "error", err)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
+			return
+		}
+		e.EventTS = eventTS.UTC().Format(time.RFC3339)
+		e.SolscanURL = "https://solscan.io/tx/" + e.TxSignature
+		items = append(items, e)
+	}
+	if items == nil {
+		items = []ShredEscrowEventItem{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(PaginatedResponse[ShredEscrowEventItem]{
+		Items: items, Total: int(total), Limit: pagination.Limit, Offset: pagination.Offset,
+	}); err != nil {
 		logError("failed to encode response", "error", err)
 	}
 }

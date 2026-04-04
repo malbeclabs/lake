@@ -18,6 +18,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
@@ -34,7 +35,8 @@ type Config struct {
 
 	// Views and stores for activity execution.
 	Serviceability *dzsvc.View
-	Shreds         *dzshreds.View // optional
+	Shreds         *dzshreds.View     // optional
+	EscrowEvents   *escrowevents.View // optional
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // optional
 	GraphStore     *dzgraph.Store     // optional
@@ -42,8 +44,11 @@ type Config struct {
 	ISISStore      *isis.Store        // optional
 }
 
-func taskQueue(network string) string  { return "indexer-dz-ingest-" + network }
-func workflowID(network string) string { return "indexer-dz-ingest-" + network }
+// TaskQueue returns the Temporal task queue name for the given network.
+func TaskQueue(network string) string  { return "indexer-dz-ingest-" + network }
+
+func taskQueue(network string) string  { return TaskQueue(network) }
+func workflowID(network string) string { return TaskQueue(network) }
 
 // Start connects to Temporal and begins processing DZ ingest workflows.
 // It blocks until ctx is cancelled or an error occurs.
@@ -75,6 +80,7 @@ func Start(ctx context.Context, cfg Config) error {
 		Network:        cfg.Network,
 		Serviceability: cfg.Serviceability,
 		Shreds:         cfg.Shreds,
+		EscrowEvents:   cfg.EscrowEvents,
 		TelemLatency:   cfg.TelemLatency,
 		TelemUsage:     cfg.TelemUsage,
 		GraphStore:     cfg.GraphStore,

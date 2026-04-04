@@ -14,6 +14,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
 	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 	"golang.org/x/sync/errgroup"
@@ -161,6 +162,10 @@ type View struct {
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
+
+	// cachedEscrowInfos holds the escrow list from the last successful refresh,
+	// used by the escrow events view to know which accounts to fetch history for.
+	cachedEscrowInfos []escrowevents.EscrowInfo
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -261,14 +266,14 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	// Fetch all program accounts in a single RPC call and optionally fetch the
 	// current distribution in parallel.
 	var (
-		allAccounts   *allProgramAccounts
+		allAccounts   *AllProgramAccounts
 		distributions []ShredDistributionRow
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		var err error
-		allAccounts, err = fetchAllProgramAccounts(gctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID)
+		allAccounts, err = FetchAllProgramAccounts(gctx, v.cfg.ShredsRawRPC, v.cfg.ProgramID)
 		if err != nil {
 			return fmt.Errorf("fetch all program accounts: %w", err)
 		}
@@ -334,6 +339,16 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	if err := v.store.ReplacePaymentEscrows(ctx, peRows); err != nil {
 		return result, fmt.Errorf("failed to replace payment escrows: %w", err)
 	}
+
+	// Cache escrow info for the escrow events view.
+	escrowInfos := make([]escrowevents.EscrowInfo, len(paymentEscrows))
+	for i, e := range paymentEscrows {
+		escrowInfos[i] = escrowevents.EscrowInfo{
+			EscrowPK:     e.Pubkey.String(),
+			ClientSeatPK: e.ClientSeatKey.String(),
+		}
+	}
+	v.cachedEscrowInfos = escrowInfos
 
 	mhRows := convertMetroHistories(metroHistories)
 	if err := v.store.ReplaceMetroHistories(ctx, mhRows); err != nil {
@@ -511,6 +526,14 @@ func convertShredDistribution(d *shreds.ShredDistribution) ShredDistributionRow 
 		DistributedContributor2ZAmount:     d.DistributedContributor2ZAmount,
 		Burned2ZAmount:                     d.Burned2ZAmount,
 	}
+}
+
+// PaymentEscrowInfos returns the escrow list from the last successful refresh.
+// Used by the escrow events view to know which accounts to fetch history for.
+func (v *View) PaymentEscrowInfos() []escrowevents.EscrowInfo {
+	v.refreshMu.Lock()
+	defer v.refreshMu.Unlock()
+	return v.cachedEscrowInfos
 }
 
 // Compile-time checks.

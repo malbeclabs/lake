@@ -11,6 +11,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	mcpgeoip "github.com/malbeclabs/lake/indexer/pkg/geoip"
@@ -25,6 +26,7 @@ type Indexer struct {
 
 	svc           *dzsvc.View
 	shreds        *dzshreds.View
+	escrowEvents  *escrowevents.View
 	graphStore    *dzgraph.Store
 	telemLatency  *dztelemlatency.View
 	telemUsage    *dztelemusage.View
@@ -95,6 +97,23 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create shreds view: %w", err)
+		}
+	}
+
+	// Initialize escrow events view (optional, depends on shreds + escrow events RPC).
+	var escrowEventsView *escrowevents.View
+	if shredsView != nil && cfg.EscrowEventsRPC != nil {
+		escrowEventsView, err = escrowevents.NewView(escrowevents.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			RPC:             cfg.EscrowEventsRPC,
+			ProgramID:       cfg.ShredsProgramID,
+			RefreshInterval: cfg.RefreshInterval,
+			ClickHouse:      cfg.ClickHouse,
+			EscrowProvider:  shredsView.PaymentEscrowInfos,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create escrow events view: %w", err)
 		}
 	}
 
@@ -231,6 +250,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 
 		svc:           svcView,
 		shreds:        shredsView,
+		escrowEvents:  escrowEventsView,
 		graphStore:    graphStore,
 		telemLatency:  telemView,
 		telemUsage:    telemetryUsageView,
@@ -316,6 +336,11 @@ func (i *Indexer) ISISStore() *isis.Store {
 // Shreds returns the shreds subscription view, or nil if not configured.
 func (i *Indexer) Shreds() *dzshreds.View {
 	return i.shreds
+}
+
+// EscrowEvents returns the escrow events view, or nil if not configured.
+func (i *Indexer) EscrowEvents() *escrowevents.View {
+	return i.escrowEvents
 }
 
 // ValidatorsApp returns the validators.app view, or nil if not configured.

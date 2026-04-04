@@ -12,9 +12,9 @@ import (
 	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 )
 
-// allProgramAccounts holds the result of a single getProgramAccounts call,
+// AllProgramAccounts holds the result of a single getProgramAccounts call,
 // split by discriminator into typed slices.
-type allProgramAccounts struct {
+type AllProgramAccounts struct {
 	ClientSeats      []shreds.KeyedClientSeat
 	PaymentEscrows   []shreds.KeyedPaymentEscrow
 	MetroHistories   []shreds.KeyedMetroHistory
@@ -22,17 +22,17 @@ type allProgramAccounts struct {
 	ValidatorRewards []shreds.KeyedValidatorClientRewards
 }
 
-// fetchAllProgramAccounts performs a single getProgramAccounts RPC call for the
+// FetchAllProgramAccounts performs a single getProgramAccounts RPC call for the
 // shreds program and splits the results by account discriminator. This replaces
 // 5 individual getProgramAccounts calls (one per account type) with a single
 // call, reducing RPC usage and avoiding rate limits.
-func fetchAllProgramAccounts(ctx context.Context, rpcClient ShredsRawRPC, programID solana.PublicKey) (*allProgramAccounts, error) {
+func FetchAllProgramAccounts(ctx context.Context, rpcClient ShredsRawRPC, programID solana.PublicKey) (*AllProgramAccounts, error) {
 	accounts, err := rpcClient.GetProgramAccountsWithOpts(ctx, programID, &rpc.GetProgramAccountsOpts{})
 	if err != nil {
 		return nil, fmt.Errorf("fetching program accounts: %w", err)
 	}
 
-	result := &allProgramAccounts{}
+	result := &AllProgramAccounts{}
 	for _, acct := range accounts {
 		data := acct.Account.Data.GetBinary()
 		if len(data) < 8 {

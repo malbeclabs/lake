@@ -24,6 +24,7 @@ const (
 // RegisterWorkflows registers all DZ ingest workflows with the given worker.
 func RegisterWorkflows(w worker.Worker) {
 	w.RegisterWorkflow(DZIngestWorkflow)
+	w.RegisterWorkflow(BackfillEscrowEventsWorkflow)
 }
 
 // DZIngestWorkflow is a long-running workflow that refreshes DZ mainnet data
@@ -52,9 +53,10 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 			logger.Error("serviceability refresh failed", "error", err)
 		}
 
-		// Run telemetry latency, shreds, ISIS sync, and graph sync in parallel.
+		// Run telemetry latency, shreds, escrow events, ISIS sync, and graph sync in parallel.
 		telemLatencyFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshTelemetryLatency)
 		shredsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShreds)
+		escrowEventsFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshShredEscrowEvents)
 		isisSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncISIS)
 		graphSyncFuture := temporalworkflow.ExecuteActivity(ctx, (*Activities).SyncGraph)
 
@@ -75,6 +77,12 @@ func DZIngestWorkflow(ctx temporalworkflow.Context, iteration int) error {
 				return ctx.Err()
 			}
 			logger.Error("shreds refresh failed", "error", err)
+		}
+		if err := escrowEventsFuture.Get(ctx, nil); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			logger.Error("escrow events refresh failed", "error", err)
 		}
 		if err := isisSyncFuture.Get(ctx, nil); err != nil {
 			if ctx.Err() != nil {

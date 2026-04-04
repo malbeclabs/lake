@@ -83,7 +83,10 @@ func insertShredsTestData(t *testing.T, api *handlers.API) {
 		 0, 0, 1, 'funder-1'),
 		('seat-2', now(), now(), generateUUIDv4(), 0, 2,
 		 'seat-2', 'dev-1', '192.168.1.2', 1, 950, 950,
-		 1, 25, 0, 'funder-2')
+		 1, 25, 0, 'funder-2'),
+		('seat-3', now(), now(), generateUUIDv4(), 0, 3,
+		 'seat-3', 'dev-1', '192.168.1.3', 5, 940, 945,
+		 0, 0, 1, 'funder-1')
 	`)
 	require.NoError(t, err)
 
@@ -195,8 +198,8 @@ func TestGetShredClientSeats_WithData(t *testing.T) {
 	var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Equal(t, 2, response.Total)
-	assert.Len(t, response.Items, 2)
+	assert.Equal(t, 3, response.Total)
+	assert.Len(t, response.Items, 3)
 
 	// Verify joins resolved
 	seat1 := findSeat(response.Items, "seat-1")
@@ -216,6 +219,105 @@ func TestGetShredClientSeats_WithData(t *testing.T) {
 	require.NotNil(t, seat2)
 	assert.Equal(t, int64(25), seat2.PricePerEpochDollars)
 	assert.Equal(t, uint8(1), seat2.HasPriceOverride)
+}
+
+func TestGetShredClientSeats_StatusFilter(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	// Test data: seat-1 (epoch=950, escrow=1, active), seat-2 (epoch=950, escrow=0, closed),
+	// seat-3 (epoch=945, escrow=1, inactive). Current epoch=950.
+
+	tests := []struct {
+		name   string
+		status string
+		want   int
+	}{
+		{"active only", "active", 1},           // seat-1 (epoch=950, escrow>0)
+		{"inactive only", "inactive", 1},        // seat-3 (epoch=945, escrow>0)
+		{"closed only", "closed", 1},            // seat-2 (escrow=0)
+		{"active+inactive", "active,inactive", 2},
+		{"all statuses", "active,inactive,closed", 3},
+		{"no filter", "", 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url := "/api/dz/shreds/client-seats"
+			if tt.status != "" {
+				url += "?status=" + tt.status
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			rr := httptest.NewRecorder()
+			api.GetShredClientSeats(rr, req)
+
+			assert.Equal(t, http.StatusOK, rr.Code)
+
+			var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+			err := json.NewDecoder(rr.Body).Decode(&response)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, response.Total, "status=%q", tt.status)
+		})
+	}
+}
+
+func TestGetShredClientSeats_Sort(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?sort_by=tenure&sort_dir=asc", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Items, 3)
+	// Ascending by tenure: seat-2 (1), seat-1 (3), seat-3 (5)
+	assert.Equal(t, uint16(1), response.Items[0].TenureEpochs)
+	assert.Equal(t, uint16(3), response.Items[1].TenureEpochs)
+	assert.Equal(t, uint16(5), response.Items[2].TenureEpochs)
+}
+
+func TestGetShredClientSeats_Filter(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	// Filter by seat PK
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?filters=seat:seat-1", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, 1, response.Total)
+	assert.Equal(t, "seat-1", response.Items[0].PK)
+}
+
+func TestGetShredClientSeats_Pagination(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?limit=1&offset=0", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredClientSeats(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, 3, response.Total)
+	assert.Len(t, response.Items, 1)
 }
 
 func TestGetShredDeviceHistories_WithData(t *testing.T) {
@@ -272,6 +374,119 @@ func TestGetShredFunders_WithData(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&funders)
 	require.NoError(t, err)
 	assert.Len(t, funders, 2)
+}
+
+func insertEscrowEventsTestData(t *testing.T, api *handlers.API) {
+	ctx := t.Context()
+
+	err := api.DB.Exec(ctx, `
+		INSERT INTO fact_dz_shred_escrow_events
+		(event_ts, ingested_at, escrow_pk, client_seat_pk, tx_signature, slot,
+		 event_type, amount_usdc, balance_after_usdc, epoch, status, signer)
+		VALUES
+		('2026-04-01 10:00:00', now(), 'escrow-1', 'seat-1', 'tx-1', 100, 'fund', 50000000, 50000000, 950, 'ok', 'signer-1'),
+		('2026-04-01 12:00:00', now(), 'escrow-1', 'seat-1', 'tx-2', 200, 'allocate_seat', NULL, 40000000, 950, 'ok', 'signer-1'),
+		('2026-04-02 10:00:00', now(), 'escrow-2', 'seat-2', 'tx-3', 300, 'fund', 100000000, 100000000, 950, 'ok', 'DZfHfcCXTLwgZeCRKQ1FL1UuwAwFAZM93g86NMYpfYan'),
+		('2026-04-03 10:00:00', now(), 'escrow-1', 'seat-1', 'tx-4', 400, 'close', 40000000, 0, 950, 'ok', 'signer-1')
+	`)
+	require.NoError(t, err)
+}
+
+func TestGetShredEscrowEvents_WithData(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEscrowEventsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEscrowEvents(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	// 3 events (internal-signer excluded by default)
+	assert.Equal(t, 3, response.Total)
+	// Should be sorted by time DESC by default
+	assert.Equal(t, "tx-4", response.Items[0].TxSignature)
+	assert.Equal(t, "close", response.Items[0].EventType)
+	assert.NotEmpty(t, response.Items[0].SolscanURL)
+	assert.NotEmpty(t, response.Items[0].Signer)
+}
+
+func TestGetShredEscrowEvents_IncludeInternal(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEscrowEventsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d&include_internal=true", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEscrowEvents(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, 4, response.Total) // All events including internal
+}
+
+func TestGetShredEscrowEvents_TimeRange(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEscrowEventsTestData(t, api)
+
+	// Custom range covering only April 1 2026
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?start_time=1775016000&end_time=1775102399&include_internal=true", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEscrowEvents(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, 2, response.Total) // Only tx-1 and tx-2 from April 1
+}
+
+func TestGetShredEscrowEvents_Filter(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEscrowEventsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d&filters=type:fund&include_internal=true", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEscrowEvents(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, 2, response.Total) // Two fund events
+	for _, item := range response.Items {
+		assert.Equal(t, "fund", item.EventType)
+	}
+}
+
+func TestGetShredEscrowEvents_Sort(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertEscrowEventsTestData(t, api)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d&sort_by=time&sort_dir=asc&include_internal=true", nil)
+	rr := httptest.NewRecorder()
+	api.GetShredEscrowEvents(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Items, 4)
+	assert.Equal(t, "tx-1", response.Items[0].TxSignature) // Earliest first
+	assert.Equal(t, "tx-4", response.Items[3].TxSignature) // Latest last
 }
 
 func findSeat(items []handlers.ShredClientSeatItem, pk string) *handlers.ShredClientSeatItem {

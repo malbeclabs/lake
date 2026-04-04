@@ -12,6 +12,7 @@ import (
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
+	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/neo4j"
@@ -53,9 +54,10 @@ type Config struct {
 	ReadyIncludesDeviceUsage     bool // If true, the indexer also waits for the device usage view to be ready.
 
 	// Shreds subscription configuration (optional, mainnet-beta + testnet only).
-	ShredsRPC       dzshreds.ShredsRPC
-	ShredsRawRPC    dzshreds.ShredsRawRPC
-	ShredsProgramID solana.PublicKey
+	ShredsRPC           dzshreds.ShredsRPC
+	ShredsRawRPC        dzshreds.ShredsRawRPC
+	ShredsProgramID     solana.PublicKey
+	EscrowEventsRPC     escrowevents.SolanaRPC // optional, for fetching escrow transaction history
 
 	// Solana configuration.
 	SolanaRPC sol.SolanaRPC

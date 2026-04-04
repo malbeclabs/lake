@@ -559,6 +559,7 @@ func main() {
 		r.Get("/api/dz/shreds/device-histories", api.GetShredDeviceHistories)
 		r.Get("/api/dz/shreds/metro-histories", api.GetShredMetroHistories)
 		r.Get("/api/dz/shreds/funders", api.GetShredFunders)
+		r.Get("/api/dz/shreds/escrow-events", api.GetShredEscrowEvents)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 

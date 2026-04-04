@@ -571,6 +571,7 @@ func run() error {
 		idxCfg.ShredsRPC = shredsClient
 		idxCfg.ShredsRawRPC = shredsRawRPC
 		idxCfg.ShredsProgramID = shreds.ProgramID
+		idxCfg.EscrowEventsRPC = shredsRawRPC
 	}
 	idx, err := indexer.New(ctx, idxCfg)
 	if err != nil {
@@ -618,6 +619,7 @@ func run() error {
 				Network:        *dzEnvFlag,
 				Serviceability: idx.Serviceability(),
 				Shreds:         idx.Shreds(),
+				EscrowEvents:   idx.EscrowEvents(),
 				TelemLatency:   idx.TelemLatency(),
 				TelemUsage:     idx.TelemUsage(),
 				GraphStore:     idx.GraphStore(),
@@ -921,6 +923,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		secondaryIdxCfg.ShredsRPC = shredsClient
 		secondaryIdxCfg.ShredsRawRPC = secondaryShredsRawRPC
 		secondaryIdxCfg.ShredsProgramID = shreds.ProgramID
+		secondaryIdxCfg.EscrowEventsRPC = secondaryShredsRawRPC
 	}
 	idx, err := indexer.New(ctx, secondaryIdxCfg)
 	if err != nil {
@@ -949,6 +952,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		Network:        env,
 		Serviceability: idx.Serviceability(),
 		Shreds:         idx.Shreds(),
+		EscrowEvents:   idx.EscrowEvents(),
 		TelemLatency:   idx.TelemLatency(),
 		TelemUsage:     idx.TelemUsage(),
 		GraphStore:     idx.GraphStore(),
@@ -1003,3 +1007,4 @@ func initializeGeoIP(cityDBPath, asnDBPath string, log *slog.Logger) (geoip.Reso
 		return nil
 	}, nil
 }
+
