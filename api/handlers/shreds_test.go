@@ -162,7 +162,7 @@ func TestGetShredsOverview_WithData(t *testing.T) {
 	assert.Equal(t, "open for requests", overview.Phase)
 	assert.Equal(t, uint64(950), overview.CurrentSubscriptionEpoch)
 	assert.Equal(t, uint64(950), overview.CurrentSolanaEpoch)
-	assert.Equal(t, uint64(2), overview.ClientSeatCount)
+	assert.Equal(t, uint64(3), overview.ClientSeatCount)
 	assert.Equal(t, uint64(1), overview.PaymentEscrowCount)
 	assert.Equal(t, uint64(1), overview.MetroHistoryCount)
 	assert.Equal(t, uint64(1), overview.DeviceHistoryCount)
@@ -234,9 +234,9 @@ func TestGetShredClientSeats_StatusFilter(t *testing.T) {
 		status string
 		want   int
 	}{
-		{"active only", "active", 1},           // seat-1 (epoch=950, escrow>0)
-		{"inactive only", "inactive", 1},        // seat-3 (epoch=945, escrow>0)
-		{"closed only", "closed", 1},            // seat-2 (escrow=0)
+		{"active only", "active", 1},     // seat-1 (epoch=950, escrow>0)
+		{"inactive only", "inactive", 1}, // seat-3 (epoch=945, escrow>0)
+		{"closed only", "closed", 1},     // seat-2 (escrow=0)
 		{"active+inactive", "active,inactive", 2},
 		{"all statuses", "active,inactive,closed", 3},
 		{"no filter", "", 3},

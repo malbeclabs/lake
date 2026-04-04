@@ -1007,4 +1007,3 @@ func initializeGeoIP(cityDBPath, asnDBPath string, log *slog.Logger) (geoip.Reso
 		return nil
 	}, nil
 }
-

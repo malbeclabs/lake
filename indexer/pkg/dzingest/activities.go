@@ -21,8 +21,8 @@ type Activities struct {
 	IngestionLog   *ingestionlog.Writer
 	Network        string
 	Serviceability *dzsvc.View
-	Shreds         *dzshreds.View       // nil when shreds is not configured
-	EscrowEvents   *escrowevents.View   // nil when shreds is not configured
+	Shreds         *dzshreds.View     // nil when shreds is not configured
+	EscrowEvents   *escrowevents.View // nil when shreds is not configured
 	TelemLatency   *dztelemlatency.View
 	TelemUsage     *dztelemusage.View // nil when InfluxDB is not configured
 	GraphStore     *dzgraph.Store     // nil when Neo4j is not configured

@@ -45,7 +45,7 @@ type Config struct {
 }
 
 // TaskQueue returns the Temporal task queue name for the given network.
-func TaskQueue(network string) string  { return "indexer-dz-ingest-" + network }
+func TaskQueue(network string) string { return "indexer-dz-ingest-" + network }
 
 func taskQueue(network string) string  { return TaskQueue(network) }
 func workflowID(network string) string { return TaskQueue(network) }

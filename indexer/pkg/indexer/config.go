@@ -54,10 +54,10 @@ type Config struct {
 	ReadyIncludesDeviceUsage     bool // If true, the indexer also waits for the device usage view to be ready.
 
 	// Shreds subscription configuration (optional, mainnet-beta + testnet only).
-	ShredsRPC           dzshreds.ShredsRPC
-	ShredsRawRPC        dzshreds.ShredsRawRPC
-	ShredsProgramID     solana.PublicKey
-	EscrowEventsRPC     escrowevents.SolanaRPC // optional, for fetching escrow transaction history
+	ShredsRPC       dzshreds.ShredsRPC
+	ShredsRawRPC    dzshreds.ShredsRawRPC
+	ShredsProgramID solana.PublicKey
+	EscrowEventsRPC escrowevents.SolanaRPC // optional, for fetching escrow transaction history
 
 	// Solana configuration.
 	SolanaRPC sol.SolanaRPC
