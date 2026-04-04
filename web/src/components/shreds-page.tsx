@@ -827,7 +827,7 @@ const eventFieldPrefixes = [
 
 function formatUSDC(raw: number | null): string {
   if (raw === null) return '\u2014'
-  return (raw / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 6 })
+  return '$' + (raw / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 const eventTypeBadgeColors: Record<string, string> = {
