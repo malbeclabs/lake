@@ -426,14 +426,10 @@ export function ShredsSeatsPage() {
                       {truncatePK(seat.funding_authority_key)}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {seat.total_usdc_balance > 0 ? `$${(seat.total_usdc_balance / 1e6).toFixed(2)}` : <span className="text-muted-foreground">{'\u2014'}</span>}
+                      {`$${(seat.total_usdc_balance / 1e6).toFixed(2)}`}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {(() => {
-                        const epochs = prepaidEpochs(seat)
-                        if (epochs <= 0) return <span className="text-muted-foreground">{'\u2014'}</span>
-                        return epochs
-                      })()}
+                      {prepaidEpochs(seat)}
                     </td>
                     <td className="px-4 py-3">
                       <Link
