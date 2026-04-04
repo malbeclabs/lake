@@ -149,10 +149,11 @@ function SortHeader({ field, label, align, currentSort, currentDir, onSort }: {
   )
 }
 
-function FilterActions({ searchFilters, removeFilter, clearAllFilters, setLiveFilter, fieldPrefixes, entity, placeholder }: {
+function FilterActions({ searchFilters, removeFilter, clearAllFilters, setLiveFilter, fieldPrefixes, entity, placeholder, autocompleteFields = [] }: {
   searchFilters: string[]; removeFilter: (f: string) => void; clearAllFilters: () => void
   setLiveFilter: (f: string) => void
   fieldPrefixes: { prefix: string; description: string }[]; entity: string; placeholder: string
+  autocompleteFields?: (string | { field: string; minChars: number })[]
 }) {
   return (
     <>
@@ -174,7 +175,7 @@ function FilterActions({ searchFilters, removeFilter, clearAllFilters, setLiveFi
       <InlineFilter
         fieldPrefixes={fieldPrefixes}
         entity={entity}
-        autocompleteFields={[]}
+        autocompleteFields={autocompleteFields}
         placeholder={placeholder}
         onLiveFilterChange={setLiveFilter}
       />
@@ -336,6 +337,7 @@ export function ShredsSeatsPage() {
               searchFilters={searchFilters} removeFilter={removeFilter} clearAllFilters={clearAllFilters}
               setLiveFilter={() => {}}
               fieldPrefixes={seatFieldPrefixes} entity="shred-seats" placeholder="Filter seats..."
+              autocompleteFields={['device', 'metro', 'ip', 'funder']}
             />
           }
         />
@@ -1039,6 +1041,7 @@ export function ShredsEscrowEventsPage() {
               searchFilters={searchFilters} removeFilter={removeFilter} clearAllFilters={clearAllFilters}
               setLiveFilter={() => {}}
               fieldPrefixes={eventFieldPrefixes} entity="escrow-events" placeholder="Filter events..."
+              autocompleteFields={['type', 'seat', 'signer', 'status']}
             />
           }
         />

@@ -75,6 +75,19 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"country":   {table: "solana_gossip_nodes_current g JOIN geoip_records_current geo ON g.gossip_ip = geo.ip", column: "geo.country"},
 		"device":    {table: "solana_gossip_nodes_current g JOIN dz_users_current u ON g.gossip_ip = u.client_ip JOIN dz_devices_current d ON u.device_pk = d.pk", column: "d.code"},
 	},
+	"escrow-events": {
+		"type":   {table: "fact_dz_shred_escrow_events", column: "event_type"},
+		"seat":   {table: "fact_dz_shred_escrow_events", column: "client_seat_pk"},
+		"signer": {table: "fact_dz_shred_escrow_events", column: "signer"},
+		"status": {table: "fact_dz_shred_escrow_events", column: "status"},
+	},
+	"shred-seats": {
+		"seat":   {table: "dim_dz_shred_client_seats_current", column: "pk"},
+		"device": {table: "dim_dz_shred_client_seats_current s JOIN dz_devices_current d ON s.device_key = d.pk", column: "d.code"},
+		"metro":  {table: "dim_dz_shred_client_seats_current s JOIN dz_devices_current d ON s.device_key = d.pk JOIN dz_metros_current m ON d.metro_pk = m.pk", column: "m.code"},
+		"funder": {table: "dim_dz_shred_client_seats_current", column: "funding_authority_key"},
+		"ip":     {table: "dim_dz_shred_client_seats_current", column: "client_ip"},
+	},
 }
 
 // factTableInterval returns the ClickHouse interval to use for fact table time bounds.
