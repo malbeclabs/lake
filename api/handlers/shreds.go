@@ -259,7 +259,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			COALESCE(u.pk, '') as user_pk,
 			COALESCE(u.owner_pubkey, '') as user_owner_pubkey,
 			COALESCE(u.status, '') as user_status,
-			COALESCE(toString(le.last_activity), '') as last_activity
+			le.last_activity as last_activity
 		FROM dim_dz_shred_client_seats_current s
 		LEFT JOIN dz_devices_current d ON s.device_key = d.pk
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
@@ -285,16 +285,20 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	var items []ShredClientSeatItem
 	for rows.Next() {
 		var s ShredClientSeatItem
+		var lastActivity *time.Time
 		if err := rows.Scan(
 			&s.PK, &s.DeviceKey, &s.DeviceCode, &s.MetroPK, &s.MetroCode,
 			&s.ClientIP, &s.TenureEpochs, &s.FundedEpoch, &s.ActiveEpoch,
 			&s.HasPriceOverride, &s.OverrideUSDCPriceDollars, &s.EscrowCount, &s.TotalUSDCBalance,
 			&s.PricePerEpochDollars, &s.FundingAuthorityKey,
-			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &s.LastActivity,
+			&s.UserPK, &s.UserOwnerPubkey, &s.UserStatus, &lastActivity,
 		); err != nil {
 			logError("shred client seats row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
+		}
+		if lastActivity != nil && !lastActivity.IsZero() {
+			s.LastActivity = lastActivity.UTC().Format(time.RFC3339)
 		}
 		items = append(items, s)
 	}
