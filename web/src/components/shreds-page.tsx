@@ -257,7 +257,7 @@ export function ShredsSeatsPage() {
   }, [searchFilters])
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['shred-client-seats', offset, sortBy, sortDir, statusParam, serverFilters],
+    queryKey: ['shred-client-seats', offset, sortBy, sortDir, statusParam, searchParam],
     queryFn: () => fetchShredClientSeats({
       limit: PAGE_SIZE,
       offset,
@@ -919,7 +919,7 @@ export function ShredsEscrowEventsPage() {
   }, [timeRange, customStart, customEnd])
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['shred-escrow-events', offset, sortBy, sortDir, timeParams, serverFilters, includeInternal],
+    queryKey: ['shred-escrow-events', offset, sortBy, sortDir, timeParams, searchParam, includeInternal],
     queryFn: () => fetchShredEscrowEvents({
       limit: PAGE_SIZE,
       offset,
