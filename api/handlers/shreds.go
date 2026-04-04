@@ -257,7 +257,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dim_dz_shred_metro_histories_current mh ON mh.exchange_key = d.metro_pk
 		LEFT JOIN dim_dz_shred_device_histories_current dh ON dh.device_key = s.device_key
-		LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
+		ANY LEFT JOIN dz_users_current u ON u.device_pk = s.device_key AND u.client_ip = s.client_ip
 		LEFT JOIN escrow_balances eb ON eb.client_seat_key = s.pk
 	` + whereSQL + ` ` + orderBy + ` LIMIT ? OFFSET ?`
 	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
