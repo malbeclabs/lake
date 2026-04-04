@@ -437,7 +437,7 @@ export function ShredsSeatsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Link
-                        to={`/dz/shreds/escrow-events?search=seat:${seat.pk}`}
+                        to={`/dz/shreds/activity?search=seat:${seat.pk}`}
                         className="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
                       >
                         Activity

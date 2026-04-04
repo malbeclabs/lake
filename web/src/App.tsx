@@ -707,7 +707,7 @@ function AppContent() {
             <Route path="/dz/shreds/funders" element={<ShredsFundersPage />} />
             <Route path="/dz/shreds/devices" element={<ShredsDevicesPage />} />
             <Route path="/dz/shreds/metros" element={<ShredsMetrosPage />} />
-            <Route path="/dz/shreds/escrow-events" element={<ShredsEscrowEventsPage />} />
+            <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
             <Route path="/dz/publisher-check" element={<PublisherCheckPage />} />
             <Route path="/dz/edge/scoreboard" element={<InternalOnly><EdgeScoreboardPage /></InternalOnly>} />
 

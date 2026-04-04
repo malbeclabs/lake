@@ -94,7 +94,7 @@ export function Sidebar() {
   const isShredsFundersRoute = location.pathname === '/dz/shreds/funders'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsMetrosRoute = location.pathname === '/dz/shreds/metros'
-  const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/escrow-events'
+  const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isScoreboardRoute = location.pathname === '/dz/edge/scoreboard'
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
@@ -507,7 +507,7 @@ export function Sidebar() {
                 <Link to="/dz/shreds/metros" className={subNavItemClass(isShredsMetrosRoute)}>
                   Metros
                 </Link>
-                <Link to="/dz/shreds/escrow-events" className={subNavItemClass(isShredsEscrowEventsRoute)}>
+                <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
                   Activity
                 </Link>
               </>
