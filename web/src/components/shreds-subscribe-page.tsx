@@ -528,7 +528,8 @@ export function ShredsSubscribePage() {
 // so we show a generic note for now)
 // ---------------------------------------------------------------------------
 
-function EpochWarning({ currentEpoch: _currentEpoch }: { currentEpoch: number }) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function EpochWarning({ currentEpoch }: { currentEpoch: number }) {
   // In the CLI, this warns when <10% of the epoch remains.
   // We'd need slot-level data (slot_index, slots_in_epoch) to replicate exactly.
   // For now, show a gentle informational note.
