@@ -20,6 +20,7 @@ import {
   Map,
   Network,
   Shield,
+  ShieldCheck,
   Wrench,
   ShieldAlert,
   Gauge,
@@ -480,6 +481,10 @@ export function Sidebar() {
             <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
               <Radio className="h-4 w-4" />
               Multicast
+            </Link>
+            <Link to="/dz/shreds/publishers" className={navItemClass(isPublisherCheckRoute)}>
+              <ShieldCheck className="h-4 w-4" />
+              Publisher Check
             </Link>
             <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Coins className="h-4 w-4" />
