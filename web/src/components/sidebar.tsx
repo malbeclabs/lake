@@ -31,7 +31,7 @@ import {
   Layers,
   BookOpen,
   ArrowRightLeft,
-  Coins,
+  Puzzle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
@@ -487,7 +487,7 @@ export function Sidebar() {
               Publisher Check
             </Link>
             <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
-              <Coins className="h-4 w-4" />
+              <Puzzle className="h-4 w-4" />
               Shreds
             </Link>
             {isShredsRoute && (

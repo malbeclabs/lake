@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
-import { Loader2, Coins, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check, RefreshCw } from 'lucide-react'
+import { Loader2, Puzzle, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check, RefreshCw } from 'lucide-react'
 import {
   fetchAllPaginated,
   fetchShredClientSeats,
@@ -401,7 +401,7 @@ export function ShredsSeatsPage() {
     <div className="flex-1 overflow-auto">
       <div className="px-4 sm:px-8 py-8">
         <PageHeader
-          icon={Coins}
+          icon={Puzzle}
           title="Shred Subscribers"
           count={total}
           subtitle={
@@ -626,7 +626,7 @@ export function ShredsDevicesPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
-          icon={Coins}
+          icon={Puzzle}
           title="Shred Devices"
           count={total}
           subtitle={
@@ -771,7 +771,7 @@ export function ShredsMetrosPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
-          icon={Coins}
+          icon={Puzzle}
           title="Shred Metros"
           count={sorted.length}
           subtitle={
@@ -897,7 +897,7 @@ export function ShredsFundersPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
-          icon={Coins}
+          icon={Puzzle}
           title="Shred Funders"
           count={sorted.length}
           subtitle={
@@ -1182,7 +1182,7 @@ export function ShredsEscrowEventsPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
-          icon={Coins}
+          icon={Puzzle}
           title="Shred Activity"
           count={total}
           subtitle={
