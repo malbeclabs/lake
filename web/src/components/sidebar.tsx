@@ -92,7 +92,7 @@ export function Sidebar() {
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
-  const isPublisherCheckRoute = location.pathname === '/dz/shreds/publishers'
+  const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
   const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
@@ -482,7 +482,7 @@ export function Sidebar() {
               <Radio className="h-4 w-4" />
               Multicast
             </Link>
-            <Link to="/dz/shreds/publishers" className={navItemClass(isPublisherCheckRoute)}>
+            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
               <ShieldCheck className="h-4 w-4" />
               Publisher Check
             </Link>
@@ -492,9 +492,6 @@ export function Sidebar() {
             </Link>
             {isShredsRoute && (
               <>
-                <Link to="/dz/shreds/publishers" className={subNavItemClass(isPublisherCheckRoute)}>
-                  Publishers
-                </Link>
                 <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
                   Subscribers
                 </Link>

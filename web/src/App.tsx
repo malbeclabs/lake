@@ -710,8 +710,7 @@ function AppContent() {
             <Route path="/dz/shreds/metros" element={<ShredsMetrosPage />} />
             <Route path="/dz/shreds/activity" element={<ShredsEscrowEventsPage />} />
             {/* Subscribe page hidden for now — see shreds-subscribe-page.tsx */}
-            <Route path="/dz/shreds/publishers" element={<PublisherCheckPage />} />
-            <Route path="/dz/publisher-check" element={<Navigate to="/dz/shreds/publishers" replace />} />
+            <Route path="/dz/publisher-check" element={<PublisherCheckPage />} />
             <Route path="/dz/shreds/scoreboard" element={<InternalOnly><EdgeScoreboardPage /></InternalOnly>} />
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
 

@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
-import { Loader2, Puzzle, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check, RefreshCw } from 'lucide-react'
+import { Loader2, Puzzle, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check, RefreshCw, Info } from 'lucide-react'
 import {
   fetchAllPaginated,
   fetchShredClientSeats,
@@ -241,7 +241,7 @@ type SeatStatus = 'active' | 'expiring' | 'pending' | 'expired' | 'closed'
 function getSeatStatus(seat: ShredClientSeat, currentSolanaEpoch: number): SeatStatus {
   if (seat.escrow_count === 0) return 'closed'
   if (seat.active_epoch < currentSolanaEpoch) {
-    return seat.total_usdc_balance > 0 ? 'pending' : 'expired'
+    return prepaidEpochs(seat) >= 1 ? 'pending' : 'expired'
   }
   const prepaid = prepaidEpochs(seat)
   if (prepaid < 2) return 'expiring'
@@ -301,6 +301,7 @@ function SeatStatusBadge({ status }: { status: SeatStatus }) {
 export function ShredsSeatsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const [showStatusInfo, setShowStatusInfo] = useState(false)
 
   // Fetch overview for current Solana epoch (used for status badges)
   const { data: overview } = useQuery({
@@ -318,17 +319,17 @@ export function ShredsSeatsPage() {
   const sortBy = searchParams.get('sort') || 'last_activity'
   const sortDir = (searchParams.get('dir') || 'desc') as SortDirection
 
-  // Status filter from URL (comma-separated, default: active,expiring).
-  const statusParam = searchParams.get('status') || 'active,expiring'
+  // Status filter from URL (comma-separated, default: active,expiring,pending).
+  const statusParam = searchParams.get('status') || 'active,expiring,pending'
   const activeStatuses = useMemo(() => new Set(statusParam.split(',').filter(Boolean)), [statusParam])
 
   const toggleStatus = useCallback((status: string) => {
     setSearchParams(prev => {
       const p = new URLSearchParams(prev)
-      const current = new Set((prev.get('status') || 'active,expiring').split(',').filter(Boolean))
+      const current = new Set((prev.get('status') || 'active,expiring,pending').split(',').filter(Boolean))
       if (current.has(status)) { current.delete(status) } else { current.add(status) }
       const val = Array.from(current).join(',')
-      if (val === 'active,expiring') { p.delete('status') } else { p.set('status', val) }
+      if (val === 'active,expiring,pending') { p.delete('status') } else { p.set('status', val) }
       p.delete('page')
       return p
     })
@@ -453,7 +454,40 @@ export function ShredsSeatsPage() {
               </button>
             )
           })}
+          <button
+            onClick={() => setShowStatusInfo(!showStatusInfo)}
+            className={`p-1 rounded-md transition-colors ${showStatusInfo ? 'text-foreground bg-muted' : 'text-muted-foreground hover:text-foreground'}`}
+            title="Status definitions"
+          >
+            <Info className="h-3.5 w-3.5" />
+          </button>
         </div>
+        {showStatusInfo && (
+          <div className="mb-3 border border-border rounded-lg bg-muted/50 overflow-hidden">
+            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-5 py-4 text-sm">
+              <span className="inline-flex items-center gap-1.5 font-medium text-green-600 dark:text-green-400">
+                <div className="h-1.5 w-1.5 rounded-full bg-green-500" /> Active
+              </span>
+              <span className="text-muted-foreground">Allocated for the current epoch with 2+ epochs of prepaid balance</span>
+              <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                <div className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Expiring
+              </span>
+              <span className="text-muted-foreground">Active but less than 2 epochs of balance remaining</span>
+              <span className="inline-flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
+                <div className="h-1.5 w-1.5 rounded-full bg-blue-500" /> Pending
+              </span>
+              <span className="text-muted-foreground">Funded with enough for at least 1 epoch but not yet allocated</span>
+              <span className="inline-flex items-center gap-1.5 font-medium text-red-600 dark:text-red-400">
+                <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> Expired
+              </span>
+              <span className="text-muted-foreground">Not active and insufficient balance to renew</span>
+              <span className="inline-flex items-center gap-1.5 font-medium text-gray-500 dark:text-gray-400">
+                <div className="h-1.5 w-1.5 rounded-full bg-gray-500" /> Closed
+              </span>
+              <span className="text-muted-foreground">No payment escrow attached</span>
+            </div>
+          </div>
+        )}
 
         <div className="relative border border-border rounded-lg overflow-hidden bg-card">
           {isFetching && data && (
@@ -1302,7 +1336,7 @@ export function ShredsEscrowEventsPage() {
                     <td className="px-4 py-3 font-mono text-xs" title={e.client_seat_pk}>
                       <span className="inline-flex items-center gap-1.5 group/cell">
                         <Link
-                          to={`/dz/shreds/subscribers?search=seat:${e.client_seat_pk}&status=active,expiring,inactive,closed`}
+                          to={`/dz/shreds/subscribers?search=seat:${e.client_seat_pk}&status=active,expiring,pending,inactive,closed`}
                           className="text-blue-600 dark:text-blue-400 hover:underline"
                         >
                           {truncatePK(e.client_seat_pk)}
