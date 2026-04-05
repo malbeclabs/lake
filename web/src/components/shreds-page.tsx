@@ -318,25 +318,25 @@ export function ShredsSeatsPage() {
   const sortBy = searchParams.get('sort') || 'last_activity'
   const sortDir = (searchParams.get('dir') || 'desc') as SortDirection
 
-  // Status toggles from URL.
-  const showActive = searchParams.get('active') !== '0'
-  const showExpiring = searchParams.get('expiring') !== '0'
-  const showInactive = searchParams.get('inactive') === '1'
-  const showClosed = searchParams.get('closed') === '1'
+  // Status filter from URL (comma-separated, default: active,expiring).
+  const statusParam = searchParams.get('status') || 'active,expiring'
+  const activeStatuses = useMemo(() => new Set(statusParam.split(',').filter(Boolean)), [statusParam])
+
+  const toggleStatus = useCallback((status: string) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      const current = new Set((prev.get('status') || 'active,expiring').split(',').filter(Boolean))
+      if (current.has(status)) { current.delete(status) } else { current.add(status) }
+      const val = Array.from(current).join(',')
+      if (val === 'active,expiring') { p.delete('status') } else { p.set('status', val) }
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
 
   // Filters from URL.
   const searchParam = searchParams.get('search') || ''
   const searchFilters = useMemo(() => parseSearchFilters(searchParam), [searchParam])
-
-  // Build status param for API.
-  const statusParam = useMemo(() => {
-    const statuses: string[] = []
-    if (showActive) statuses.push('active')
-    if (showExpiring) statuses.push('expiring')
-    if (showInactive) statuses.push('inactive')
-    if (showClosed) statuses.push('closed')
-    return statuses.join(',')
-  }, [showActive, showExpiring, showInactive, showClosed])
 
   // Build server-side filter params.
   const serverFilters = useMemo(() => {
@@ -367,16 +367,6 @@ export function ShredsSeatsPage() {
       const p = new URLSearchParams(prev)
       if (prev.get('sort') === field) { p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc') }
       else { p.set('sort', field); p.set('dir', 'desc') }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
-
-  const toggleParam = useCallback((key: string, current: boolean, defaultOn = false) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (defaultOn) { if (current) { p.set(key, '0') } else { p.delete(key) } }
-      else { if (current) { p.delete(key) } else { p.set(key, '1') } }
       p.delete('page')
       return p
     })
@@ -442,50 +432,26 @@ export function ShredsSeatsPage() {
         />
 
         <div className="flex items-center gap-2 mb-3">
-          <button
-            onClick={() => toggleParam('active', showActive, true)}
-            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-              showActive
-                ? 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20'
-                : 'bg-muted text-muted-foreground border-border opacity-50'
-            }`}
-          >
-            <div className={`h-1.5 w-1.5 rounded-full ${showActive ? 'bg-green-500' : 'bg-muted-foreground'}`} />
-            Active
-          </button>
-          <button
-            onClick={() => toggleParam('expiring', showExpiring, true)}
-            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-              showExpiring
-                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-                : 'bg-muted text-muted-foreground border-border opacity-50'
-            }`}
-          >
-            <div className={`h-1.5 w-1.5 rounded-full ${showExpiring ? 'bg-amber-500' : 'bg-muted-foreground'}`} />
-            Expiring
-          </button>
-          <button
-            onClick={() => toggleParam('inactive', showInactive)}
-            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-              showInactive
-                ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
-                : 'bg-muted text-muted-foreground border-border opacity-50'
-            }`}
-          >
-            <div className={`h-1.5 w-1.5 rounded-full ${showInactive ? 'bg-red-500' : 'bg-muted-foreground'}`} />
-            Expired
-          </button>
-          <button
-            onClick={() => toggleParam('closed', showClosed)}
-            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
-              showClosed
-                ? 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20'
-                : 'bg-muted text-muted-foreground border-border opacity-50'
-            }`}
-          >
-            <div className={`h-1.5 w-1.5 rounded-full ${showClosed ? 'bg-gray-500' : 'bg-muted-foreground'}`} />
-            Closed
-          </button>
+          {([
+            { key: 'active', label: 'Active', onClass: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20', dotClass: 'bg-green-500' },
+            { key: 'expiring', label: 'Expiring', onClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20', dotClass: 'bg-amber-500' },
+            { key: 'inactive', label: 'Expired', onClass: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20', dotClass: 'bg-red-500' },
+            { key: 'closed', label: 'Closed', onClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20', dotClass: 'bg-gray-500' },
+          ] as const).map(({ key, label, onClass, dotClass }) => {
+            const on = activeStatuses.has(key)
+            return (
+              <button
+                key={key}
+                onClick={() => toggleStatus(key)}
+                className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                  on ? onClass : 'bg-muted text-muted-foreground border-border opacity-50'
+                }`}
+              >
+                <div className={`h-1.5 w-1.5 rounded-full ${on ? dotClass : 'bg-muted-foreground'}`} />
+                {label}
+              </button>
+            )
+          })}
         </div>
 
         <div className="relative border border-border rounded-lg overflow-hidden bg-card">
