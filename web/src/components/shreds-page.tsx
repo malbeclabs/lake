@@ -1238,7 +1238,7 @@ export function ShredsEscrowEventsPage() {
                       {e.amount_usdc !== null ? formatUSDC(e.amount_usdc) : <span className="text-muted-foreground">{'\u2014'}</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {formatUSDC(e.balance_after_usdc ?? 0)}
+                      {e.balance_after_usdc !== null ? formatUSDC(e.balance_after_usdc) : <span className="text-muted-foreground">{'\u2014'}</span>}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {e.epoch !== null ? e.epoch : <span className="text-muted-foreground">{'\u2014'}</span>}
