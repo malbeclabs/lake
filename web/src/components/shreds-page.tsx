@@ -14,6 +14,7 @@ import {
   type ShredMetroHistory,
   type ShredFunder,
 } from '@/lib/api'
+import { useWallet } from '@solana/wallet-adapter-react'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -297,6 +298,8 @@ function SeatStatusBadge({ status }: { status: SeatStatus }) {
 export function ShredsSeatsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const { publicKey: walletKey } = useWallet()
+  const walletAddress = walletKey?.toBase58() ?? null
 
   // Modal state
   const [fundSeat, setFundSeat] = useState<ShredClientSeat | null>(null)
@@ -464,16 +467,16 @@ export function ShredsSeatsPage() {
             <table className="w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Seat</th>
                   <SortHeader field="device" label="Device" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="metro" label="Metro" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="ip" label="Client IP" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <th className="px-4 py-3 font-medium">Status</th>
                   <SortHeader field="tenure" label="Tenure" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="balance" label="Balance (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="prepaid" label="Prepaid Epochs" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="last_activity" label="Last Activity" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <th className="px-4 py-3 font-medium">Actions</th>
+                  {walletAddress && <th className="px-4 py-3 font-medium">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -481,9 +484,6 @@ export function ShredsSeatsPage() {
                   const status = getSeatStatus(seat, currentSolanaEpoch)
                   return (
                   <tr key={seat.pk} className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors" onClick={(e) => handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)}>
-                    <td className="px-4 py-3">
-                      <SeatStatusBadge status={status} />
-                    </td>
                     <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.pk}>
                       <span className="inline-flex items-center gap-1">
                         {truncatePK(seat.pk)}
@@ -515,6 +515,9 @@ export function ShredsSeatsPage() {
                         <CopyIcon text={seat.client_ip} />
                       </span>
                     </td>
+                    <td className="px-4 py-3">
+                      <SeatStatusBadge status={status} />
+                    </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">{seat.tenure_epochs}</td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {`$${(seat.total_usdc_balance / 1e6).toFixed(2)}`}
@@ -531,45 +534,49 @@ export function ShredsSeatsPage() {
                         <ChevronRight className="h-3 w-3" />
                       </Link>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        {(status === 'active' || status === 'expiring' || status === 'expired') && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setFundSeat(seat) }}
-                            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted-foreground/10 transition-colors"
-                            title="Fund this seat"
-                          >
-                            <DollarSign className="h-3 w-3" />
-                            Fund
-                          </button>
+                    {walletAddress && (
+                      <td className="px-4 py-3">
+                        {walletAddress === seat.funding_authority_key && (
+                          <div className="flex items-center gap-1">
+                            {(status === 'active' || status === 'expiring' || status === 'expired') && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setFundSeat(seat) }}
+                                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted-foreground/10 transition-colors"
+                                title="Fund this seat"
+                              >
+                                <DollarSign className="h-3 w-3" />
+                                Fund
+                              </button>
+                            )}
+                            {(status === 'active' || status === 'expiring') && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setWithdrawSeat(seat) }}
+                                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                title="Unsubscribe"
+                              >
+                                <LogOut className="h-3 w-3" />
+                                Unsubscribe
+                              </button>
+                            )}
+                            {status === 'expired' && seat.escrow_count > 0 && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setWithdrawSeat(seat) }}
+                                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                title="Withdraw remaining USDC"
+                              >
+                                <LogOut className="h-3 w-3" />
+                                Withdraw
+                              </button>
+                            )}
+                          </div>
                         )}
-                        {(status === 'active' || status === 'expiring') && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setWithdrawSeat(seat) }}
-                            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                            title="Unsubscribe"
-                          >
-                            <LogOut className="h-3 w-3" />
-                            Unsubscribe
-                          </button>
-                        )}
-                        {status === 'expired' && seat.escrow_count > 0 && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setWithdrawSeat(seat) }}
-                            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                            title="Withdraw remaining USDC"
-                          >
-                            <LogOut className="h-3 w-3" />
-                            Withdraw
-                          </button>
-                        )}
-                      </div>
-                    </td>
+                      </td>
+                    )}
                   </tr>
                   )
                 })}
                 {items.length === 0 && (
-                  <tr><td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">No subscribers found</td></tr>
+                  <tr><td colSpan={walletAddress ? 11 : 10} className="px-4 py-8 text-center text-muted-foreground">No subscribers found</td></tr>
                 )}
               </tbody>
             </table>

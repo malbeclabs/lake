@@ -479,7 +479,7 @@ export function Sidebar() {
             </Link>
             <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
               <Radio className="h-4 w-4" />
-              Multicast Groups
+              Multicast
             </Link>
             <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Coins className="h-4 w-4" />
