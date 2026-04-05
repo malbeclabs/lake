@@ -1167,7 +1167,7 @@ export function ShredsEscrowEventsPage() {
                     <td className="px-4 py-3 font-mono text-xs" title={e.client_seat_pk}>
                       <span className="inline-flex items-center gap-1.5">
                         <Link
-                          to={`/dz/shreds/seats?search=seat:${e.client_seat_pk}`}
+                          to={`/dz/shreds/seats?search=seat:${e.client_seat_pk}&inactive=1&closed=1`}
                           className="text-blue-600 dark:text-blue-400 hover:underline"
                         >
                           {truncatePK(e.client_seat_pk)}
