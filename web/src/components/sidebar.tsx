@@ -20,7 +20,6 @@ import {
   Map,
   Network,
   Shield,
-  ShieldCheck,
   Wrench,
   ShieldAlert,
   Gauge,
@@ -30,7 +29,6 @@ import {
   Moon,
   Layers,
   BookOpen,
-  Trophy,
   ArrowRightLeft,
   Coins,
 } from 'lucide-react'
@@ -90,13 +88,11 @@ export function Sidebar() {
   const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
   const isShredsRoute = location.pathname.startsWith('/dz/shreds')
-  const isShredsSeatsRoute = location.pathname === '/dz/shreds/seats'
-  const isShredsFundersRoute = location.pathname === '/dz/shreds/funders'
+  const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
-  const isShredsMetrosRoute = location.pathname === '/dz/shreds/metros'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
-  const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
-  const isScoreboardRoute = location.pathname === '/dz/edge/scoreboard'
+  const isPublisherCheckRoute = location.pathname === '/dz/shreds/publishers'
+  const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -485,38 +481,30 @@ export function Sidebar() {
               <Radio className="h-4 w-4" />
               Multicast Groups
             </Link>
-            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
-              <ShieldCheck className="h-4 w-4" />
-              Publisher Check
-            </Link>
-            <Link to="/dz/shreds/seats" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
+            <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Coins className="h-4 w-4" />
-              Shred Subscriptions
+              Shreds
             </Link>
             {isShredsRoute && (
               <>
-                <Link to="/dz/shreds/seats" className={subNavItemClass(isShredsSeatsRoute)}>
-                  Seats
+                <Link to="/dz/shreds/publishers" className={subNavItemClass(isPublisherCheckRoute)}>
+                  Publishers
                 </Link>
-                <Link to="/dz/shreds/funders" className={subNavItemClass(isShredsFundersRoute)}>
-                  Funders
+                <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
+                  Subscribers
                 </Link>
                 <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
                   Devices
                 </Link>
-                <Link to="/dz/shreds/metros" className={subNavItemClass(isShredsMetrosRoute)}>
-                  Metros
-                </Link>
                 <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
                   Activity
                 </Link>
+                {isInternalUser && (
+                  <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
+                    Scoreboard
+                  </Link>
+                )}
               </>
-            )}
-            {isInternalUser && (
-              <Link to="/dz/edge/scoreboard" className={navItemClass(isScoreboardRoute)}>
-                <Trophy className="h-4 w-4" />
-                Scoreboard
-              </Link>
             )}
           </div>
         </div>

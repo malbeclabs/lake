@@ -5316,3 +5316,64 @@ export async function fetchBulkDeviceMetrics(params: FetchDeviceMetricsParams = 
   if (!res.ok) throw new Error('Failed to fetch bulk device metrics')
   return res.json()
 }
+
+// Shred Pricing
+export interface ShredPricing {
+  device_key: string
+  device_code: string
+  metro_exchange_key: string
+  metro_code: string
+  is_enabled: number
+  base_price_dollars: number
+  premium_dollars: number
+  total_price_dollars: number
+  granted_seats: number
+  available_seats: number
+  is_price_finalized: number
+  current_epoch: number
+}
+
+export async function fetchShredPricing(): Promise<ShredPricing[]> {
+  const res = await fetchWithRetry('/api/dz/shreds/pricing')
+  if (!res.ok) {
+    throw new Error('Failed to fetch shred pricing')
+  }
+  return res.json()
+}
+
+// Shred Devices (with pricing and seat info)
+export interface ShredDevice {
+  device_key: string
+  device_code: string
+  metro_exchange_key: string
+  metro_code: string
+  is_enabled: number
+  base_price_dollars: number
+  premium_dollars: number
+  total_price_dollars: number
+  granted_seats: number
+  capacity: number
+  available_seats: number
+}
+
+export async function fetchShredDevices(params: {
+  limit: number
+  offset: number
+  sortBy?: string
+  sortDir?: string
+  filters?: string[]
+}): Promise<PaginatedResponse<ShredDevice>> {
+  const qs = new URLSearchParams()
+  qs.set('limit', params.limit.toString())
+  qs.set('offset', params.offset.toString())
+  if (params.sortBy) qs.set('sort_by', params.sortBy)
+  if (params.sortDir) qs.set('sort_dir', params.sortDir)
+  if (params.filters) {
+    for (const f of params.filters) qs.append('filters', f)
+  }
+  const res = await fetchWithRetry(`/api/dz/shreds/devices?${qs.toString()}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch shred devices')
+  }
+  return res.json()
+}

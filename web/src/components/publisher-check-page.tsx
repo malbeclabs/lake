@@ -271,7 +271,7 @@ export function PublisherCheckPage() {
       <div className="mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={ShieldCheck}
-          title="Publisher Check"
+          title="Shred Publishers"
           subtitle={
             activeTab === 'slots'
               ? data?.max_slot

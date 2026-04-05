@@ -187,9 +187,22 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			statuses[s] = true
 		}
 
+		// Price expression used for prepaid epoch calculation.
+		priceExpr := `CASE
+			WHEN s.has_price_override = 1 THEN toInt64(s.override_usdc_price_dollars)
+			ELSE toInt64(COALESCE(mh.current_usdc_price_dollars, 0)) + toInt64(COALESCE(dh.current_usdc_metro_premium_dollars, 0))
+		END`
+		prepaidExpr := `CASE WHEN ` + priceExpr + ` > 0 THEN intDiv(COALESCE(eb.total_usdc_balance, 0) / 1000000, ` + priceExpr + `) ELSE 0 END`
+
 		var statusOr []string
 		if statuses["active"] {
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0)")
+			// Active but NOT expiring (prepaid >= 2).
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 2)")
+			whereArgs = append(whereArgs, solanaEpoch)
+		}
+		if statuses["expiring"] {
+			// Active but expiring soon (prepaid < 2).
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 2)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["inactive"] {
