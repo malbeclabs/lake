@@ -4840,6 +4840,7 @@ export interface ShredEscrowEvent {
   epoch: number | null
   status: string
   signer: string
+  client_ip: string
   solscan_url: string
 }
 

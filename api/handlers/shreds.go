@@ -556,6 +556,7 @@ type ShredEscrowEventItem struct {
 	Epoch            *uint64 `json:"epoch"`
 	Status           string  `json:"status"`
 	Signer           string  `json:"signer"`
+	ClientIP         string  `json:"client_ip"`
 	SolscanURL       string  `json:"solscan_url"`
 }
 
@@ -565,21 +566,21 @@ var escrowEventExcludedSigners = []string{
 }
 
 var escrowEventSortFields = map[string]string{
-	"time":    "event_ts",
-	"type":    "event_type",
-	"amount":  "amount_usdc",
-	"balance": "balance_after_usdc",
-	"epoch":   "epoch",
-	"slot":    "slot",
+	"time":    "e.event_ts",
+	"type":    "e.event_type",
+	"amount":  "e.amount_usdc",
+	"balance": "e.balance_after_usdc",
+	"epoch":   "e.epoch",
+	"slot":    "e.slot",
 }
 
 var escrowEventFilterFields = map[string]FilterFieldConfig{
-	"type":   {Column: "event_type", Type: FieldTypeText},
-	"escrow": {Column: "escrow_pk", Type: FieldTypeText},
-	"seat":   {Column: "client_seat_pk", Type: FieldTypeText},
-	"status": {Column: "status", Type: FieldTypeText},
-	"epoch":  {Column: "epoch", Type: FieldTypeNumeric},
-	"signer": {Column: "signer", Type: FieldTypeText},
+	"type":   {Column: "e.event_type", Type: FieldTypeText},
+	"escrow": {Column: "e.escrow_pk", Type: FieldTypeText},
+	"seat":   {Column: "e.client_seat_pk", Type: FieldTypeText},
+	"status": {Column: "e.status", Type: FieldTypeText},
+	"epoch":  {Column: "e.epoch", Type: FieldTypeNumeric},
+	"signer": {Column: "e.signer", Type: FieldTypeText},
 }
 
 // splitCSV splits a comma-separated string into trimmed non-empty values.
@@ -653,7 +654,7 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// Build WHERE clause.
-	whereClause := ` WHERE event_ts >= ? AND event_ts <= ?`
+	whereClause := ` WHERE e.event_ts >= ? AND e.event_ts <= ?`
 	whereArgs := []any{startTime, endTime}
 
 	filterClause, filterArgs := filters.BuildFilterClause(escrowEventFilterFields)
@@ -665,13 +666,13 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	// Exclude internal/test signers unless include_internal=true.
 	if r.URL.Query().Get("include_internal") != "true" && len(escrowEventExcludedSigners) > 0 {
 		for _, signer := range escrowEventExcludedSigners {
-			whereClause += ` AND signer != ?`
+			whereClause += ` AND e.signer != ?`
 			whereArgs = append(whereArgs, signer)
 		}
 	}
 
 	// Count query.
-	countQuery := `SELECT count(*) FROM fact_dz_shred_escrow_events FINAL` + whereClause
+	countQuery := `SELECT count(*) FROM fact_dz_shred_escrow_events FINAL AS e` + whereClause
 	var total uint64
 	if err := a.envDB(ctx).QueryRow(ctx, countQuery, whereArgs...).Scan(&total); err != nil {
 		logError("shred escrow events count failed", "error", err)
@@ -683,9 +684,11 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	orderBy := sort.OrderByClause(escrowEventSortFields)
 	query := `
 		SELECT
-			event_ts, escrow_pk, client_seat_pk, tx_signature, slot,
-			event_type, amount_usdc, balance_after_usdc, epoch, status, signer
-		FROM fact_dz_shred_escrow_events FINAL
+			e.event_ts, e.escrow_pk, e.client_seat_pk, e.tx_signature, e.slot,
+			e.event_type, e.amount_usdc, e.balance_after_usdc, e.epoch, e.status, e.signer,
+			COALESCE(s.client_ip, '') as client_ip
+		FROM fact_dz_shred_escrow_events FINAL AS e
+		LEFT JOIN dim_dz_shred_client_seats_current s ON e.client_seat_pk = s.pk
 	` + whereClause + ` ` + orderBy + ` LIMIT ? OFFSET ?`
 	queryArgs := append(whereArgs, pagination.Limit, pagination.Offset)
 
@@ -707,6 +710,7 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(
 			&eventTS, &e.EscrowPK, &e.ClientSeatPK, &e.TxSignature, &e.Slot,
 			&e.EventType, &e.AmountUSDC, &e.BalanceAfterUSDC, &e.Epoch, &e.Status, &e.Signer,
+			&e.ClientIP,
 		); err != nil {
 			logError("shred escrow events row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

@@ -1141,6 +1141,7 @@ export function ShredsEscrowEventsPage() {
                   <SortHeader field="time" label="Time" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="type" label="Event" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <th className="px-4 py-3 font-medium">Seat</th>
+                  <th className="px-4 py-3 font-medium">Client IP</th>
                   <th className="px-4 py-3 font-medium">Signer</th>
                   <SortHeader field="amount" label="Amount (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="balance" label="Balance (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
@@ -1165,7 +1166,7 @@ export function ShredsEscrowEventsPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs" title={e.client_seat_pk}>
-                      <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 group/cell">
                         <Link
                           to={`/dz/shreds/seats?search=seat:${e.client_seat_pk}&inactive=1&closed=1`}
                           className="text-blue-600 dark:text-blue-400 hover:underline"
@@ -1175,7 +1176,7 @@ export function ShredsEscrowEventsPage() {
                         {!searchFilters.some(f => f.startsWith('seat:')) && (
                           <button
                             onClick={() => addFilter(`seat:${e.client_seat_pk}`)}
-                            className="text-muted-foreground hover:text-foreground transition-colors p-0.5"
+                            className="text-muted-foreground hover:text-foreground opacity-0 group-hover/cell:opacity-100 transition-opacity p-0.5"
                             title="Filter by this seat"
                           >
                             <Filter className="h-3 w-3" />
@@ -1183,8 +1184,17 @@ export function ShredsEscrowEventsPage() {
                         )}
                       </span>
                     </td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      <span className="inline-flex items-center gap-1.5 group/cell">
+                        {e.client_ip || <span className="text-muted-foreground">{'\u2014'}</span>}
+                        {e.client_ip && <CopyIcon text={e.client_ip} />}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs" title={e.signer}>
-                      {e.signer ? truncatePK(e.signer) : <span className="text-muted-foreground">{'\u2014'}</span>}
+                      <span className="inline-flex items-center gap-1.5 group/cell">
+                        {e.signer ? truncatePK(e.signer) : <span className="text-muted-foreground">{'\u2014'}</span>}
+                        {e.signer && <CopyIcon text={e.signer} />}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
                       {e.amount_usdc !== null ? formatUSDC(e.amount_usdc) : <span className="text-muted-foreground">{'\u2014'}</span>}
@@ -1210,7 +1220,7 @@ export function ShredsEscrowEventsPage() {
                   </tr>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">No activity found</td></tr>
+                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No activity found</td></tr>
                 )}
               </tbody>
             </table>
