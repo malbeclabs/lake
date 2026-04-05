@@ -16,9 +16,9 @@ import {
   Zap,
 } from 'lucide-react'
 import {
-  fetchShredPricing,
+  fetchShredDevices,
   fetchShredsOverview,
-  type ShredPricing,
+  type ShredDevice,
 } from '@/lib/api'
 import { ipv4ToU32, isValidIpv4 } from '@/lib/shred-program'
 import {
@@ -97,9 +97,9 @@ function DevicePicker({
   selected,
   onSelect,
 }: {
-  devices: ShredPricing[]
-  selected: ShredPricing | null
-  onSelect: (d: ShredPricing) => void
+  devices: ShredDevice[]
+  selected: ShredDevice | null
+  onSelect: (d: ShredDevice) => void
 }) {
   const [search, setSearch] = useState('')
 
@@ -135,7 +135,7 @@ function DevicePicker({
           <tbody>
             {filtered.map(d => {
               const isSelected = selected?.device_key === d.device_key
-              const hasSeats = d.available_seats - d.granted_seats > 0
+              const hasSeats = d.available_seats > 0
               return (
                 <tr
                   key={d.device_key}
@@ -154,8 +154,8 @@ function DevicePicker({
                     ${d.total_price_dollars}
                   </td>
                   <td className="px-4 py-2.5 text-sm tabular-nums text-right">
-                    {d.available_seats - d.granted_seats > 0 ? (
-                      <span>{d.available_seats - d.granted_seats}</span>
+                    {d.available_seats > 0 ? (
+                      <span>{d.available_seats}</span>
                     ) : (
                       <span className="text-red-500">Full</span>
                     )}
@@ -190,8 +190,9 @@ export function ShredsSubscribePage() {
 
   // Data fetching
   const { data: pricing, isLoading: pricingLoading, error: pricingError } = useQuery({
-    queryKey: ['shred-pricing'],
-    queryFn: fetchShredPricing,
+    queryKey: ['shred-devices-subscribe'],
+    queryFn: () => fetchShredDevices({ limit: 1000, offset: 0, sortBy: 'device', sortDir: 'asc' }),
+    select: (data) => data.items,
     refetchInterval: 30_000,
   })
 
@@ -202,7 +203,7 @@ export function ShredsSubscribePage() {
   })
 
   // Form state
-  const [selectedDevice, setSelectedDevice] = useState<ShredPricing | null>(null)
+  const [selectedDevice, setSelectedDevice] = useState<ShredDevice | null>(null)
 
   // Auto-select device from ?device= query param
   useEffect(() => {

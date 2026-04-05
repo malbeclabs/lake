@@ -5317,30 +5317,6 @@ export async function fetchBulkDeviceMetrics(params: FetchDeviceMetricsParams = 
   return res.json()
 }
 
-// Shred Pricing
-export interface ShredPricing {
-  device_key: string
-  device_code: string
-  metro_exchange_key: string
-  metro_code: string
-  is_enabled: number
-  base_price_dollars: number
-  premium_dollars: number
-  total_price_dollars: number
-  granted_seats: number
-  available_seats: number
-  is_price_finalized: number
-  current_epoch: number
-}
-
-export async function fetchShredPricing(): Promise<ShredPricing[]> {
-  const res = await fetchWithRetry('/api/dz/shreds/pricing')
-  if (!res.ok) {
-    throw new Error('Failed to fetch shred pricing')
-  }
-  return res.json()
-}
-
 // Shred Devices (with pricing and seat info)
 export interface ShredDevice {
   device_key: string
