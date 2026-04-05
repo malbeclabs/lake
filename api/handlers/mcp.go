@@ -63,6 +63,29 @@ func (a *API) createMCPServer(r *http.Request) *mcp.Server {
 	return server
 }
 
+// isReadOnlySQL checks whether a SQL query is read-only by stripping leading
+// comments and checking that the first keyword is a read-only statement.
+var readOnlySQLPattern = regexp.MustCompile(`(?i)^(SELECT|WITH|SHOW|DESCRIBE|DESC|EXISTS|EXPLAIN)\b`)
+
+// sqlLeadingComment matches block comments (/* ... */) and line comments (-- ...\n)
+// at the start of a query, which could be used to hide a write statement.
+var sqlLeadingComment = regexp.MustCompile(`(?s)^(\s*(--[^\n]*\n|/\*.*?\*/)\s*)+`)
+
+func isReadOnlySQL(query string) bool {
+	q := strings.TrimSpace(query)
+	q = sqlLeadingComment.ReplaceAllString(q, "")
+	q = strings.TrimSpace(q)
+	return readOnlySQLPattern.MatchString(q)
+}
+
+// isReadOnlyCypher checks whether a Cypher query is read-only. Rejects queries
+// containing write clauses like CREATE, MERGE, DELETE, SET, REMOVE, or DETACH.
+var writeCypherPattern = regexp.MustCompile(`(?i)\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE)\b`)
+
+func isReadOnlyCypher(query string) bool {
+	return !writeCypherPattern.MatchString(query)
+}
+
 // ExecuteSQLInput is the input for the execute_sql tool.
 type ExecuteSQLInput struct {
 	Query       string `json:"query" jsonschema:"The SQL query to execute against ClickHouse"`
@@ -99,6 +122,10 @@ func (a *API) registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 		query := strings.TrimSpace(input.Query)
 		if query == "" {
 			return nil, ExecuteSQLOutput{}, errors.New("query is required")
+		}
+
+		if !isReadOnlySQL(query) {
+			return nil, ExecuteSQLOutput{}, errors.New("only read-only queries (SELECT, WITH, SHOW, DESCRIBE, EXPLAIN) are allowed")
 		}
 
 		query = strings.TrimSuffix(query, ";")
@@ -203,6 +230,10 @@ func (a *API) registerExecuteCypherTool(server *mcp.Server, r *http.Request) {
 		query := strings.TrimSpace(input.Query)
 		if query == "" {
 			return nil, ExecuteCypherOutput{}, errors.New("query is required")
+		}
+
+		if !isReadOnlyCypher(query) {
+			return nil, ExecuteCypherOutput{}, errors.New("only read-only queries (MATCH, RETURN, CALL) are allowed")
 		}
 
 		if a.Neo4jClient == nil {

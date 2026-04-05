@@ -457,6 +457,34 @@ func TestMCPHandler_ExecuteSQL_InvalidQuery(t *testing.T) {
 	assert.Contains(t, textContent["text"].(string), "query failed")
 }
 
+func TestMCPHandler_ExecuteSQL_RejectsWriteQueries(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	handler, sessionID := mcpSession(t, api)
+
+	writeQueries := []string{
+		"INSERT INTO foo VALUES (1)",
+		"ALTER TABLE foo DELETE WHERE id = 1",
+		"DROP TABLE foo",
+	}
+
+	for _, q := range writeQueries {
+		response := callTool(t, handler, sessionID, "execute_sql", map[string]any{
+			"query":       q,
+			"description": "write query",
+		})
+
+		result, ok := response["result"].(map[string]any)
+		require.True(t, ok, "expected result for query: %s, got: %v", q, response)
+		assert.True(t, result["isError"].(bool), "expected isError for query: %s", q)
+
+		content := result["content"].([]any)
+		textContent := content[0].(map[string]any)
+		assert.Contains(t, textContent["text"].(string), "read-only", "query: %s", q)
+	}
+}
+
 func TestMCPHandler_ExecuteCypher_EmptyResults(t *testing.T) {
 	t.Parallel()
 	api := apitesting.NewTestAPIAll(t, testChDB, nil, testNeo4jDB, nil)

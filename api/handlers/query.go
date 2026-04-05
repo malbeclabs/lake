@@ -98,9 +98,14 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	query := strings.TrimSpace(req.Query)
+	if !isReadOnlySQL(query) {
+		http.Error(w, "Only read-only queries (SELECT, WITH, SHOW, DESCRIBE, EXPLAIN) are allowed", http.StatusForbidden)
+		return
+	}
+
 	start := time.Now()
 
-	query := strings.TrimSpace(req.Query)
 	query = strings.TrimSuffix(query, ";")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)

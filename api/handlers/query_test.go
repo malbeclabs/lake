@@ -100,7 +100,7 @@ func TestExecuteQuery_InvalidSQL(t *testing.T) {
 	api := apitesting.NewTestAPI(t, testChDB)
 
 	reqBody := handlers.QueryRequest{
-		Query: "SELECTERINO * FROMONO nonexistent",
+		Query: "SELECT * FROMONO nonexistent",
 	}
 	body, _ := json.Marshal(reqBody)
 
@@ -117,6 +117,32 @@ func TestExecuteQuery_InvalidSQL(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 	assert.NotEmpty(t, response.Error)
+}
+
+func TestExecuteQuery_RejectsWriteQueries(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+
+	writeQueries := []string{
+		"INSERT INTO foo VALUES (1)",
+		"ALTER TABLE foo DELETE WHERE id = 1",
+		"DROP TABLE foo",
+		"TRUNCATE TABLE foo",
+		"CREATE TABLE foo (id Int32) ENGINE = Memory",
+	}
+
+	for _, q := range writeQueries {
+		reqBody := handlers.QueryRequest{Query: q}
+		body, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/query", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		api.ExecuteQuery(rr, req)
+
+		assert.Equal(t, http.StatusForbidden, rr.Code, "expected 403 for query: %s", q)
+	}
 }
 
 func TestExecuteQuery_InvalidRequestBody(t *testing.T) {
