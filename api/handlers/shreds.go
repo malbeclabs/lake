@@ -205,8 +205,14 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 2)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
+		if statuses["pending"] {
+			// Funded but not yet active (has balance but active_epoch < current).
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND COALESCE(eb.total_usdc_balance, 0) > 0)")
+			whereArgs = append(whereArgs, solanaEpoch)
+		}
 		if statuses["inactive"] {
-			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0)")
+			// Expired: was active, no balance remaining.
+			statusOr = append(statusOr, "(s.active_epoch < ? AND s.escrow_count > 0 AND COALESCE(eb.total_usdc_balance, 0) = 0)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["closed"] {

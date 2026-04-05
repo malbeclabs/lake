@@ -236,11 +236,13 @@ function prepaidEpochs(seat: ShredClientSeat): number {
   return Math.floor((seat.total_usdc_balance / 1e6) / seat.price_per_epoch_dollars)
 }
 
-type SeatStatus = 'active' | 'expiring' | 'expired' | 'closed'
+type SeatStatus = 'active' | 'expiring' | 'pending' | 'expired' | 'closed'
 
 function getSeatStatus(seat: ShredClientSeat, currentSolanaEpoch: number): SeatStatus {
   if (seat.escrow_count === 0) return 'closed'
-  if (seat.active_epoch < currentSolanaEpoch) return 'expired'
+  if (seat.active_epoch < currentSolanaEpoch) {
+    return seat.total_usdc_balance > 0 ? 'pending' : 'expired'
+  }
   const prepaid = prepaidEpochs(seat)
   if (prepaid < 2) return 'expiring'
   return 'active'
@@ -254,6 +256,10 @@ const seatStatusConfig: Record<SeatStatus, { label: string; className: string }>
   expiring: {
     label: 'Expiring',
     className: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+  },
+  pending: {
+    label: 'Pending',
+    className: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
   },
   expired: {
     label: 'Expired',
@@ -429,6 +435,7 @@ export function ShredsSeatsPage() {
           {([
             { key: 'active', label: 'Active', onClass: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20', dotClass: 'bg-green-500' },
             { key: 'expiring', label: 'Expiring', onClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20', dotClass: 'bg-amber-500' },
+            { key: 'pending', label: 'Pending', onClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20', dotClass: 'bg-blue-500' },
             { key: 'inactive', label: 'Expired', onClass: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20', dotClass: 'bg-red-500' },
             { key: 'closed', label: 'Closed', onClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20', dotClass: 'bg-gray-500' },
           ] as const).map(({ key, label, onClass, dotClass }) => {
