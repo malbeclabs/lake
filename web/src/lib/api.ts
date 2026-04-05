@@ -4766,49 +4766,6 @@ export async function fetchShredClientSeats(
   return res.json()
 }
 
-export interface ShredDeviceHistory {
-  pk: string
-  device_key: string
-  device_code: string
-  is_enabled: number
-  has_settled_seats: number
-  metro_exchange_key: string
-  metro_code: string
-  active_granted_seats: number
-  active_total_available_seats: number
-  current_epoch: number
-  current_requested_seat_count: number
-  current_granted_seat_count: number
-  current_total_available_seats: number
-  current_usdc_metro_premium_dollars: number
-}
-
-export async function fetchShredDeviceHistories(limit = 100, offset = 0): Promise<PaginatedResponse<ShredDeviceHistory>> {
-  const res = await fetchWithRetry(`/api/dz/shreds/device-histories?limit=${limit}&offset=${offset}`)
-  if (!res.ok) {
-    throw new Error('Failed to fetch shred device histories')
-  }
-  return res.json()
-}
-
-export interface ShredMetroHistory {
-  pk: string
-  exchange_key: string
-  metro_code: string
-  is_current_price_finalized: number
-  total_initialized_devices: number
-  current_epoch: number
-  current_usdc_price_dollars: number
-}
-
-export async function fetchShredMetroHistories(limit = 100, offset = 0): Promise<PaginatedResponse<ShredMetroHistory>> {
-  const res = await fetchWithRetry(`/api/dz/shreds/metro-histories?limit=${limit}&offset=${offset}`)
-  if (!res.ok) {
-    throw new Error('Failed to fetch shred metro histories')
-  }
-  return res.json()
-}
-
 export interface ShredFunder {
   funding_authority_key: string
   total_seats: number

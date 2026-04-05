@@ -3,15 +3,12 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { Loader2, Puzzle, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check, RefreshCw, Info } from 'lucide-react'
 import {
-  fetchAllPaginated,
   fetchShredClientSeats,
   fetchShredDevices,
-  fetchShredMetroHistories,
   fetchShredFunders,
   fetchShredEscrowEvents,
   fetchShredsOverview,
   type ShredClientSeat,
-  type ShredMetroHistory,
   type ShredFunder,
 } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
@@ -736,133 +733,6 @@ export function ShredsDevicesPage() {
           {total > PAGE_SIZE && (
             <Pagination total={total} limit={PAGE_SIZE} offset={offset} onOffsetChange={setOffset} />
           )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// --- Metros Page ---
-
-const metroFilterFields = ['metro', 'devices', 'price']
-const metroFieldPrefixes = [
-  { prefix: 'metro:', description: 'Filter by metro code' },
-  { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
-  { prefix: 'price:', description: 'Filter by USDC price (e.g., >0)' },
-]
-
-function matchesMetroFilter(m: ShredMetroHistory, filter: string): boolean {
-  const { field, value } = parseFilter(filter, metroFilterFields)
-  const needle = value.toLowerCase()
-
-  if (field === 'all') {
-    return (m.metro_code || m.exchange_key).toLowerCase().includes(needle)
-  }
-
-  switch (field) {
-    case 'metro': return (m.metro_code || m.exchange_key).toLowerCase().includes(needle)
-    case 'devices': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(m.total_initialized_devices, nf) : false }
-    case 'price': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(m.current_usdc_price_dollars, nf) : false }
-    default: return true
-  }
-}
-
-export function ShredsMetrosPage() {
-  const ps = usePageState()
-  const sortField = ps.sortField || 'devices'
-
-  const { data, isLoading, isFetching: rawFetchingMetros, error, refetch: refetchMetros } = useQuery({
-    queryKey: ['shred-metro-histories', 'all'],
-    queryFn: () => fetchAllPaginated(fetchShredMetroHistories, PAGE_SIZE),
-    refetchInterval: 30000,
-  })
-  const isFetchingMetros = useDebouncedFetching(rawFetchingMetros)
-
-  const filtered = useMemo(() => {
-    if (!data?.items) return []
-    const seen = new Set<string>()
-    const unique = data.items.filter(m => { if (seen.has(m.pk)) return false; seen.add(m.pk); return true })
-    if (ps.allFilters.length === 0) return unique
-    const grouped = new Map<string, string[]>()
-    for (const f of ps.allFilters) {
-      const { field } = parseFilter(f, metroFilterFields)
-      grouped.set(field, [...(grouped.get(field) ?? []), f])
-    }
-    return unique.filter(m => Array.from(grouped.values()).every(group => group.some(f => matchesMetroFilter(m, f))))
-  }, [data, ps.allFilters])
-
-  const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'metro': cmp = (a.metro_code || a.exchange_key).localeCompare(b.metro_code || b.exchange_key); break
-        case 'devices': cmp = a.total_initialized_devices - b.total_initialized_devices; break
-        case 'price': cmp = a.current_usdc_price_dollars - b.current_usdc_price_dollars; break
-      }
-      return ps.sortDirection === 'asc' ? cmp : -cmp
-    })
-  }, [filtered, sortField, ps.sortDirection])
-
-  const paged = useMemo(() => sorted.slice(ps.offset, ps.offset + PAGE_SIZE), [sorted, ps.offset])
-
-  if (isLoading) return <LoadingState />
-  if (error) return <ErrorState message={error?.message || 'Unknown error'} />
-
-  return (
-    <div className="flex-1 overflow-auto">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-        <PageHeader
-          icon={Puzzle}
-          title="Shred Metros"
-          count={sorted.length}
-          subtitle={
-            <button onClick={() => refetchMetros()} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {isFetchingMetros ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </button>
-          }
-          actions={
-            <FilterActions
-              searchFilters={ps.searchFilters} removeFilter={ps.removeFilter} clearAllFilters={ps.clearAllFilters}
-              setLiveFilter={ps.setLiveFilter}
-              fieldPrefixes={metroFieldPrefixes} entity="shred-metros" placeholder="Filter metros..."
-            />
-          }
-        />
-
-        <div className="relative border border-border rounded-lg overflow-hidden bg-card">
-          {isFetchingMetros && data && (
-            <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden z-10">
-              <div className="h-full w-1/3 bg-primary/60 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
-            </div>
-          )}
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <SortHeader field="metro" label="Metro" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
-                  <SortHeader field="devices" label="Devices" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
-                  <SortHeader field="price" label="Price (USDC)" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map((m) => (
-                  <tr key={m.pk} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
-                    <td className="px-4 py-3 text-sm">
-                      <Link to={`/dz/metros/${m.exchange_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={m.exchange_key}>
-                        {m.metro_code || truncatePK(m.exchange_key)}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">{m.total_initialized_devices}</td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">${m.current_usdc_price_dollars}</td>
-                  </tr>
-                ))}
-                {sorted.length === 0 && (
-                  <tr><td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">No metros found</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <Pagination total={sorted.length} limit={PAGE_SIZE} offset={ps.offset} onOffsetChange={ps.setOffset} />
         </div>
       </div>
     </div>
