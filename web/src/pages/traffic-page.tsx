@@ -61,12 +61,18 @@ const aggLabels: Record<AggMethod, string> = {
   'min': 'Min',
 }
 
-type ChartSection = 'non-tunnel-stacked' | 'non-tunnel' | 'tunnel-stacked' | 'tunnel' | 'discards'
+type ChartSection = 'tunnel-stacked' | 'tunnel' | 'link-stacked' | 'link' | 'cyoa-stacked' | 'cyoa' | 'other-stacked' | 'other' | 'discards'
 
-const ALL_KNOWN_SECTIONS: ChartSection[] = ['non-tunnel-stacked', 'non-tunnel', 'tunnel-stacked', 'tunnel', 'discards']
+const ALL_KNOWN_SECTIONS: ChartSection[] = ['tunnel-stacked', 'tunnel', 'link-stacked', 'link', 'cyoa-stacked', 'cyoa', 'other-stacked', 'other', 'discards']
 
-const TUNNEL_SECTIONS: Set<ChartSection> = new Set(['tunnel-stacked', 'tunnel'])
-const NON_TUNNEL_SECTIONS: Set<ChartSection> = new Set(['non-tunnel-stacked', 'non-tunnel', 'discards'])
+type IntfCategory = 'tunnel' | 'link' | 'cyoa' | 'other'
+
+const SECTION_CATEGORY: Partial<Record<ChartSection, IntfCategory>> = {
+  'tunnel-stacked': 'tunnel', 'tunnel': 'tunnel',
+  'link-stacked': 'link', 'link': 'link',
+  'cyoa-stacked': 'cyoa', 'cyoa': 'cyoa',
+  'other-stacked': 'other', 'other': 'other',
+}
 
 type Layout = '1x4' | '2x2'
 
@@ -208,12 +214,16 @@ function TrafficPageContent() {
 
 
   // Determine which chart categories to show based on intf type filter
-  const showTunnelCharts = intfType === 'all' || intfType === 'tunnel'
-  const showNonTunnelCharts = intfType === 'all' || intfType === 'link' || intfType === 'other'
+  const showCategory: Record<IntfCategory, boolean> = {
+    tunnel: intfType === 'all' || intfType === 'tunnel',
+    link: intfType === 'all' || intfType === 'link',
+    cyoa: intfType === 'all' || intfType === 'cyoa',
+    other: intfType === 'all' || intfType === 'other',
+  }
 
   // Build dimension filter params from dashboard state.
   // When intfType is 'all', intf_type is omitted and the per-chart tunnel_only
-  // param handles the tunnel/non-tunnel split. When a specific type is selected
+  // param handles the category split. When a specific type is selected
   // (link/tunnel/other), intf_type is passed through so the server filters to
   // only that interface type.
   const filterParams = useMemo(() => {
@@ -234,31 +244,47 @@ function TrafficPageContent() {
     refetchInterval: dashboardState.refetchInterval,
   })
 
-  // Split by tunnel vs non-tunnel client-side when fetching all interfaces
-  const tunnelData = useMemo(() => {
-    if (!allTrafficData || intfType !== 'all') return allTrafficData
-    return {
-      ...allTrafficData,
-      points: allTrafficData.points.filter(p => p.intf.startsWith('Tunnel')),
-      series: allTrafficData.series.filter(s => s.intf.startsWith('Tunnel')),
-      discards_series: allTrafficData.discards_series.filter(s => s.intf.startsWith('Tunnel')),
+  // Build a lookup from series metadata to classify each device+intf pair
+  const intfCategoryMap = useMemo(() => {
+    const map = new Map<string, IntfCategory>()
+    if (!allTrafficData) return map
+    for (const s of allTrafficData.series) {
+      if (s.direction !== 'in') continue // only need one direction per intf
+      const key = `${s.device}:${s.intf}`
+      if (s.intf.startsWith('Tunnel')) {
+        map.set(key, 'tunnel')
+      } else if (s.cyoa_type && s.cyoa_type !== 'none' && s.cyoa_type !== '') {
+        map.set(key, 'cyoa')
+      } else if (s.link_pk) {
+        map.set(key, 'link')
+      } else {
+        map.set(key, 'other')
+      }
     }
-  }, [allTrafficData, intfType])
+    return map
+  }, [allTrafficData])
 
-  const nonTunnelData = useMemo(() => {
-    if (!allTrafficData || intfType !== 'all') return allTrafficData
-    return {
-      ...allTrafficData,
-      points: allTrafficData.points.filter(p => !p.intf.startsWith('Tunnel')),
-      series: allTrafficData.series.filter(s => !s.intf.startsWith('Tunnel')),
-      discards_series: allTrafficData.discards_series.filter(s => !s.intf.startsWith('Tunnel')),
+  // Split data by interface category client-side
+  const categoryData = useMemo(() => {
+    if (!allTrafficData || intfType !== 'all') {
+      return { tunnel: allTrafficData, link: allTrafficData, cyoa: allTrafficData, other: allTrafficData }
     }
-  }, [allTrafficData, intfType])
-
-  const tunnelFetching = trafficFetching
-  const tunnelError = trafficError
-  const nonTunnelFetching = trafficFetching
-  const nonTunnelError = trafficError
+    const filterByCategory = (cat: IntfCategory) => {
+      const match = (device: string, intf: string) => (intfCategoryMap.get(`${device}:${intf}`) ?? 'other') === cat
+      return {
+        ...allTrafficData,
+        points: allTrafficData.points.filter(p => match(p.device, p.intf)),
+        series: allTrafficData.series.filter(s => match(s.device, s.intf)),
+        discards_series: allTrafficData.discards_series.filter(s => match(s.device, s.intf)),
+      }
+    }
+    return {
+      tunnel: filterByCategory('tunnel'),
+      link: filterByCategory('link'),
+      cyoa: filterByCategory('cyoa'),
+      other: filterByCategory('other'),
+    }
+  }, [allTrafficData, intfType, intfCategoryMap])
 
   // Fetch topology data for link metadata
   const {
@@ -273,10 +299,10 @@ function TrafficPageContent() {
   // Derive interface counters (errors/discards/fcs/carrier) from the traffic response.
   // Transforms counter fields into TrafficPoint-compatible format for the TrafficChart.
   const countersData = useMemo(() => {
-    if (!nonTunnelData) return null
+    if (!allTrafficData) return null
     // Sum all counter types per interface to find which interfaces have any events
     const intfTotals = new Map<string, { device: string; devicePk: string; intf: string; total: number }>()
-    for (const p of nonTunnelData.points) {
+    for (const p of allTrafficData.points) {
       const total = p.in_discards + p.out_discards + p.in_errors + p.out_errors + p.in_fcs_errors + p.carrier_transitions
       if (total === 0) continue
       const key = `${p.device}-${p.intf}`
@@ -292,7 +318,7 @@ function TrafficPageContent() {
     // Build points using combined counters as in/out values:
     // in = in_discards + in_errors + in_fcs_errors + carrier_transitions
     // out = out_discards + out_errors (negated for bidirectional)
-    const points = nonTunnelData.points
+    const points = allTrafficData.points
       .filter(p => {
         const total = p.in_discards + p.out_discards + p.in_errors + p.out_errors + p.in_fcs_errors + p.carrier_transitions
         return total > 0
@@ -311,7 +337,7 @@ function TrafficPageContent() {
     ])
 
     return { points, series }
-  }, [nonTunnelData])
+  }, [allTrafficData])
   const countersLoading = trafficLoading
   const countersFetching = trafficFetching
 
@@ -342,9 +368,9 @@ function TrafficPageContent() {
 
   // Check if a section should be shown based on intf type
   const isSectionAllowed = (section: ChartSection): boolean => {
-    if (TUNNEL_SECTIONS.has(section)) return showTunnelCharts
-    if (NON_TUNNEL_SECTIONS.has(section)) return showNonTunnelCharts
-    return true
+    const cat = SECTION_CATEGORY[section]
+    if (cat) return showCategory[cat]
+    return true // discards always shown
   }
 
   // Render a chart section
@@ -378,38 +404,23 @@ function TrafficPageContent() {
       )
     }
 
-    let isTunnel = false
-    let stacked = false
+    const cat = SECTION_CATEGORY[section]
+    if (!cat) return null
+    const stacked = section.endsWith('-stacked')
 
-    switch (section) {
-      case 'non-tunnel-stacked':
-        isTunnel = false
-        stacked = true
-        break
-      case 'non-tunnel':
-        isTunnel = false
-        stacked = false
-        break
-      case 'tunnel-stacked':
-        isTunnel = true
-        stacked = true
-        break
-      case 'tunnel':
-        isTunnel = true
-        stacked = false
-        break
+    const categoryLabels: Record<IntfCategory, string> = {
+      tunnel: 'Tunnel',
+      link: 'Link',
+      cyoa: 'CYOA',
+      other: 'Other',
     }
-
-    // Build title based on intf type filter and metric
-    const typeLabel = isTunnel
-      ? 'Tunnel'
-      : intfType === 'link' ? 'Link' : intfType === 'other' ? 'Other' : 'Non-Tunnel'
+    const typeLabel = categoryLabels[cat]
     const metricLabel = metric === 'packets' ? 'Packets' : 'Traffic'
     const title = `${typeLabel} ${metricLabel} Per Device & Interface${stacked ? ' (stacked)' : ''}`
 
-    const data = isTunnel ? tunnelData : nonTunnelData
-    const fetching = isTunnel ? tunnelFetching : nonTunnelFetching
-    const error = isTunnel ? tunnelError : nonTunnelError
+    const data = categoryData[cat]
+    const fetching = trafficFetching
+    const error = trafficError
 
     return (
       <div key={section} className="border border-border rounded-lg p-4">
@@ -478,7 +489,7 @@ function TrafficPageContent() {
       {/* Scrollable content */}
       <div className="flex-1 overflow-auto px-4 sm:px-8 py-6">
         {/* Truncation warning */}
-        {(tunnelData?.truncated || nonTunnelData?.truncated) && (
+        {(allTrafficData?.truncated || allTrafficData?.truncated) && (
           <div className="mb-4 px-4 py-3 bg-yellow-500/10 border border-yellow-500/30 rounded-md text-sm text-yellow-700 dark:text-yellow-200">
             Results were truncated due to data volume. Try a larger bucket size or shorter time range to see all data.
           </div>

@@ -33,6 +33,8 @@ type SeriesInfo struct {
 	Intf      string  `json:"intf"`
 	Direction string  `json:"direction"`
 	Mean      float64 `json:"mean"`
+	LinkPK    string  `json:"link_pk,omitempty"`
+	CYOAType  string  `json:"cyoa_type,omitempty"`
 }
 
 // TrafficDataResponse is the JSON response for the traffic data endpoint.
@@ -235,9 +237,12 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			AVG(%s) AS mean_in_bps,
 			AVG(%s) AS mean_out_bps,
 			toInt64(SUM(COALESCE(f.in_discards_delta, 0))) AS total_in_discards,
-			toInt64(SUM(COALESCE(f.out_discards_delta, 0))) AS total_out_discards
+			toInt64(SUM(COALESCE(f.out_discards_delta, 0))) AS total_out_discards,
+			anyLast(f.link_pk) AS link_pk,
+			COALESCE(anyLast(di.cyoa_type), '') AS cyoa_type
 		FROM fact_dz_device_interface_counters f
-		INNER JOIN devices d ON d.pk = f.device_pk%s%s
+		INNER JOIN devices d ON d.pk = f.device_pk
+		LEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf%s%s
 		WHERE f.%s
 			%s%s
 			%s
@@ -338,9 +343,12 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			AVG(%s) AS mean_in_bps,
 			AVG(%s) AS mean_out_bps,
 			toInt64(SUM(f.in_discards)) AS total_in_discards,
-			toInt64(SUM(f.out_discards)) AS total_out_discards
+			toInt64(SUM(f.out_discards)) AS total_out_discards,
+			anyLast(f.link_pk) AS link_pk,
+			COALESCE(anyLast(di.cyoa_type), '') AS cyoa_type
 		FROM device_interface_rollup_5m f
-		INNER JOIN devices d ON d.pk = f.device_pk%s%s
+		INNER JOIN devices d ON d.pk = f.device_pk
+		LEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf%s%s
 		WHERE f.%s
 			%s%s
 			%s
@@ -387,7 +395,8 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		var device, intf string
 		var meanIn, meanOut float64
 		var totalInDiscards, totalOutDiscards int64
-		if err := meanRows.Scan(&device, &intf, &meanIn, &meanOut, &totalInDiscards, &totalOutDiscards); err != nil {
+		var linkPK, cyoaType string
+		if err := meanRows.Scan(&device, &intf, &meanIn, &meanOut, &totalInDiscards, &totalOutDiscards, &linkPK, &cyoaType); err != nil {
 			logError("traffic mean row scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -399,6 +408,8 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			Intf:      intf,
 			Direction: "in",
 			Mean:      meanIn,
+			LinkPK:    linkPK,
+			CYOAType:  cyoaType,
 		})
 		series = append(series, SeriesInfo{
 			Key:       fmt.Sprintf("%s (out)", key),
@@ -406,6 +417,8 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			Intf:      intf,
 			Direction: "out",
 			Mean:      meanOut,
+			LinkPK:    linkPK,
+			CYOAType:  cyoaType,
 		})
 		if totalInDiscards > 0 {
 			discardsSeries = append(discardsSeries, DiscardSeriesInfo{

@@ -3803,6 +3803,8 @@ export interface SeriesInfo {
   intf: string
   direction: string
   mean: number
+  link_pk?: string
+  cyoa_type?: string
 }
 
 export interface TrafficDataResponse {
