@@ -166,10 +166,17 @@ function deriveLinkInfo(metrics: LinkMetricsResponse): DerivedLinkInfo {
     }
   }
 
-  // Check if the link is down: look at the latest non-collecting bucket
+  // Check if the link is down: look at the latest bucket with a signal.
+  // For ISIS down, also check the collecting bucket since it uses real-time
+  // adjacency data rather than rollup data.
   for (let i = metrics.buckets.length - 1; i >= 0; i--) {
     const b = metrics.buckets[i]
-    if (b.status && !b.status.collecting) {
+    if (!b.status) continue
+    if (b.status.collecting && b.status.isis_down) {
+      isDown = true
+      break
+    }
+    if (!b.status.collecting) {
       if (b.status.health === 'down' || b.status.isis_down) {
         isDown = true
       }
