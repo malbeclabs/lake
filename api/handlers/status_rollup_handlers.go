@@ -23,9 +23,10 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 	now := time.Now().UTC()
 
 	var (
-		linkMeta      map[string]*statusLinkMeta
-		linkRollupMap map[linkBucketKey]*linkRollupRow
-		intfRows      []interfaceRollupRow
+		linkMeta        map[string]*statusLinkMeta
+		linkRollupMap   map[linkBucketKey]*linkRollupRow
+		intfRows        []interfaceRollupRow
+		currentISISDown map[string]bool
 	)
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -59,6 +60,17 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 		})
 		if err != nil {
 			return fmt.Errorf("interface rollup: %w", err)
+		}
+		return nil
+	})
+
+	// 4. Real-time ISIS adjacency state for collecting bucket
+	g.Go(func() error {
+		var err error
+		currentISISDown, err = queryCurrentISISDown(ctx, db)
+		if err != nil {
+			slog.Warn("failed to query current ISIS state", "error", err)
+			currentISISDown = nil
 		}
 		return nil
 	})
@@ -179,6 +191,11 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 					issueReasons["high_latency"] = true
 				}
 
+				isisDown := rollup.ISISDown
+				if isCollecting && currentISISDown[pk] {
+					isisDown = true
+				}
+
 				hourStatus := LinkHourStatus{
 					Hour:           key,
 					Status:         status,
@@ -193,7 +210,7 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 					SideZLatencyUs: rollup.ZAvgRttUs,
 					SideZLossPct:   rollup.ZLossPct,
 					SideZSamples:   rollup.ZSamples,
-					ISISDown:       rollup.ISISDown,
+					ISISDown:       isisDown,
 				}
 
 				// Add interface counters per side
@@ -286,7 +303,7 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 					}
 				}
 
-				if rollup.ISISDown {
+				if isisDown {
 					issueReasons["missing_adjacency"] = true
 				}
 
@@ -296,6 +313,9 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 				isisDown := false
 				if rollup != nil {
 					isisDown = rollup.ISISDown
+				}
+				if isCollecting && currentISISDown[pk] {
+					isisDown = true
 				}
 				hourStatuses = append(hourStatuses, LinkHourStatus{
 					Hour:        key,
@@ -335,8 +355,11 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 			}
 			break // only check the most recent completed bucket
 		}
-		// ISIS down also means the link is down
+		// ISIS down also means the link is down (check rollup + real-time state)
 		if rollupData, exists := linkRollupMap[linkBucketKey{LinkPK: pk, BucketTS: now.Truncate(bucketDuration)}]; exists && rollupData.ISISDown {
+			isDown = true
+		}
+		if currentISISDown[pk] {
 			isDown = true
 		}
 		if currentDrainStatus != "" || isProvisioning {
@@ -804,9 +827,10 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 	}
 
 	var (
-		meta          *statusLinkMeta
-		linkRollupMap map[linkBucketKey]*linkRollupRow
-		intfRows      []interfaceRollupRow
+		meta            *statusLinkMeta
+		linkRollupMap   map[linkBucketKey]*linkRollupRow
+		intfRows        []interfaceRollupRow
+		currentISISDown map[string]bool
 	)
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -833,6 +857,16 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 			LinkPKs: []string{linkPK},
 		})
 		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		currentISISDown, err = queryCurrentISISDown(ctx, db, linkPK)
+		if err != nil {
+			slog.Warn("failed to query current ISIS state for link", "error", err, "link_pk", linkPK)
+			currentISISDown = nil
+		}
+		return nil
 	})
 
 	if err := g.Wait(); err != nil {
@@ -904,6 +938,11 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 				}
 			}
 
+			isisDown := rollup.ISISDown
+			if isCollecting && currentISISDown[linkPK] {
+				isisDown = true
+			}
+
 			hs := LinkHourStatus{
 				Hour:           key,
 				Status:         status,
@@ -918,7 +957,7 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 				SideZLatencyUs: rollup.ZAvgRttUs,
 				SideZLossPct:   rollup.ZLossPct,
 				SideZSamples:   rollup.ZSamples,
-				ISISDown:       rollup.ISISDown,
+				ISISDown:       isisDown,
 			}
 
 			// Interface counters per side
@@ -959,6 +998,9 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 			isisDown := false
 			if rollup != nil {
 				isisDown = rollup.ISISDown
+			}
+			if isCollecting && currentISISDown[linkPK] {
+				isisDown = true
 			}
 			hours = append(hours, LinkHourStatus{
 				Hour:        key,

@@ -296,10 +296,11 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 	}
 
 	var (
-		meta          *statusLinkMeta
-		linkRollupMap map[linkBucketKey]*linkRollupRow
-		intfRows      []interfaceRollupRow
-		statusChanges []EntityStatusChange
+		meta            *statusLinkMeta
+		linkRollupMap   map[linkBucketKey]*linkRollupRow
+		intfRows        []interfaceRollupRow
+		statusChanges   []EntityStatusChange
+		currentISISDown map[string]bool
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -321,6 +322,19 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 			linkRollupMap, err = queryLinkRollup(gctx, db, params, linkPK)
 			if err != nil {
 				return fmt.Errorf("link rollup: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Real-time ISIS adjacency state for collecting bucket
+	if include.Status {
+		g.Go(func() error {
+			var err error
+			currentISISDown, err = queryCurrentISISDown(gctx, db, linkPK)
+			if err != nil {
+				slog.Warn("failed to query current ISIS state", "error", err)
+				currentISISDown = nil
 			}
 			return nil
 		})
@@ -404,7 +418,7 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 
 		// --- Status ---
 		if include.Status {
-			st := buildLinkMetricsStatus(rollup, meta, healthCommittedRtt, isCollecting, bucketStart, intfIndex)
+			st := buildLinkMetricsStatus(rollup, meta, healthCommittedRtt, isCollecting, bucketStart, intfIndex, currentISISDown[linkPK])
 			bucket.Status = &st
 		}
 
@@ -490,10 +504,17 @@ func buildLinkMetricsStatus(
 	isCollecting bool,
 	bucketStart time.Time,
 	intfIndex map[linkMetricsSideKey]*interfaceRollupRow,
+	currentISISDown bool,
 ) LinkMetricsStatus {
 	isisDown := false
 	if rollup != nil {
 		isisDown = rollup.ISISDown
+	}
+	// For the collecting bucket, overlay real-time ISIS state so the timeline
+	// reflects adjacency loss immediately rather than waiting for the next
+	// rollup materialization.
+	if isCollecting && currentISISDown {
+		isisDown = true
 	}
 
 	provisioning := meta.CommittedRttNs == committedRttProvisioningNs
@@ -811,9 +832,10 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 	}
 
 	var (
-		metaMap       map[string]*statusLinkMeta
-		linkRollupMap map[linkBucketKey]*linkRollupRow
-		intfRows      []interfaceRollupRow
+		metaMap         map[string]*statusLinkMeta
+		linkRollupMap   map[linkBucketKey]*linkRollupRow
+		intfRows        []interfaceRollupRow
+		currentISISDown map[string]bool
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -835,6 +857,19 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			linkRollupMap, err = queryLinkRollup(gctx, db, params)
 			if err != nil {
 				return fmt.Errorf("bulk link rollup: %w", err)
+			}
+			return nil
+		})
+	}
+
+	// Real-time ISIS adjacency state for collecting bucket
+	if include.Status {
+		g.Go(func() error {
+			var err error
+			currentISISDown, err = queryCurrentISISDown(gctx, db)
+			if err != nil {
+				slog.Warn("failed to query current ISIS state for bulk", "error", err)
+				currentISISDown = nil
 			}
 			return nil
 		})
@@ -912,7 +947,7 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			}
 
 			if include.Status {
-				st := buildLinkMetricsStatus(rollup, meta, healthCommittedRtt, isCollecting, bucketStart, perLinkIntfIndex)
+				st := buildLinkMetricsStatus(rollup, meta, healthCommittedRtt, isCollecting, bucketStart, perLinkIntfIndex, currentISISDown[linkPK])
 				bucket.Status = &st
 			}
 

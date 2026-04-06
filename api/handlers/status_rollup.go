@@ -1015,6 +1015,58 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 	return result, rows.Err()
 }
 
+// queryCurrentISISDown returns the set of link PKs that currently have ISIS down.
+// A link is considered ISIS down if it has an adjacency record in dim_isis_adjacencies_history
+// whose most recent snapshot shows is_deleted=1, OR if it's an activated link with a tunnel_net
+// that has no adjacency at all in isis_adjacencies_current (and no peer on the same tunnel does).
+// If linkPKs is provided, only those links are checked.
+func queryCurrentISISDown(ctx context.Context, db driver.Conn, linkPKs ...string) (map[string]bool, error) {
+	// Get activated link PKs that have no current ISIS adjacency.
+	// This mirrors the status endpoint's missing-adjacency check.
+	var filterClause string
+	var args []any
+	args = append(args, committedRttProvisioningNs)
+	if len(linkPKs) > 0 {
+		args = append(args, linkPKs)
+		filterClause = fmt.Sprintf(" AND l.pk IN ($%d)", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT l.pk
+		FROM dz_links_current l
+		WHERE l.status = 'activated'
+		  AND l.tunnel_net != ''
+		  AND l.committed_rtt_ns != $1
+		  AND l.pk NOT IN (
+		    SELECT DISTINCT link_pk
+		    FROM isis_adjacencies_current
+		    WHERE link_pk != ''
+		  )
+		  AND l.tunnel_net NOT IN (
+		    SELECT DISTINCT l2.tunnel_net
+		    FROM dz_links_current l2
+		    JOIN isis_adjacencies_current a ON a.link_pk = l2.pk
+		    WHERE l2.tunnel_net != '' AND a.link_pk != ''
+		  )%s
+	`, filterClause)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("current ISIS down query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var pk string
+		if err := rows.Scan(&pk); err != nil {
+			return nil, fmt.Errorf("current ISIS down scan: %w", err)
+		}
+		result[pk] = true
+	}
+	return result, rows.Err()
+}
+
 // statusDeviceMeta holds static device metadata from dimension tables for status pages.
 type statusDeviceMeta struct {
 	PK          string
