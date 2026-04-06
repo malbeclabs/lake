@@ -51,7 +51,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
 
   const axes = useMemo((): uPlot.Axis[] => [
     {},
-    { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(v)) },
+    { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(Math.abs(v))) },
   ], [])
 
   const { uPlotData, uPlotSeries } = useMemo(() => {
@@ -61,50 +61,58 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     }
 
     const timestamps = buckets.map((b) => new Date(b.ts).getTime() / 1000)
-    const errors = buckets.map((b) => {
+    const inErrors = buckets.map((b) => {
       if (!b.traffic) return null
-      const v = b.traffic.in_errors + b.traffic.out_errors
-      return v > 0 ? v : null
+      return b.traffic.in_errors > 0 ? b.traffic.in_errors : null
+    })
+    const outErrors = buckets.map((b) => {
+      if (!b.traffic) return null
+      return b.traffic.out_errors > 0 ? -b.traffic.out_errors : null
     })
     const fcs = buckets.map((b) => {
       if (!b.traffic) return null
-      const v = b.traffic.in_fcs_errors
-      return v > 0 ? v : null
+      return b.traffic.in_fcs_errors > 0 ? b.traffic.in_fcs_errors : null
     })
-    const discards = buckets.map((b) => {
+    const inDiscards = buckets.map((b) => {
       if (!b.traffic) return null
-      const v = b.traffic.in_discards + b.traffic.out_discards
-      return v > 0 ? v : null
+      return b.traffic.in_discards > 0 ? b.traffic.in_discards : null
+    })
+    const outDiscards = buckets.map((b) => {
+      if (!b.traffic) return null
+      return b.traffic.out_discards > 0 ? -b.traffic.out_discards : null
     })
     const carrier = buckets.map((b) => {
       if (!b.traffic) return null
-      const v = b.traffic.carrier_transitions
-      return v > 0 ? v : null
+      return b.traffic.carrier_transitions > 0 ? b.traffic.carrier_transitions : null
     })
 
     const series: uPlot.Series[] = [
       {},
-      { label: 'errors', stroke: errorColor, width: 1.5, points: { show: true, size: 4 } },
-      { label: 'fcs', stroke: fcsColor, width: 1.5, points: { show: true, size: 4 } },
-      { label: 'discards', stroke: discardColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'errors (rx)', stroke: errorColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'errors (tx)', stroke: errorColor, width: 1.5, points: { show: true, size: 4 }, dash: [4, 4] },
+      { label: 'fcs (rx)', stroke: fcsColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'discards (rx)', stroke: discardColor, width: 1.5, points: { show: true, size: 4 } },
+      { label: 'discards (tx)', stroke: discardColor, width: 1.5, points: { show: true, size: 4 }, dash: [4, 4] },
       { label: 'carrier', stroke: carrierColor, width: 1.5, points: { show: true, size: 4 } },
     ]
 
     return {
-      uPlotData: [timestamps, errors, fcs, discards, carrier] as uPlot.AlignedData,
+      uPlotData: [timestamps, inErrors, outErrors, fcs, inDiscards, outDiscards, carrier] as uPlot.AlignedData,
       uPlotSeries: series,
     }
   }, [data, errorColor, fcsColor, discardColor, carrierColor])
 
   const legend = useChartLegend()
   const legendSeries: ChartLegendSeries[] = useMemo(() => [
-    { key: 'errors', color: errorColor, label: 'Errors' },
-    { key: 'fcs', color: fcsColor, label: 'FCS Errors' },
-    { key: 'discards', color: discardColor, label: 'Discards' },
+    { key: 'errors_rx', color: errorColor, label: 'Errors (Rx)' },
+    { key: 'errors_tx', color: errorColor, label: 'Errors (Tx)' },
+    { key: 'fcs_rx', color: fcsColor, label: 'FCS (Rx)' },
+    { key: 'discards_rx', color: discardColor, label: 'Discards (Rx)' },
+    { key: 'discards_tx', color: discardColor, label: 'Discards (Tx)' },
     { key: 'carrier', color: carrierColor, label: 'Carrier' },
   ], [errorColor, fcsColor, discardColor, carrierColor])
 
-  const seriesKeys = ['errors', 'fcs', 'discards', 'carrier']
+  const seriesKeys = ['errors_rx', 'errors_tx', 'fcs_rx', 'discards_rx', 'discards_tx', 'carrier']
 
   uPlotDataRef.current = uPlotData
 
@@ -160,7 +168,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     const idx = hoveredIdx != null && hoveredIdx < uPlotData[0].length ? hoveredIdx : defaultIdx
     for (let i = 0; i < seriesKeys.length; i++) {
       const val = (uPlotData[i + 1] as (number | null)[])?.[idx]
-      map.set(seriesKeys[i], val != null ? formatCount(val) : '--')
+      map.set(seriesKeys[i], val != null ? formatCount(Math.abs(val)) : '--')
     }
     return map
   }, [uPlotData, hoveredIdx])
@@ -171,7 +179,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     for (let i = 0; i < seriesKeys.length; i++) {
       const s = uPlotData[i + 1] as (number | null)[]
       let max = 0
-      if (s) for (const v of s) if (v != null && v > max) max = v
+      if (s) for (const v of s) if (v != null && Math.abs(v) > max) max = Math.abs(v)
       map.set(seriesKeys[i], formatCount(max))
     }
     return map
