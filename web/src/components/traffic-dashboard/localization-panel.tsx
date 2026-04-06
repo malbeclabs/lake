@@ -11,6 +11,7 @@ const allGroupByOptions = [
   { value: 'link_type', label: 'Link Type' },
   { value: 'contributor', label: 'Contributor' },
   { value: 'user_kind', label: 'User Kind' },
+  { value: 'cyoa_type', label: 'CYOA Type' },
 ]
 
 function formatPercent(val: number): string {
@@ -122,6 +123,13 @@ export function LocalizationPanel() {
           state.setUserKindFilter(state.userKindFilter.filter(f => f !== key))
         } else {
           state.setUserKindFilter([...state.userKindFilter, key])
+        }
+        break
+      case 'cyoa_type':
+        if (state.cyoaTypeFilter.includes(key)) {
+          state.setCyoaTypeFilter(state.cyoaTypeFilter.filter(f => f !== key))
+        } else {
+          state.setCyoaTypeFilter([...state.cyoaTypeFilter, key])
         }
         break
     }

@@ -32,7 +32,9 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"contributor": {table: "dz_devices_current d JOIN dz_contributors_current c ON d.contributor_pk = c.pk", column: "c.code"},
 	},
 	"interfaces": {
-		"intf": {table: "device_interface_rollup_5m", column: "intf"},
+		"intf":           {table: "device_interface_rollup_5m", column: "intf"},
+		"cyoa_type":      {table: "dz_device_interfaces_current", column: "cyoa_type"},
+		"interface_type": {table: "dz_device_interfaces_current", column: "interface_type"},
 	},
 	"links": {
 		"status":      {table: "dz_links_current", column: "status"},

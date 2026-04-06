@@ -27,6 +27,8 @@ const intfTypeOptions: { value: IntfType; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'link', label: 'Link' },
   { value: 'tunnel', label: 'Tunnel' },
+  { value: 'cyoa', label: 'CYOA' },
+  { value: 'dia', label: 'DIA' },
   { value: 'other', label: 'Other' },
 ]
 
@@ -109,6 +111,8 @@ const fieldPrefixes = [
   { prefix: 'link_type:', description: 'Filter by link type', contextKey: 'link_type' },
   { prefix: 'contributor:', description: 'Filter by contributor', contextKey: 'contributor' },
   { prefix: 'user_kind:', description: 'Filter by user kind', contextKey: 'user_kind' },
+  { prefix: 'cyoa_type:', description: 'Filter by CYOA type', contextKey: 'cyoa_type' },
+  { prefix: 'interface_type:', description: 'Filter by interface type', contextKey: 'interface_type' },
 ] as const
 
 type ContextKey = typeof fieldPrefixes[number]['contextKey']
@@ -120,6 +124,8 @@ const autocompleteConfig: Record<string, { entity: string; field: string; minCha
   'link_type': { entity: 'links', field: 'type' },
   'contributor': { entity: 'devices', field: 'contributor' },
   'user_kind': { entity: 'users', field: 'kind' },
+  'cyoa_type': { entity: 'interfaces', field: 'cyoa_type' },
+  'interface_type': { entity: 'interfaces', field: 'interface_type' },
 }
 
 function DashboardSearch() {
@@ -131,6 +137,8 @@ function DashboardSearch() {
     contributorFilter, setContributorFilter,
     intfFilter, setIntfFilter,
     userKindFilter, setUserKindFilter,
+    cyoaTypeFilter, setCyoaTypeFilter,
+    interfaceTypeFilter, setInterfaceTypeFilter,
   } = useDashboard()
 
   // Build scope filters to pass to field-values API so autocomplete
@@ -144,8 +152,10 @@ function DashboardSearch() {
     if (contributorFilter.length > 0) f.contributor = contributorFilter.join(',')
     if (intfFilter.length > 0) f.intf = intfFilter.join(',')
     if (userKindFilter.length > 0) f.user_kind = userKindFilter.join(',')
+    if (cyoaTypeFilter.length > 0) f.cyoa_type = cyoaTypeFilter.join(',')
+    if (interfaceTypeFilter.length > 0) f.interface_type = interfaceTypeFilter.join(',')
     return Object.keys(f).length > 0 ? f : undefined
-  }, [timeRange, metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter])
+  }, [timeRange, metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter, cyoaTypeFilter, interfaceTypeFilter])
 
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -205,6 +215,8 @@ function DashboardSearch() {
       link_type: { get: linkTypeFilter, set: setLinkTypeFilter },
       contributor: { get: contributorFilter, set: setContributorFilter },
       user_kind: { get: userKindFilter, set: setUserKindFilter },
+      cyoa_type: { get: cyoaTypeFilter, set: setCyoaTypeFilter },
+      interface_type: { get: interfaceTypeFilter, set: setInterfaceTypeFilter },
     }
     const { get, set } = setters[contextKey]
     if (!get.includes(value)) {
@@ -212,7 +224,7 @@ function DashboardSearch() {
     }
     setQuery('')
     inputRef.current?.focus()
-  }, [metroFilter, setMetroFilter, deviceFilter, setDeviceFilter, intfFilter, setIntfFilter, linkTypeFilter, setLinkTypeFilter, contributorFilter, setContributorFilter, userKindFilter, setUserKindFilter])
+  }, [metroFilter, setMetroFilter, deviceFilter, setDeviceFilter, intfFilter, setIntfFilter, linkTypeFilter, setLinkTypeFilter, contributorFilter, setContributorFilter, userKindFilter, setUserKindFilter, cyoaTypeFilter, setCyoaTypeFilter, interfaceTypeFilter, setInterfaceTypeFilter])
 
   const commitFilter = useCallback((filterStr: string) => {
     const colonIndex = filterStr.indexOf(':')
@@ -685,12 +697,14 @@ export function DashboardFilterBadges() {
     contributorFilter, setContributorFilter,
     intfFilter, setIntfFilter,
     userKindFilter, setUserKindFilter,
+    cyoaTypeFilter, setCyoaTypeFilter,
+    interfaceTypeFilter, setInterfaceTypeFilter,
     clearFilters,
   } = useDashboard()
 
   const hasFilters = metroFilter.length > 0 || deviceFilter.length > 0 ||
     linkTypeFilter.length > 0 || contributorFilter.length > 0 || intfFilter.length > 0 ||
-    userKindFilter.length > 0
+    userKindFilter.length > 0 || cyoaTypeFilter.length > 0 || interfaceTypeFilter.length > 0
 
   if (!hasFilters) return null
 
@@ -714,6 +728,12 @@ export function DashboardFilterBadges() {
       ))}
       {userKindFilter.map(v => (
         <FilterBadge key={`uk-${v}`} label={`User Kind: ${v}`} onRemove={() => setUserKindFilter(userKindFilter.filter(f => f !== v))} />
+      ))}
+      {cyoaTypeFilter.map(v => (
+        <FilterBadge key={`cyoa-${v}`} label={`CYOA: ${v}`} onRemove={() => setCyoaTypeFilter(cyoaTypeFilter.filter(f => f !== v))} />
+      ))}
+      {interfaceTypeFilter.map(v => (
+        <FilterBadge key={`it-${v}`} label={`Intf Type: ${v}`} onRemove={() => setInterfaceTypeFilter(interfaceTypeFilter.filter(f => f !== v))} />
       ))}
       <button
         onClick={clearFilters}

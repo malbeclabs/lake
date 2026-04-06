@@ -3,9 +3,9 @@ import { createContext, useContext, useState, useMemo, useCallback, useTransitio
 import { useSearchParams } from 'react-router-dom'
 
 export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
-export type IntfType = 'all' | 'link' | 'tunnel' | 'other'
+export type IntfType = 'all' | 'link' | 'tunnel' | 'cyoa' | 'dia' | 'other'
 
-const validIntfTypes: Set<string> = new Set(['all', 'link', 'tunnel', 'other'])
+const validIntfTypes: Set<string> = new Set(['all', 'link', 'tunnel', 'cyoa', 'dia', 'other'])
 
 const validTimeRanges: Set<string> = new Set(['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'])
 
@@ -106,6 +106,8 @@ export interface DashboardState {
   contributorFilter: string[]
   intfFilter: string[]
   userKindFilter: string[]
+  cyoaTypeFilter: string[]
+  interfaceTypeFilter: string[]
 
   // Custom time range (unix seconds)
   customStart: number | null
@@ -129,6 +131,8 @@ export interface DashboardState {
   setContributorFilter: (f: string[]) => void
   setIntfFilter: (f: string[]) => void
   setUserKindFilter: (f: string[]) => void
+  setCyoaTypeFilter: (f: string[]) => void
+  setInterfaceTypeFilter: (f: string[]) => void
   setCustomRange: (start: number, end: number) => void
   clearCustomRange: () => void
   selectEntity: (e: SelectedEntity | null) => void
@@ -206,7 +210,7 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
     return 'auto'
   }, [searchParams])
 
-  // Force away from utilization when intf_type is non-link (utilization requires bandwidth)
+  // Force away from utilization when intf_type has no bandwidth data
   const metric = useMemo<'utilization' | 'throughput' | 'packets'>(() => {
     const param = searchParams.get('metric')
     if (param === 'packets') return 'packets'
@@ -251,6 +255,8 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
   const contributorFilter = useMemo(() => parseList(searchParams.get('contributor')), [searchParams])
   const intfFilter = useMemo(() => parseList(searchParams.get('intf')), [searchParams])
   const userKindFilter = useMemo(() => parseList(searchParams.get('user_kind')), [searchParams])
+  const cyoaTypeFilter = useMemo(() => parseList(searchParams.get('cyoa_type')), [searchParams])
+  const interfaceTypeFilter = useMemo(() => parseList(searchParams.get('interface_type')), [searchParams])
 
   const selectedEntity = useMemo<SelectedEntity | null>(() => {
     const param = searchParams.get('sel')
@@ -353,6 +359,8 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
   const setContributorFilter = useCallback((f: string[]) => setListParam('contributor', f), [setListParam])
   const setIntfFilter = useCallback((f: string[]) => setListParam('intf', f), [setListParam])
   const setUserKindFilter = useCallback((f: string[]) => setListParam('user_kind', f), [setListParam])
+  const setCyoaTypeFilter = useCallback((f: string[]) => setListParam('cyoa_type', f), [setListParam])
+  const setInterfaceTypeFilter = useCallback((f: string[]) => setListParam('interface_type', f), [setListParam])
 
   const setCustomRange = useCallback((start: number, end: number) => {
     setSearchParams(prev => {
@@ -417,6 +425,8 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
       prev.delete('contributor')
       prev.delete('intf')
       prev.delete('user_kind')
+      prev.delete('cyoa_type')
+      prev.delete('interface_type')
       prev.delete('sel')
       prev.delete('pinned')
       return prev
@@ -439,12 +449,12 @@ export function DashboardProvider({ children, defaultTimeRange = '24h' as TimeRa
     <DashboardContext.Provider
       value={{
         timeRange, threshold, metric, groupBy, intfType, bucket, refreshInterval: refreshIntervalKey, refetchInterval,
-        metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter,
+        metroFilter, deviceFilter, linkTypeFilter, contributorFilter, intfFilter, userKindFilter, cyoaTypeFilter, interfaceTypeFilter,
         customStart, customEnd,
         selectedEntity, pinnedEntities,
         setTimeRange: handleSetTimeRange, setThreshold: setThresholdAction, setMetric: setMetricAction, setGroupBy: setGroupByAction,
         setIntfType: setIntfTypeAction, setBucket: setBucketAction, setRefreshInterval,
-        setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter, setUserKindFilter,
+        setMetroFilter, setDeviceFilter, setLinkTypeFilter, setContributorFilter, setIntfFilter, setUserKindFilter, setCyoaTypeFilter, setInterfaceTypeFilter,
         setCustomRange, clearCustomRange,
         selectEntity, pinEntity, unpinEntity, clearFilters,
         referenceLines, setReferenceLines,
@@ -480,5 +490,7 @@ export function dashboardFilterParams(state: DashboardState): Record<string, str
   if (state.contributorFilter.length > 0) params.contributor = state.contributorFilter.join(',')
   if (state.intfFilter.length > 0) params.intf = state.intfFilter.join(',')
   if (state.userKindFilter.length > 0) params.user_kind = state.userKindFilter.join(',')
+  if (state.cyoaTypeFilter.length > 0) params.cyoa_type = state.cyoaTypeFilter.join(',')
+  if (state.interfaceTypeFilter.length > 0) params.interface_type = state.interfaceTypeFilter.join(',')
   return params
 }

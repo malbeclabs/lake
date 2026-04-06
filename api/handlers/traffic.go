@@ -51,7 +51,7 @@ const maxTrafficRows = 2_000_000
 // trafficDimensionJoins builds the SQL JOIN clauses needed for dimension filtering
 // in the traffic/discards endpoints. The source table must be aliased as "f" and
 // the devices CTE (with pk, code, metro_pk, contributor_pk) as "d".
-func trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin bool) string {
+func trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin bool) string {
 	var joins []string
 	if needsLinkJoin {
 		joins = append(joins, "LEFT JOIN dz_links_current l ON f.link_pk = l.pk")
@@ -61,6 +61,9 @@ func trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin b
 	}
 	if needsContributorJoin {
 		joins = append(joins, "LEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk")
+	}
+	if needsInterfaceJoin {
+		joins = append(joins, "LEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf")
 	}
 	if len(joins) == 0 {
 		return ""
@@ -131,9 +134,9 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	// Build dimension filters
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
-	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin)
+	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin)
 
 	// Add user join when user_kind filter is present
 	var userJoinSQL, userKindFilter string
@@ -499,9 +502,9 @@ func (a *API) GetDiscardsData(w http.ResponseWriter, r *http.Request) {
 	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
 	// Build dimension filters
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
-	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin)
+	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin)
 
 	// Add user join when user_kind filter is present
 	var userJoinSQL, userKindFilter string
