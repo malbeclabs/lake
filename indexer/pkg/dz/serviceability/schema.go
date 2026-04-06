@@ -73,6 +73,57 @@ func (s *DeviceSchema) GetPrimaryKey(d Device) string {
 	return d.PK
 }
 
+// DeviceInterfaceSchema defines the schema for device interfaces
+type DeviceInterfaceSchema struct{}
+
+func (s *DeviceInterfaceSchema) Name() string {
+	return "dz_device_interfaces"
+}
+
+func (s *DeviceInterfaceSchema) PrimaryKeyColumns() []string {
+	return []string{"device_pk:VARCHAR", "intf:VARCHAR"}
+}
+
+func (s *DeviceInterfaceSchema) PayloadColumns() []string {
+	return []string{
+		"status:VARCHAR",
+		"interface_type:VARCHAR",
+		"cyoa_type:VARCHAR",
+		"dia_type:VARCHAR",
+		"loopback_type:VARCHAR",
+		"routing_mode:VARCHAR",
+		"bandwidth:BIGINT",
+		"cir:BIGINT",
+		"mtu:INTEGER",
+		"vlan_id:INTEGER",
+		"node_segment_idx:INTEGER",
+		"user_tunnel_endpoint:BOOLEAN",
+	}
+}
+
+func (s *DeviceInterfaceSchema) ToRow(di DeviceInterface) []any {
+	return []any{
+		di.DevicePK,
+		di.Intf,
+		di.Status,
+		di.InterfaceType,
+		di.CYOAType,
+		di.DIAType,
+		di.LoopbackType,
+		di.RoutingMode,
+		di.Bandwidth,
+		di.Cir,
+		di.Mtu,
+		di.VlanID,
+		di.NodeSegmentIdx,
+		di.UserTunnelEndpoint,
+	}
+}
+
+func (s *DeviceInterfaceSchema) GetPrimaryKey(di DeviceInterface) string {
+	return di.DevicePK + ":" + di.Intf
+}
+
 // UserSchema defines the schema for users
 type UserSchema struct{}
 
@@ -292,13 +343,14 @@ func (s *TenantSchema) GetPrimaryKey(t Tenant) string {
 }
 
 var (
-	contributorSchema    = &ContributorSchema{}
-	deviceSchema         = &DeviceSchema{}
-	userSchema           = &UserSchema{}
-	metroSchema          = &MetroSchema{}
-	linkSchema           = &LinkSchema{}
-	multicastGroupSchema = &MulticastGroupSchema{}
-	tenantSchema         = &TenantSchema{}
+	contributorSchema     = &ContributorSchema{}
+	deviceSchema          = &DeviceSchema{}
+	deviceInterfaceSchema = &DeviceInterfaceSchema{}
+	userSchema            = &UserSchema{}
+	metroSchema           = &MetroSchema{}
+	linkSchema            = &LinkSchema{}
+	multicastGroupSchema  = &MulticastGroupSchema{}
+	tenantSchema          = &TenantSchema{}
 )
 
 func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
@@ -307,6 +359,10 @@ func NewContributorDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, er
 
 func NewDeviceDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
 	return dataset.NewDimensionType2Dataset(log, deviceSchema)
+}
+
+func NewDeviceInterfaceDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {
+	return dataset.NewDimensionType2Dataset(log, deviceInterfaceSchema)
 }
 
 func NewUserDataset(log *slog.Logger) (*dataset.DimensionType2Dataset, error) {

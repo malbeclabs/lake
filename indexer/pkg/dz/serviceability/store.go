@@ -97,6 +97,31 @@ func (s *Store) ReplaceDevices(ctx context.Context, devices []Device) error {
 	return nil
 }
 
+func (s *Store) ReplaceDeviceInterfaces(ctx context.Context, deviceInterfaces []DeviceInterface) error {
+	s.log.Debug("serviceability/store: replacing device interfaces", "count", len(deviceInterfaces))
+
+	d, err := NewDeviceInterfaceDataset(s.log)
+	if err != nil {
+		return fmt.Errorf("failed to create dataset: %w", err)
+	}
+
+	conn, err := s.cfg.ClickHouse.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get ClickHouse connection: %w", err)
+	}
+	defer conn.Close()
+
+	if err := d.WriteBatch(ctx, conn, len(deviceInterfaces), func(i int) ([]any, error) {
+		return deviceInterfaceSchema.ToRow(deviceInterfaces[i]), nil
+	}, &dataset.DimensionType2DatasetWriteConfig{
+		MissingMeansDeleted: true,
+	}); err != nil {
+		return fmt.Errorf("failed to write device interfaces to ClickHouse: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Store) ReplaceUsers(ctx context.Context, users []User) error {
 	s.log.Debug("serviceability/store: replacing users", "count", len(users))
 

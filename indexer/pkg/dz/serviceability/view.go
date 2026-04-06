@@ -48,6 +48,23 @@ type Interface struct {
 	Status string `json:"status"`
 }
 
+type DeviceInterface struct {
+	DevicePK           string
+	Intf               string
+	Status             string
+	InterfaceType      string
+	CYOAType           string
+	DIAType            string
+	LoopbackType       string
+	RoutingMode        string
+	Bandwidth          uint64
+	Cir                uint64
+	Mtu                uint16
+	VlanID             uint16
+	NodeSegmentIdx     uint16
+	UserTunnelEndpoint bool
+}
+
 type Device struct {
 	PK            string
 	Status        string
@@ -299,6 +316,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	contributors := convertContributors(pd.Contributors)
 	devices := convertDevices(pd.Devices)
+	deviceInterfaces := convertDeviceInterfaces(pd.Devices)
 	users := convertUsers(pd.Users)
 	links := convertLinks(pd.Links, pd.Devices)
 	metros := convertMetros(pd.Exchanges)
@@ -313,6 +331,10 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 
 	if err := v.store.ReplaceDevices(ctx, devices); err != nil {
 		return result, fmt.Errorf("failed to replace devices: %w", err)
+	}
+
+	if err := v.store.ReplaceDeviceInterfaces(ctx, deviceInterfaces); err != nil {
+		return result, fmt.Errorf("failed to replace device interfaces: %w", err)
 	}
 
 	if err := v.store.ReplaceUsers(ctx, users); err != nil {
@@ -335,7 +357,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		return result, fmt.Errorf("failed to replace tenants: %w", err)
 	}
 
-	result.RowsAffected = int64(len(contributors) + len(devices) + len(users) + len(metros) + len(links) + len(multicastGroups) + len(tenants))
+	result.RowsAffected = int64(len(contributors) + len(devices) + len(deviceInterfaces) + len(users) + len(metros) + len(links) + len(multicastGroups) + len(tenants))
 	result.SourceMaxEventTS = &fetchedAt
 
 	v.fetchedAt = fetchedAt
@@ -389,6 +411,32 @@ func convertDevices(onchain []serviceability.Device) []Device {
 			MetroPK:       solana.PublicKeyFromBytes(device.ExchangePubKey[:]).String(),
 			MaxUsers:      device.MaxUsers,
 			Interfaces:    interfaces,
+		}
+	}
+	return result
+}
+
+func convertDeviceInterfaces(onchain []serviceability.Device) []DeviceInterface {
+	var result []DeviceInterface
+	for _, device := range onchain {
+		devicePK := solana.PublicKeyFromBytes(device.PubKey[:]).String()
+		for _, iface := range device.Interfaces {
+			result = append(result, DeviceInterface{
+				DevicePK:           devicePK,
+				Intf:               iface.Name,
+				Status:             iface.Status.String(),
+				InterfaceType:      iface.InterfaceType.String(),
+				CYOAType:           iface.InterfaceCYOA.String(),
+				DIAType:            iface.InterfaceDIA.String(),
+				LoopbackType:       iface.LoopbackType.String(),
+				RoutingMode:        iface.RoutingMode.String(),
+				Bandwidth:          iface.Bandwidth,
+				Cir:                iface.Cir,
+				Mtu:                iface.Mtu,
+				VlanID:             iface.VlanId,
+				NodeSegmentIdx:     iface.NodeSegmentIdx,
+				UserTunnelEndpoint: iface.UserTunnelEndpoint,
+			})
 		}
 	}
 	return result
