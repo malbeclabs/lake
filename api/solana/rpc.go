@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -59,7 +60,14 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+const (
+	maxRetries   = 3
+	baseBackoff  = 500 * time.Millisecond
+	maxBackoff   = 5 * time.Second
+)
+
 // call executes a JSON-RPC method and unmarshals the result.
+// It retries on HTTP 429 (rate limited) with exponential backoff.
 func (c *Client) call(ctx context.Context, method string, params []any, result any) error {
 	req := rpcRequest{
 		JSONRPC: "2.0",
@@ -73,6 +81,48 @@ func (c *Client) call(ctx context.Context, method string, params []any, result a
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	var lastErr error
+	for attempt := range maxRetries {
+		if attempt > 0 {
+			d := baseBackoff * time.Duration(1<<(attempt-1))
+			if d > maxBackoff {
+				d = maxBackoff
+			}
+			t := time.NewTimer(d)
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+				return ctx.Err()
+			}
+		}
+
+		lastErr = c.doCall(ctx, body, result)
+		if lastErr == nil {
+			return nil
+		}
+		if !isRateLimited(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+// rateLimitedError indicates the RPC endpoint returned a rate limit response.
+type rateLimitedError struct {
+	statusCode int
+}
+
+func (e *rateLimitedError) Error() string {
+	return fmt.Sprintf("rate limited (status %d)", e.statusCode)
+}
+
+func isRateLimited(err error) bool {
+	var rle *rateLimitedError
+	return errors.As(err, &rle)
+}
+
+func (c *Client) doCall(ctx context.Context, body []byte, result any) error {
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.rpcURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -84,6 +134,10 @@ func (c *Client) call(ctx context.Context, method string, params []any, result a
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return &rateLimitedError{statusCode: resp.StatusCode}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
