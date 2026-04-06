@@ -477,7 +477,23 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 			quantileIf(0.90)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p90_out_pps,
 			quantileIf(0.95)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p95_out_pps,
 			quantileIf(0.99)(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as p99_out_pps,
-			maxIf(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as max_out_pps
+			maxIf(out_pkts_delta / delta_duration, delta_duration > 0 AND out_pkts_delta >= 0) as max_out_pps,
+			-- In Multicast PPS percentiles
+			avgIf(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as avg_in_mcast_pps,
+			minIf(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as min_in_mcast_pps,
+			quantileIf(0.50)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p50_in_mcast_pps,
+			quantileIf(0.90)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p90_in_mcast_pps,
+			quantileIf(0.95)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p95_in_mcast_pps,
+			quantileIf(0.99)(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as p99_in_mcast_pps,
+			maxIf(in_multicast_pkts_delta / delta_duration, delta_duration > 0 AND in_multicast_pkts_delta >= 0) as max_in_mcast_pps,
+			-- Out Multicast PPS percentiles
+			avgIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as avg_out_mcast_pps,
+			minIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as min_out_mcast_pps,
+			quantileIf(0.50)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p50_out_mcast_pps,
+			quantileIf(0.90)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p90_out_mcast_pps,
+			quantileIf(0.95)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p95_out_mcast_pps,
+			quantileIf(0.99)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p99_out_mcast_pps,
+			maxIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as max_out_mcast_pps
 		FROM ` + factCounters + `
 		WHERE event_ts >= $1 AND event_ts < $2
 		GROUP BY device_pk, intf, bucket
@@ -505,6 +521,8 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 			&b.OutBps.Avg, &b.OutBps.Min, &b.OutBps.P50, &b.OutBps.P90, &b.OutBps.P95, &b.OutBps.P99, &b.OutBps.Max,
 			&b.InPps.Avg, &b.InPps.Min, &b.InPps.P50, &b.InPps.P90, &b.InPps.P95, &b.InPps.P99, &b.InPps.Max,
 			&b.OutPps.Avg, &b.OutPps.Min, &b.OutPps.P50, &b.OutPps.P90, &b.OutPps.P95, &b.OutPps.P99, &b.OutPps.Max,
+			&b.InMcastPps.Avg, &b.InMcastPps.Min, &b.InMcastPps.P50, &b.InMcastPps.P90, &b.InMcastPps.P95, &b.InMcastPps.P99, &b.InMcastPps.Max,
+			&b.OutMcastPps.Avg, &b.OutMcastPps.Min, &b.OutMcastPps.P50, &b.OutMcastPps.P90, &b.OutMcastPps.P95, &b.OutMcastPps.P99, &b.OutMcastPps.Max,
 		); err != nil {
 			return nil, fmt.Errorf("device interface scan: %w", err)
 		}
@@ -733,6 +751,8 @@ func (a *Activities) WriteDeviceInterfaceBuckets(ctx context.Context, buckets []
 		avg_out_bps, min_out_bps, p50_out_bps, p90_out_bps, p95_out_bps, p99_out_bps, max_out_bps,
 		avg_in_pps, min_in_pps, p50_in_pps, p90_in_pps, p95_in_pps, p99_in_pps, max_in_pps,
 		avg_out_pps, min_out_pps, p50_out_pps, p90_out_pps, p95_out_pps, p99_out_pps, max_out_pps,
+		avg_in_mcast_pps, min_in_mcast_pps, p50_in_mcast_pps, p90_in_mcast_pps, p95_in_mcast_pps, p99_in_mcast_pps, max_in_mcast_pps,
+		avg_out_mcast_pps, min_out_mcast_pps, p50_out_mcast_pps, p90_out_mcast_pps, p95_out_mcast_pps, p99_out_mcast_pps, max_out_mcast_pps,
 		status, isis_overload, isis_unreachable
 	)`)
 	if err != nil {
@@ -748,6 +768,8 @@ func (a *Activities) WriteDeviceInterfaceBuckets(ctx context.Context, buckets []
 			b.OutBps.Avg, b.OutBps.Min, b.OutBps.P50, b.OutBps.P90, b.OutBps.P95, b.OutBps.P99, b.OutBps.Max,
 			b.InPps.Avg, b.InPps.Min, b.InPps.P50, b.InPps.P90, b.InPps.P95, b.InPps.P99, b.InPps.Max,
 			b.OutPps.Avg, b.OutPps.Min, b.OutPps.P50, b.OutPps.P90, b.OutPps.P95, b.OutPps.P99, b.OutPps.Max,
+			b.InMcastPps.Avg, b.InMcastPps.Min, b.InMcastPps.P50, b.InMcastPps.P90, b.InMcastPps.P95, b.InMcastPps.P99, b.InMcastPps.Max,
+			b.OutMcastPps.Avg, b.OutMcastPps.Min, b.OutMcastPps.P50, b.OutMcastPps.P90, b.OutMcastPps.P95, b.OutMcastPps.P99, b.OutMcastPps.Max,
 			b.Status, b.ISISOverload, b.ISISUnreachable,
 		); err != nil {
 			return fmt.Errorf("append batch: %w", err)

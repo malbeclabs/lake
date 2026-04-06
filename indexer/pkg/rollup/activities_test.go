@@ -272,6 +272,8 @@ func TestWriteDeviceInterfaceBuckets(t *testing.T) {
 		OutBps:             InterfaceRateStats{Avg: 500_000},
 		InPps:              InterfaceRateStats{Avg: 1500},
 		OutPps:             InterfaceRateStats{Avg: 750},
+		InMcastPps:         InterfaceRateStats{Avg: 200, P95: 350, Max: 500},
+		OutMcastPps:        InterfaceRateStats{Avg: 100, P95: 175, Max: 250},
 		Status:             "activated",
 		ISISOverload:       false,
 		ISISUnreachable:    true,
@@ -281,16 +283,22 @@ func TestWriteDeviceInterfaceBuckets(t *testing.T) {
 
 	var inErr, outErr, fcsErr uint64
 	var avgInBps, p95InBps, maxInBps float64
+	var avgInMcastPps, p95InMcastPps, maxInMcastPps float64
+	var avgOutMcastPps, p95OutMcastPps, maxOutMcastPps float64
 	var linkPK, linkSide, userPK, status string
 	var userTunnelID *int64
 	var isisOverload, isisUnreachable bool
 	err := conn.QueryRow(ctx, `
 		SELECT in_errors, out_errors, in_fcs_errors, avg_in_bps, p95_in_bps, max_in_bps,
+		       avg_in_mcast_pps, p95_in_mcast_pps, max_in_mcast_pps,
+		       avg_out_mcast_pps, p95_out_mcast_pps, max_out_mcast_pps,
 		       link_pk, link_side, user_tunnel_id, user_pk,
 		       status, isis_overload, isis_unreachable
 		FROM device_interface_rollup_5m FINAL
 		WHERE device_pk = 'device-1' AND intf = 'Ethernet1/1'
 	`).Scan(&inErr, &outErr, &fcsErr, &avgInBps, &p95InBps, &maxInBps,
+		&avgInMcastPps, &p95InMcastPps, &maxInMcastPps,
+		&avgOutMcastPps, &p95OutMcastPps, &maxOutMcastPps,
 		&linkPK, &linkSide, &userTunnelID, &userPK,
 		&status, &isisOverload, &isisUnreachable)
 	require.NoError(t, err)
@@ -301,6 +309,12 @@ func TestWriteDeviceInterfaceBuckets(t *testing.T) {
 	assert.InDelta(t, 1_000_000, avgInBps, 0.01)
 	assert.InDelta(t, 1_500_000, p95InBps, 0.01)
 	assert.InDelta(t, 2_000_000, maxInBps, 0.01)
+	assert.InDelta(t, 200, avgInMcastPps, 0.01)
+	assert.InDelta(t, 350, p95InMcastPps, 0.01)
+	assert.InDelta(t, 500, maxInMcastPps, 0.01)
+	assert.InDelta(t, 100, avgOutMcastPps, 0.01)
+	assert.InDelta(t, 175, p95OutMcastPps, 0.01)
+	assert.InDelta(t, 250, maxOutMcastPps, 0.01)
 	assert.Equal(t, "link-1", linkPK)
 	assert.Equal(t, "A", linkSide)
 	require.NotNil(t, userTunnelID)
@@ -347,10 +361,11 @@ func TestComputeDeviceInterfaceRollup_WithData(t *testing.T) {
 	// Seed multiple counter snapshots for the same interface
 	for i := range 5 {
 		ts := bucketStart.Add(time.Duration(i) * time.Minute)
-		err := conn.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters (event_ts, ingested_at, device_pk, host, intf, link_pk, link_side, in_errors_delta, out_errors_delta, in_fcs_errors_delta, in_discards_delta, out_discards_delta, carrier_transitions_delta, in_octets_delta, out_octets_delta, in_pkts_delta, out_pkts_delta, delta_duration) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+		err := conn.Exec(ctx, `INSERT INTO fact_dz_device_interface_counters (event_ts, ingested_at, device_pk, host, intf, link_pk, link_side, in_errors_delta, out_errors_delta, in_fcs_errors_delta, in_discards_delta, out_discards_delta, carrier_transitions_delta, in_octets_delta, out_octets_delta, in_pkts_delta, out_pkts_delta, in_multicast_pkts_delta, out_multicast_pkts_delta, delta_duration) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 			ts, ts, "device-1", "host-1", "Ethernet1/1", "link-1", "A",
 			int64(10), int64(5), int64(1), int64(2), int64(1), int64(0),
-			int64(125_000*(i+1)), int64(62_500*(i+1)), int64(100*(i+1)), int64(50*(i+1)), float64(1.0))
+			int64(125_000*(i+1)), int64(62_500*(i+1)), int64(100*(i+1)), int64(50*(i+1)),
+			int64(30*(i+1)), int64(15*(i+1)), float64(1.0))
 		require.NoError(t, err)
 	}
 
@@ -386,6 +401,16 @@ func TestComputeDeviceInterfaceRollup_WithData(t *testing.T) {
 	// PPS
 	assert.Greater(t, b.InPps.Avg, float64(0))
 	assert.Greater(t, b.OutPps.Avg, float64(0))
+
+	// Multicast PPS (5 snapshots with increasing rates: 30/s, 60/s, 90/s, 120/s, 150/s)
+	assert.Greater(t, b.InMcastPps.Avg, float64(0))
+	assert.Greater(t, b.InMcastPps.Min, float64(0))
+	assert.Greater(t, b.InMcastPps.Max, float64(0))
+	assert.GreaterOrEqual(t, b.InMcastPps.Max, b.InMcastPps.P99)
+	assert.GreaterOrEqual(t, b.InMcastPps.P99, b.InMcastPps.P95)
+	assert.GreaterOrEqual(t, b.InMcastPps.P95, b.InMcastPps.Min)
+	assert.Greater(t, b.OutMcastPps.Avg, float64(0))
+	assert.Greater(t, b.OutMcastPps.Max, float64(0))
 
 	// Device state
 	assert.Equal(t, "activated", b.Status)

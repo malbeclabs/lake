@@ -91,10 +91,12 @@ type DeviceInterfaceBucket struct {
 	CarrierTransitions uint64 `json:"carrier_transitions"`
 
 	// Traffic rates
-	InBps  InterfaceRateStats `json:"in_bps"`
-	OutBps InterfaceRateStats `json:"out_bps"`
-	InPps  InterfaceRateStats `json:"in_pps"`
-	OutPps InterfaceRateStats `json:"out_pps"`
+	InBps       InterfaceRateStats `json:"in_bps"`
+	OutBps      InterfaceRateStats `json:"out_bps"`
+	InPps       InterfaceRateStats `json:"in_pps"`
+	OutPps      InterfaceRateStats `json:"out_pps"`
+	InMcastPps  InterfaceRateStats `json:"in_mcast_pps"`
+	OutMcastPps InterfaceRateStats `json:"out_mcast_pps"`
 
 	// Entity state resolved from history tables at write time
 	Status          string `json:"status"`           // activated, soft-drained, hard-drained, suspended
