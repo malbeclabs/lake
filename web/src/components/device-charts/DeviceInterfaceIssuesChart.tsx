@@ -109,7 +109,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     { key: 'fcs_rx', color: fcsColor, label: 'FCS (Rx)' },
     { key: 'discards_rx', color: discardColor, label: 'Discards (Rx)' },
     { key: 'discards_tx', color: discardColor, label: 'Discards (Tx)' },
-    { key: 'carrier', color: carrierColor, label: 'Carrier' },
+    { key: 'carrier', color: carrierColor, label: 'Carrier Transitions' },
   ], [errorColor, fcsColor, discardColor, carrierColor])
 
   const seriesKeys = ['errors_rx', 'errors_tx', 'fcs_rx', 'discards_rx', 'discards_tx', 'carrier']
