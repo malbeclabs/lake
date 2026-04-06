@@ -5218,6 +5218,7 @@ export interface DeviceInterfaceTraffic {
   link_code?: string
   link_side?: string
   user_pk?: string
+  cyoa_type?: string
   in_bps: number
   out_bps: number
   max_in_bps: number

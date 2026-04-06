@@ -36,10 +36,11 @@ function formatBpsAxis(value: number): string {
   return `${abs.toFixed(0)}`
 }
 
-type InterfaceCategory = 'userTunnel' | 'link' | 'other'
+type InterfaceCategory = 'userTunnel' | 'link' | 'cyoa' | 'other'
 
 function classifyInterface(intf: DeviceInterfaceTraffic): InterfaceCategory {
   if (intf.user_pk) return 'userTunnel'
+  if (intf.cyoa_type && intf.cyoa_type !== 'none' && intf.cyoa_type !== '') return 'cyoa'
   if (intf.link_pk) return 'link'
   return 'other'
 }
@@ -47,10 +48,11 @@ function classifyInterface(intf: DeviceInterfaceTraffic): InterfaceCategory {
 const categoryLabels: Record<InterfaceCategory, string> = {
   userTunnel: 'User Tunnel Traffic',
   link: 'Link Interface Traffic',
-  other: 'Non-Link Interface Traffic',
+  cyoa: 'CYOA Interface Traffic',
+  other: 'Other Interface Traffic',
 }
 
-const categoryOrder: InterfaceCategory[] = ['userTunnel', 'link', 'other']
+const categoryOrder: InterfaceCategory[] = ['userTunnel', 'link', 'cyoa', 'other']
 
 interface CategoryChartProps {
   title: string
@@ -307,6 +309,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
     const catIntfs: Record<InterfaceCategory, Set<string>> = {
       userTunnel: new Set(),
       link: new Set(),
+      cyoa: new Set(),
       other: new Set(),
     }
     const map = new Map<string, DeviceInterfaceTraffic>()

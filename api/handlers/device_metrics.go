@@ -46,6 +46,7 @@ type DeviceInterfaceTraffic struct {
 	LinkCode  string  `json:"link_code,omitempty"`
 	LinkSide  string  `json:"link_side,omitempty"`
 	UserPK    string  `json:"user_pk,omitempty"`
+	CYOAType  string  `json:"cyoa_type,omitempty"`
 	InBps     float64 `json:"in_bps"`
 	OutBps    float64 `json:"out_bps"`
 	MaxInBps  float64 `json:"max_in_bps"`
@@ -351,6 +352,21 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 		}
 	}
 
+	// Resolve interface CYOA types from the device interfaces dimension table
+	cyoaTypes := make(map[string]string)
+	{
+		rows, err := db.Query(ctx, "SELECT intf, cyoa_type FROM dz_device_interfaces_current WHERE device_pk = $1 AND cyoa_type != 'none'", devicePK)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var intf, cyoaType string
+				if err := rows.Scan(&intf, &cyoaType); err == nil {
+					cyoaTypes[intf] = cyoaType
+				}
+			}
+		}
+	}
+
 	isDrained := health.IsDrainedStatus(meta.Status)
 
 	// Build buckets
@@ -407,6 +423,7 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 						LinkCode:  linkCodes[ir.LinkPK],
 						LinkSide:  ir.LinkSide,
 						UserPK:    ir.UserPK,
+						CYOAType:  cyoaTypes[ir.Intf],
 						InBps:     ir.AvgInBps,
 						OutBps:    ir.AvgOutBps,
 						MaxInBps:  ir.MaxInBps,
