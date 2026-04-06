@@ -6,6 +6,7 @@ import { fetchBulkLinkMetrics, fetchLinkMetrics } from '@/lib/api'
 import type { LinkMetricsResponse, LinkMetricsBucket } from '@/lib/api'
 import { LinkPacketLossChart as LinkPacketLossDetailChart } from '@/components/link-charts/LinkPacketLossChart'
 import { LinkInterfaceIssuesChart } from '@/components/link-charts/LinkInterfaceIssuesChart'
+import { LinkLatencyChart } from '@/components/link-charts/LinkLatencyChart'
 import { LinkHealthTimeline } from '@/components/link-charts/LinkHealthTimeline'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 
@@ -383,7 +384,7 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
 
   // Has expandable content: packet loss or interface issues
   const hasExpandableContent = issueReasons.some(r =>
-    r === 'packet_loss' || r === 'interface_errors' || r === 'fcs_errors' || r === 'discards' || r === 'carrier_transitions'
+    r === 'packet_loss' || r === 'high_latency' || r === 'interface_errors' || r === 'fcs_errors' || r === 'discards' || r === 'carrier_transitions'
   )
 
   return (
@@ -467,8 +468,14 @@ function LinkRow({ linkMetrics, derivedInfo, linksWithIssues, criticalityMap, me
         <div className="px-4 pb-4 pt-2 space-y-4">
           {/* Packet loss chart — needs latency data from per-link fetch */}
           {fullMetrics && (() => {
+            const hasLatency = fullMetrics.buckets.some(b => b.latency && (b.latency.a_avg_rtt_us > 0 || b.latency.z_avg_rtt_us > 0))
             const hasLoss = fullMetrics.buckets.some(b => b.latency && (b.latency.a_loss_pct > 0 || b.latency.z_loss_pct > 0))
-            return hasLoss ? <LinkPacketLossDetailChart data={fullMetrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} /> : null
+            return (
+              <>
+                {hasLatency && issueReasons.includes('high_latency') && <LinkLatencyChart data={fullMetrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />}
+                {hasLoss && <LinkPacketLossDetailChart data={fullMetrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />}
+              </>
+            )
           })()}
           {/* Interface issues chart — uses bulk data (has traffic) */}
           {(() => {
