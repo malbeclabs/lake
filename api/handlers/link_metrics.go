@@ -784,6 +784,10 @@ func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
 				keep = true
 				break
 			}
+			if b.Status.ISISDown {
+				keep = true
+				break
+			}
 			if !b.Status.Collecting && b.Status.Health != "healthy" && b.Status.Health != "" {
 				keep = true
 				break
