@@ -416,14 +416,23 @@ func queryLinkRollup(ctx context.Context, db driver.Conn, params bucketParams, l
 			JOIN dim_dz_links_history lh ON lb.link_pk = lh.pk AND lh.snapshot_ts <= lb.bucket_ts + INTERVAL 5 MINUTE
 			GROUP BY ls_bucket, ls_pk
 		),
-		-- ISIS adjacency state as of each bucket's end time
+		-- ISIS adjacency state: true if down at any point during the bucket.
+		-- Checks carry-forward state entering the bucket and any deletion within it.
 		isis_state_asof AS (
 			SELECT
-				lb.bucket_ts AS is_bucket, lb.link_pk AS is_pk,
-				argMax(ih.is_deleted, ih.snapshot_ts) AS is_deleted
-			FROM latency_buckets lb
-			JOIN dim_isis_adjacencies_history ih ON lb.link_pk = ih.link_pk AND ih.snapshot_ts <= lb.bucket_ts + INTERVAL 5 MINUTE
-			WHERE ih.link_pk != ''
+				is_bucket, is_pk,
+				greatest(
+					argMax(ih_is_deleted, ih_ts) = 1 AND argMax(ih_ts, ih_ts) <= is_bucket,
+					maxIf(ih_is_deleted, ih_ts > is_bucket AND ih_ts <= is_bucket + INTERVAL 5 MINUTE) = 1
+				) AS is_deleted
+			FROM (
+				SELECT
+					lb.bucket_ts AS is_bucket, lb.link_pk AS is_pk,
+					ih.is_deleted AS ih_is_deleted, ih.snapshot_ts AS ih_ts
+				FROM latency_buckets lb
+				JOIN dim_isis_adjacencies_history ih ON lb.link_pk = ih.link_pk AND ih.snapshot_ts <= lb.bucket_ts + INTERVAL 5 MINUTE
+				WHERE ih.link_pk != ''
+			)
 			GROUP BY is_bucket, is_pk
 		),
 		raw_source AS (

@@ -392,7 +392,10 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 		return nil, fmt.Errorf("ISIS adjacency rows: %w", err)
 	}
 
-	// For each (link, bucket), find the latest entry with ts <= bucket end (bucket + 5m)
+	// For each (link, bucket), check if ISIS was down at any point during the
+	// bucket. A bucket is marked isis_down=true if the adjacency was deleted
+	// entering the bucket OR if any snapshot within the bucket has is_deleted=1.
+	// This ensures short down-then-up events within a single bucket are visible.
 	const bucketWidth = 5 * time.Minute
 	result := make(map[bucketKey]bool)
 	sortedBuckets := sortedTimes(bucketTimes)
@@ -403,16 +406,20 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 		}
 		entryIdx := 0
 		seenEntry := false
-		current := false
+		current := false // carry-forward state at bucket boundary
 		for _, bt := range sortedBuckets {
 			bucketEnd := bt.Add(bucketWidth)
+			wasDown := current // was already down entering this bucket
 			for entryIdx < len(entries) && !entries[entryIdx].ts.After(bucketEnd) {
 				current = entries[entryIdx].isDeleted
+				if current {
+					wasDown = true
+				}
 				seenEntry = true
 				entryIdx++
 			}
 			if seenEntry {
-				result[bucketKey{linkPK: pk, bucket: bt}] = current
+				result[bucketKey{linkPK: pk, bucket: bt}] = wasDown
 			}
 		}
 	}
