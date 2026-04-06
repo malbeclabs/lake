@@ -269,19 +269,44 @@ const seatStatusConfig: Record<SeatStatus, { label: string; className: string }>
 }
 
 /** Extends a boolean flag to stay true for at least `minMs` after it turns on. */
-function useDebouncedFetching(isFetching: boolean, minMs = 800): boolean {
-  const [visible, setVisible] = useState(false)
+function useRefreshButton(refetch: () => void, isFetching: boolean, minMs = 400) {
+  const [spinning, setSpinning] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const onClick = useCallback(() => {
+    refetch()
+    setSpinning(true)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setSpinning(false), minMs)
+  }, [refetch, minMs])
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+
+  return { spinning: spinning || isFetching, onClick }
+}
+
+function useDebouncedFetching(isFetching: boolean, { delayMs = 150, minMs = 800 } = {}): boolean {
+  const [visible, setVisible] = useState(false)
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (isFetching) {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
-      setVisible(true)
-    } else if (visible) {
-      timerRef.current = setTimeout(() => setVisible(false), minMs)
+      if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
+      if (!visible && !showTimerRef.current) {
+        showTimerRef.current = setTimeout(() => { showTimerRef.current = null; setVisible(true) }, delayMs)
+      }
+    } else {
+      if (showTimerRef.current) { clearTimeout(showTimerRef.current); showTimerRef.current = null }
+      if (visible) {
+        hideTimerRef.current = setTimeout(() => setVisible(false), minMs)
+      }
     }
-    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
-  }, [isFetching, visible, minMs])
+    return () => {
+      if (showTimerRef.current) clearTimeout(showTimerRef.current)
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    }
+  }, [isFetching, visible, delayMs, minMs])
 
   return visible
 }
@@ -355,6 +380,7 @@ export function ShredsSeatsPage() {
     refetchInterval: 30000,
   })
   const isFetching = useDebouncedFetching(rawFetching)
+  const refresh = useRefreshButton(refetch, rawFetching)
 
   const items = data?.items ?? []
   const total = data?.total ?? 0
@@ -410,11 +436,11 @@ export function ShredsSeatsPage() {
           count={total}
           subtitle={
             <button
-              onClick={() => refetch()}
+              onClick={refresh.onClick}
               className="text-muted-foreground hover:text-foreground transition-colors"
               title="Refresh"
             >
-              {isFetching
+              {refresh.spinning
                 ? <Loader2 className="h-4 w-4 animate-spin" />
                 : <RefreshCw className="h-4 w-4" />}
             </button>
@@ -615,6 +641,7 @@ export function ShredsDevicesPage() {
     refetchInterval: 30000,
   })
   const isFetchingDevices = useDebouncedFetching(rawFetchingDevices)
+  const refreshDevices = useRefreshButton(refetchDevices, rawFetchingDevices)
 
   const items = data?.items ?? []
   const total = data?.total ?? 0
@@ -668,8 +695,8 @@ export function ShredsDevicesPage() {
           title="Shred Devices"
           count={total}
           subtitle={
-            <button onClick={() => refetchDevices()} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {isFetchingDevices ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <button onClick={refreshDevices.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
+              {refreshDevices.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </button>
           }
           actions={
@@ -776,6 +803,7 @@ export function ShredsFundersPage() {
     refetchInterval: 30000,
   })
   const isFetchingFunders = useDebouncedFetching(rawFetchingFunders)
+  const refreshFunders = useRefreshButton(refetchFunders, rawFetchingFunders)
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -812,8 +840,8 @@ export function ShredsFundersPage() {
           title="Shred Funders"
           count={sorted.length}
           subtitle={
-            <button onClick={() => refetchFunders()} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {isFetchingFunders ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <button onClick={refreshFunders.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
+              {refreshFunders.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </button>
           }
           actions={
@@ -981,6 +1009,7 @@ export function ShredsEscrowEventsPage() {
     refetchInterval: 30000,
   })
   const isFetchingEvents = useDebouncedFetching(rawFetchingEvents)
+  const refreshEvents = useRefreshButton(refetchEvents, rawFetchingEvents)
 
   const items = data?.items ?? []
   const total = data?.total ?? 0
@@ -1097,8 +1126,8 @@ export function ShredsEscrowEventsPage() {
           title="Shred Activity"
           count={total}
           subtitle={
-            <button onClick={() => refetchEvents()} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {isFetchingEvents ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <button onClick={refreshEvents.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
+              {refreshEvents.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </button>
           }
           actions={
