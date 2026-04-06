@@ -449,7 +449,7 @@ function LinkLatencyPageContent() {
     }
     // Pass through dashboard dimension filters
     for (const [k, v] of Object.entries(filterParams)) {
-      if (v && k !== 'time_range' && k !== 'threshold' && k !== 'bucket') {
+      if (v && k !== 'time_range' && k !== 'threshold') {
         params[k] = v
       }
     }

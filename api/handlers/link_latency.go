@@ -91,6 +91,30 @@ func linkLatencyAgg(r *http.Request) (aggPrefix, rollupAggFunc string) {
 	return
 }
 
+// linkLatencyRawAgg returns the ClickHouse aggregate function and its
+// conditional (If-combinator) variant for raw fact table queries.
+// The plain form is used in aggregate mode (e.g. "avg", "quantile(0.95)").
+// The ifForm is used in per-link mode for directional metrics
+// (e.g. "avgIf", "quantileIf(0.95)").
+func linkLatencyRawAgg(r *http.Request) (plain, ifForm string) {
+	switch r.URL.Query().Get("agg") {
+	case "min":
+		return "min", "minIf"
+	case "p50":
+		return "quantile(0.50)", "quantileIf(0.50)"
+	case "p90":
+		return "quantile(0.90)", "quantileIf(0.90)"
+	case "p95":
+		return "quantile(0.95)", "quantileIf(0.95)"
+	case "p99":
+		return "quantile(0.99)", "quantileIf(0.99)"
+	case "max":
+		return "max", "maxIf"
+	default:
+		return "avg", "avgIf"
+	}
+}
+
 // linkLatencyFilterSQL builds WHERE clauses for metro, device, contributor, and link_type filters.
 // Returns the SQL fragment (including leading " AND ") and join flags.
 func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJoin, needsMetroJoin bool) {
@@ -185,7 +209,7 @@ func linkLatencyFilterSQL(r *http.Request) (filterSQL string, needsContributorJo
 		for i, pk := range pks {
 			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(strings.TrimSpace(pk)))
 		}
-		filterClauses = append(filterClauses, fmt.Sprintf("r.link_pk IN (%s)", strings.Join(quoted, ",")))
+		filterClauses = append(filterClauses, fmt.Sprintf("l.pk IN (%s)", strings.Join(quoted, ",")))
 	}
 
 	if len(filterClauses) > 0 {
@@ -343,8 +367,9 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 	}
 	r.URL.RawQuery = q.Encode()
 
-	timeFilter, bucketInterval := rollupTimeFilter(r)
+	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 	aggPrefix, rollupAggFunc := linkLatencyAgg(r)
+	_, rawAggIfFunc := linkLatencyRawAgg(r)
 
 	start := time.Now()
 	var query string
@@ -362,34 +387,62 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 			extraJoins += " LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk"
 		}
 
-		// Each stat line produces avg of both directions combined
-		query = fmt.Sprintf(`
-			SELECT
-				formatDateTime(toStartOfInterval(r.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
-				AVG(r.a_avg_rtt_us + r.z_avg_rtt_us) / 2.0 / 1000.0 AS avg_rtt_ms,
-				AVG(r.a_p95_rtt_us + r.z_p95_rtt_us) / 2.0 / 1000.0 AS p95_rtt_ms,
-				AVG(r.a_p99_rtt_us + r.z_p99_rtt_us) / 2.0 / 1000.0 AS p99_rtt_ms,
-				MAX(greatest(r.a_max_rtt_us, r.z_max_rtt_us)) / 1000.0 AS max_rtt_ms,
-				AVG(r.a_avg_jitter_us + r.z_avg_jitter_us) / 2.0 / 1000.0 AS avg_jitter_ms,
-				AVG(r.a_p95_jitter_us + r.z_p95_jitter_us) / 2.0 / 1000.0 AS p95_jitter_ms,
-				AVG(r.a_p99_jitter_us + r.z_p99_jitter_us) / 2.0 / 1000.0 AS p99_jitter_ms,
-				MAX(greatest(r.a_max_jitter_us, r.z_max_jitter_us)) / 1000.0 AS max_jitter_ms,
-				AVG(greatest(r.a_loss_pct, r.z_loss_pct)) AS avg_loss_pct,
-				MAX(greatest(r.a_loss_pct, r.z_loss_pct)) AS max_loss_pct
-			FROM link_rollup_5m r
-			JOIN dz_links_current l ON r.link_pk = l.pk
-			JOIN dz_devices_current da ON l.side_a_pk = da.pk
-			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-			%s
-			WHERE r.%s
-				AND (r.a_samples > 0 OR r.z_samples > 0)
+		if useRaw {
+			query = fmt.Sprintf(`
+				SELECT
+					formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
+					avg(f.rtt_us) / 1000.0 AS avg_rtt_ms,
+					quantile(0.95)(f.rtt_us) / 1000.0 AS p95_rtt_ms,
+					quantile(0.99)(f.rtt_us) / 1000.0 AS p99_rtt_ms,
+					max(f.rtt_us) / 1000.0 AS max_rtt_ms,
+					avg(abs(f.ipdv_us)) / 1000.0 AS avg_jitter_ms,
+					quantile(0.95)(abs(f.ipdv_us)) / 1000.0 AS p95_jitter_ms,
+					quantile(0.99)(abs(f.ipdv_us)) / 1000.0 AS p99_jitter_ms,
+					max(abs(f.ipdv_us)) / 1000.0 AS max_jitter_ms,
+					countIf(f.loss = true OR f.rtt_us = 0) * 100.0 / greatest(count(*), 1) AS avg_loss_pct,
+					countIf(f.loss = true OR f.rtt_us = 0) * 100.0 / greatest(count(*), 1) AS max_loss_pct
+				FROM fact_dz_device_link_latency f
+				JOIN dz_links_current l ON f.link_pk = l.pk
+				JOIN dz_devices_current da ON l.side_a_pk = da.pk
+				JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 				%s
-			GROUP BY time_bucket
-			ORDER BY time_bucket`,
-			bucketInterval,
-			extraJoins,
-			timeFilter,
-			filterSQL)
+				WHERE f.%s
+				%s
+				GROUP BY time_bucket
+				ORDER BY time_bucket`,
+				bucketInterval,
+				extraJoins,
+				timeFilter,
+				filterSQL)
+		} else {
+			query = fmt.Sprintf(`
+				SELECT
+					formatDateTime(toStartOfInterval(r.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
+					AVG(r.a_avg_rtt_us + r.z_avg_rtt_us) / 2.0 / 1000.0 AS avg_rtt_ms,
+					AVG(r.a_p95_rtt_us + r.z_p95_rtt_us) / 2.0 / 1000.0 AS p95_rtt_ms,
+					AVG(r.a_p99_rtt_us + r.z_p99_rtt_us) / 2.0 / 1000.0 AS p99_rtt_ms,
+					MAX(greatest(r.a_max_rtt_us, r.z_max_rtt_us)) / 1000.0 AS max_rtt_ms,
+					AVG(r.a_avg_jitter_us + r.z_avg_jitter_us) / 2.0 / 1000.0 AS avg_jitter_ms,
+					AVG(r.a_p95_jitter_us + r.z_p95_jitter_us) / 2.0 / 1000.0 AS p95_jitter_ms,
+					AVG(r.a_p99_jitter_us + r.z_p99_jitter_us) / 2.0 / 1000.0 AS p99_jitter_ms,
+					MAX(greatest(r.a_max_jitter_us, r.z_max_jitter_us)) / 1000.0 AS max_jitter_ms,
+					AVG(greatest(r.a_loss_pct, r.z_loss_pct)) AS avg_loss_pct,
+					MAX(greatest(r.a_loss_pct, r.z_loss_pct)) AS max_loss_pct
+				FROM link_rollup_5m r
+				JOIN dz_links_current l ON r.link_pk = l.pk
+				JOIN dz_devices_current da ON l.side_a_pk = da.pk
+				JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+				%s
+				WHERE r.%s
+					AND (r.a_samples > 0 OR r.z_samples > 0)
+					%s
+				GROUP BY time_bucket
+				ORDER BY time_bucket`,
+				bucketInterval,
+				extraJoins,
+				timeFilter,
+				filterSQL)
+		}
 
 		rows, err := a.envDB(ctx).Query(ctx, query)
 		duration := time.Since(start)
@@ -464,34 +517,62 @@ func (a *API) GetMultiLinkLatencyHistory(w http.ResponseWriter, r *http.Request)
 			extraJoins += " LEFT JOIN dz_contributors_current co ON l.contributor_pk = co.pk"
 		}
 
-		query = fmt.Sprintf(`
-			SELECT
-				formatDateTime(toStartOfInterval(r.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
-				r.link_pk,
-				l.code AS link_code,
-				%s(r.a_%s_rtt_us) / 1000.0 AS rtt_a_to_z_ms,
-				%s(r.z_%s_rtt_us) / 1000.0 AS rtt_z_to_a_ms,
-				%s(r.a_%s_jitter_us) / 1000.0 AS jitter_a_to_z_ms,
-				%s(r.z_%s_jitter_us) / 1000.0 AS jitter_z_to_a_ms,
-				MAX(greatest(r.a_loss_pct, r.z_loss_pct)) AS loss_pct
-			FROM link_rollup_5m r
-			JOIN dz_links_current l ON r.link_pk = l.pk
-			JOIN dz_devices_current da ON l.side_a_pk = da.pk
-			JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
-			%s
-			WHERE r.%s
-				AND (r.a_samples > 0 OR r.z_samples > 0)
+		if useRaw {
+			query = fmt.Sprintf(`
+				SELECT
+					formatDateTime(toStartOfInterval(f.event_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
+					f.link_pk,
+					l.code AS link_code,
+					%sIf(f.rtt_us, f.origin_device_pk = l.side_a_pk) / 1000.0 AS rtt_a_to_z_ms,
+					%sIf(f.rtt_us, f.origin_device_pk != l.side_a_pk) / 1000.0 AS rtt_z_to_a_ms,
+					%sIf(abs(f.ipdv_us), f.origin_device_pk = l.side_a_pk) / 1000.0 AS jitter_a_to_z_ms,
+					%sIf(abs(f.ipdv_us), f.origin_device_pk != l.side_a_pk) / 1000.0 AS jitter_z_to_a_ms,
+					countIf(f.loss = true OR f.rtt_us = 0) * 100.0 / greatest(count(*), 1) AS loss_pct
+				FROM fact_dz_device_link_latency f
+				JOIN dz_links_current l ON f.link_pk = l.pk
+				JOIN dz_devices_current da ON l.side_a_pk = da.pk
+				JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 				%s
-			GROUP BY time_bucket, r.link_pk, l.code
-			ORDER BY time_bucket, l.code`,
-			bucketInterval,
-			rollupAggFunc, aggPrefix,
-			rollupAggFunc, aggPrefix,
-			rollupAggFunc, aggPrefix,
-			rollupAggFunc, aggPrefix,
-			extraJoins,
-			timeFilter,
-			filterSQL)
+				WHERE f.%s
+				%s
+				GROUP BY time_bucket, f.link_pk, l.code
+				ORDER BY time_bucket, l.code`,
+				bucketInterval,
+				rawAggIfFunc, rawAggIfFunc,
+				rawAggIfFunc, rawAggIfFunc,
+				extraJoins,
+				timeFilter,
+				filterSQL)
+		} else {
+			query = fmt.Sprintf(`
+				SELECT
+					formatDateTime(toStartOfInterval(r.bucket_ts, INTERVAL %s), '%%Y-%%m-%%dT%%H:%%i:%%SZ') AS time_bucket,
+					r.link_pk,
+					l.code AS link_code,
+					%s(r.a_%s_rtt_us) / 1000.0 AS rtt_a_to_z_ms,
+					%s(r.z_%s_rtt_us) / 1000.0 AS rtt_z_to_a_ms,
+					%s(r.a_%s_jitter_us) / 1000.0 AS jitter_a_to_z_ms,
+					%s(r.z_%s_jitter_us) / 1000.0 AS jitter_z_to_a_ms,
+					MAX(greatest(r.a_loss_pct, r.z_loss_pct)) AS loss_pct
+				FROM link_rollup_5m r
+				JOIN dz_links_current l ON r.link_pk = l.pk
+				JOIN dz_devices_current da ON l.side_a_pk = da.pk
+				JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
+				%s
+				WHERE r.%s
+					AND (r.a_samples > 0 OR r.z_samples > 0)
+					%s
+				GROUP BY time_bucket, r.link_pk, l.code
+				ORDER BY time_bucket, l.code`,
+				bucketInterval,
+				rollupAggFunc, aggPrefix,
+				rollupAggFunc, aggPrefix,
+				rollupAggFunc, aggPrefix,
+				rollupAggFunc, aggPrefix,
+				extraJoins,
+				timeFilter,
+				filterSQL)
+		}
 		scanPerLink = true
 	}
 
