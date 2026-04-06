@@ -28,7 +28,6 @@ const intfTypeOptions: { value: IntfType; label: string }[] = [
   { value: 'link', label: 'Link' },
   { value: 'tunnel', label: 'Tunnel' },
   { value: 'cyoa', label: 'CYOA' },
-  { value: 'dia', label: 'DIA' },
   { value: 'other', label: 'Other' },
 ]
 

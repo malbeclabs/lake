@@ -3,9 +3,9 @@ import { createContext, useContext, useState, useMemo, useCallback, useTransitio
 import { useSearchParams } from 'react-router-dom'
 
 export type TimeRange = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
-export type IntfType = 'all' | 'link' | 'tunnel' | 'cyoa' | 'dia' | 'other'
+export type IntfType = 'all' | 'link' | 'tunnel' | 'cyoa' | 'other'
 
-const validIntfTypes: Set<string> = new Set(['all', 'link', 'tunnel', 'cyoa', 'dia', 'other'])
+const validIntfTypes: Set<string> = new Set(['all', 'link', 'tunnel', 'cyoa', 'other'])
 
 const validTimeRanges: Set<string> = new Set(['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'])
 
