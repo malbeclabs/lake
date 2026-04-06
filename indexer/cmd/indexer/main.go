@@ -67,8 +67,9 @@ const (
 )
 
 func main() {
+	slog.SetDefault(logger.New(false))
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		slog.Error("fatal error", "error", err)
 		os.Exit(1)
 	}
 }
