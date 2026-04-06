@@ -135,8 +135,10 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 	// Resolve time filter and data source (raw fact table for sub-5m, rollup for >= 5m)
 	timeFilter, bucketInterval, useRaw := trafficTimeFilter(r)
 
-	// Build dimension filters
+	// Build dimension filters.
+	// Always join device interfaces so series metadata includes cyoa_type.
 	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	needsInterfaceJoin = true
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
 	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin)
 
@@ -241,8 +243,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			anyLast(f.link_pk) AS link_pk,
 			COALESCE(anyLast(di.cyoa_type), '') AS cyoa_type
 		FROM fact_dz_device_interface_counters f
-		INNER JOIN devices d ON d.pk = f.device_pk
-		LEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf%s%s
+		INNER JOIN devices d ON d.pk = f.device_pk%s%s
 		WHERE f.%s
 			%s%s
 			%s
@@ -347,8 +348,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 			anyLast(f.link_pk) AS link_pk,
 			COALESCE(anyLast(di.cyoa_type), '') AS cyoa_type
 		FROM device_interface_rollup_5m f
-		INNER JOIN devices d ON d.pk = f.device_pk
-		LEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf%s%s
+		INNER JOIN devices d ON d.pk = f.device_pk%s%s
 		WHERE f.%s
 			%s%s
 			%s
