@@ -388,9 +388,9 @@ func buildIntfTypeFilter(intfType string) (string, bool) {
 	case "tunnel":
 		return " AND f.user_tunnel_id IS NOT NULL", false
 	case "cyoa":
-		return " AND di.cyoa_type != 'none'", true
+		return " AND di.cyoa_type NOT IN ('none', '')", true
 	case "other":
-		return " AND f.link_pk = '' AND f.user_tunnel_id IS NULL AND di.cyoa_type = 'none'", true
+		return " AND f.link_pk = '' AND f.user_tunnel_id IS NULL AND (di.cyoa_type IN ('none', '') OR di.cyoa_type IS NULL)", true
 	default:
 		// "all" or empty: no filter
 		return "", false
