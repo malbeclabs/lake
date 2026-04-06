@@ -66,13 +66,11 @@ interface CategoryChartProps {
   loading?: boolean
   className?: string
   bucketSeconds: number
-  /** Traffic filter controls (only shown on last chart) */
-  filters?: React.ReactNode
   highlightTimeRange?: { start: number; end: number } | null
   onCursorTime?: (time: number | null) => void
 }
 
-function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, aggMode, loading, className, bucketSeconds, filters, highlightTimeRange, onCursorTime }: CategoryChartProps) {
+function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, aggMode, loading, className, bucketSeconds, highlightTimeRange, onCursorTime }: CategoryChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const chartRef = useRef<HTMLDivElement>(null)
@@ -221,7 +219,6 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
           <span>{title}</span>
           {loading && <Loader2 className="h-3 w-3 animate-spin" />}
         </div>
-        {filters}
       </div>
       <div className="h-0.5 w-full overflow-hidden rounded-full mb-1">
         {loading && (
@@ -373,7 +370,10 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
 
   return (
     <div className="space-y-4">
-      {categories.map((cat, idx) => (
+      <div className="flex items-center justify-end">
+        {filters}
+      </div>
+      {categories.map((cat) => (
         <CategoryChart
           key={cat.key}
           title={cat.title}
@@ -385,7 +385,6 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
           loading={loading}
           className={className}
           bucketSeconds={data.bucket_seconds}
-          filters={idx === categories.length - 1 ? filters : undefined}
           highlightTimeRange={highlightTimeRange}
           onCursorTime={onCursorTime}
         />
