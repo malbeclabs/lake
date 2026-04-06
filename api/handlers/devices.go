@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -164,27 +163,44 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type DeviceDetailInterface struct {
+	Name               string `json:"name"`
+	IP                 string `json:"ip"`
+	Status             string `json:"status"`
+	InterfaceType      string `json:"interface_type"`
+	CYOAType           string `json:"cyoa_type"`
+	DIAType            string `json:"dia_type"`
+	LoopbackType       string `json:"loopback_type"`
+	RoutingMode        string `json:"routing_mode"`
+	Bandwidth          uint64 `json:"bandwidth"`
+	Cir                uint64 `json:"cir"`
+	Mtu                uint16 `json:"mtu"`
+	VlanID             uint16 `json:"vlan_id"`
+	NodeSegmentIdx     uint16 `json:"node_segment_idx"`
+	UserTunnelEndpoint bool   `json:"user_tunnel_endpoint"`
+}
+
 type DeviceDetail struct {
-	PK              string            `json:"pk"`
-	Code            string            `json:"code"`
-	Status          string            `json:"status"`
-	DeviceType      string            `json:"device_type"`
-	ContributorPK   string            `json:"contributor_pk"`
-	ContributorCode string            `json:"contributor_code"`
-	MetroPK         string            `json:"metro_pk"`
-	MetroCode       string            `json:"metro_code"`
-	MetroName       string            `json:"metro_name"`
-	PublicIP        string            `json:"public_ip"`
-	MaxUsers        int32             `json:"max_users"`
-	CurrentUsers    uint64            `json:"current_users"`
-	InBps           float64           `json:"in_bps"`
-	OutBps          float64           `json:"out_bps"`
-	PeakInBps       float64           `json:"peak_in_bps"`
-	PeakOutBps      float64           `json:"peak_out_bps"`
-	ValidatorCount  uint64            `json:"validator_count"`
-	StakeSol        float64           `json:"stake_sol"`
-	StakeShare      float64           `json:"stake_share"`
-	Interfaces      []DeviceInterface `json:"interfaces"`
+	PK              string                  `json:"pk"`
+	Code            string                  `json:"code"`
+	Status          string                  `json:"status"`
+	DeviceType      string                  `json:"device_type"`
+	ContributorPK   string                  `json:"contributor_pk"`
+	ContributorCode string                  `json:"contributor_code"`
+	MetroPK         string                  `json:"metro_pk"`
+	MetroCode       string                  `json:"metro_code"`
+	MetroName       string                  `json:"metro_name"`
+	PublicIP        string                  `json:"public_ip"`
+	MaxUsers        int32                   `json:"max_users"`
+	CurrentUsers    uint64                  `json:"current_users"`
+	InBps           float64                 `json:"in_bps"`
+	OutBps          float64                 `json:"out_bps"`
+	PeakInBps       float64                 `json:"peak_in_bps"`
+	PeakOutBps      float64                 `json:"peak_out_bps"`
+	ValidatorCount  uint64                  `json:"validator_count"`
+	StakeSol        float64                 `json:"stake_sol"`
+	StakeShare      float64                 `json:"stake_share"`
+	Interfaces      []DeviceDetailInterface `json:"interfaces"`
 }
 
 func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
@@ -315,10 +331,58 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse interfaces JSON
-	if err := json.Unmarshal([]byte(interfacesJSON), &device.Interfaces); err != nil {
-		slog.Warn("failed to parse interfaces JSON", "device_pk", device.PK, "error", err)
-		device.Interfaces = []DeviceInterface{}
+	// Parse base interfaces JSON for IP lookup and fallback
+	var baseInterfaces []DeviceInterface
+	if err := json.Unmarshal([]byte(interfacesJSON), &baseInterfaces); err != nil {
+		baseInterfaces = nil
+	}
+
+	// Fetch enriched interfaces from the device interfaces dimension table.
+	// Fall back to the basic JSON interfaces if the dimension table has no data.
+	ifaceQuery := `
+		SELECT
+			di.intf, COALESCE(di.status, ''), COALESCE(di.interface_type, ''),
+			COALESCE(di.cyoa_type, ''), COALESCE(di.dia_type, ''),
+			COALESCE(di.loopback_type, ''), COALESCE(di.routing_mode, ''),
+			di.bandwidth, di.cir, di.mtu, di.vlan_id, di.node_segment_idx, di.user_tunnel_endpoint
+		FROM dz_device_interfaces_current di
+		WHERE di.device_pk = ?
+		ORDER BY di.status DESC, di.intf
+	`
+	ifaceRows, ifaceErr := a.envDB(ctx).Query(ctx, ifaceQuery, pk)
+	if ifaceErr == nil {
+		defer ifaceRows.Close()
+		for ifaceRows.Next() {
+			var di DeviceDetailInterface
+			var ute uint8
+			if err := ifaceRows.Scan(
+				&di.Name, &di.Status, &di.InterfaceType,
+				&di.CYOAType, &di.DIAType,
+				&di.LoopbackType, &di.RoutingMode,
+				&di.Bandwidth, &di.Cir, &di.Mtu, &di.VlanID, &di.NodeSegmentIdx, &ute,
+			); err != nil {
+				continue
+			}
+			di.UserTunnelEndpoint = ute == 1
+			// Populate IP from the base interfaces JSON
+			for _, base := range baseInterfaces {
+				if base.Name == di.Name {
+					di.IP = base.IP
+					break
+				}
+			}
+			device.Interfaces = append(device.Interfaces, di)
+		}
+	}
+	// Fall back to basic interfaces if dimension table had no data
+	if len(device.Interfaces) == 0 {
+		for _, base := range baseInterfaces {
+			device.Interfaces = append(device.Interfaces, DeviceDetailInterface{
+				Name:   base.Name,
+				IP:     base.IP,
+				Status: base.Status,
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

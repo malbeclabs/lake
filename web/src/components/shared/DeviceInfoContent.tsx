@@ -41,6 +41,43 @@ interface DeviceInfoContentProps {
   hideCharts?: boolean
 }
 
+function formatBandwidth(bps: number): string {
+  if (bps >= 1e9) return `${(bps / 1e9).toFixed(0)}G`
+  if (bps >= 1e6) return `${(bps / 1e6).toFixed(0)}M`
+  if (bps >= 1e3) return `${(bps / 1e3).toFixed(0)}K`
+  return `${bps}`
+}
+
+function InterfaceTypeBadges({ iface }: { iface: DeviceInterface }) {
+  const badges: { label: string; className: string }[] = []
+  if (iface.interface_type === 'loopback') {
+    badges.push({ label: 'loopback', className: 'bg-purple-500/15 text-purple-400' })
+    if (iface.loopback_type && iface.loopback_type !== 'none') {
+      badges.push({ label: iface.loopback_type, className: 'bg-purple-500/10 text-purple-400/80' })
+    }
+  }
+  if (iface.cyoa_type && iface.cyoa_type !== 'none') {
+    badges.push({ label: iface.cyoa_type.replace(/_/g, ' '), className: 'bg-amber-500/15 text-amber-400' })
+  }
+  if (iface.dia_type && iface.dia_type !== 'none') {
+    badges.push({ label: 'DIA', className: 'bg-orange-500/15 text-orange-400' })
+  }
+  if (iface.routing_mode && iface.routing_mode !== 'static') {
+    badges.push({ label: iface.routing_mode.toUpperCase(), className: 'bg-blue-500/15 text-blue-400' })
+  }
+  if (iface.bandwidth && iface.bandwidth > 0) {
+    badges.push({ label: formatBandwidth(iface.bandwidth), className: 'bg-green-500/15 text-green-400' })
+  }
+  if (badges.length === 0) return null
+  return (
+    <span className="inline-flex gap-1 ml-1.5">
+      {badges.map((b, i) => (
+        <span key={i} className={`px-1 py-0.5 rounded text-[10px] leading-none ${b.className}`}>{b.label}</span>
+      ))}
+    </span>
+  )
+}
+
 function formatStake(sol: number): string {
   if (sol === 0) return '—'
   if (sol >= 1e6) return `${(sol / 1e6).toFixed(2)}M SOL`
@@ -110,10 +147,15 @@ export function DeviceInfoContent({
     { label: 'Stake Share', value: formatStakeShare(device.stakeShare) },
   ]
 
-  // Sort interfaces: activated first, then by name
+  // Sort interfaces: activated first, then by type (physical, loopback), then by name
   const sortedInterfaces = [...(device.interfaces || [])].sort((a, b) => {
     if (a.status === 'activated' && b.status !== 'activated') return -1
     if (a.status !== 'activated' && b.status === 'activated') return 1
+    // Physical before loopback
+    const typeOrder = (t?: string) => t === 'physical' ? 0 : t === 'loopback' ? 1 : 2
+    const typeA = typeOrder(a.interface_type)
+    const typeB = typeOrder(b.interface_type)
+    if (typeA !== typeB) return typeA - typeB
     return a.name.localeCompare(b.name)
   })
 
@@ -137,7 +179,7 @@ export function DeviceInfoContent({
         {sortedInterfaces.length > 0 && (
           <div>
             <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-              Physical Interfaces ({sortedInterfaces.length})
+              Interfaces ({sortedInterfaces.length})
             </div>
             <div className="space-y-1 max-h-48 overflow-y-auto">
               {sortedInterfaces.map((iface, i) => (
@@ -147,6 +189,7 @@ export function DeviceInfoContent({
                 >
                   <span className="truncate flex-1 mr-2" title={iface.name}>
                     {iface.name}
+                    <InterfaceTypeBadges iface={iface} />
                   </span>
                   <span className="text-muted-foreground whitespace-nowrap">
                     {iface.ip || '—'}
@@ -195,7 +238,7 @@ export function DeviceInfoContent({
       {sortedInterfaces.length > 0 && (
         <div>
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-            Physical Interfaces ({sortedInterfaces.length})
+            Interfaces ({sortedInterfaces.length})
           </div>
           <div className="flex flex-wrap gap-2">
             {sortedInterfaces.map((iface, i) => (
@@ -208,6 +251,7 @@ export function DeviceInfoContent({
                 {iface.ip && (
                   <span className="text-muted-foreground">{iface.ip}</span>
                 )}
+                <InterfaceTypeBadges iface={iface} />
               </div>
             ))}
           </div>

@@ -1586,6 +1586,17 @@ export interface DeviceInterface {
   name: string
   ip: string
   status: string
+  interface_type?: string
+  cyoa_type?: string
+  dia_type?: string
+  loopback_type?: string
+  routing_mode?: string
+  bandwidth?: number
+  cir?: number
+  mtu?: number
+  vlan_id?: number
+  node_segment_idx?: number
+  user_tunnel_endpoint?: boolean
 }
 
 export interface TopologyDevice {
