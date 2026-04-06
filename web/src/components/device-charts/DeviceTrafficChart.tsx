@@ -62,6 +62,8 @@ interface CategoryChartProps {
   dataMap: Map<string, DeviceInterfaceTraffic>
   /** Display labels per interface (e.g. "Ethernet1 (Side A)") */
   interfaceLabels?: Map<string, string>
+  /** Interface type metadata for badges */
+  interfaceTypes?: Map<string, { cyoa_type?: string; link_pk?: string }>
   aggMode: AggMode
   loading?: boolean
   className?: string
@@ -70,7 +72,7 @@ interface CategoryChartProps {
   onCursorTime?: (time: number | null) => void
 }
 
-function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, aggMode, loading, className, bucketSeconds, highlightTimeRange, onCursorTime }: CategoryChartProps) {
+function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes, aggMode, loading, className, bucketSeconds, highlightTimeRange, onCursorTime }: CategoryChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const chartRef = useRef<HTMLDivElement>(null)
@@ -262,6 +264,21 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
                     <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: color }} />
                     <span className="font-mono text-foreground truncate">{interfaceLabels?.get(intf) ?? intf} Rx</span>
+                    {(() => {
+                      const t = interfaceTypes?.get(intf)
+                      if (!t) return null
+                      return <>
+                        {t.cyoa_type && t.cyoa_type !== 'none' && t.cyoa_type !== '' && (
+                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-amber-500/15 text-amber-400 flex-shrink-0">CYOA</span>
+                        )}
+                        {(!t.cyoa_type || t.cyoa_type === 'none' || t.cyoa_type === '') && t.link_pk && (
+                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-blue-500/15 text-blue-400 flex-shrink-0">link</span>
+                        )}
+                        {(!t.cyoa_type || t.cyoa_type === 'none' || t.cyoa_type === '') && !t.link_pk && intf.startsWith('Loopback') && (
+                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-purple-500/15 text-purple-400 flex-shrink-0">lo</span>
+                        )}
+                      </>
+                    })()}
                   </div>
                   <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-24 text-right">
                     {formatBps(maxIn)}
@@ -302,7 +319,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
   const [aggMode, setAggMode] = useState<AggMode>('avg')
 
   // Collect all interface data across buckets, classify, and build lookup
-  const { categories, bucketTimestamps, dataMap, interfaceLabels } = useMemo(() => {
+  const { categories, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes } = useMemo(() => {
     const catIntfs: Record<InterfaceCategory, Set<string>> = {
       userTunnel: new Set(),
       link: new Set(),
@@ -311,6 +328,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
     }
     const map = new Map<string, DeviceInterfaceTraffic>()
     const labels = new Map<string, string>()
+    const types = new Map<string, { cyoa_type?: string; link_pk?: string }>()
     const timestamps: number[] = []
 
     const nonCollecting = data.buckets.filter((b) => !b.status?.collecting)
@@ -322,6 +340,9 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
           const cat = classifyInterface(intf)
           catIntfs[cat].add(intf.intf)
           map.set(`${intf.intf}:${ts}`, intf)
+          if (!types.has(intf.intf)) {
+            types.set(intf.intf, { cyoa_type: intf.cyoa_type, link_pk: intf.link_pk })
+          }
           // Build label for link interfaces: "Ethernet1 (link-code, Side A)"
           if (intf.link_pk && !labels.has(intf.intf)) {
             const parts: string[] = []
@@ -341,7 +362,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
         interfaces: Array.from(catIntfs[c]).sort(),
       }))
 
-    return { categories: cats, bucketTimestamps: timestamps, dataMap: map, interfaceLabels: labels }
+    return { categories: cats, bucketTimestamps: timestamps, dataMap: map, interfaceLabels: labels, interfaceTypes: types }
   }, [data])
 
   if (categories.length === 0) {
@@ -381,6 +402,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
           bucketTimestamps={bucketTimestamps}
           dataMap={dataMap}
           interfaceLabels={interfaceLabels}
+          interfaceTypes={interfaceTypes}
           aggMode={aggMode}
           loading={loading}
           className={className}
