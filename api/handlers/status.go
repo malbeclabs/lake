@@ -149,18 +149,20 @@ type InterfaceIssue struct {
 	Contributor        string `json:"contributor"`
 	Metro              string `json:"metro"`
 	InterfaceName      string `json:"interface_name"`
-	LinkPK             string `json:"link_pk,omitempty"`   // Empty if not a link interface
-	LinkCode           string `json:"link_code,omitempty"` // Empty if not a link interface
-	LinkType           string `json:"link_type,omitempty"` // WAN, DZX, etc.
-	LinkSide           string `json:"link_side,omitempty"` // A or Z
+	InterfaceType      string `json:"interface_type,omitempty"`
+	CYOAType           string `json:"cyoa_type,omitempty"`
+	LinkPK             string `json:"link_pk,omitempty"`
+	LinkCode           string `json:"link_code,omitempty"`
+	LinkType           string `json:"link_type,omitempty"`
+	LinkSide           string `json:"link_side,omitempty"`
 	InErrors           uint64 `json:"in_errors"`
 	OutErrors          uint64 `json:"out_errors"`
 	InFcsErrors        uint64 `json:"in_fcs_errors"`
 	InDiscards         uint64 `json:"in_discards"`
 	OutDiscards        uint64 `json:"out_discards"`
 	CarrierTransitions uint64 `json:"carrier_transitions"`
-	FirstSeen          string `json:"first_seen"` // When issues first appeared in window
-	LastSeen           string `json:"last_seen"`  // Most recent occurrence in window
+	FirstSeen          string `json:"first_seen"`
+	LastSeen           string `json:"last_seen"`
 }
 
 type NonActivatedDevice struct {

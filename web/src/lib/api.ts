@@ -1255,6 +1255,8 @@ export interface InterfaceIssue {
   contributor: string
   metro: string
   interface_name: string
+  interface_type?: string
+  cyoa_type?: string
   link_pk?: string
   link_code?: string
   link_type?: string

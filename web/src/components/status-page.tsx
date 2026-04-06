@@ -1498,7 +1498,19 @@ function InterfaceIssuesTable({
                     <Link to={`/dz/devices/${issue.device_pk}`} className="font-mono text-sm hover:underline">{issue.device_code}</Link>
                     <div className="text-xs text-muted-foreground">{issue.contributor || issue.device_type}</div>
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-sm">{issue.interface_name}</td>
+                  <td className="px-4 py-2.5 text-sm">
+                    <span className="font-mono">{issue.interface_name}</span>
+                    {issue.interface_type && (
+                      <span className={`ml-1.5 px-1 py-0.5 rounded text-[10px] leading-none ${
+                        issue.interface_type === 'loopback' ? 'bg-purple-500/15 text-purple-400' : 'bg-muted text-muted-foreground'
+                      }`}>{issue.interface_type}</span>
+                    )}
+                    {issue.cyoa_type && issue.cyoa_type !== 'none' && (
+                      <span className="ml-1 px-1 py-0.5 rounded text-[10px] leading-none bg-amber-500/15 text-amber-400">
+                        {issue.cyoa_type.replace(/_/g, ' ')}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-sm">
                     {issue.link_code && issue.link_pk ? (
                       <div>

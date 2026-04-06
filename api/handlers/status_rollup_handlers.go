@@ -656,6 +656,8 @@ func (a *API) fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.
 			COALESCE(contrib.code, '') as contributor,
 			COALESCE(m.code, '') as metro,
 			r.intf as interface_name,
+			COALESCE(di.interface_type, '') as interface_type,
+			COALESCE(di.cyoa_type, '') as cyoa_type,
 			COALESCE(l.pk, '') as link_pk,
 			COALESCE(l.code, '') as link_code,
 			COALESCE(l.link_type, '') as link_type,
@@ -673,10 +675,11 @@ func (a *API) fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.
 		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
 		LEFT JOIN dz_contributors_current contrib ON d.contributor_pk = contrib.pk
 		LEFT JOIN dz_links_current l ON r.link_pk = l.pk
+		LEFT JOIN dz_device_interfaces_current di ON r.device_pk = di.device_pk AND r.intf = di.intf
 		WHERE r.bucket_ts > now() - INTERVAL %d HOUR
 		  AND d.status = 'activated'
 		  AND (r.in_errors > 0 OR r.out_errors > 0 OR r.in_fcs_errors > 0 OR r.in_discards > 0 OR r.out_discards > 0 OR r.carrier_transitions > 0)
-		GROUP BY r.device_pk, d.code, d.device_type, contrib.code, m.code, r.intf, l.pk, l.code, l.link_type, r.link_side
+		GROUP BY r.device_pk, d.code, d.device_type, contrib.code, m.code, r.intf, di.interface_type, di.cyoa_type, l.pk, l.code, l.link_type, r.link_side
 		ORDER BY (in_errors + out_errors + in_fcs_errors + in_discards + out_discards + carrier_transitions) DESC
 		LIMIT 50
 	`, hours)
@@ -693,6 +696,7 @@ func (a *API) fetchInterfaceIssuesFromRollup(ctx context.Context, duration time.
 		if err := rows.Scan(
 			&issue.DevicePK, &issue.DeviceCode, &issue.DeviceType,
 			&issue.Contributor, &issue.Metro, &issue.InterfaceName,
+			&issue.InterfaceType, &issue.CYOAType,
 			&issue.LinkPK, &issue.LinkCode, &issue.LinkType, &issue.LinkSide,
 			&issue.InErrors, &issue.OutErrors, &issue.InFcsErrors,
 			&issue.InDiscards, &issue.OutDiscards, &issue.CarrierTransitions,
