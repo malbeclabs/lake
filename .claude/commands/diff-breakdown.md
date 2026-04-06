@@ -1,22 +1,19 @@
 Analyze the diff between the current branch and origin/main and produce a categorized breakdown.
 
 Steps:
-1. Run `git fetch origin` to ensure remote tracking is up to date
-2. Run `git diff origin/main...HEAD --numstat` to get per-file added/removed line counts
-3. Categorize each changed file using these heuristics (applied in order, first match wins):
-   - **Tests**: files matching `*_test.go`, `*.test.ts`, `*.test.tsx`, `tests/`, `e2e/`, `evals/`
-   - **Fixtures/snapshots**: paths containing `fixtures/`, `snapshots/`, or test data files within those directories
-   - **Config/build**: `go.mod`, `go.sum`, `Makefile`, `*.toml`, `*.yml`, `*.yaml`, `Dockerfile`, `docker-compose.yml`, `package.json`, `tsconfig.json`, `vite.config.*`, `tailwind.config.*`
-   - **Docs**: `*.md`, paths under `docs/`
-   - **Generated**: lock files (`go.sum`, `bun.lockb`, `package-lock.json`), protobuf generated output (`*.pb.go`)
+1. Run `scripts/diff-breakdown.sh` to get the automated categorization. The script outputs JSON with:
+   - `categories`: tallies (files, added, removed) for tests, fixtures, config, docs, generated, and unclassified
+   - `unclassified_files`: list of files not auto-categorized, with per-file added/removed counts
+   - `table`: a pre-formatted markdown table (use as a starting point)
+   - `total`: aggregate totals
+2. For each file in `unclassified_files`, read the diff (`git diff origin/main...HEAD -- <file>`) and classify as either:
    - **Scaffolding**: code that wires things together but contains little logic of its own:
      - Metrics/instrumentation definitions (`metrics.go`, prometheus boilerplate)
      - Thin CLI wrappers or route registration (`main.go` wiring a new dependency, adding a route in a chi router)
      - Interface definitions that are pure signatures with no logic
      - Re-exports or barrel files (`index.ts` re-exporting modules)
    - **Core logic**: everything else — the files where the real business logic, components, and algorithms live
-4. Tally lines added and removed per category, and count distinct files per category
-5. Omit categories with zero changes
+3. Rebuild the table replacing "Unclassified" with the Scaffolding and Core logic rows. Omit categories with zero changes.
 
 Output the breakdown as plain text (NOT inside a code block) so it's readable in the terminal. Use this format:
 

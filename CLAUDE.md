@@ -122,16 +122,12 @@ Add caching when a page runs expensive queries, has a common default view, and 3
 
 ## Pull Requests
 
-- Use the `/pr-text` skill to generate PR descriptions
-- PR title format: `component: short description` (same as commit messages). Use a single component — don't comma-separate multiple components
-- Do NOT include "Generated with Claude Code" or similar attribution lines
-- PR body structure:
-  - `## Summary of Changes` — bullet points describing the net result of the branch vs main
-  - `## Testing Verification` — how changes were tested (omit CI checks like builds, linting, or type checks)
-- Focus on the final diff, not individual commits or intermediate work
-- Describe the "what" and "why", not the "how"
-- Keep bullet points concise — write like changelog entries, not a design doc
-- No bold text, no implementation details, no architecture explanations
-- Order bullets by most important/significant first
+- Use the `/pr-text` skill to generate PR descriptions, then use `gh pr create`
+- Do not include "Generated with Claude Code" or similar footers
+- PR title format: `component: short description` (same as commit messages)
+- Summary bullets should be concise, ordered by importance/significance
+- Focus on "what" and "why", not implementation details
+- Include a "Testing Verification" section
+- Don't mention table-stakes items in testing verification (e.g., "compiles cleanly", "builds successfully", "no lint errors"). Only include meaningful verification like specific test scenarios, behavioral observations, or edge cases validated.
 - Group related changes together
 - Mention any breaking changes or migration steps if applicable
