@@ -61,9 +61,9 @@ type rpcError struct {
 }
 
 const (
-	maxRetries   = 3
-	baseBackoff  = 500 * time.Millisecond
-	maxBackoff   = 5 * time.Second
+	maxRetries  = 3
+	baseBackoff = 500 * time.Millisecond
+	maxBackoff  = 5 * time.Second
 )
 
 // call executes a JSON-RPC method and unmarshals the result.
