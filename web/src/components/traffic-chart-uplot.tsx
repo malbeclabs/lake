@@ -1292,6 +1292,16 @@ function TrafficChartImpl({ title, data, series, stacked = false, linkLookup, bi
                           style={{ backgroundColor: color }}
                         />
                         <span className="text-xs truncate">{g.intfKey}</span>
+                        {g.inSeries.cyoa_type && g.inSeries.cyoa_type !== 'none' && g.inSeries.cyoa_type !== '' && (
+                          <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-amber-500/15 text-amber-400 flex-shrink-0">CYOA</span>
+                        )}
+                        {!g.inSeries.cyoa_type || g.inSeries.cyoa_type === 'none' || g.inSeries.cyoa_type === '' ? (
+                          g.inSeries.link_pk ? (
+                            <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-blue-500/15 text-blue-400 flex-shrink-0">link</span>
+                          ) : g.intf.startsWith('Loopback') ? (
+                            <span className="px-1 py-0.5 rounded text-[9px] leading-none bg-purple-500/15 text-purple-400 flex-shrink-0">lo</span>
+                          ) : null
+                        ) : null}
                       </div>
                       <span className="text-xs text-muted-foreground font-mono tabular-nums whitespace-nowrap ml-2">
                         {displayVal ? `${fmtValue(displayVal.rx)} / ${fmtValue(displayVal.tx)}` : '—'}

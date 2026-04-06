@@ -329,12 +329,23 @@ function TrafficPageContent() {
         out_bps: p.out_discards + p.out_errors,
       }))
 
+    // Build a lookup for link_pk/cyoa_type from the traffic series
+    const seriesMeta = new Map<string, { link_pk?: string; cyoa_type?: string }>()
+    for (const s of allTrafficData.series) {
+      if (s.direction === 'in') {
+        seriesMeta.set(`${s.device}-${s.intf}`, { link_pk: s.link_pk, cyoa_type: s.cyoa_type })
+      }
+    }
+
     // Build series info sorted by total events
     const sorted = [...intfTotals.entries()].sort((a, b) => b[1].total - a[1].total)
-    const series = sorted.flatMap(([, info]) => [
-      { key: `${info.device}-${info.intf} (in)`, device: info.device, intf: info.intf, direction: 'in' as const, mean: 0 },
-      { key: `${info.device}-${info.intf} (out)`, device: info.device, intf: info.intf, direction: 'out' as const, mean: 0 },
-    ])
+    const series = sorted.flatMap(([, info]) => {
+      const meta = seriesMeta.get(`${info.device}-${info.intf}`)
+      return [
+        { key: `${info.device}-${info.intf} (in)`, device: info.device, intf: info.intf, direction: 'in' as const, mean: 0, link_pk: meta?.link_pk, cyoa_type: meta?.cyoa_type },
+        { key: `${info.device}-${info.intf} (out)`, device: info.device, intf: info.intf, direction: 'out' as const, mean: 0, link_pk: meta?.link_pk, cyoa_type: meta?.cyoa_type },
+      ]
+    })
 
     return { points, series }
   }, [allTrafficData])
