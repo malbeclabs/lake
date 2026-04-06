@@ -291,8 +291,8 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		),
 		rates AS (
 			SELECT
-				f.device_pk,
-				f.intf,
+				f.device_pk AS device_pk,
+				f.intf AS intf,
 				toStartOfInterval(f.bucket_ts, INTERVAL %s) AS time_bucket,
 				%s(%s) AS in_bps,
 				%s(%s) AS out_bps,
