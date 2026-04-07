@@ -158,7 +158,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 		var inExpr, outExpr, fInExpr, fOutExpr, srcColumns, srcFilters string
 		switch metric {
 		case "packets":
-			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta, f.in_errors_delta, f.out_errors_delta, f.in_fcs_errors_delta, f.carrier_transitions_delta"
+			srcColumns = "f.device_pk AS device_pk, f.intf AS intf, f.event_ts, f.in_pkts_delta, f.out_pkts_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta, f.in_errors_delta, f.out_errors_delta, f.in_fcs_errors_delta, f.carrier_transitions_delta"
 			inExpr = "in_pkts_delta / delta_duration"
 			outExpr = "out_pkts_delta / delta_duration"
 			fInExpr = "f.in_pkts_delta / f.delta_duration"
@@ -167,7 +167,7 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 				AND f.in_pkts_delta >= 0
 				AND f.out_pkts_delta >= 0`
 		default: // throughput
-			srcColumns = "f.device_pk, f.intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta, f.in_errors_delta, f.out_errors_delta, f.in_fcs_errors_delta, f.carrier_transitions_delta"
+			srcColumns = "f.device_pk AS device_pk, f.intf AS intf, f.event_ts, f.in_octets_delta, f.out_octets_delta, f.delta_duration, f.in_discards_delta, f.out_discards_delta, f.in_errors_delta, f.out_errors_delta, f.in_fcs_errors_delta, f.carrier_transitions_delta"
 			inExpr = "in_octets_delta * 8 / delta_duration"
 			outExpr = "out_octets_delta * 8 / delta_duration"
 			fInExpr = "f.in_octets_delta * 8 / f.delta_duration"

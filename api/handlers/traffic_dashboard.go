@@ -270,7 +270,7 @@ func clampBucket(b string) string {
 // the device interface dimension table when the link bandwidth is 0.
 func bandwidthExpr(needsInterfaceJoin bool) string {
 	if needsInterfaceJoin {
-		return "COALESCE(NULLIF(l.bandwidth_bps, 0), NULLIF(di.bandwidth, 0), 0)"
+		return "COALESCE(NULLIF(toFloat64(l.bandwidth_bps), 0), NULLIF(toFloat64(di.bandwidth), 0), 0)"
 	}
 	return "l.bandwidth_bps"
 }
@@ -650,6 +650,12 @@ func BuildStressQueryRaw(timeFilter, bucketInterval, metric, groupBy, filterSQL,
 		groupByCols = "bucket_ts"
 	}
 
+	// When intfTypeSQL references di, join it in the first CTE too
+	var rawIntfJoin string
+	if needsInterfaceJoin {
+		rawIntfJoin = "\n\t\t\tLEFT JOIN dz_device_interfaces_current di ON f.device_pk = di.device_pk AND f.intf = di.intf"
+	}
+
 	query = fmt.Sprintf(`
 		WITH interface_rates AS (
 			SELECT
@@ -659,7 +665,7 @@ func BuildStressQueryRaw(timeFilter, bucketInterval, metric, groupBy, filterSQL,
 				max(f.out_octets_delta * 8 / f.delta_duration) AS out_bps,
 				max(COALESCE(f.in_pkts_delta, 0) / f.delta_duration) AS in_pps,
 				max(COALESCE(f.out_pkts_delta, 0) / f.delta_duration) AS out_pps
-			FROM fact_dz_device_interface_counters f
+			FROM fact_dz_device_interface_counters f%s
 			WHERE %s
 				AND delta_duration > 0
 				AND in_octets_delta >= 0
@@ -684,7 +690,7 @@ func BuildStressQueryRaw(timeFilter, bucketInterval, metric, groupBy, filterSQL,
 		WHERE 1=1 %s
 		GROUP BY %s
 		ORDER BY bucket_ts`,
-		bucketInterval, userTunnelSelect, timeFilter,
+		bucketInterval, userTunnelSelect, rawIntfJoin, timeFilter,
 		intfTypeSQL, intfFilterSQL,
 		userTunnelGroupBy,
 		metricExprIn, metricExprOut, groupBySelect,
