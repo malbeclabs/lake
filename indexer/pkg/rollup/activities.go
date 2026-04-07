@@ -411,13 +411,18 @@ func (a *Activities) resolveISISAdjacency(ctx context.Context, linkPKs map[strin
 		current := false // carry-forward state at bucket boundary
 		for _, bt := range sortedBuckets {
 			bucketEnd := bt.Add(bucketWidth)
-			wasDown := current // was already down entering this bucket
+			// Consume entries before this bucket — they update the carry-forward state.
+			for entryIdx < len(entries) && entries[entryIdx].ts.Before(bt) {
+				current = entries[entryIdx].isDeleted
+				seenEntry = true
+				entryIdx++
+			}
+			wasDown := current // carry-forward: was down entering this bucket
+			// Consume entries within the bucket window [bt, bucketEnd].
 			for entryIdx < len(entries) && !entries[entryIdx].ts.After(bucketEnd) {
 				current = entries[entryIdx].isDeleted
-				// Only count deletions that happened within this bucket's
-				// time window, not historical entries consumed here.
-				if current && !entries[entryIdx].ts.Before(bt) {
-					wasDown = true
+				if current {
+					wasDown = true // went down during this bucket
 				}
 				seenEntry = true
 				entryIdx++
