@@ -5,6 +5,8 @@ import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
+import { type ChartLegendSeries } from '@/components/topology/ChartLegend'
+import { ChartLegendTable } from '@/components/topology/ChartLegendTable'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { DeviceMetricsResponse, DeviceInterfaceTraffic } from '@/lib/api'
 
@@ -40,6 +42,62 @@ function typeBadge(intf: DeviceInterfaceTraffic) {
   return null
 }
 
+function AggregateLegend({ seriesKeys, uPlotData, legend, hoveredIdx, hoveredTime, errorColor, fcsColor, discardColor, carrierColor }: {
+  seriesKeys: string[]
+  uPlotData: uPlot.AlignedData
+  legend: ReturnType<typeof useChartLegend>
+  hoveredIdx: number | null
+  hoveredTime: string | null | undefined
+  errorColor: string; fcsColor: string; discardColor: string; carrierColor: string
+  data: DeviceMetricsResponse
+}) {
+  const colorMap: Record<string, string> = {
+    errors_rx: errorColor, errors_tx: errorColor,
+    fcs_rx: fcsColor,
+    discards_rx: discardColor, discards_tx: discardColor,
+    carrier: carrierColor,
+  }
+  const labelMap: Record<string, string> = {
+    errors_rx: 'Errors (Rx)', errors_tx: 'Errors (Tx)',
+    fcs_rx: 'FCS (Rx)',
+    discards_rx: 'Discards (Rx)', discards_tx: 'Discards (Tx)',
+    carrier: 'Carrier Transitions',
+  }
+
+  const legendSeries: ChartLegendSeries[] = seriesKeys.map((k) => ({
+    key: k, color: colorMap[k] ?? '#888', label: labelMap[k] ?? k,
+  }))
+
+  const displayValues = useMemo(() => {
+    const map = new Map<string, string>()
+    if (uPlotData[0].length === 0) return map
+    let defaultIdx = uPlotData[0].length - 1
+    for (let j = defaultIdx; j >= 0; j--) {
+      if (seriesKeys.some((_, si) => (uPlotData[si + 1] as (number | null)[])?.[j] != null)) { defaultIdx = j; break }
+    }
+    const idx = hoveredIdx != null && hoveredIdx < uPlotData[0].length ? hoveredIdx : defaultIdx
+    for (let i = 0; i < seriesKeys.length; i++) {
+      const val = (uPlotData[i + 1] as (number | null)[])?.[idx]
+      map.set(seriesKeys[i], val != null ? formatCount(Math.abs(val)) : '--')
+    }
+    return map
+  }, [uPlotData, hoveredIdx, seriesKeys])
+
+  const maxValues = useMemo(() => {
+    const map = new Map<string, string>()
+    if (uPlotData[0].length === 0) return map
+    for (let i = 0; i < seriesKeys.length; i++) {
+      const s = uPlotData[i + 1] as (number | null)[]
+      let max = 0
+      if (s) for (const v of s) if (v != null && Math.abs(v) > max) max = Math.abs(v)
+      map.set(seriesKeys[i], formatCount(max))
+    }
+    return map
+  }, [uPlotData, seriesKeys])
+
+  return <ChartLegendTable series={legendSeries} legend={legend} values={displayValues} maxValues={maxValues} hoveredTime={hoveredTime ?? undefined} />
+}
+
 export function DeviceInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime }: DeviceInterfaceIssuesChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -65,8 +123,14 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
     { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(Math.abs(v))) },
   ], [])
 
+  // Check if per-interface data is available (single device endpoint has it, bulk does not)
+  const hasPerIntfData = useMemo(() =>
+    data.buckets.some((b) => b.interfaces && b.interfaces.length > 0),
+    [data])
+
   // Collect per-interface issue totals to find which interfaces have issues
   const { intfIssues, intfMeta } = useMemo(() => {
+    if (!hasPerIntfData) return { intfIssues: [] as string[], intfMeta: new Map<string, DeviceInterfaceTraffic>() }
     const totals = new Map<string, number>()
     const meta = new Map<string, DeviceInterfaceTraffic>()
     const buckets = data.buckets.filter((b) => !b.status?.collecting)
@@ -80,18 +144,75 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
         if (!meta.has(intf.intf)) meta.set(intf.intf, intf)
       }
     }
-    // Sort by total descending
     const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([intf]) => intf)
     return { intfIssues: sorted, intfMeta: meta }
-  }, [data])
+  }, [data, hasPerIntfData])
+
+  const errorColor = isDark ? '#ef4444' : '#dc2626'
+  const fcsColor = isDark ? '#f97316' : '#ea580c'
+  const discardColor = isDark ? '#f59e0b' : '#d97706'
+  const carrierColor = isDark ? '#8b5cf6' : '#7c3aed'
 
   const { uPlotData, uPlotSeries, seriesKeys } = useMemo(() => {
     const buckets = data.buckets.filter((b) => !b.status?.collecting)
-    if (buckets.length === 0 || intfIssues.length === 0) {
+    if (buckets.length === 0) {
       return { uPlotData: [[]] as uPlot.AlignedData, uPlotSeries: [] as uPlot.Series[], seriesKeys: [] as string[] }
     }
 
     const timestamps = buckets.map((b) => new Date(b.ts).getTime() / 1000)
+
+    // Fallback: aggregate mode (bulk endpoint without per-interface data)
+    if (!hasPerIntfData) {
+      const inErrors = buckets.map((b) => {
+        if (!b.traffic) return null
+        return b.traffic.in_errors > 0 ? b.traffic.in_errors : null
+      })
+      const outErrors = buckets.map((b) => {
+        if (!b.traffic) return null
+        return b.traffic.out_errors > 0 ? -b.traffic.out_errors : null
+      })
+      const fcs = buckets.map((b) => {
+        if (!b.traffic) return null
+        return b.traffic.in_fcs_errors > 0 ? b.traffic.in_fcs_errors : null
+      })
+      const inDiscards = buckets.map((b) => {
+        if (!b.traffic) return null
+        return b.traffic.in_discards > 0 ? b.traffic.in_discards : null
+      })
+      const outDiscards = buckets.map((b) => {
+        if (!b.traffic) return null
+        return b.traffic.out_discards > 0 ? -b.traffic.out_discards : null
+      })
+      const carrier = buckets.map((b) => {
+        if (!b.traffic) return null
+        return b.traffic.carrier_transitions > 0 ? b.traffic.carrier_transitions : null
+      })
+
+      // Filter out all-null series
+      const candidates: { key: string; label: string; color: string; dash?: number[]; vals: (number | null)[] }[] = [
+        { key: 'errors_rx', label: 'Errors (Rx)', color: errorColor, vals: inErrors },
+        { key: 'errors_tx', label: 'Errors (Tx)', color: errorColor, dash: [4, 4], vals: outErrors },
+        { key: 'fcs_rx', label: 'FCS (Rx)', color: fcsColor, vals: fcs },
+        { key: 'discards_rx', label: 'Discards (Rx)', color: discardColor, vals: inDiscards },
+        { key: 'discards_tx', label: 'Discards (Tx)', color: discardColor, dash: [4, 4], vals: outDiscards },
+        { key: 'carrier', label: 'Carrier Transitions', color: carrierColor, vals: carrier },
+      ]
+      const active = candidates.filter((c) => c.vals.some((v) => v !== null))
+
+      return {
+        uPlotData: [timestamps, ...active.map((c) => c.vals)] as uPlot.AlignedData,
+        uPlotSeries: [{}, ...active.map((c) => ({
+          label: c.label, stroke: c.color, width: 1.5, points: { show: true, size: 4 },
+          ...(c.dash ? { dash: c.dash } : {}),
+        }))],
+        seriesKeys: active.map((c) => c.key),
+      }
+    }
+
+    // Per-interface mode
+    if (intfIssues.length === 0) {
+      return { uPlotData: [[]] as uPlot.AlignedData, uPlotSeries: [] as uPlot.Series[], seriesKeys: [] as string[] }
+    }
 
     // Build per-bucket lookup: intf -> counters
     const bucketIndex = buckets.map((b) => {
@@ -110,7 +231,6 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
       const intfName = intfIssues[i]
       const color = COLORS[i % COLORS.length]
 
-      // Rx: in_errors + in_fcs_errors + in_discards + carrier_transitions
       const rxVals: (number | null)[] = bucketIndex.map((m) => {
         const d = m.get(intfName)
         if (!d) return null
@@ -118,7 +238,6 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
         return v > 0 ? v : null
       })
 
-      // Tx: out_errors + out_discards (negated)
       const txVals: (number | null)[] = bucketIndex.map((m) => {
         const d = m.get(intfName)
         if (!d) return null
@@ -139,7 +258,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
       uPlotSeries: series,
       seriesKeys: keys,
     }
-  }, [data, intfIssues])
+  }, [data, hasPerIntfData, intfIssues, errorColor, fcsColor, discardColor, carrierColor])
 
   const legend = useChartLegend()
 
@@ -224,8 +343,8 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
         )}
       </div>
       <div ref={chartRef} className="h-36" />
-      {/* Per-interface legend */}
-      <div className="flex flex-col text-xs px-2 pt-1 pb-2">
+      {!hasPerIntfData && <AggregateLegend seriesKeys={seriesKeys} uPlotData={uPlotData} legend={legend} hoveredIdx={hoveredIdx} hoveredTime={hoveredTime} errorColor={errorColor} fcsColor={fcsColor} discardColor={discardColor} carrierColor={carrierColor} data={data} />}
+      {hasPerIntfData && <div className="flex flex-col text-xs px-2 pt-1 pb-2">
         <div className="flex items-center px-1 mb-1">
           <span className="text-xs text-muted-foreground flex-1 min-w-0">Interface</span>
           <span className="text-xs text-muted-foreground w-20 text-right whitespace-nowrap">Max</span>
@@ -296,7 +415,7 @@ export function DeviceInterfaceIssuesChart({ data, className, loading, highlight
             )
           })}
         </div>
-      </div>
+      </div>}
     </div>
   )
 }
