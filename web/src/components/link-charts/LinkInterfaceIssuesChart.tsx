@@ -58,12 +58,8 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(Math.abs(v))) },
   ], [])
 
-  const sideALabel = data.side_a_device && data.side_a_iface_name
-    ? `${data.side_a_device} ${data.side_a_iface_name}`
-    : 'Side A'
-  const sideZLabel = data.side_z_device && data.side_z_iface_name
-    ? `${data.side_z_device} ${data.side_z_iface_name}`
-    : 'Side Z'
+  const sideALabel = 'Side A'
+  const sideZLabel = 'Side Z'
 
   // Define all possible series, then filter to those with data
   const allSideSeries: SideSeries[] = useMemo(() => [
