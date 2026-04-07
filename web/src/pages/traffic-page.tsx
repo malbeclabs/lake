@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, useTransition } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { ChevronDown, Network, Sigma } from 'lucide-react'
@@ -297,14 +297,7 @@ function TrafficPageContent() {
     return map[timeRange] || 86400
   }, [timeRange, customStart, customEnd])
 
-  const [searchParams, setSearchParamsRaw] = useSearchParams()
-  const [isPending, startTransition] = useTransition()
-  const setSearchParams = useCallback(
-    (updater: (prev: URLSearchParams) => URLSearchParams) => {
-      startTransition(() => { setSearchParamsRaw(updater) })
-    },
-    [setSearchParamsRaw]
-  )
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const aggMethod = useMemo<AggMethod>(() => {
     const param = searchParams.get('agg')
@@ -710,7 +703,7 @@ function TrafficPageContent() {
                     : 'Auto: charts with >10 interfaces are aggregated. Click to show all per-interface.'
               }
             >
-              <Sigma className={`h-4 w-4 transition-opacity duration-150 ${isPending ? 'opacity-40' : ''}`} />
+              <Sigma className="h-4 w-4" />
               {aggregateOverride === null && <span className="text-[9px] leading-none opacity-60">A</span>}
             </button>
             <button
