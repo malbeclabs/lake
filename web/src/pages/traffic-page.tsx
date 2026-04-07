@@ -338,16 +338,6 @@ function TrafficPageContent() {
     else setAggregateOverride(null)
   }, [searchParams, setAggregateOverride])
 
-  // Clear processing after charts have had time to redraw
-  useEffect(() => {
-    if (!aggregateProcessing) return
-    const raf = requestAnimationFrame(() => {
-      const t = setTimeout(() => setAggregateProcessing(false), 50)
-      return () => clearTimeout(t)
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [aggregateProcessing, aggregateOverride])
-
   const [layout, setLayout] = useState<Layout>('2x2')
   const [bidirectional, setBidirectional] = useState(true)
 
@@ -496,6 +486,14 @@ function TrafficPageContent() {
       shouldAggregate(cat) ? aggHelper(categoryData[cat], aggregateTrafficDataTotal) : categoryData[cat]
     return { tunnel: maybeAgg('tunnel'), link: maybeAgg('link'), cyoa: maybeAgg('cyoa'), other: maybeAgg('other') }
   }, [categoryData, shouldAggregate, aggHelper])
+
+  // Clear processing after charts redraw. React runs child effects (uPlot creation
+  // in TrafficChart) before parent effects, so this fires after charts are drawn.
+  useEffect(() => {
+    if (aggregateProcessing) {
+      setAggregateProcessing(false)
+    }
+  }, [aggregateProcessing, aggregatedCategoryData, aggregatedCategoryDataStacked])
 
   // Fetch topology data for link metadata
   const {
