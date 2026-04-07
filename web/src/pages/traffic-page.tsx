@@ -740,7 +740,7 @@ function TrafficPageContent() {
         )}
 
         {/* Charts */}
-        <div className={`${gridClass} transition-opacity duration-150 ${isPending ? 'opacity-50' : ''}`}>
+        <div className={gridClass}>
           {ALL_KNOWN_SECTIONS.map(section => renderChartSection(section))}
         </div>
       </div>
