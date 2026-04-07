@@ -490,13 +490,18 @@ function TrafficPageContent() {
     return { tunnel: maybeAgg('tunnel'), link: maybeAgg('link'), cyoa: maybeAgg('cyoa'), other: maybeAgg('other') }
   }, [categoryData, shouldAggregate, aggHelper])
 
-  // Clear processing after charts redraw. React runs child effects (uPlot creation
-  // in TrafficChart) before parent effects, so this fires after charts are drawn.
+  // Keep processing indicator visible until the browser is idle (charts done painting)
   useEffect(() => {
-    if (aggregateProcessing) {
-      setAggregateProcessing(false)
+    if (!aggregateProcessing) return
+    // requestIdleCallback fires after the browser has finished layout/paint work
+    if ('requestIdleCallback' in window) {
+      const id = requestIdleCallback(() => setAggregateProcessing(false))
+      return () => cancelIdleCallback(id)
     }
-  }, [aggregateProcessing, aggregatedCategoryData, aggregatedCategoryDataStacked])
+    // Fallback: wait a generous amount for chart rendering
+    const t = setTimeout(() => setAggregateProcessing(false), 2000)
+    return () => clearTimeout(t)
+  }, [aggregateProcessing])
 
   // Fetch topology data for link metadata
   const {
@@ -717,7 +722,7 @@ function TrafficPageContent() {
                     : 'Auto: charts with >10 interfaces are aggregated. Click to show all per-interface.'
               }
             >
-              <Sigma className={`h-4 w-4 ${aggregateProcessing ? 'animate-pulse opacity-50' : ''}`} />
+              <Sigma className={`h-4 w-4 transition-opacity ${aggregateProcessing ? 'opacity-30 animate-pulse' : ''}`} />
               {aggregateOverride === null && <span className="text-[9px] leading-none opacity-60">A</span>}
             </button>
             <button
