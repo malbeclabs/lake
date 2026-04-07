@@ -427,12 +427,14 @@ function TrafficPageContent() {
     return counts
   }, [intfCategoryMap])
 
-  // Reset override when data changes (interface count shifts from filter changes)
+  // Reset override when filters change the interface count (but not on initial data load)
   const totalCount = intfCategoryMap.size
+  const prevTotalCount = useRef(totalCount)
   useEffect(() => {
-    if (aggregateOverride !== null) {
+    if (prevTotalCount.current !== 0 && totalCount !== prevTotalCount.current && aggregateOverride !== null) {
       setAggregateOverride(null)
     }
+    prevTotalCount.current = totalCount
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalCount])
 
