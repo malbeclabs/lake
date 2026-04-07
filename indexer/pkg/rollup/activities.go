@@ -113,7 +113,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 				SELECT origin_device_pk, target_device_pk, link_pk AS _hdr_link_pk, epoch,
 					   max(latest_sample_index) AS latest_sample_index,
 					   any(sampling_interval_us) AS sampling_interval_us
-				FROM ` + factLatencyHeader + `
+				FROM ` + factLatencyHeader + ` FINAL
 				GROUP BY origin_device_pk, target_device_pk, link_pk, epoch
 			) h ON f.origin_device_pk = h.origin_device_pk
 				AND f.target_device_pk = h.target_device_pk
@@ -128,7 +128,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 				toStartOfFiveMinutes(` + bucketTs + `) as bucket,
 				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
-			FROM ` + factLatency + ` f
+			FROM ` + factLatency + ` FINAL f
 			JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 			WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 			GROUP BY f.link_pk, bucket, direction
@@ -153,7 +153,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			quantile(0.95)(abs(f.ipdv_us)) as p95_jitter,
 			quantile(0.99)(abs(f.ipdv_us)) as p99_jitter,
 			toFloat64(max(abs(f.ipdv_us))) as max_jitter
-		FROM ` + factLatency + ` f
+		FROM ` + factLatency + ` FINAL f
 		JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 		LEFT JOIN loss_sub ls ON f.link_pk = ls.link_pk
 			AND toStartOfFiveMinutes(` + bucketTs + `) = ls.bucket
@@ -510,7 +510,7 @@ func (a *Activities) ComputeDeviceInterfaceRollup(ctx context.Context, input Bac
 			quantileIf(0.95)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p95_out_mcast_pps,
 			quantileIf(0.99)(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as p99_out_mcast_pps,
 			maxIf(out_multicast_pkts_delta / delta_duration, delta_duration > 0 AND out_multicast_pkts_delta >= 0) as max_out_mcast_pps
-		FROM ` + factCounters + `
+		FROM ` + factCounters + ` FINAL
 		WHERE event_ts >= $1 AND event_ts < $2
 		GROUP BY device_pk, intf, bucket
 		ORDER BY device_pk, intf, bucket
