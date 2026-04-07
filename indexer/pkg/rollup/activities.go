@@ -128,7 +128,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 				toStartOfFiveMinutes(` + bucketTs + `) as bucket,
 				if(f.origin_device_pk = l.side_a_pk, 'A', 'Z') as direction,
 				countIf(f.loss OR f.rtt_us = 0) * 100.0 / count(*) as loss_pct
-			FROM ` + factLatency + ` FINAL f
+			FROM ` + factLatency + ` f FINAL
 			JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 			WHERE ` + filterCol + ` >= $1 AND ` + filterCol + ` < $2
 			GROUP BY f.link_pk, bucket, direction
@@ -153,7 +153,7 @@ func (a *Activities) ComputeLinkRollup(ctx context.Context, input BackfillChunkI
 			quantile(0.95)(abs(f.ipdv_us)) as p95_jitter,
 			quantile(0.99)(abs(f.ipdv_us)) as p99_jitter,
 			toFloat64(max(abs(f.ipdv_us))) as max_jitter
-		FROM ` + factLatency + ` FINAL f
+		FROM ` + factLatency + ` f FINAL
 		JOIN ` + linksCurrent + ` l ON f.link_pk = l.pk` + headerJoin + `
 		LEFT JOIN loss_sub ls ON f.link_pk = ls.link_pk
 			AND toStartOfFiveMinutes(` + bucketTs + `) = ls.bucket

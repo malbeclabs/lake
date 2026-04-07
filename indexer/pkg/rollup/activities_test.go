@@ -465,3 +465,100 @@ func TestComputeDeviceInterfaceRollup_WithUserTunnel(t *testing.T) {
 	assert.Equal(t, int64(42), *b.UserTunnelID)
 	assert.Equal(t, "user-pk-1", b.UserPK)
 }
+
+// TestComputeDeviceInterfaceRollup_DeduplicatesStaleRows verifies that the rollup
+// uses FINAL when reading the fact table, so stale duplicate rows (e.g. from a
+// backfill that overwrites inflated-rate rows) are excluded. Without FINAL, maxIf
+// would see both the old inflated row and the new clean row and return 74 Gbps.
+func TestComputeDeviceInterfaceRollup_DeduplicatesStaleRows(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	now := time.Now().Truncate(5 * time.Minute)
+	ts := now.Add(-4 * time.Minute)
+	oldIngestedAt := now.Add(-1 * time.Hour)
+
+	insert := `INSERT INTO fact_dz_device_interface_counters
+		(event_ts, ingested_at, device_pk, host, intf, link_pk, link_side,
+		 in_errors_delta, out_errors_delta, in_fcs_errors_delta, in_discards_delta, out_discards_delta,
+		 carrier_transitions_delta, in_octets_delta, out_octets_delta, in_pkts_delta, out_pkts_delta,
+		 in_multicast_pkts_delta, out_multicast_pkts_delta, delta_duration)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
+
+	// Old row: inflated rate due to tiny delta_duration (simulates pre-fix carrier-transition bug).
+	// 63_745_167 bytes / 0.007s ≈ 74 Gbps.
+	err := conn.Exec(ctx, insert,
+		ts, oldIngestedAt, "device-dedup", "host-1", "Ethernet1/1", "", "",
+		int64(0), int64(0), int64(0), int64(0), int64(0), int64(0),
+		int64(63_745_167), int64(0), int64(100), int64(50), int64(0), int64(0),
+		float64(0.007))
+	require.NoError(t, err)
+
+	// New row: same key (event_ts, device_pk, intf), newer ingested_at, correct delta_duration.
+	// 63_745_167 bytes / 2.0s ≈ 255 Mbps.
+	err = conn.Exec(ctx, insert,
+		ts, now, "device-dedup", "host-1", "Ethernet1/1", "", "",
+		int64(0), int64(0), int64(0), int64(0), int64(0), int64(0),
+		int64(63_745_167), int64(0), int64(100), int64(50), int64(0), int64(0),
+		float64(2.0))
+	require.NoError(t, err)
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeDeviceInterfaceRollup(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1)
+
+	// With FINAL the newer (clean) row wins: max should be ~255 Mbps, nowhere near 74 Gbps.
+	assert.Less(t, buckets[0].InBps.Max, 1e9, "expected <1 Gbps but got inflated rate — FINAL missing from fact table read?")
+}
+
+// TestComputeLinkRollup_DeduplicatesStaleRows verifies that the link rollup uses
+// FINAL when reading the latency fact table so duplicate rows from backfills don't
+// inflate sample counts or skew percentiles.
+func TestComputeLinkRollup_DeduplicatesStaleRows(t *testing.T) {
+	t.Parallel()
+	conn := setupTestDB(t)
+	ctx := context.Background()
+
+	now := time.Now().Truncate(5 * time.Minute)
+	ts := now.Add(-4 * time.Minute)
+	oldIngestedAt := now.Add(-1 * time.Hour)
+
+	// Seed required link dimension.
+	err := conn.Exec(ctx, `INSERT INTO dim_dz_links_history
+		(entity_id, snapshot_ts, ingested_at, op_id, is_deleted, pk, status, side_a_pk, side_z_pk, bandwidth_bps, committed_rtt_ns)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		"link-entity-dedup", now, now, "00000000-0000-0000-0000-000000000099", uint8(0),
+		"link-dedup", "activated", "dev-dedup-a", "dev-dedup-z", int64(10_000_000_000), int64(500_000))
+	require.NoError(t, err)
+
+	insert := `INSERT INTO fact_dz_device_link_latency
+		(event_ts, ingested_at, epoch, sample_index, origin_device_pk, target_device_pk, link_pk, rtt_us, loss)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+	// Old row: stale ingested_at, rtt=100us.
+	err = conn.Exec(ctx, insert, ts, oldIngestedAt, int64(1), int32(0), "dev-dedup-a", "dev-dedup-z", "link-dedup", int64(100), false)
+	require.NoError(t, err)
+
+	// New row: same key, newer ingested_at, rtt=300us.
+	err = conn.Exec(ctx, insert, ts, now, int64(1), int32(0), "dev-dedup-a", "dev-dedup-z", "link-dedup", int64(300), false)
+	require.NoError(t, err)
+
+	a := &Activities{ClickHouse: conn, Log: laketesting.NewLogger()}
+	buckets, err := a.ComputeLinkRollup(ctx, BackfillChunkInput{
+		WindowStart: now.Add(-10 * time.Minute),
+		WindowEnd:   now.Add(5 * time.Minute),
+	})
+	require.NoError(t, err)
+	require.Len(t, buckets, 1)
+
+	// With FINAL only the newer row is seen: 1 sample at 300us.
+	// Without FINAL both rows are seen: 2 samples averaging (100+300)/2=200us.
+	b := buckets[0]
+	assert.Equal(t, uint32(1), b.A.Samples, "expected 1 sample — duplicate rows not deduplicated, FINAL missing?")
+	assert.InDelta(t, 300.0, b.A.AvgRttUs, 1.0)
+}
