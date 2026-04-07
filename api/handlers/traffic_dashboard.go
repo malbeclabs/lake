@@ -480,7 +480,6 @@ func BuildStressQuery(timeFilter, bucketInterval, metric, groupBy, filterSQL, in
 			THEN f.max_out_bps / %s
 			ELSE NULL END`, bwExpr, bwExpr)
 		metricFilter = " AND metric_val_in IS NOT NULL"
-		needsInterfaceJoin = true
 	}
 
 	// Build percentile select

@@ -137,8 +137,8 @@ func (a *API) GetTrafficData(w http.ResponseWriter, r *http.Request) {
 
 	// Build dimension filters.
 	// Always join device interfaces so series metadata includes cyoa_type.
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
-	needsInterfaceJoin = true
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, needsLinkJoin, needsMetroJoin, needsContributorJoin, needsUserJoin, _ := buildDimensionFilters(r)
+	needsInterfaceJoin := true
 	intfTypeFilter := trafficIntfTypeFilter(r, intfTypeSQL)
 	dimJoins := trafficDimensionJoins(needsLinkJoin, needsMetroJoin, needsContributorJoin, needsInterfaceJoin)
 

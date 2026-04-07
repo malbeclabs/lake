@@ -204,6 +204,13 @@ function ExpandedDeviceCharts({ devicePk, timeRange, deviceMetrics, highlightTim
   highlightTimeRange: { start: number; end: number } | null
   onCursorTime: (time: number | null) => void
 }) {
+  // Fetch per-interface data for this device on expand
+  const { data: detailMetrics, isLoading } = useQuery({
+    queryKey: ['device-metrics-detail', devicePk, timeRange],
+    queryFn: () => fetchDeviceMetrics(devicePk, { range: timeRange, include: ['traffic'] }),
+    staleTime: 30_000,
+  })
+
   const hasIssues = deviceMetrics.buckets.some(b => b.traffic && (
     b.traffic.in_errors + b.traffic.out_errors > 0 ||
     b.traffic.in_fcs_errors > 0 ||
@@ -211,13 +218,6 @@ function ExpandedDeviceCharts({ devicePk, timeRange, deviceMetrics, highlightTim
     b.traffic.carrier_transitions > 0
   ))
   if (!hasIssues) return null
-
-  // Fetch per-interface data for this device on expand
-  const { data: detailMetrics, isLoading } = useQuery({
-    queryKey: ['device-metrics-detail', devicePk, timeRange],
-    queryFn: () => fetchDeviceMetrics(devicePk, { range: timeRange, include: ['traffic'] }),
-    staleTime: 30_000,
-  })
 
   // Use per-interface data if available, fall back to bulk aggregate
   const chartData = detailMetrics ?? deviceMetrics
