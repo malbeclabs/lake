@@ -2,7 +2,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
-import { fetchBulkDeviceMetrics } from '@/lib/api'
+import { fetchBulkDeviceMetrics, fetchDeviceMetrics } from '@/lib/api'
 import type { DeviceMetricsResponse } from '@/lib/api'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
@@ -197,14 +197,47 @@ function DeviceInfoPopover({ deviceMetrics }: { deviceMetrics: DeviceMetricsResp
 
 const cardClass = "rounded-lg border border-border p-4"
 
+function ExpandedDeviceCharts({ devicePk, timeRange, deviceMetrics, highlightTimeRange, onCursorTime }: {
+  devicePk: string
+  timeRange: string
+  deviceMetrics: DeviceMetricsResponse
+  highlightTimeRange: { start: number; end: number } | null
+  onCursorTime: (time: number | null) => void
+}) {
+  const hasIssues = deviceMetrics.buckets.some(b => b.traffic && (
+    b.traffic.in_errors + b.traffic.out_errors > 0 ||
+    b.traffic.in_fcs_errors > 0 ||
+    b.traffic.in_discards + b.traffic.out_discards > 0 ||
+    b.traffic.carrier_transitions > 0
+  ))
+  if (!hasIssues) return null
+
+  // Fetch per-interface data for this device on expand
+  const { data: detailMetrics, isLoading } = useQuery({
+    queryKey: ['device-metrics-detail', devicePk, timeRange],
+    queryFn: () => fetchDeviceMetrics(devicePk, { range: timeRange, include: ['traffic'] }),
+    staleTime: 30_000,
+  })
+
+  // Use per-interface data if available, fall back to bulk aggregate
+  const chartData = detailMetrics ?? deviceMetrics
+
+  return (
+    <div className="px-4 pb-4 pt-2 space-y-4">
+      <DeviceInterfaceIssuesChart data={chartData} loading={isLoading} className={cardClass} highlightTimeRange={highlightTimeRange} onCursorTime={onCursorTime} />
+    </div>
+  )
+}
+
 interface DeviceRowProps {
   deviceMetrics: DeviceMetricsResponse
   derivedInfo: DerivedDeviceInfo
   devicesWithIssues?: Map<string, string[]>
   initiallyExpanded?: boolean
+  timeRange?: string
 }
 
-function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExpanded = false }: DeviceRowProps) {
+function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExpanded = false, timeRange = '24h' }: DeviceRowProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded)
   const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
@@ -380,20 +413,15 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
         </div>
       </div>
 
-      {/* Expanded charts */}
+      {/* Expanded charts — fetch per-interface data on demand */}
       {expanded && (
-        <div className="px-4 pb-4 pt-2 space-y-4">
-          {(() => {
-            const hasIssues = deviceMetrics.buckets.some(b => b.traffic && (
-              b.traffic.in_errors + b.traffic.out_errors > 0 ||
-              b.traffic.in_fcs_errors > 0 ||
-              b.traffic.in_discards + b.traffic.out_discards > 0 ||
-              b.traffic.carrier_transitions > 0
-            ))
-            if (!hasIssues) return null
-            return <DeviceInterfaceIssuesChart data={deviceMetrics} loading={false} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-          })()}
-        </div>
+        <ExpandedDeviceCharts
+          devicePk={derivedInfo.pk}
+          timeRange={timeRange}
+          deviceMetrics={deviceMetrics}
+          highlightTimeRange={hoveredTimeRange}
+          onCursorTime={setChartHoveredTime}
+        />
       )}
     </div>
   )
@@ -623,6 +651,7 @@ export function DeviceStatusTimelines({
             derivedInfo={derived}
             devicesWithIssues={devicesWithIssues}
             initiallyExpanded={derived.pk === expandedDevicePk}
+            timeRange={timeRange}
           />
         ))}
       </div>
