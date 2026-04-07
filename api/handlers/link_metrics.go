@@ -24,6 +24,10 @@ type LinkMetricsResponse struct {
 	ContributorCode   string               `json:"contributor_code"`
 	SideAMetro        string               `json:"side_a_metro"`
 	SideZMetro        string               `json:"side_z_metro"`
+	SideADevice       string               `json:"side_a_device"`
+	SideZDevice       string               `json:"side_z_device"`
+	SideAIfaceName    string               `json:"side_a_iface_name"`
+	SideZIfaceName    string               `json:"side_z_iface_name"`
 	CommittedRttUs    float64              `json:"committed_rtt_us"`
 	CommittedJitterUs float64              `json:"committed_jitter_us"`
 	BandwidthBps      int64                `json:"bandwidth_bps"`
@@ -484,6 +488,10 @@ func (a *API) fetchLinkMetrics(ctx context.Context, linkPK string, params bucket
 		ContributorCode:   meta.Contributor,
 		SideAMetro:        meta.SideAMetro,
 		SideZMetro:        meta.SideZMetro,
+		SideADevice:       meta.SideADevice,
+		SideZDevice:       meta.SideZDevice,
+		SideAIfaceName:    meta.SideAIfaceName,
+		SideZIfaceName:    meta.SideZIfaceName,
 		CommittedRttUs:    committedRtt,
 		CommittedJitterUs: meta.CommittedJitterUs,
 		BandwidthBps:      meta.BandwidthBps,
@@ -1010,6 +1018,10 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			ContributorCode:   meta.Contributor,
 			SideAMetro:        meta.SideAMetro,
 			SideZMetro:        meta.SideZMetro,
+			SideADevice:       meta.SideADevice,
+			SideZDevice:       meta.SideZDevice,
+			SideAIfaceName:    meta.SideAIfaceName,
+			SideZIfaceName:    meta.SideZIfaceName,
 			CommittedRttUs:    committedRtt,
 			CommittedJitterUs: meta.CommittedJitterUs,
 			BandwidthBps:      meta.BandwidthBps,

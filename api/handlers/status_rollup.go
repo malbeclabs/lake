@@ -959,6 +959,8 @@ type statusLinkMeta struct {
 	SideZDevice       string
 	SideADevicePK     string
 	SideZDevicePK     string
+	SideAIfaceName    string
+	SideZIfaceName    string
 	BandwidthBps      int64
 	CommittedRttUs    float64
 	CommittedRttNs    int64
@@ -988,6 +990,8 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			dz.code as side_z_device,
 			l.side_a_pk,
 			l.side_z_pk,
+			COALESCE(l.side_a_iface_name, '') as side_a_iface_name,
+			COALESCE(l.side_z_iface_name, '') as side_z_iface_name,
 			l.bandwidth_bps,
 			l.committed_rtt_ns / 1000.0 as committed_rtt_us,
 			l.committed_rtt_ns,
@@ -1015,6 +1019,7 @@ func queryStatusLinkMeta(ctx context.Context, db driver.Conn, linkPKs ...string)
 			&m.PK, &m.Code, &m.LinkType, &m.Contributor,
 			&m.SideAMetro, &m.SideZMetro, &m.SideADevice, &m.SideZDevice,
 			&m.SideADevicePK, &m.SideZDevicePK,
+			&m.SideAIfaceName, &m.SideZIfaceName,
 			&m.BandwidthBps, &m.CommittedRttUs, &m.CommittedRttNs, &m.CommittedJitterUs, &m.Status,
 		); err != nil {
 			return nil, fmt.Errorf("link metadata scan: %w", err)

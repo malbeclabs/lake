@@ -5,8 +5,6 @@ import { useTheme } from '@/hooks/use-theme'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
-import { type ChartLegendSeries } from '@/components/topology/ChartLegend'
-import { ChartLegendTable } from '@/components/topology/ChartLegendTable'
 import { formatHoveredTime } from '@/components/topology/utils'
 import type { LinkMetricsResponse } from '@/lib/api'
 
@@ -24,6 +22,17 @@ function formatCount(value: number): string {
   return value.toString()
 }
 
+const SIDE_A_COLOR = '#06b6d4' // cyan
+const SIDE_Z_COLOR = '#f59e0b' // amber
+
+interface SideSeries {
+  key: string
+  label: string
+  color: string
+  dashed: boolean
+  extract: (b: LinkMetricsResponse['buckets'][number]) => number | null
+}
+
 export function LinkInterfaceIssuesChart({ data, className, loading, highlightTimeRange, onCursorTime }: LinkInterfaceIssuesChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
@@ -39,12 +48,6 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     }
   }, [onCursorTime])
 
-  // Colors matching LinkStatusCharts
-  const errorColor = isDark ? '#ef4444' : '#dc2626'
-  const fcsColor = isDark ? '#f97316' : '#ea580c'
-  const discardColor = isDark ? '#f59e0b' : '#d97706'
-  const carrierColor = isDark ? '#8b5cf6' : '#7c3aed'
-
   const scales = useMemo((): uPlot.Scales => ({
     x: { time: true },
     y: { auto: true },
@@ -55,71 +58,79 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     { values: (_u: uPlot, vals: number[]) => vals.map((v) => formatCount(Math.abs(v))) },
   ], [])
 
-  const { uPlotData, uPlotSeries } = useMemo(() => {
+  const sideALabel = data.side_a_device && data.side_a_iface_name
+    ? `${data.side_a_device} ${data.side_a_iface_name}`
+    : 'Side A'
+  const sideZLabel = data.side_z_device && data.side_z_iface_name
+    ? `${data.side_z_device} ${data.side_z_iface_name}`
+    : 'Side Z'
+
+  // Define all possible series, then filter to those with data
+  const allSideSeries: SideSeries[] = useMemo(() => [
+    { key: 'a_errors_rx', label: `${sideALabel} errors (rx)`, color: SIDE_A_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_a_in_errors ?? 0; return v > 0 ? v : null } },
+    { key: 'a_errors_tx', label: `${sideALabel} errors (tx)`, color: SIDE_A_COLOR, dashed: true,
+      extract: (b) => { const v = b.traffic?.side_a_out_errors ?? 0; return v > 0 ? -v : null } },
+    { key: 'a_fcs', label: `${sideALabel} fcs (rx)`, color: SIDE_A_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_a_in_fcs_errors ?? 0; return v > 0 ? v : null } },
+    { key: 'a_discards_rx', label: `${sideALabel} discards (rx)`, color: SIDE_A_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_a_in_discards ?? 0; return v > 0 ? v : null } },
+    { key: 'a_discards_tx', label: `${sideALabel} discards (tx)`, color: SIDE_A_COLOR, dashed: true,
+      extract: (b) => { const v = b.traffic?.side_a_out_discards ?? 0; return v > 0 ? -v : null } },
+    { key: 'a_carrier', label: `${sideALabel} carrier transitions`, color: SIDE_A_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_a_carrier_transitions ?? 0; return v > 0 ? v : null } },
+    { key: 'z_errors_rx', label: `${sideZLabel} errors (rx)`, color: SIDE_Z_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_z_in_errors ?? 0; return v > 0 ? v : null } },
+    { key: 'z_errors_tx', label: `${sideZLabel} errors (tx)`, color: SIDE_Z_COLOR, dashed: true,
+      extract: (b) => { const v = b.traffic?.side_z_out_errors ?? 0; return v > 0 ? -v : null } },
+    { key: 'z_fcs', label: `${sideZLabel} fcs (rx)`, color: SIDE_Z_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_z_in_fcs_errors ?? 0; return v > 0 ? v : null } },
+    { key: 'z_discards_rx', label: `${sideZLabel} discards (rx)`, color: SIDE_Z_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_z_in_discards ?? 0; return v > 0 ? v : null } },
+    { key: 'z_discards_tx', label: `${sideZLabel} discards (tx)`, color: SIDE_Z_COLOR, dashed: true,
+      extract: (b) => { const v = b.traffic?.side_z_out_discards ?? 0; return v > 0 ? -v : null } },
+    { key: 'z_carrier', label: `${sideZLabel} carrier transitions`, color: SIDE_Z_COLOR, dashed: false,
+      extract: (b) => { const v = b.traffic?.side_z_carrier_transitions ?? 0; return v > 0 ? v : null } },
+  ], [sideALabel, sideZLabel])
+
+  const { uPlotData, uPlotSeries, activeSeries, seriesKeys } = useMemo(() => {
     const buckets = data.buckets
     if (buckets.length === 0) {
-      return { uPlotData: [[]] as uPlot.AlignedData, uPlotSeries: [] as uPlot.Series[] }
+      return { uPlotData: [[]] as uPlot.AlignedData, uPlotSeries: [] as uPlot.Series[], activeSeries: [] as SideSeries[], seriesKeys: [] as string[] }
     }
 
     const timestamps = buckets.map((b) => new Date(b.ts).getTime() / 1000)
-    const inErrors = buckets.map((b) => {
-      if (!b.traffic) return null
-      const v = (b.traffic.side_a_in_errors ?? 0) + (b.traffic.side_z_in_errors ?? 0)
-      return v > 0 ? v : null
-    })
-    const outErrors = buckets.map((b) => {
-      if (!b.traffic) return null
-      const v = (b.traffic.side_a_out_errors ?? 0) + (b.traffic.side_z_out_errors ?? 0)
-      return v > 0 ? -v : null
-    })
-    const fcs = buckets.map((b) => {
-      if (!b.traffic) return null
-      const v = (b.traffic.side_a_in_fcs_errors ?? 0) + (b.traffic.side_z_in_fcs_errors ?? 0)
-      return v > 0 ? v : null
-    })
-    const inDiscards = buckets.map((b) => {
-      if (!b.traffic) return null
-      const v = (b.traffic.side_a_in_discards ?? 0) + (b.traffic.side_z_in_discards ?? 0)
-      return v > 0 ? v : null
-    })
-    const outDiscards = buckets.map((b) => {
-      if (!b.traffic) return null
-      const v = (b.traffic.side_a_out_discards ?? 0) + (b.traffic.side_z_out_discards ?? 0)
-      return v > 0 ? -v : null
-    })
-    const carrier = buckets.map((b) => {
-      if (!b.traffic) return null
-      const v = (b.traffic.side_a_carrier_transitions ?? 0) + (b.traffic.side_z_carrier_transitions ?? 0)
-      return v > 0 ? v : null
-    })
 
-    const series: uPlot.Series[] = [
-      {},
-      { label: 'errors (rx)', stroke: errorColor, width: 1.5, points: { show: true, size: 4 } },
-      { label: 'errors (tx)', stroke: errorColor, width: 1.5, points: { show: true, size: 4 }, dash: [4, 4] },
-      { label: 'fcs (rx)', stroke: fcsColor, width: 1.5, points: { show: true, size: 4 } },
-      { label: 'discards (rx)', stroke: discardColor, width: 1.5, points: { show: true, size: 4 } },
-      { label: 'discards (tx)', stroke: discardColor, width: 1.5, points: { show: true, size: 4 }, dash: [4, 4] },
-      { label: 'carrier', stroke: carrierColor, width: 1.5, points: { show: true, size: 4 } },
-    ]
+    // Build data arrays and filter out all-null series
+    const active: SideSeries[] = []
+    const dataArrays: (number | null)[][] = [timestamps as unknown as (number | null)[]]
+    const series: uPlot.Series[] = [{}]
+    const keys: string[] = []
+
+    for (const s of allSideSeries) {
+      const vals = buckets.map(s.extract)
+      if (vals.every((v) => v === null)) continue
+      active.push(s)
+      dataArrays.push(vals)
+      series.push({
+        label: s.label,
+        stroke: s.color,
+        width: 1.5,
+        points: { show: true, size: 4 },
+        ...(s.dashed ? { dash: [4, 4] } : {}),
+      })
+      keys.push(s.key)
+    }
 
     return {
-      uPlotData: [timestamps, inErrors, outErrors, fcs, inDiscards, outDiscards, carrier] as uPlot.AlignedData,
+      uPlotData: dataArrays as uPlot.AlignedData,
       uPlotSeries: series,
+      activeSeries: active,
+      seriesKeys: keys,
     }
-  }, [data, errorColor, fcsColor, discardColor, carrierColor])
+  }, [data, allSideSeries])
 
   const legend = useChartLegend()
-  const legendSeries: ChartLegendSeries[] = useMemo(() => [
-    { key: 'errors_rx', color: errorColor, label: 'Errors (Rx)' },
-    { key: 'errors_tx', color: errorColor, label: 'Errors (Tx)' },
-    { key: 'fcs_rx', color: fcsColor, label: 'FCS (Rx)' },
-    { key: 'discards_rx', color: discardColor, label: 'Discards (Rx)' },
-    { key: 'discards_tx', color: discardColor, label: 'Discards (Tx)' },
-    { key: 'carrier', color: carrierColor, label: 'Carrier Transitions' },
-  ], [errorColor, fcsColor, discardColor, carrierColor])
-
-  const seriesKeys = ['errors_rx', 'errors_tx', 'fcs_rx', 'discards_rx', 'discards_tx', 'carrier']
 
   uPlotDataRef.current = uPlotData
 
@@ -170,27 +181,27 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
     if (uPlotData[0].length === 0) return map
     let defaultIdx = uPlotData[0].length - 1
     for (let j = defaultIdx; j >= 0; j--) {
-      if (seriesKeys.some((_, si) => (uPlotData[si + 1] as (number | null)[])?.[j] != null)) { defaultIdx = j; break }
+      if (activeSeries.some((_, si) => (uPlotData[si + 1] as (number | null)[])?.[j] != null)) { defaultIdx = j; break }
     }
     const idx = hoveredIdx != null && hoveredIdx < uPlotData[0].length ? hoveredIdx : defaultIdx
-    for (let i = 0; i < seriesKeys.length; i++) {
+    for (let i = 0; i < activeSeries.length; i++) {
       const val = (uPlotData[i + 1] as (number | null)[])?.[idx]
-      map.set(seriesKeys[i], val != null ? formatCount(Math.abs(val)) : '--')
+      map.set(activeSeries[i].key, val != null ? formatCount(Math.abs(val)) : '--')
     }
     return map
-  }, [uPlotData, hoveredIdx])
+  }, [uPlotData, hoveredIdx, activeSeries])
 
   const maxValues = useMemo(() => {
     const map = new Map<string, string>()
     if (uPlotData[0].length === 0) return map
-    for (let i = 0; i < seriesKeys.length; i++) {
+    for (let i = 0; i < activeSeries.length; i++) {
       const s = uPlotData[i + 1] as (number | null)[]
       let max = 0
       if (s) for (const v of s) if (v != null && Math.abs(v) > max) max = Math.abs(v)
-      map.set(seriesKeys[i], formatCount(max))
+      map.set(activeSeries[i].key, formatCount(max))
     }
     return map
-  }, [uPlotData])
+  }, [uPlotData, activeSeries])
 
   const hoveredTime = useMemo(() =>
     formatHoveredTime(uPlotData[0] as ArrayLike<number>, hoveredIdx, data.bucket_seconds < 60),
@@ -222,7 +233,46 @@ export function LinkInterfaceIssuesChart({ data, className, loading, highlightTi
         )}
       </div>
       <div ref={chartRef} className="h-36" />
-      <ChartLegendTable series={legendSeries} legend={legend} values={displayValues} maxValues={maxValues} hoveredTime={hoveredTime} />
+      {/* Per-series legend */}
+      <div className="flex flex-col text-xs px-2 pt-1 pb-2">
+        <div className="flex items-center px-1 mb-1">
+          <span className="text-xs text-muted-foreground flex-1 min-w-0">Series</span>
+          <span className="text-xs text-muted-foreground w-16 text-right whitespace-nowrap">Max</span>
+          <span className="text-xs text-muted-foreground w-16 text-right whitespace-nowrap">{hoveredTime ?? 'Value'}</span>
+        </div>
+        <div className="max-h-32 overflow-y-auto space-y-0.5">
+          {activeSeries.map((s) => {
+            const isVisible = !legend.selectedSeries.has('__none__') &&
+              (legend.selectedSeries.size === 0 || legend.selectedSeries.has(s.key))
+            return (
+              <div
+                key={s.key}
+                className={`flex items-center px-1 py-0.5 rounded cursor-pointer hover:bg-muted/50 transition-colors ${isVisible ? '' : 'opacity-40'}`}
+                onClick={(e) => legend.handleClick(s.key, e)}
+                onMouseEnter={() => legend.handleMouseEnter(s.key)}
+                onMouseLeave={legend.handleMouseLeave}
+              >
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  {s.dashed ? (
+                    <svg className="w-2.5 h-2.5 flex-shrink-0" viewBox="0 0 10 10">
+                      <line x1="0" y1="5" x2="10" y2="5" stroke={s.color} strokeWidth="3" strokeDasharray="3 2" />
+                    </svg>
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: s.color }} />
+                  )}
+                  <span className="text-foreground truncate">{s.label}</span>
+                </div>
+                <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
+                  {maxValues.get(s.key) ?? '--'}
+                </span>
+                <span className="text-muted-foreground font-mono tabular-nums whitespace-nowrap w-16 text-right">
+                  {displayValues.get(s.key) ?? '--'}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }

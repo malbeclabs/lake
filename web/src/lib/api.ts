@@ -5133,6 +5133,10 @@ export interface LinkMetricsResponse {
   contributor_code: string
   side_a_metro: string
   side_z_metro: string
+  side_a_device: string
+  side_z_device: string
+  side_a_iface_name: string
+  side_z_iface_name: string
   committed_rtt_us: number
   committed_jitter_us: number
   bandwidth_bps: number
