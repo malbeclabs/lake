@@ -328,12 +328,25 @@ function TrafficPageContent() {
     })
   }, [setSearchParams])
 
+  const [aggregateProcessing, setAggregateProcessing] = useState(false)
+
   const toggleAggregate = useCallback(() => {
+    setAggregateProcessing(true)
     const current = searchParams.get('aggregate')
-    if (current === null) setAggregateOverride(false)       // auto → force off
-    else if (current === 'off') setAggregateOverride(true)  // force off → force on
-    else setAggregateOverride(null)                         // force on → auto
+    if (current === null) setAggregateOverride(false)
+    else if (current === 'off') setAggregateOverride(true)
+    else setAggregateOverride(null)
   }, [searchParams, setAggregateOverride])
+
+  // Clear processing after charts have had time to redraw
+  useEffect(() => {
+    if (!aggregateProcessing) return
+    const raf = requestAnimationFrame(() => {
+      const t = setTimeout(() => setAggregateProcessing(false), 50)
+      return () => clearTimeout(t)
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [aggregateProcessing, aggregateOverride])
 
   const [layout, setLayout] = useState<Layout>('2x2')
   const [bidirectional, setBidirectional] = useState(true)
@@ -703,7 +716,7 @@ function TrafficPageContent() {
                     : 'Auto: charts with >10 interfaces are aggregated. Click to show all per-interface.'
               }
             >
-              <Sigma className="h-4 w-4" />
+              <Sigma className={`h-4 w-4 ${aggregateProcessing ? 'animate-pulse opacity-50' : ''}`} />
               {aggregateOverride === null && <span className="text-[9px] leading-none opacity-60">A</span>}
             </button>
             <button
