@@ -5223,6 +5223,12 @@ export interface DeviceInterfaceTraffic {
   out_bps: number
   max_in_bps: number
   max_out_bps: number
+  in_errors: number
+  out_errors: number
+  in_fcs_errors: number
+  in_discards: number
+  out_discards: number
+  carrier_transitions: number
 }
 
 export interface DeviceMetricsBucket {
