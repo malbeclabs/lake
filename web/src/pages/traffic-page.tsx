@@ -319,17 +319,30 @@ function TrafficPageContent() {
     })
   }, [setSearchParams])
 
-  const [aggregateOverride, setAggregateOverride] = useState<boolean | null>(null)
+  // aggregate param: absent = auto, 'on' = force all on, 'off' = force all off
+  const aggregateOverride = useMemo<boolean | null>(() => {
+    const param = searchParams.get('aggregate')
+    if (param === 'on') return true
+    if (param === 'off') return false
+    return null
+  }, [searchParams])
+
+  const setAggregateOverride = useCallback((v: boolean | null) => {
+    setSearchParams(prev => {
+      if (v === null) { prev.delete('aggregate') }
+      else { prev.set('aggregate', v ? 'on' : 'off') }
+      return prev
+    })
+  }, [setSearchParams])
 
   const toggleAggregate = useCallback(() => {
     startTransition(() => {
-      setAggregateOverride(prev => {
-        if (prev === null) return false  // auto → force off (most useful click)
-        if (prev === false) return true  // force off → force on
-        return null                      // force on → back to auto
-      })
+      const current = searchParams.get('aggregate')
+      if (current === null) setAggregateOverride(false)       // auto → force off
+      else if (current === 'off') setAggregateOverride(true)  // force off → force on
+      else setAggregateOverride(null)                         // force on → auto
     })
-  }, [startTransition])
+  }, [startTransition, searchParams, setAggregateOverride])
 
   const [layout, setLayout] = useState<Layout>('2x2')
   const [bidirectional, setBidirectional] = useState(true)
@@ -417,10 +430,13 @@ function TrafficPageContent() {
     return counts
   }, [intfCategoryMap])
 
-  // Reset override when data changes
+  // Reset override when data changes (interface count shifts from filter changes)
   const totalCount = intfCategoryMap.size
   useEffect(() => {
-    setAggregateOverride(null)
+    if (aggregateOverride !== null) {
+      setAggregateOverride(null)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalCount])
 
   // Resolve whether a given category should be aggregated
