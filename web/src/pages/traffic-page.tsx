@@ -336,13 +336,11 @@ function TrafficPageContent() {
   }, [setSearchParams])
 
   const toggleAggregate = useCallback(() => {
-    startTransition(() => {
-      const current = searchParams.get('aggregate')
-      if (current === null) setAggregateOverride(false)       // auto → force off
-      else if (current === 'off') setAggregateOverride(true)  // force off → force on
-      else setAggregateOverride(null)                         // force on → auto
-    })
-  }, [startTransition, searchParams, setAggregateOverride])
+    const current = searchParams.get('aggregate')
+    if (current === null) setAggregateOverride(false)       // auto → force off
+    else if (current === 'off') setAggregateOverride(true)  // force off → force on
+    else setAggregateOverride(null)                         // force on → auto
+  }, [searchParams, setAggregateOverride])
 
   const [layout, setLayout] = useState<Layout>('2x2')
   const [bidirectional, setBidirectional] = useState(true)
