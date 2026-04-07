@@ -332,10 +332,13 @@ function TrafficPageContent() {
 
   const toggleAggregate = useCallback(() => {
     setAggregateProcessing(true)
-    const current = searchParams.get('aggregate')
-    if (current === null) setAggregateOverride(false)
-    else if (current === 'off') setAggregateOverride(true)
-    else setAggregateOverride(null)
+    // Defer the actual change so the processing state renders first
+    requestAnimationFrame(() => {
+      const current = searchParams.get('aggregate')
+      if (current === null) setAggregateOverride(false)
+      else if (current === 'off') setAggregateOverride(true)
+      else setAggregateOverride(null)
+    })
   }, [searchParams, setAggregateOverride])
 
   const [layout, setLayout] = useState<Layout>('2x2')
