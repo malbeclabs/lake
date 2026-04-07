@@ -337,6 +337,10 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 		userKindSQL = fmt.Sprintf(" AND u.kind IN (%s)", strings.Join(quoted, ","))
 	}
 
+	// di.* filters must go into intfTypeSQL (CTE-scoped) not filterSQL (outer query),
+	// because the di join is inside the CTE where f is in scope.
+	var diClauses []string
+
 	if cyoaTypes := r.URL.Query().Get("cyoa_type"); cyoaTypes != "" {
 		needsInterfaceJoin = true
 		vals := strings.Split(cyoaTypes, ",")
@@ -344,7 +348,7 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 		for i, v := range vals {
 			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
 		}
-		clauses = append(clauses, fmt.Sprintf("di.cyoa_type IN (%s)", strings.Join(quoted, ",")))
+		diClauses = append(diClauses, fmt.Sprintf("di.cyoa_type IN (%s)", strings.Join(quoted, ",")))
 	}
 
 	if interfaceTypes := r.URL.Query().Get("interface_type"); interfaceTypes != "" {
@@ -354,7 +358,7 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 		for i, v := range vals {
 			quoted[i] = fmt.Sprintf("'%s'", escapeSingleQuote(v))
 		}
-		clauses = append(clauses, fmt.Sprintf("di.interface_type IN (%s)", strings.Join(quoted, ",")))
+		diClauses = append(diClauses, fmt.Sprintf("di.interface_type IN (%s)", strings.Join(quoted, ",")))
 	}
 
 	if intfs := r.URL.Query().Get("intf"); intfs != "" {
@@ -370,6 +374,11 @@ func buildDimensionFilters(r *http.Request) (filterSQL, intfFilterSQL, intfTypeS
 	intfTypeSQL, intfTypeNeedsJoin = buildIntfTypeFilter(r.URL.Query().Get("intf_type"))
 	if intfTypeNeedsJoin {
 		needsInterfaceJoin = true
+	}
+
+	// Append di.* filters to intfTypeSQL so they stay inside the CTE
+	for _, c := range diClauses {
+		intfTypeSQL += " AND " + c
 	}
 
 	if len(clauses) > 0 {
