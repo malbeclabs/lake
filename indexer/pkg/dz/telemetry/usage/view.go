@@ -687,30 +687,34 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 
 		// For all counter fields: use value if present, otherwise forward-fill with last known
 		// Sparse counters (errors/discards) have baselines from 10-year query
-		// Non-sparse counters: first row is used as baseline, not stored
+		// Non-sparse counters: first row is used as baseline, not stored.
+		// isRate marks counters whose deltas are divided by delta_duration to
+		// produce per-second rates (bps, pps). Only rows carrying at least one
+		// real isRate value should advance lastTime (see #388).
 		allCounterFields := []struct {
 			field     string
 			dest      **int64
 			deltaDest **int64
 			baseline  map[string]*int64
 			isSparse  bool
+			isRate    bool
 		}{
-			{"carrier-transitions", &u.CarrierTransitions, &u.CarrierTransitionsDelta, nil, false},
-			{"in-broadcast-pkts", &u.InBroadcastPkts, &u.InBroadcastPktsDelta, nil, false},
-			{"in-discards", &u.InDiscards, &u.InDiscardsDelta, baselines.InDiscards, true},
-			{"in-errors", &u.InErrors, &u.InErrorsDelta, baselines.InErrors, true},
-			{"in-fcs-errors", &u.InFCSErrors, &u.InFCSErrorsDelta, baselines.InFCSErrors, true},
-			{"in-multicast-pkts", &u.InMulticastPkts, &u.InMulticastPktsDelta, nil, false},
-			{"in-octets", &u.InOctets, &u.InOctetsDelta, nil, false},
-			{"in-pkts", &u.InPkts, &u.InPktsDelta, nil, false},
-			{"in-unicast-pkts", &u.InUnicastPkts, &u.InUnicastPktsDelta, nil, false},
-			{"out-broadcast-pkts", &u.OutBroadcastPkts, &u.OutBroadcastPktsDelta, nil, false},
-			{"out-discards", &u.OutDiscards, &u.OutDiscardsDelta, baselines.OutDiscards, true},
-			{"out-errors", &u.OutErrors, &u.OutErrorsDelta, baselines.OutErrors, true},
-			{"out-multicast-pkts", &u.OutMulticastPkts, &u.OutMulticastPktsDelta, nil, false},
-			{"out-octets", &u.OutOctets, &u.OutOctetsDelta, nil, false},
-			{"out-pkts", &u.OutPkts, &u.OutPktsDelta, nil, false},
-			{"out-unicast-pkts", &u.OutUnicastPkts, &u.OutUnicastPktsDelta, nil, false},
+			{"carrier-transitions", &u.CarrierTransitions, &u.CarrierTransitionsDelta, nil, false, false},
+			{"in-broadcast-pkts", &u.InBroadcastPkts, &u.InBroadcastPktsDelta, nil, false, true},
+			{"in-discards", &u.InDiscards, &u.InDiscardsDelta, baselines.InDiscards, true, false},
+			{"in-errors", &u.InErrors, &u.InErrorsDelta, baselines.InErrors, true, false},
+			{"in-fcs-errors", &u.InFCSErrors, &u.InFCSErrorsDelta, baselines.InFCSErrors, true, false},
+			{"in-multicast-pkts", &u.InMulticastPkts, &u.InMulticastPktsDelta, nil, false, true},
+			{"in-octets", &u.InOctets, &u.InOctetsDelta, nil, false, true},
+			{"in-pkts", &u.InPkts, &u.InPktsDelta, nil, false, true},
+			{"in-unicast-pkts", &u.InUnicastPkts, &u.InUnicastPktsDelta, nil, false, true},
+			{"out-broadcast-pkts", &u.OutBroadcastPkts, &u.OutBroadcastPktsDelta, nil, false, true},
+			{"out-discards", &u.OutDiscards, &u.OutDiscardsDelta, baselines.OutDiscards, true, false},
+			{"out-errors", &u.OutErrors, &u.OutErrorsDelta, baselines.OutErrors, true, false},
+			{"out-multicast-pkts", &u.OutMulticastPkts, &u.OutMulticastPktsDelta, nil, false, true},
+			{"out-octets", &u.OutOctets, &u.OutOctetsDelta, nil, false, true},
+			{"out-pkts", &u.OutPkts, &u.OutPktsDelta, nil, false, true},
+			{"out-unicast-pkts", &u.OutUnicastPkts, &u.OutUnicastPktsDelta, nil, false, true},
 		}
 
 		// For non-sparse counters on first row: extract values and use as baseline, skip storing the row
@@ -744,12 +748,18 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 			firstRowSeen[key] = true
 		}
 
-		// Process all counters
+		// Process all counters. Track whether any non-sparse counter had a
+		// real (non-forward-filled) value in this row so we know whether to
+		// advance lastTime below.
+		hasRateCounter := false
 		for _, cf := range allCounterFields {
 			var currentValue *int64
 			value := extractInt64FromRow(row, cf.field)
 			if value != nil {
 				currentValue = value
+				if cf.isRate {
+					hasRateCounter = true
+				}
 			} else if key != "" {
 				// Forward-fill with last known value (includes pre-populated baselines)
 				if lastKnown, ok := lastKnownValues[key][cf.field]; ok && lastKnown != nil {
@@ -775,14 +785,21 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 			}
 		}
 
-		// Compute delta_duration: time difference from previous measurement
+		// Compute delta_duration: time difference from previous measurement.
+		// Only advance lastTime when the row carried real non-sparse counter
+		// values (octets, pkts, etc.). Rows that only contain sparse counters
+		// (e.g. a carrier-transition event) still get a delta_duration from the
+		// previous row, but must not advance the clock — otherwise the next
+		// real-counter row inherits a tiny duration for a full counter delta,
+		// producing wildly inflated rates (see #388).
 		if key != "" {
 			if lastT, ok := lastTime[key]; ok {
 				duration := t.Sub(lastT).Seconds()
 				u.DeltaDuration = &duration
 			}
-			// Update last time for next iteration
-			lastTime[key] = t
+			if hasRateCounter {
+				lastTime[key] = t
+			}
 		}
 
 		usage = append(usage, *u)

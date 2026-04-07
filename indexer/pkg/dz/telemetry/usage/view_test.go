@@ -605,13 +605,19 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 				"time":       now.Format(time.RFC3339Nano),
 				"dzd_pubkey": "device1",
 				"intf":       "eth0",
-				"in-errors":  int64(1), // Sparse counter, so first row is stored
+				"in-octets":  int64(1000), // Non-sparse counter: first row used as baseline
+			},
+			{
+				"time":       now.Add(30 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
 			},
 			{
 				"time":       now.Add(60 * time.Second).Format(time.RFC3339Nano),
 				"dzd_pubkey": "device1",
 				"intf":       "eth0",
-				"in-errors":  int64(2),
+				"in-octets":  int64(3000),
 			},
 		}
 
@@ -621,14 +627,85 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 
 		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
-		require.Len(t, usage, 2)
+		require.Len(t, usage, 2) // first row is baseline, not stored
 
-		// First row should not have delta_duration
-		require.Nil(t, usage[0].DeltaDuration)
+		// First stored row should have delta_duration of 30 seconds (from baseline)
+		require.NotNil(t, usage[0].DeltaDuration)
+		require.InDelta(t, 30.0, *usage[0].DeltaDuration, 0.01)
 
-		// Second row should have delta_duration of 60 seconds
+		// Second stored row should have delta_duration of 30 seconds
 		require.NotNil(t, usage[1].DeltaDuration)
-		require.InDelta(t, 60.0, *usage[1].DeltaDuration, 0.01)
+		require.InDelta(t, 30.0, *usage[1].DeltaDuration, 0.01)
+	})
+
+	t.Run("carrier transition row does not advance lastTime", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		// Reproduce the pattern from #388: normal octets rows every ~2s,
+		// with a carrier-transition-only row arriving between them ~7ms
+		// before the next octets row.
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		rows := []map[string]any{
+			{ // baseline row (skipped)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000),
+			},
+			{ // normal octets row at +2s
+				"time":       now.Add(2 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(2000),
+			},
+			{ // carrier transition only at +3.993s (no octets)
+				"time":                now.Add(3993 * time.Millisecond).Format(time.RFC3339Nano),
+				"dzd_pubkey":          "device1",
+				"intf":                "eth0",
+				"carrier-transitions": int64(777),
+			},
+			{ // next octets row at +4s (7ms after carrier event)
+				"time":       now.Add(4 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(3000),
+			},
+		}
+
+		baselines := &CounterBaselines{}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		require.NoError(t, err)
+		require.Len(t, usage, 3) // baseline skipped, 3 rows stored
+
+		// Row 0: normal octets at +2s, delta_duration = 2s from baseline
+		require.NotNil(t, usage[0].DeltaDuration)
+		require.InDelta(t, 2.0, *usage[0].DeltaDuration, 0.01)
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[0].InOctetsDelta)
+
+		// Row 1: carrier-transition-only at +3.993s, delta_duration = 1.993s from
+		// last octets row (not from itself since it has no non-sparse counters)
+		require.NotNil(t, usage[1].DeltaDuration)
+		require.InDelta(t, 1.993, *usage[1].DeltaDuration, 0.01)
+
+		// Row 2: octets at +4s — delta_duration should be ~2s from the +2s row,
+		// NOT 7ms from the carrier event. This is the bug from #388.
+		require.NotNil(t, usage[2].DeltaDuration)
+		require.InDelta(t, 2.0, *usage[2].DeltaDuration, 0.01)
+		require.NotNil(t, usage[2].InOctetsDelta)
+		require.Equal(t, int64(1000), *usage[2].InOctetsDelta)
 	})
 
 	t.Run("skips already-written rows", func(t *testing.T) {
