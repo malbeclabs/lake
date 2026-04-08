@@ -100,15 +100,16 @@ function WinRateBar({
   feeds: string[]
   data: Record<string, string | number>
 }) {
+  const [hoveredFeed, setHoveredFeed] = useState<string | null>(null)
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
 
   return (
     <div
       className="relative flex-1 h-14"
-      onMouseLeave={() => setMousePos(null)}
+      onMouseLeave={() => { setMousePos(null); setHoveredFeed(null) }}
       onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
     >
-      <div className="flex h-full rounded overflow-hidden">
+      <div className="relative flex h-full rounded overflow-hidden">
         {feeds.map((f) => {
           const pct = Number(data[f] ?? 0)
           if (pct < 0.1) return null
@@ -117,12 +118,16 @@ function WinRateBar({
             <div
               key={f}
               style={{ width: `${pct}%`, backgroundColor: FEED_COLORS[f] ?? '#6b7280', minWidth: 0 }}
-              className="flex items-center justify-center overflow-hidden"
+              className="relative flex items-center justify-center overflow-hidden"
+              onMouseEnter={() => setHoveredFeed(f)}
             >
               {(f === 'dz' || f === 'dz_rebop') && raw >= 2 && (
                 <span className="text-white text-xs font-semibold whitespace-nowrap select-none">
                   {raw.toFixed(1)}%
                 </span>
+              )}
+              {hoveredFeed === f && (
+                <div className="absolute inset-0 bg-white/15 ring-1 ring-inset ring-white/40 pointer-events-none" />
               )}
             </div>
           )
@@ -295,6 +300,7 @@ function SlotRaceNodeChart({
   const slotLeadersRef = useRef(slotLeaders)
   slotLeadersRef.current = slotLeaders
   const setHoverRef = useRef<((idx: number | null, vx: number, vy: number) => void) | null>(null)
+  const hoveredIdxRef = useRef<number | null>(null)
 
   const [hover, setHover] = useState<{ idx: number; vx: number; vy: number } | null>(null)
   setHoverRef.current = (idx, vx, vy) => setHover(idx == null ? null : { idx, vx, vy })
@@ -341,6 +347,21 @@ function SlotRaceNodeChart({
                 cumulative[i] += val
               }
             }
+            // Highlight hovered column
+            const hIdx = hoveredIdxRef.current
+            if (hIdx != null && hIdx >= 0 && hIdx < n) {
+              const x1 = Math.round(u.valToPos(hIdx - 0.4, 'x', true))
+              const x2 = Math.round(u.valToPos(hIdx + 0.4, 'x', true))
+              const y1 = Math.round(u.valToPos(100, 'y', true))
+              const y2 = Math.round(u.valToPos(0, 'y', true))
+              const w = x2 - x1
+              const h = y2 - y1
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
+              ctx.fillRect(x1, y1, w, h)
+              ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'
+              ctx.lineWidth = 1
+              ctx.strokeRect(x1 + 0.5, y1 + 0.5, w - 1, h - 1)
+            }
             ctx.restore()
           },
         ],
@@ -348,9 +369,13 @@ function SlotRaceNodeChart({
           (u) => {
             const idx = u.cursor.idx
             if (idx == null || idx < 0 || idx >= slotDataRef.current.length) {
+              hoveredIdxRef.current = null
+              u.redraw(false)
               setHoverRef.current?.(null, 0, 0)
               return
             }
+            hoveredIdxRef.current = idx
+            u.redraw(false)
             const rect = u.over.getBoundingClientRect()
             const vx = rect.left + (u.cursor.left ?? 0)
             const vy = rect.top + (u.cursor.top ?? 0)
