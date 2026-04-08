@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Info, Loader2 } from 'lucide-react'
+import { Trophy, Loader2 } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import maplibregl from 'maplibre-gl'
@@ -387,7 +387,7 @@ function SlotRaceNodeChart({
   const xPos = hover != null && hover.vx + 10 + 180 > window.innerWidth ? hover.vx - 190 : (hover?.vx ?? 0) + 10
 
   return (
-    <div className="relative flex-1 h-full">
+    <div className="relative flex-1 h-full min-w-0 overflow-hidden">
       <div ref={containerRef} />
       {hover && hoveredSlot && (
         <div
@@ -619,12 +619,16 @@ export function EdgeScoreboardPage() {
   const leadersOnly = searchParams.get('leaders_only') !== 'false'
 
   const [showLoader, setShowLoader] = useState(false)
+  const [showShimmer, setShowShimmer] = useState(false)
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['edge-scoreboard', window, leadersOnly],
     queryFn: () => fetchEdgeScoreboard(window, leadersOnly),
     refetchInterval: 30_000,
     staleTime: 15_000,
+    placeholderData: keepPreviousData,
   })
 
   const setLeadersOnly = (v: boolean) => {
@@ -714,7 +718,33 @@ export function EdgeScoreboardPage() {
     return () => clearTimeout(t)
   }, [isLoading])
 
-  if (isLoading && showLoader) return (
+  // Show shimmer when switching views, but only if data takes >200ms to arrive.
+  // Fast cache hits skip the shimmer entirely.
+  useEffect(() => {
+    showTimerRef.current = setTimeout(() => {
+      showTimerRef.current = null
+      setShowShimmer(true)
+      hideTimerRef.current = setTimeout(() => {
+        hideTimerRef.current = null
+        setShowShimmer(false)
+      }, 1500)
+    }, 200)
+    return () => {
+      if (showTimerRef.current) { clearTimeout(showTimerRef.current); showTimerRef.current = null }
+      if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
+      setShowShimmer(false)
+    }
+  }, [leadersOnly, window])
+
+  // Cancel the debounce if data arrives before the 200ms threshold.
+  useEffect(() => {
+    if (showTimerRef.current) {
+      clearTimeout(showTimerRef.current)
+      showTimerRef.current = null
+    }
+  }, [data])
+
+  if (isLoading && showLoader && !data) return (
     <div className="flex-1 flex items-center justify-center bg-background">
       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
     </div>
@@ -772,15 +802,11 @@ export function EdgeScoreboardPage() {
           }
         />
 
-        {/* Completeness info */}
-        <div className="mb-6 rounded-lg bg-muted/50 border border-border px-4 py-3 text-sm text-muted-foreground">
-          <div className="flex items-start gap-2">
-            <Info className="h-4 w-4 mt-0.5 shrink-0" />
-            <div className="space-y-1.5">
-              <div><a href="https://doublezero.xyz/dz-edge" target="_blank" rel="noopener noreferrer" className="font-medium text-foreground hover:underline">Edge</a> delivers Solana leader shreds only and publishers are encouraged to not send retransmit shreds. Completeness measures the percentage of total leader slots observed by each edge node during the selected window.</div>
-              <div><Link to="/dz/publisher-check" className="font-medium text-foreground hover:underline">Publisher Check</Link> tracks the publishers contributing to Solana shreds over Edge.</div>
-            </div>
-          </div>
+        {/* Loading shimmer */}
+        <div className="h-0.5 w-full overflow-hidden rounded-full mb-4">
+          {showShimmer && (
+            <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
+          )}
         </div>
 
         {/* Epoch progress */}
