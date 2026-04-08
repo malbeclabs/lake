@@ -109,16 +109,6 @@ var validWindows = map[string]string{
 	"all": "",
 }
 
-// slotBucketSizes maps time window to slots-per-bucket, targeting ~100 buckets.
-// Solana produces ~2.5 slots/sec: 1h≈9000, 24h≈216000, 7d≈1.5M, 30d≈6.5M slots.
-var slotBucketSizes = map[string]uint64{
-	"1h":  100,
-	"24h": 2000,
-	"7d":  15000,
-	"30d": 64000,
-	"all": 200000,
-}
-
 // edgeScoreboardCacheKey returns the page cache key for a request, or "" if the request
 // is not eligible for caching (non-default window).
 func edgeScoreboardCacheKey(r *http.Request) string {
@@ -189,6 +179,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			uniqExact(slot) AS total_slots,
 			uniqExactIf(slot, feed IN ('dz', 'dz_rebop')) AS dz_slots,
 			max(epoch) AS max_epoch,
+			min(slot) AS min_slot,
 			max(slot) AS max_slot,
 			max(event_ts) AS last_updated,
 			uniqExact(feed) AS feed_count
@@ -210,6 +201,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		totalSlots  uint64
 		dzSlots     uint64
 		maxEpoch    uint64
+		minSlot     uint64
 		maxSlot     uint64
 		lastUpdated time.Time
 	}
@@ -219,7 +211,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		var nodeID string
 		var info nodeSlotInfo
 		var feedCount uint64
-		if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.maxSlot, &info.lastUpdated, &feedCount); err != nil {
+		if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.minSlot, &info.maxSlot, &info.lastUpdated, &feedCount); err != nil {
 			return nil, fmt.Errorf("query1 scan: %w", err)
 		}
 		// Skip nodes that only record one feed in the time window — they can't produce
@@ -238,7 +230,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	// to filter out corrupted outliers. A single bad row can cause max(slot) to be wildly
 	// inflated; using the median anchors us to the real current Solana slot range.
 	const slotsPerEpoch = 432_000
-	var globalMaxEpoch, globalMaxSlot uint64
+	var globalMaxEpoch, globalMaxSlot, globalMinSlot uint64
 	if len(nodeSlots) > 0 {
 		maxSlots := make([]uint64, 0, len(nodeSlots))
 		for _, info := range nodeSlots {
@@ -249,10 +241,17 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// Accept slots within 2 epochs of the median — generous enough for normal lag,
 		// tight enough to exclude corrupted values that are orders of magnitude larger.
 		upperBound := median + 2*slotsPerEpoch
+		globalMinSlot = ^uint64(0) // max uint64, will be replaced below
 		for _, info := range nodeSlots {
 			if info.maxSlot <= upperBound && info.maxSlot > globalMaxSlot {
 				globalMaxSlot = info.maxSlot
 			}
+			if info.maxSlot <= upperBound && info.minSlot < globalMinSlot {
+				globalMinSlot = info.minSlot
+			}
+		}
+		if globalMinSlot == ^uint64(0) {
+			globalMinSlot = globalMaxSlot
 		}
 		globalMaxEpoch = globalMaxSlot / slotsPerEpoch
 	}
@@ -866,9 +865,13 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 	// Group E: bucketed slot win rates across the full time window (q7) — non-fatal
 	g.Go(func() error {
-		bucketSize, ok := slotBucketSizes[window]
-		if !ok || bucketSize == 0 {
-			bucketSize = 10000
+		// Compute bucket size from the actual observed slot range, targeting ~100 buckets.
+		// This adapts to however much data is available rather than assuming a full window.
+		const targetBuckets = 100
+		slotRange := globalMaxSlot - globalMinSlot
+		bucketSize := uint64(1)
+		if slotRange > targetBuckets {
+			bucketSize = slotRange / targetBuckets
 		}
 
 		// The correct denominator for bucketed win rate is the total shreds across ALL
