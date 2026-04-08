@@ -26,8 +26,8 @@ var HealthDB driver.Conn
 // Falls back to DB (main user) if those env vars are not set.
 var PublicQueryDB driver.Conn
 
-// shredderDB is the ClickHouse database name for shredder tables (default: "shredder").
-var shredderDB = "shredder"
+// shredderDB is the ClickHouse database name for shredder tables (default: "shredder_qa").
+var shredderDB = "shredder_qa"
 
 // EnvDBs maps environment names to their ClickHouse connection pools.
 // The mainnet-beta entry always points to DB.
