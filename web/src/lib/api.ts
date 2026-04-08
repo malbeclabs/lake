@@ -5002,6 +5002,7 @@ export interface EdgeScoreboardResponse {
   current_epoch: number
   current_slot: number
   total_slots: number
+  global_total_slots: number
   dz_slots: number
   total_dz_leader_slots: number
   completeness_pct: number

@@ -80,6 +80,7 @@ type EdgeScoreboardResponse struct {
 	CurrentEpoch       uint64                           `json:"current_epoch"`
 	CurrentSlot        uint64                           `json:"current_slot"`
 	TotalSlots         uint64                           `json:"total_slots"`
+	GlobalTotalSlots   uint64                           `json:"global_total_slots"`
 	DZSlots            uint64                           `json:"dz_slots"`
 	TotalDZLeaderSlots uint64                           `json:"total_dz_leader_slots"`
 	CompletenessPct    float64                          `json:"completeness_pct"`
@@ -872,6 +873,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		CurrentEpoch:       globalMaxEpoch,
 		CurrentSlot:        globalMaxSlot,
 		TotalSlots:         totalSlots,
+		GlobalTotalSlots:   globalTotalSlots,
 		DZSlots:            dzSlots,
 		TotalDZLeaderSlots: totalDZLeaderSlots,
 		CompletenessPct:    completenessPct,

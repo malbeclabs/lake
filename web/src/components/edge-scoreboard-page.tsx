@@ -636,10 +636,10 @@ export function EdgeScoreboardPage() {
   }, [data?.generated_at, now])
 
   const slotDuration = useMemo(() => {
-    if (!data?.total_slots) return null
-    const m = Math.round(data.total_slots * 0.4 / 60)
+    if (!data?.global_total_slots) return null
+    const m = Math.round(data.global_total_slots * 0.4 / 60)
     return m < 1 ? '~<1m' : `~${m}m`
-  }, [data?.total_slots])
+  }, [data?.global_total_slots])
 
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
@@ -779,7 +779,7 @@ export function EdgeScoreboardPage() {
           subtitle={
             data && freshness ? (
               <span className="text-sm text-muted-foreground">
-                {data.total_slots.toLocaleString()} slots ({slotDuration}) · updated {freshness}
+                {data.global_total_slots.toLocaleString()} slots ({slotDuration}) · updated {freshness}
               </span>
             ) : undefined
           }
