@@ -358,34 +358,99 @@ function SlotRaceNodeChart({
             const currentData = slotDataRef.current
             const currentN = currentData.length
             const cumulative = new Float64Array(currentN)
-            for (const feed of feeds) {
-              ctx.fillStyle = FEED_COLORS[feed] ?? '#6b7280'
-              for (let i = 0; i < currentN; i++) {
-                const val = currentData[i][feed] ?? 0
-                if (!val) continue
-                const prev = cumulative[i]
-                const x1 = Math.round(u.valToPos(i - 0.4, 'x', true))
-                const x2 = Math.round(u.valToPos(i + 0.4, 'x', true))
-                const y1 = Math.round(u.valToPos(prev + val, 'y', true))
-                const y2 = Math.round(u.valToPos(prev, 'y', true))
-                if (y2 > y1 && x2 > x1) ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
-                cumulative[i] += val
+
+            if (bucketSize !== undefined) {
+              // Smooth stacked area chart for bucketed mode.
+              // addSmooth draws a midpoint-quadratic-bezier curve through pts.
+              // move=true uses moveTo for the first point; false uses lineTo (to continue an existing path).
+              const addSmooth = (pts: Array<{ x: number; y: number }>, move: boolean) => {
+                if (pts.length === 0) return
+                if (move) ctx.moveTo(pts[0].x, pts[0].y)
+                else ctx.lineTo(pts[0].x, pts[0].y)
+                for (let i = 1; i < pts.length - 1; i++) {
+                  const mx = (pts[i].x + pts[i + 1].x) / 2
+                  const my = (pts[i].y + pts[i + 1].y) / 2
+                  ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my)
+                }
+                if (pts.length > 1) ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y)
               }
-            }
-            // Highlight hovered column
-            const hIdx = hoveredIdxRef.current
-            if (hIdx != null && hIdx >= 0 && hIdx < currentN) {
-              const x1 = Math.round(u.valToPos(hIdx - 0.4, 'x', true))
-              const x2 = Math.round(u.valToPos(hIdx + 0.4, 'x', true))
-              const y1 = Math.round(u.valToPos(100, 'y', true))
-              const y2 = Math.round(u.valToPos(0, 'y', true))
-              const w = x2 - x1
-              const h = y2 - y1
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
-              ctx.fillRect(x1, y1, w, h)
-              ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'
-              ctx.lineWidth = 1
-              ctx.strokeRect(x1 + 0.5, y1 + 0.5, w - 1, h - 1)
+
+              for (const feed of feeds) {
+                const color = FEED_COLORS[feed] ?? '#6b7280'
+                const topPts = Array.from({ length: currentN }, (_, i) => ({
+                  x: u.valToPos(i, 'x', true),
+                  y: u.valToPos(cumulative[i] + (currentData[i][feed] ?? 0), 'y', true),
+                }))
+                const botPts = Array.from({ length: currentN }, (_, i) => ({
+                  x: u.valToPos(i, 'x', true),
+                  y: u.valToPos(cumulative[i], 'y', true),
+                }))
+                const botPtsRev = [...botPts].reverse()
+
+                // Filled area: smooth top (L→R) then smooth bottom (R→L) in one path
+                ctx.fillStyle = color + 'bb'
+                ctx.beginPath()
+                addSmooth(topPts, true)
+                addSmooth(botPtsRev, false)
+                ctx.closePath()
+                ctx.fill()
+
+                // Top boundary line
+                ctx.strokeStyle = color
+                ctx.lineWidth = 1.5
+                ctx.lineJoin = 'round'
+                ctx.beginPath()
+                addSmooth(topPts, true)
+                ctx.stroke()
+
+                for (let i = 0; i < currentN; i++) cumulative[i] += currentData[i][feed] ?? 0
+              }
+              // Hover: vertical cursor line
+              const hIdx = hoveredIdxRef.current
+              if (hIdx != null && hIdx >= 0 && hIdx < currentN) {
+                const x = Math.round(u.valToPos(hIdx, 'x', true))
+                const y1 = Math.round(u.valToPos(100, 'y', true))
+                const y2 = Math.round(u.valToPos(0, 'y', true))
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
+                ctx.lineWidth = 1
+                ctx.setLineDash([3, 3])
+                ctx.beginPath()
+                ctx.moveTo(x + 0.5, y1)
+                ctx.lineTo(x + 0.5, y2)
+                ctx.stroke()
+                ctx.setLineDash([])
+              }
+            } else {
+              // Stacked bar chart for individual slot mode
+              for (const feed of feeds) {
+                ctx.fillStyle = FEED_COLORS[feed] ?? '#6b7280'
+                for (let i = 0; i < currentN; i++) {
+                  const val = currentData[i][feed] ?? 0
+                  if (!val) continue
+                  const prev = cumulative[i]
+                  const x1 = Math.round(u.valToPos(i - 0.4, 'x', true))
+                  const x2 = Math.round(u.valToPos(i + 0.4, 'x', true))
+                  const y1 = Math.round(u.valToPos(prev + val, 'y', true))
+                  const y2 = Math.round(u.valToPos(prev, 'y', true))
+                  if (y2 > y1 && x2 > x1) ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
+                  cumulative[i] += val
+                }
+              }
+              // Highlight hovered column
+              const hIdx = hoveredIdxRef.current
+              if (hIdx != null && hIdx >= 0 && hIdx < currentN) {
+                const x1 = Math.round(u.valToPos(hIdx - 0.4, 'x', true))
+                const x2 = Math.round(u.valToPos(hIdx + 0.4, 'x', true))
+                const y1 = Math.round(u.valToPos(100, 'y', true))
+                const y2 = Math.round(u.valToPos(0, 'y', true))
+                const w = x2 - x1
+                const h = y2 - y1
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
+                ctx.fillRect(x1, y1, w, h)
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'
+                ctx.lineWidth = 1
+                ctx.strokeRect(x1 + 0.5, y1 + 0.5, w - 1, h - 1)
+              }
             }
             ctx.restore()
           },
