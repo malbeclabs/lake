@@ -144,6 +144,7 @@ func (a *Activities) refresh(ctx context.Context, name, key string, fn func(cont
 	result, err := fn(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
+			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
 			return
 		}
 		a.Log.Error("cache refresh failed", "cache", name, "error", err)
