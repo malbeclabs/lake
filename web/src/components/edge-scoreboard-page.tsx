@@ -260,12 +260,12 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h3 className="text-sm font-medium">Win Rate by Node</h3>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-end gap-3 mt-1">
           {chartData.feeds.map((f) => (
-            <div key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+            <div key={f} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
               {FEED_LABELS[f] ?? f}
             </div>
           ))}
@@ -497,12 +497,12 @@ function RecentSlotsChart({
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h3 className="text-sm font-medium">Recent Edge Leader Slots — Win Rate per Slot</h3>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-end gap-3 mt-1">
           {feeds.map((f) => (
-            <div key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+            <div key={f} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
               {FEED_LABELS[f] ?? f}
             </div>
           ))}
@@ -735,7 +735,7 @@ export function EdgeScoreboardPage() {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
+      <div className="w-full px-4 sm:px-8 py-8">
         <PageHeader
           icon={Trophy}
           title="Edge Scoreboard"
