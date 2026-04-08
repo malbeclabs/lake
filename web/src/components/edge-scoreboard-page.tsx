@@ -16,13 +16,6 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
 
-const VALID_WINDOWS = ['1h', '24h', '7d', '30d', 'all'] as const
-type TimeWindow = (typeof VALID_WINDOWS)[number]
-
-function isValidWindow(v: string | null): v is TimeWindow {
-  return v !== null && (VALID_WINDOWS as readonly string[]).includes(v)
-}
-
 function formatPct(v: number): string {
   return `${v.toFixed(1)}%`
 }
@@ -614,8 +607,6 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 export function EdgeScoreboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const rawWindow = searchParams.get('window')
-  const window: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
   const leadersOnly = searchParams.get('leaders_only') !== 'false'
 
   const [showLoader, setShowLoader] = useState(false)
@@ -623,9 +614,9 @@ export function EdgeScoreboardPage() {
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['edge-scoreboard', window, leadersOnly],
-    queryFn: () => fetchEdgeScoreboard(window, leadersOnly),
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['edge-scoreboard', leadersOnly],
+    queryFn: () => fetchEdgeScoreboard('1h', leadersOnly),
     refetchInterval: 30_000,
     staleTime: 15_000,
     placeholderData: keepPreviousData,
@@ -640,7 +631,7 @@ export function EdgeScoreboardPage() {
     })
   }
 
-  // Aggregate global Edge stats across all nodes
+// Aggregate global Edge stats across all nodes
   const globalStats = useMemo(() => {
     if (!data?.nodes) return null
 
