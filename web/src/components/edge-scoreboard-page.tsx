@@ -964,6 +964,25 @@ export function EdgeScoreboardPage() {
     placeholderData: keepPreviousData,
   })
 
+  // Keep recent slots stable across window changes: only update when a newer
+  // response arrives (by generated_at), so switching 1h↔24h doesn't flip the chart.
+  type RecentSlotsSnapshot = {
+    generatedAt: string
+    slots: EdgeScoreboardSlotRace[]
+    leaders: Record<string, EdgeScoreboardLeader> | undefined
+  }
+  const latestRecentRef = useRef<RecentSlotsSnapshot | null>(null)
+  const [stableRecent, setStableRecent] = useState<RecentSlotsSnapshot | null>(null)
+  useEffect(() => {
+    if (!data?.generated_at || !data.recent_slots?.length) return
+    const prev = latestRecentRef.current
+    if (!prev || new Date(data.generated_at) > new Date(prev.generatedAt)) {
+      const snap: RecentSlotsSnapshot = { generatedAt: data.generated_at, slots: data.recent_slots, leaders: data.slot_leaders }
+      latestRecentRef.current = snap
+      setStableRecent(snap)
+    }
+  }, [data])
+
   const freshness = useMemo(() => {
     if (!data?.generated_at) return null
     const ageSec = Math.round((now - new Date(data.generated_at).getTime()) / 1000)
@@ -1206,7 +1225,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} currentSlot={data.current_slot} bucketed={bucketed} setBucketed={setBucketed} />
+            <RecentSlotsChart slots={stableRecent?.slots ?? data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} currentSlot={data.current_slot} bucketed={bucketed} setBucketed={setBucketed} />
           </div>
         )}
 
