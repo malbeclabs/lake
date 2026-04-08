@@ -298,7 +298,7 @@ function SlotRaceNodeChart({
   slotLeaders,
   bucketSize,
 }: {
-  slotData: Array<Record<string, number>>
+  slotData: Array<Record<string, number | null>>
   feeds: string[]
   slotLeaders?: Record<string, EdgeScoreboardLeader>
   bucketSize?: number
@@ -361,9 +361,9 @@ function SlotRaceNodeChart({
 
             if (bucketSize !== undefined) {
               // Smooth stacked area chart for bucketed mode.
-              // addSmooth draws a midpoint-quadratic-bezier curve through pts.
-              // move=true uses moveTo for the first point; false uses lineTo (to continue an existing path).
-              const addSmooth = (pts: Array<{ x: number; y: number }>, move: boolean) => {
+              // Null values are gaps — the path is split into continuous segments.
+              type Pt = { x: number; y: number }
+              const addSmooth = (pts: Pt[], move: boolean) => {
                 if (pts.length === 0) return
                 if (move) ctx.moveTo(pts[0].x, pts[0].y)
                 else ctx.lineTo(pts[0].x, pts[0].y)
@@ -377,33 +377,44 @@ function SlotRaceNodeChart({
 
               for (const feed of feeds) {
                 const color = FEED_COLORS[feed] ?? '#6b7280'
-                const topPts = Array.from({ length: currentN }, (_, i) => ({
-                  x: u.valToPos(i, 'x', true),
-                  y: u.valToPos(cumulative[i] + (currentData[i][feed] ?? 0), 'y', true),
-                }))
-                const botPts = Array.from({ length: currentN }, (_, i) => ({
-                  x: u.valToPos(i, 'x', true),
-                  y: u.valToPos(cumulative[i], 'y', true),
-                }))
-                const botPtsRev = [...botPts].reverse()
+                const topPts: (Pt | null)[] = Array.from({ length: currentN }, (_, i) => {
+                  const val = currentData[i][feed] as number | null
+                  if (!val) return null
+                  return { x: u.valToPos(i, 'x', true), y: u.valToPos(cumulative[i] + val, 'y', true) }
+                })
+                const botPts: (Pt | null)[] = Array.from({ length: currentN }, (_, i) => {
+                  const val = currentData[i][feed] as number | null
+                  if (!val) return null
+                  return { x: u.valToPos(i, 'x', true), y: u.valToPos(cumulative[i], 'y', true) }
+                })
 
-                // Filled area: smooth top (L→R) then smooth bottom (R→L) in one path
-                ctx.fillStyle = color + 'bb'
-                ctx.beginPath()
-                addSmooth(topPts, true)
-                addSmooth(botPtsRev, false)
-                ctx.closePath()
-                ctx.fill()
+                // Split into continuous segments at null gaps
+                const segments: Array<{ start: number; end: number }> = []
+                let segStart = -1
+                for (let i = 0; i <= currentN; i++) {
+                  const has = i < currentN && topPts[i] !== null
+                  if (has && segStart === -1) segStart = i
+                  if (!has && segStart !== -1) { segments.push({ start: segStart, end: i - 1 }); segStart = -1 }
+                }
 
-                // Top boundary line
-                ctx.strokeStyle = color
-                ctx.lineWidth = 1.5
-                ctx.lineJoin = 'round'
-                ctx.beginPath()
-                addSmooth(topPts, true)
-                ctx.stroke()
+                for (const { start, end } of segments) {
+                  const st = topPts.slice(start, end + 1) as Pt[]
+                  const sb = botPts.slice(start, end + 1) as Pt[]
+                  ctx.fillStyle = color + 'bb'
+                  ctx.beginPath()
+                  addSmooth(st, true)
+                  addSmooth([...sb].reverse(), false)
+                  ctx.closePath()
+                  ctx.fill()
+                  ctx.strokeStyle = color
+                  ctx.lineWidth = 1.5
+                  ctx.lineJoin = 'round'
+                  ctx.beginPath()
+                  addSmooth(st, true)
+                  ctx.stroke()
+                }
 
-                for (let i = 0; i < currentN; i++) cumulative[i] += currentData[i][feed] ?? 0
+                for (let i = 0; i < currentN; i++) cumulative[i] += (currentData[i][feed] as number | null) ?? 0
               }
               // Hover: vertical cursor line
               const hIdx = hoveredIdxRef.current
@@ -743,11 +754,12 @@ function RecentSlotsChart({
 
         const data = displayBucketStarts.map((slot, idx) => {
           const agg = displayData.get(slot)
-          const row: Record<string, number> = { idx, slot }
+          const total = agg?.bucketTotal ?? 0
+          const row: Record<string, number | null> = { idx, slot }
           for (const f of feeds) {
             const feedWon = agg?.feedWon.get(f) ?? 0
-            const total = agg?.bucketTotal ?? 1
-            row[f] = total > 0 ? Math.round((feedWon / total) * 1000) / 10 : 0
+            const pct = total > 0 ? Math.round((feedWon / total) * 1000) / 10 : 0
+            row[f] = pct > 0 ? pct : null
           }
           return row
         })
