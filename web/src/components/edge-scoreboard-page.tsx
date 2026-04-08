@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Info } from 'lucide-react'
+import { Trophy, Info, Loader2 } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import maplibregl from 'maplibre-gl'
@@ -14,7 +14,6 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
-import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { PageHeader } from './page-header'
 
 const VALID_WINDOWS = ['1h', '24h', '7d', '30d', 'all'] as const
@@ -44,26 +43,6 @@ function formatStake(sol: number): string {
   return `${sol.toFixed(0)} SOL`
 }
 
-function Skeleton({ className }: { className?: string }) {
-  return <div className={`animate-pulse bg-muted rounded ${className || ''}`} />
-}
-
-function ScoreboardSkeleton() {
-  return (
-    <div className="flex-1 overflow-auto">
-      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
-        <Skeleton className="h-8 w-64 mb-8" />
-        <Skeleton className="h-16 mb-6" />
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-24" />
-          ))}
-        </div>
-        <Skeleton className="h-[400px] rounded-lg" />
-      </div>
-    </div>
-  )
-}
 
 function SummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -724,10 +703,11 @@ export function EdgeScoreboardPage() {
     return [...data.nodes].sort((a, b) => a.host.localeCompare(b.host))
   }, [data?.nodes])
 
-  const showSkeleton = useDelayedLoading(isLoading)
-
-  if (isLoading && showSkeleton) return <ScoreboardSkeleton />
-  if (isLoading) return null
+  if (isLoading) return (
+    <div className="flex-1 flex items-center justify-center bg-background">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  )
 
   if (error) {
     return (
