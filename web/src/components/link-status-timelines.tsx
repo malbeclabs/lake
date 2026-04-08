@@ -98,7 +98,10 @@ function deriveLinkInfo(metrics: LinkMetricsResponse): DerivedLinkInfo {
   const issueReasons = new Set<string>()
   let worstHealth = 'healthy'
   let isDown = false
-  let drainStatus = ''
+  // Use the top-level current_drain_status from metadata, not historical bucket drain statuses.
+  // Historical buckets retain their drain_status from when they were written, so using them
+  // would incorrectly treat recently re-activated links as still drained.
+  const drainStatus = metrics.current_drain_status || ''
   let provisioning = false
 
   const healthPriority: Record<string, number> = {
@@ -118,9 +121,6 @@ function deriveLinkInfo(metrics: LinkMetricsResponse): DerivedLinkInfo {
       }
       if (b.status.isis_down) {
         issueReasons.add('missing_adjacency')
-      }
-      if (b.status.drain_status) {
-        drainStatus = b.status.drain_status
       }
       if (b.status.provisioning) {
         provisioning = true

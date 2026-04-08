@@ -5140,6 +5140,7 @@ export interface LinkMetricsResponse {
   committed_rtt_us: number
   committed_jitter_us: number
   bandwidth_bps: number
+  current_drain_status: string
   time_range: string
   bucket_seconds: number
   bucket_count: number
