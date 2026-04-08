@@ -241,7 +241,7 @@ function getSeatStatus(seat: ShredClientSeat, currentSolanaEpoch: number): SeatS
     return prepaidEpochs(seat) >= 1 ? 'pending' : 'expired'
   }
   const prepaid = prepaidEpochs(seat)
-  if (prepaid < 2) return 'expiring'
+  if (prepaid < 1) return 'expiring'
   return 'active'
 }
 
