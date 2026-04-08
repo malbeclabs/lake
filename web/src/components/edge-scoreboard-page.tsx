@@ -515,10 +515,12 @@ function RecentSlotsChart({
   slots,
   nodes,
   slotLeaders,
+  leadersOnly,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
   slotLeaders?: Record<string, EdgeScoreboardLeader>
+  leadersOnly?: boolean
 }) {
   const chartData = useMemo(() => {
     if (!slots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
@@ -594,7 +596,7 @@ function RecentSlotsChart({
         </div>
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
-        {slotCount} most recent Edge leader slots
+        {slotCount} most recent {leadersOnly ? 'Edge leader ' : ''}slots
       </div>
     </div>
   )
@@ -958,7 +960,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} />
           </div>
         )}
 
