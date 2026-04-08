@@ -672,18 +672,27 @@ function RecentSlotsChart({
           <h3 className="text-sm font-medium">
             {bucketed ? 'Win Rate by Slot Bucket' : 'Win Rate per Slot'}
           </h3>
-          <button
-            onClick={() => setBucketed(b => !b)}
-            className={cn(
-              'px-2 text-xs rounded-md border transition-colors inline-flex items-center justify-center h-[26px]',
-              bucketed
-                ? 'border-foreground/30 text-foreground bg-muted'
-                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-            )}
-            title={bucketed ? 'Showing bucketed averages. Click for individual slots.' : 'Showing individual slots. Click to bucket across the full time window.'}
-          >
-            <Sigma className="h-3.5 w-3.5" />
-          </button>
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
+            <button
+              onClick={() => setBucketed(false)}
+              className={cn(
+                'px-2.5 transition-colors',
+                !bucketed ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            >
+              Per Slot
+            </button>
+            <button
+              onClick={() => setBucketed(true)}
+              className={cn(
+                'px-2.5 transition-colors inline-flex items-center gap-1 border-l border-border',
+                bucketed ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            >
+              <Sigma className="h-3 w-3" />
+              Bucketed
+            </button>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3 mt-1">
           {feeds.map((f) => (
