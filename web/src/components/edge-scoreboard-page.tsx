@@ -197,19 +197,17 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       ) : (
         label
       )}
-      {show && (node.metro_name || node.name || node.gossip_ip || node.asn_org) && (
+      {show && (
         <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap text-left text-foreground">
           {node.metro_name && (
             <div className="font-medium mb-1">{node.metro_name}</div>
           )}
-          {node.name && node.name !== node.metro_name && (
-            <div className="text-muted-foreground mb-1">{node.name}</div>
-          )}
+          <div className="flex gap-2"><span className="text-muted-foreground">Host</span><span className="font-mono">{node.host}</span></div>
           {node.gossip_ip && (
             <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
           )}
           {node.asn_org && (
-            <div className="flex gap-2"><span className="text-muted-foreground">Host</span><span>{node.asn_org}</span></div>
+            <div className="flex gap-2"><span className="text-muted-foreground">Org</span><span>{node.asn_org}</span></div>
           )}
           {node.asn != null && node.asn > 0 && (
             <div className="flex gap-2"><span className="text-muted-foreground">ASN</span><span>AS{node.asn}</span></div>

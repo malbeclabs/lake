@@ -403,15 +403,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	//   B: metro coordinates (q3)
 	//   C: stake by metro (q4)
 	//   D: recent slot races (q5) + slot leader enrichment (q6a, q6b)
-	type nodeGeoInfo struct {
-		ip      string
-		pubkey  string
-		asn     int64
-		asnOrg  string
-		city    string
-		country string
-	}
-
 	var (
 		feedStats      map[feedKey]*EdgeScoreboardFeedStats
 		metros         = make(map[string]*metroInfo)
@@ -420,7 +411,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		slotBuckets    []EdgeScoreboardSlotBucket
 		slotBucketSize uint64
 		slotLeaders    = make(map[string]*EdgeScoreboardLeader)
-		nodeGeo        = make(map[string]*nodeGeoInfo)
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -991,76 +981,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		return nil
 	})
 
-	// Group F: host → IP → geoip enrichment (non-fatal)
-	g.Go(func() error {
-		// Get the most recent publisher_ip per host from publisher_shred_stats.
-		query8 := fmt.Sprintf(`
-			SELECT host, argMax(publisher_ip, event_ts) AS ip
-			FROM %s.publisher_shred_stats
-			WHERE host IN (%s)
-			GROUP BY host
-		`, shredderDB, nodeList)
-		rows8, err := a.envDB(gctx).Query(gctx, query8)
-		if err != nil {
-			log.Printf("EdgeScoreboard query8 (host IPs) error: %v", err)
-			return nil
-		}
-		defer rows8.Close()
-		ipToHost := make(map[string]string)
-		for rows8.Next() {
-			var host, ip string
-			if err := rows8.Scan(&host, &ip); err != nil {
-				log.Printf("EdgeScoreboard query8 scan error: %v", err)
-				break
-			}
-			if ip != "" {
-				ipToHost[ip] = host
-			}
-		}
-		if len(ipToHost) == 0 {
-			return nil
-		}
-
-		ips := make([]string, 0, len(ipToHost))
-		for ip := range ipToHost {
-			ips = append(ips, "'"+ip+"'")
-		}
-		ipList := strings.Join(ips, ",")
-
-		// Join geoip + gossip nodes for enrichment data.
-		query9 := fmt.Sprintf(`
-			SELECT
-				g.ip,
-				COALESCE(gn.pubkey, ''),
-				COALESCE(g.asn, 0),
-				COALESCE(g.asn_org, ''),
-				COALESCE(g.city, ''),
-				COALESCE(g.country, '')
-			FROM geoip_records_current g
-			LEFT JOIN solana_gossip_nodes_current gn ON gn.gossip_ip = g.ip
-			WHERE g.ip IN (%s)
-		`, ipList)
-		rows9, err := a.envDB(gctx).Query(gctx, query9)
-		if err != nil {
-			log.Printf("EdgeScoreboard query9 (geoip) error: %v", err)
-			return nil
-		}
-		defer rows9.Close()
-		localGeo := make(map[string]*nodeGeoInfo)
-		for rows9.Next() {
-			var gi nodeGeoInfo
-			if err := rows9.Scan(&gi.ip, &gi.pubkey, &gi.asn, &gi.asnOrg, &gi.city, &gi.country); err != nil {
-				log.Printf("EdgeScoreboard query9 scan error: %v", err)
-				break
-			}
-			if host, ok := ipToHost[gi.ip]; ok {
-				localGeo[host] = &gi
-			}
-		}
-		nodeGeo = localGeo
-		return nil
-	})
-
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -1092,15 +1012,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		if si, ok := stakeByMetro[loc]; ok {
 			node.StakeSol = si.stakeSol
 			node.Validators = si.validators
-		}
-
-		if gi, ok := nodeGeo[nodeID]; ok {
-			node.GossipPubkey = gi.pubkey
-			node.GossipIP = gi.ip
-			node.ASN = gi.asn
-			node.ASNOrg = gi.asnOrg
-			node.City = gi.city
-			node.Country = gi.country
 		}
 
 		// Attach feed stats
