@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -193,7 +194,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		lastUpdated time.Time
 	}
 	nodeSlots := make(map[string]*nodeSlotInfo)
-	var globalMaxEpoch, globalMaxSlot uint64
 
 	for rows1.Next() {
 		var nodeID string
@@ -209,15 +209,32 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			continue
 		}
 		nodeSlots[nodeID] = &info
-		if info.maxEpoch > globalMaxEpoch {
-			globalMaxEpoch = info.maxEpoch
-		}
-		if info.maxSlot > globalMaxSlot {
-			globalMaxSlot = info.maxSlot
-		}
 	}
 	if err := rows1.Err(); err != nil {
 		return nil, fmt.Errorf("query1 rows: %w", err)
+	}
+
+	// Compute trusted max slot/epoch using the median of per-node values as a reference
+	// to filter out corrupted outliers. A single bad row can cause max(slot) to be wildly
+	// inflated; using the median anchors us to the real current Solana slot range.
+	const slotsPerEpoch = 432_000
+	var globalMaxEpoch, globalMaxSlot uint64
+	if len(nodeSlots) > 0 {
+		maxSlots := make([]uint64, 0, len(nodeSlots))
+		for _, info := range nodeSlots {
+			maxSlots = append(maxSlots, info.maxSlot)
+		}
+		slices.Sort(maxSlots)
+		median := maxSlots[len(maxSlots)/2]
+		// Accept slots within 2 epochs of the median — generous enough for normal lag,
+		// tight enough to exclude corrupted values that are orders of magnitude larger.
+		upperBound := median + 2*slotsPerEpoch
+		for _, info := range nodeSlots {
+			if info.maxSlot <= upperBound && info.maxSlot > globalMaxSlot {
+				globalMaxSlot = info.maxSlot
+			}
+		}
+		globalMaxEpoch = globalMaxSlot / slotsPerEpoch
 	}
 
 	// If no data, return empty response
@@ -611,6 +628,12 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		var localSlots []EdgeScoreboardSlotRace
 		localLeaders := make(map[string]*EdgeScoreboardLeader)
 
+		// Slot window bounds derived from the trusted max slot computed in query1.
+		// Using Go-side literals instead of a max(slot) subquery makes the window
+		// resilient to corrupted outlier rows that could inflate max(slot).
+		slotWindowMin := globalMaxSlot - 10000
+		slotWindowMax := globalMaxSlot + 2*slotsPerEpoch
+
 		var query5 string
 		if leadersOnly {
 			query5 = fmt.Sprintf(`
@@ -621,7 +644,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					WHERE feed_type = 'shred' AND loser_feed = '' AND feed = 'dz'
 						AND slot IN (SELECT slot FROM dz_leader_slots)
 						AND host IN (%s)
-						AND slot >= (SELECT max(slot) - 10000 FROM %s.slot_feed_race_summary WHERE feed_type = 'shred' AND loser_feed = '')
+						AND slot BETWEEN %d AND %d
 				),
 				common_slots AS (
 					SELECT slot
@@ -644,7 +667,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
 					AND r.host IN (%s)
 				ORDER BY r.host, r.slot, r.feed
-			`, dzLeaderCTE, shredderDB, nodeList, shredderDB, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
+			`, dzLeaderCTE, shredderDB, nodeList, slotWindowMin, slotWindowMax, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH common_slots AS (
@@ -654,7 +677,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						FROM %s.slot_feed_race_summary
 						WHERE feed_type = 'shred' AND loser_feed = ''
 							AND host IN (%s)
-							AND slot >= (SELECT max(slot) - 10000 FROM %s.slot_feed_race_summary WHERE feed_type = 'shred' AND loser_feed = '')
+							AND slot BETWEEN %d AND %d
 					)
 					GROUP BY slot
 					HAVING count(DISTINCT host) >= %d
@@ -668,7 +691,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
 					AND r.host IN (%s)
 				ORDER BY r.host, r.slot, r.feed
-			`, shredderDB, nodeList, shredderDB, nodeCount, shredderDB, nodeList)
+			`, shredderDB, nodeList, slotWindowMin, slotWindowMax, nodeCount, shredderDB, nodeList)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
