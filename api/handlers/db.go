@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -190,12 +191,10 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		columns = append(columns, c)
 	}
 
-	// Fetch view definitions from mainnet database
+	// Fetch view names to label them in the output
 	start = time.Now()
 	viewRows, err := f.db.Query(ctx, `
-		SELECT
-			name,
-			as_select
+		SELECT name
 		FROM system.tables
 		WHERE database = $1
 		  AND engine = 'View'
@@ -210,14 +209,13 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	defer viewRows.Close()
 	metrics.RecordClickHouseQuery(duration, nil)
 
-	// Build view definitions map
-	viewDefs := make(map[string]string)
+	views := make(map[string]bool)
 	for viewRows.Next() {
-		var name, asSelect string
-		if err := viewRows.Scan(&name, &asSelect); err != nil {
+		var name string
+		if err := viewRows.Scan(&name); err != nil {
 			return "", err
 		}
-		viewDefs[name] = asSelect
+		views[name] = true
 	}
 
 	// Format schema as readable text
@@ -226,22 +224,16 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	for _, col := range columns {
 		if col.Table != currentTable {
 			if currentTable != "" {
-				if def, ok := viewDefs[currentTable]; ok {
-					sb.WriteString("  Definition: " + def + "\n")
-				}
 				sb.WriteString("\n")
 			}
 			currentTable = col.Table
-			if _, isView := viewDefs[col.Table]; isView {
+			if views[col.Table] {
 				sb.WriteString(col.Table + " (VIEW):\n")
 			} else {
 				sb.WriteString(col.Table + ":\n")
 			}
 		}
-		sb.WriteString("  - " + col.Name + " (" + col.Type + ")\n")
-	}
-	if def, ok := viewDefs[currentTable]; ok {
-		sb.WriteString("  Definition: " + def + "\n")
+		sb.WriteString("  - " + col.Name + " (" + compactType(col.Type) + ")\n")
 	}
 
 	result := sb.String()
@@ -253,4 +245,20 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 	schemaCacheMu.Unlock()
 
 	return result, nil
+}
+
+// compactType simplifies ClickHouse type names for readability.
+// e.g. "Nullable(String)" → "String", "LowCardinality(Nullable(String))" → "String",
+// "DateTime64(3)" → "DateTime64", "Array(Nullable(UInt64))" → "Array(UInt64)"
+var reTypeWrapper = regexp.MustCompile(`(?:Nullable|LowCardinality)\(([^()]*(?:\([^()]*\))?[^()]*)\)`)
+
+func compactType(t string) string {
+	// Strip Nullable and LowCardinality wrappers (may be nested)
+	for reTypeWrapper.MatchString(t) {
+		t = reTypeWrapper.ReplaceAllString(t, "$1")
+	}
+	// Remove precision from DateTime64(N)
+	t = strings.Replace(t, "DateTime64(3)", "DateTime64", 1)
+	t = strings.Replace(t, "DateTime64(9)", "DateTime64", 1)
+	return t
 }
