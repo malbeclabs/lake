@@ -41,7 +41,8 @@ type EdgeScoreboardNode struct {
 	StakeSol      float64                             `json:"stake_sol"`
 	Validators    uint64                              `json:"validators"`
 	TotalSlots    uint64                              `json:"total_slots"`
-	SlotsObserved uint64                              `json:"slots_observed"` // DZ-participated slots (or DZ-leader slots in leaders_only mode)
+	SlotsObserved uint64                              `json:"slots_observed"`  // view-dependent: DZ-leader slots in leaders_only mode, DZ+dz_rebop in all-slots mode
+	DZLeaderSlots uint64                              `json:"dz_leader_slots"` // always feed='dz' leader slots — used for Edge Leaders Completeness
 	LastUpdated   time.Time                           `json:"last_updated"`
 	Name          string                              `json:"name,omitempty"`
 	GossipPubkey  string                              `json:"gossip_pubkey,omitempty"`
@@ -156,8 +157,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 
 	// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
-	// dz_slots counts slots where dz or dz_rebop participated (all Edge feeds).
-	// In leaders-only mode this value is overridden by query1b with the DZ-leader subset.
+	// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
+	// all-slots mode. In leaders-only mode, query1b overrides this with DZ-leader slots only.
 	// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes).
 	query1 := fmt.Sprintf(`
 		SELECT
@@ -229,15 +230,17 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	// DZ-leader slot filter: use publisher_shred_stats.is_scheduled_leader to identify
 	// slots where the leader was publishing shreds via DZ. This is the authoritative
 	// source — it comes from the shredder's own observation of DZ multicast traffic.
-	// When leadersOnly is false, we skip this filter and include all slots.
 	dzLeaderCTE := fmt.Sprintf(`dz_leader_slots AS (
 		SELECT DISTINCT slot
 		FROM %s.publisher_shred_stats
 		WHERE is_scheduled_leader = true %s
 	)`, shredderDB, timeFilter)
 
-	if leadersOnly {
-		// Query 1b: DZ-leader slot counts per node (overrides dz_slots from query 1)
+	// Query 1b: DZ-leader slot counts per node — always run regardless of leadersOnly.
+	// Populates dzLeaderSlots (used for Edge Leaders Completeness, always consistent).
+	// In leaders-only mode, also overrides info.dzSlots so SlotsObserved reflects leader slots.
+	dzLeaderSlotsByNode := make(map[string]uint64)
+	{
 		query1b := fmt.Sprintf(`
 			WITH %s
 			SELECT host, uniqExact(slot) AS dz_leader_slots
@@ -257,22 +260,28 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 		defer rows1b.Close()
 
-		// Reset dz_slots and update with DZ-leader counts
-		for _, info := range nodeSlots {
-			info.dzSlots = 0
-		}
 		for rows1b.Next() {
 			var nodeID string
-			var dzLeaderSlots uint64
-			if err := rows1b.Scan(&nodeID, &dzLeaderSlots); err != nil {
+			var count uint64
+			if err := rows1b.Scan(&nodeID, &count); err != nil {
 				return nil, fmt.Errorf("query1b scan: %w", err)
 			}
-			if info, ok := nodeSlots[nodeID]; ok {
-				info.dzSlots = dzLeaderSlots
-			}
+			dzLeaderSlotsByNode[nodeID] = count
 		}
 		if err := rows1b.Err(); err != nil {
 			return nil, fmt.Errorf("query1b rows: %w", err)
+		}
+
+		// In leaders-only mode, SlotsObserved = DZ-leader slots (override query1 value).
+		if leadersOnly {
+			for _, info := range nodeSlots {
+				info.dzSlots = 0
+			}
+			for nodeID, count := range dzLeaderSlotsByNode {
+				if info, ok := nodeSlots[nodeID]; ok {
+					info.dzSlots = count
+				}
+			}
 		}
 	}
 
@@ -806,6 +815,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				node.Feeds[key.feed] = fs
 			}
 		}
+
+		node.DZLeaderSlots = dzLeaderSlotsByNode[nodeID]
 
 		nodes = append(nodes, node)
 	}

@@ -4984,6 +4984,7 @@ export interface EdgeScoreboardNode {
   validators: number
   total_slots: number
   slots_observed: number
+  dz_leader_slots: number
   last_updated: string
   name?: string
   gossip_pubkey?: string

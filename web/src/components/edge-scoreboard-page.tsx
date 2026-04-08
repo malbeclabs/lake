@@ -618,6 +618,8 @@ export function EdgeScoreboardPage() {
   const window: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
   const leadersOnly = searchParams.get('leaders_only') !== 'false'
 
+  const [showLoader, setShowLoader] = useState(false)
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['edge-scoreboard', window, leadersOnly],
     queryFn: () => fetchEdgeScoreboard(window, leadersOnly),
@@ -690,7 +692,7 @@ export function EdgeScoreboardPage() {
       totalSlots,
       avgCompleteness:
         data.nodes.length > 0
-          ? data.nodes.reduce((sum, n) => sum + (n.total_slots > 0 ? n.slots_observed / n.total_slots : 0), 0) /
+          ? data.nodes.reduce((sum, n) => sum + (n.total_slots > 0 ? n.dz_leader_slots / n.total_slots : 0), 0) /
             data.nodes.length *
             100
           : 0,
@@ -703,7 +705,16 @@ export function EdgeScoreboardPage() {
     return [...data.nodes].sort((a, b) => a.host.localeCompare(b.host))
   }, [data?.nodes])
 
-  if (isLoading) return (
+  useEffect(() => {
+    if (!isLoading) {
+      setShowLoader(false)
+      return
+    }
+    const t = setTimeout(() => setShowLoader(true), 200)
+    return () => clearTimeout(t)
+  }, [isLoading])
+
+  if (isLoading && showLoader) return (
     <div className="flex-1 flex items-center justify-center bg-background">
       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
     </div>
@@ -851,7 +862,7 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
-  const completeness = node.total_slots > 0 ? (node.slots_observed / node.total_slots) * 100 : 0
+  const completeness = node.total_slots > 0 ? (node.dz_leader_slots / node.total_slots) * 100 : 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }
   const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
