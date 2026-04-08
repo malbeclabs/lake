@@ -400,7 +400,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		validNodeIDs = append(validNodeIDs, "'"+id+"'")
 	}
 	nodeList := strings.Join(validNodeIDs, ",")
-	nodeCount := len(nodeSlots)
+
 	slotWindowMax := globalMaxSlot + 2*slotsPerEpoch
 
 	type metroInfo struct {
@@ -703,16 +703,26 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			AND slot BETWEEN %d AND %d
 		)`, shredderDB, slotWindowMin, slotWindowMax)
 
+		// Recent slots queries use slot-range bounds only (not timeFilter/nodeList/nodeCount),
+		// so the chart always shows the same 100 slots regardless of the selected time window.
 		var query5 string
 		if leadersOnly {
 			query5 = fmt.Sprintf(`
 				WITH %s,
+				active_hosts AS (
+					SELECT host
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = ''
+						AND slot BETWEEN %d AND %d
+					GROUP BY host
+					HAVING uniqExact(feed) >= 2
+				),
 				dz_slots AS (
 					SELECT DISTINCT slot
 					FROM %s.slot_feed_race_summary
 					WHERE feed_type = 'shred' AND loser_feed = '' AND feed = 'dz'
 						AND slot IN (SELECT slot FROM dz_leader_slots)
-						AND host IN (%s)
+						AND host IN (SELECT host FROM active_hosts)
 						AND slot BETWEEN %d AND %d
 				),
 				common_slots AS (
@@ -721,11 +731,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						SELECT DISTINCT host, slot
 						FROM %s.slot_feed_race_summary
 						WHERE feed_type = 'shred' AND loser_feed = ''
-							AND host IN (%s)
+							AND host IN (SELECT host FROM active_hosts)
 							AND slot IN (SELECT slot FROM dz_slots)
 					)
 					GROUP BY slot
-					HAVING count(DISTINCT host) >= %d
+					HAVING count(DISTINCT host) >= (SELECT count() FROM active_hosts)
 					ORDER BY slot DESC
 					LIMIT 100
 				)
@@ -734,22 +744,30 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
 				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
-					AND r.host IN (%s)
+					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, dzLeaderCTEForRecent, shredderDB, nodeList, slotWindowMin, slotWindowMax, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
+			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, shredderDB, shredderDB)
 		} else {
 			query5 = fmt.Sprintf(`
-				WITH common_slots AS (
+				WITH active_hosts AS (
+					SELECT host
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = ''
+						AND slot BETWEEN %d AND %d
+					GROUP BY host
+					HAVING uniqExact(feed) >= 2
+				),
+				common_slots AS (
 					SELECT slot
 					FROM (
 						SELECT DISTINCT host, slot
 						FROM %s.slot_feed_race_summary
 						WHERE feed_type = 'shred' AND loser_feed = ''
-							AND host IN (%s)
+							AND host IN (SELECT host FROM active_hosts)
 							AND slot BETWEEN %d AND %d
 					)
 					GROUP BY slot
-					HAVING count(DISTINCT host) >= %d
+					HAVING count(DISTINCT host) >= (SELECT count() FROM active_hosts)
 					ORDER BY slot DESC
 					LIMIT 100
 				)
@@ -758,9 +776,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
 				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
-					AND r.host IN (%s)
+					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, shredderDB, nodeList, slotWindowMin, slotWindowMax, nodeCount, shredderDB, nodeList)
+			`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, shredderDB)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
