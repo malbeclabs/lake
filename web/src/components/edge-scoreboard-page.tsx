@@ -398,9 +398,21 @@ function SlotRaceNodeChart({
                   if (!has && segStart !== -1) { segments.push({ start: segStart, end: i - 1 }); segStart = -1 }
                 }
 
+                const leftEdgeX = u.valToPos(-0.5, 'x', true)
+                const rightEdgeX = u.valToPos(currentN - 0.5, 'x', true)
+
                 for (const { start, end } of segments) {
-                  const st = topPts.slice(start, end + 1) as Pt[]
-                  const sb = botPts.slice(start, end + 1) as Pt[]
+                  let st = topPts.slice(start, end + 1) as Pt[]
+                  let sb = botPts.slice(start, end + 1) as Pt[]
+                  // Extend first/last segments to chart edges so there's no inset gap
+                  if (start === 0) {
+                    st = [{ x: leftEdgeX, y: st[0].y }, ...st]
+                    sb = [{ x: leftEdgeX, y: sb[0].y }, ...sb]
+                  }
+                  if (end === currentN - 1) {
+                    st = [...st, { x: rightEdgeX, y: st[st.length - 1].y }]
+                    sb = [...sb, { x: rightEdgeX, y: sb[sb.length - 1].y }]
+                  }
                   ctx.fillStyle = color + 'bb'
                   ctx.beginPath()
                   addSmooth(st, true)
@@ -513,8 +525,9 @@ function SlotRaceNodeChart({
 
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
 
-    // One slot's pixel width — new data starts offset by this much to the right
-    const slotPx = plot.valToPos(1, 'x', true) - plot.valToPos(0, 'x', true)
+    // Slide-in offset: use one slot-width, but cap at 4px so bucketed mode
+    // (fewer, wider buckets) doesn't animate a large gap on the left.
+    const slotPx = Math.min(plot.valToPos(1, 'x', true) - plot.valToPos(0, 'x', true), 4)
     const duration = 350
     const startTime = performance.now()
     animOffsetRef.current = slotPx
