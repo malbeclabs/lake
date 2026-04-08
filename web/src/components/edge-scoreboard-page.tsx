@@ -301,12 +301,19 @@ function SlotRaceNodeChart({
   slotLeadersRef.current = slotLeaders
   const setHoverRef = useRef<((idx: number | null, vx: number, vy: number) => void) | null>(null)
   const hoveredIdxRef = useRef<number | null>(null)
+  const animOffsetRef = useRef(0)
+  const rafRef = useRef<number | null>(null)
+  const isFirstDataRef = useRef(true)
 
   const [hover, setHover] = useState<{ idx: number; vx: number; vy: number } | null>(null)
   setHoverRef.current = (idx, vx, vy) => setHover(idx == null ? null : { idx, vx, vy })
 
+  // Re-initialize uPlot only when slot count or feeds change (not on every data refresh).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!containerRef.current || !slotData.length) return
+
+    isFirstDataRef.current = true
 
     const n = slotData.length
     const height = NODE_ROW_HEIGHT - 4
@@ -332,11 +339,19 @@ function SlotRaceNodeChart({
           (u) => {
             const ctx = u.ctx
             ctx.save()
-            const cumulative = new Float64Array(n)
+            // Clip to the plot area so animated bars don't overflow
+            ctx.beginPath()
+            ctx.rect(u.bbox.left, u.bbox.top, u.bbox.width, u.bbox.height)
+            ctx.clip()
+            // Apply slide-in offset during data refresh animation
+            ctx.translate(animOffsetRef.current, 0)
+            const currentData = slotDataRef.current
+            const currentN = currentData.length
+            const cumulative = new Float64Array(currentN)
             for (const feed of feeds) {
               ctx.fillStyle = FEED_COLORS[feed] ?? '#6b7280'
-              for (let i = 0; i < n; i++) {
-                const val = slotDataRef.current[i][feed] ?? 0
+              for (let i = 0; i < currentN; i++) {
+                const val = currentData[i][feed] ?? 0
                 if (!val) continue
                 const prev = cumulative[i]
                 const x1 = Math.round(u.valToPos(i - 0.4, 'x', true))
@@ -349,7 +364,7 @@ function SlotRaceNodeChart({
             }
             // Highlight hovered column
             const hIdx = hoveredIdxRef.current
-            if (hIdx != null && hIdx >= 0 && hIdx < n) {
+            if (hIdx != null && hIdx >= 0 && hIdx < currentN) {
               const x1 = Math.round(u.valToPos(hIdx - 0.4, 'x', true))
               const x2 = Math.round(u.valToPos(hIdx + 0.4, 'x', true))
               const y1 = Math.round(u.valToPos(100, 'y', true))
@@ -398,7 +413,46 @@ function SlotRaceNodeChart({
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [slotData, feeds])
+  }, [slotData.length, feeds])
+
+  // Animate bars sliding in from the right on data refresh.
+  useEffect(() => {
+    if (isFirstDataRef.current) {
+      isFirstDataRef.current = false
+      return
+    }
+    const plot = plotRef.current
+    if (!plot || !slotData.length) return
+
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+
+    // One slot's pixel width — new data starts offset by this much to the right
+    const slotPx = plot.valToPos(1, 'x', true) - plot.valToPos(0, 'x', true)
+    const duration = 350
+    const startTime = performance.now()
+    animOffsetRef.current = slotPx
+
+    const tick = (now: number) => {
+      const t = Math.min((now - startTime) / duration, 1)
+      const eased = 1 - (1 - t) ** 3  // cubic ease-out
+      animOffsetRef.current = slotPx * (1 - eased)
+      plot.redraw(false)
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick)
+      } else {
+        animOffsetRef.current = 0
+        rafRef.current = null
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick)
+
+    return () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+    }
+  }, [slotData])
 
   const hoveredSlot = hover != null ? slotData[hover.idx] : null
   const hoveredLeader = hoveredSlot ? slotLeadersRef.current?.[String(hoveredSlot['slot'])] : undefined
