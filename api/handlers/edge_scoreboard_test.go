@@ -179,12 +179,11 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(800), resp.CurrentEpoch)
 	assert.Len(t, resp.Nodes, 2)
 
-	// Each node has 2 total slots (100 and 200) and 1 DZ leader slot (100).
-	// There is 1 global DZ leader slot. Both nodes observe it => 100% completeness each => avg 100%.
+	// 2 unique slots total (100, 200), 1 is a DZ-leader slot => completeness = 50%.
 	assert.Equal(t, uint64(4), resp.TotalSlots)
 	assert.Equal(t, uint64(2), resp.DZSlots)
 	assert.Equal(t, uint64(1), resp.TotalDZLeaderSlots)
-	assert.Equal(t, 100.0, resp.CompletenessPct)
+	assert.InDelta(t, 50.0, resp.CompletenessPct, 0.01)
 
 	// Find nodes by ID
 	nodeMap := make(map[string]handlers.EdgeScoreboardNode)

@@ -555,9 +555,8 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
       center: [0, 30],
       zoom: 1,
       attributionControl: false,
+      interactive: false,
     })
-
-    map.addControl(new maplibregl.NavigationControl(), 'top-right')
 
     // Fit map to show all node markers
     const bounds = new maplibregl.LngLatBounds()
@@ -687,12 +686,7 @@ export function EdgeScoreboardPage() {
       winRate: dzTotalShreds > 0 ? dzShredsWon / dzTotalShreds : 0,
       leads,
       totalSlots,
-      avgCompleteness:
-        data.nodes.length > 0 && data.total_dz_leader_slots > 0
-          ? data.nodes.reduce((sum, n) => sum + n.dz_leader_slots / data.total_dz_leader_slots, 0) /
-            data.nodes.length *
-            100
-          : 0,
+      avgCompleteness: data.completeness_pct,
     }
   }, [data?.nodes])
 

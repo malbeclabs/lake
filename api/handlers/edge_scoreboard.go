@@ -286,14 +286,20 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 	}
 
-	// Query 1c: total DZ-leader slots in the window (global, not per-node).
-	// Used as the denominator for per-node completeness: dz_leader_slots / total_dz_leader_slots.
-	var totalDZLeaderSlots uint64
+	// Query 1c: DZ-leader slot count and total slot count from slot_feed_race_summary.
+	// feed='dz' rows only appear when the leader is a DZ publisher, so uniqExactIf(slot, feed='dz')
+	// gives DZ-leader slots. Both values come from the same table/window so the ratio is consistent.
+	// completeness_pct = dz_leader_slots / total_slots — fraction of slots with a DZ leader.
+	var totalDZLeaderSlots, globalTotalSlots uint64
 	{
 		query1c := fmt.Sprintf(`
 			WITH %s
-			SELECT uniqExact(slot) FROM dz_leader_slots
-		`, dzLeaderCTE)
+			SELECT
+				uniqExactIf(slot, feed = 'dz' AND slot IN (SELECT slot FROM dz_leader_slots)) AS dz_leader_slots,
+				uniqExact(slot) AS total_slots
+			FROM %s.slot_feed_race_summary
+			WHERE feed_type = 'shred' AND loser_feed = '' %s
+		`, dzLeaderCTE, shredderDB, timeFilter)
 		start = time.Now()
 		rows1c, err := a.envDB(ctx).Query(ctx, query1c)
 		duration = time.Since(start)
@@ -302,7 +308,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			return nil, fmt.Errorf("query1c: %w", err)
 		}
 		if rows1c.Next() {
-			if err := rows1c.Scan(&totalDZLeaderSlots); err != nil {
+			if err := rows1c.Scan(&totalDZLeaderSlots, &globalTotalSlots); err != nil {
 				rows1c.Close()
 				return nil, fmt.Errorf("query1c scan: %w", err)
 			}
@@ -853,15 +859,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		return nodes[i].Host < nodes[j].Host
 	})
 
-	// completeness_pct: average per-node fraction of global DZ-leader slots observed.
-	// Uses totalDZLeaderSlots as the denominator so nodes missing slots show < 100%.
+	// completeness_pct: fraction of all slots where the leader was publishing via DZ.
 	var completenessPct float64
-	if totalDZLeaderSlots > 0 && len(nodes) > 0 {
-		var sumPct float64
-		for i := range nodes {
-			sumPct += float64(nodes[i].DZLeaderSlots) / float64(totalDZLeaderSlots) * 100
-		}
-		completenessPct = sumPct / float64(len(nodes))
+	if globalTotalSlots > 0 {
+		completenessPct = float64(totalDZLeaderSlots) / float64(globalTotalSlots) * 100
 	}
 
 	return &EdgeScoreboardResponse{
