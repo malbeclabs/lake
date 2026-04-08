@@ -631,7 +631,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 export function EdgeScoreboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const leadersOnly = searchParams.get('leaders_only') !== 'false'
+  const leadersOnly = searchParams.get('leaders_only') === 'true'
 
   const [showLoader, setShowLoader] = useState(false)
   const [showShimmer, setShowShimmer] = useState(false)
@@ -669,8 +669,8 @@ export function EdgeScoreboardPage() {
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (v) p.delete('leaders_only')
-      else p.set('leaders_only', 'false')
+      if (v) p.set('leaders_only', 'true')
+      else p.delete('leaders_only')
       return p
     })
   }
@@ -812,8 +812,8 @@ export function EdgeScoreboardPage() {
             <div className="flex items-center gap-3">
               <div className="flex items-center rounded-md border border-border text-sm">
                 {([
-                  [true, 'Edge Leaders'] as const,
                   [false, 'All Slots'] as const,
+                  [true, 'Edge Leaders'] as const,
                 ]).map(([v, label]) => (
                   <button
                     key={String(v)}
