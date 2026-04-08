@@ -183,7 +183,7 @@ export function BurstinessPanel() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [minBps, setMinBps] = useState(10_000_000)
   const [minPeakBps, setMinPeakBps] = useState(0)
-  const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'other'>('link')
+  const [activeTab, setActiveTab] = useState<'link' | 'tunnel' | 'cyoa' | 'other'>('link')
   const [page, setPage] = useState(0)
 
   const isAllMode = state.intfType === 'all'
@@ -237,6 +237,15 @@ export function BurstinessPanel() {
     enabled: isAllMode,
   })
 
+  const cyoaQuery = useQuery({
+    queryKey: ['dashboard-burstiness', { ...baseParams, intf_type: 'cyoa' }],
+    queryFn: () => fetchDashboardBurstiness({ ...baseParams, intf_type: 'cyoa' }),
+    staleTime: 30_000,
+    refetchInterval: state.refetchInterval,
+    placeholderData: keepPreviousData,
+    enabled: isAllMode,
+  })
+
   const otherQuery = useQuery({
     queryKey: ['dashboard-burstiness', { ...baseParams, intf_type: 'other' }],
     queryFn: () => fetchDashboardBurstiness({ ...baseParams, intf_type: 'other' }),
@@ -255,11 +264,12 @@ export function BurstinessPanel() {
       return [
         ...(linkQuery.data?.entities ?? []),
         ...(tunnelQuery.data?.entities ?? []),
+        ...(cyoaQuery.data?.entities ?? []),
         ...(otherQuery.data?.entities ?? []),
       ]
     }
     return singleQuery.data?.entities ?? []
-  }, [isAllMode, linkQuery.data, tunnelQuery.data, otherQuery.data, singleQuery.data])
+  }, [isAllMode, linkQuery.data, tunnelQuery.data, cyoaQuery.data, otherQuery.data, singleQuery.data])
 
   useEffect(() => {
     if (!selectedEntity || state.referenceLines.size > 0) return
@@ -276,7 +286,7 @@ export function BurstinessPanel() {
   }, [selectedEntity, allEntities, state.referenceLines.size, state.setReferenceLines])
 
   const isLoading = isAllMode
-    ? linkQuery.isLoading || tunnelQuery.isLoading || otherQuery.isLoading
+    ? linkQuery.isLoading || tunnelQuery.isLoading || cyoaQuery.isLoading || otherQuery.isLoading
     : singleQuery.isLoading
 
   const renderControls = (total: number) => {
@@ -390,6 +400,7 @@ export function BurstinessPanel() {
   const tabs = [
     { key: 'link' as const, label: 'Links', query: linkQuery },
     { key: 'tunnel' as const, label: 'User Tunnels', query: tunnelQuery },
+    { key: 'cyoa' as const, label: 'CYOA', query: cyoaQuery },
     { key: 'other' as const, label: 'Other', query: otherQuery },
   ]
 
