@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, Sigma } from 'lucide-react'
+import { Trophy, Loader2 } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import maplibregl from 'maplibre-gl'
@@ -685,11 +685,10 @@ function RecentSlotsChart({
             <button
               onClick={() => setBucketed(true)}
               className={cn(
-                'px-2.5 transition-colors inline-flex items-center gap-1 border-l border-border',
+                'px-2.5 transition-colors border-l border-border',
                 bucketed ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
-              <Sigma className="h-3 w-3" />
               Bucketed
             </button>
           </div>
