@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
 import { Trophy, Info } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import uPlot from 'uplot'
+import 'uplot/dist/uPlot.min.css'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
@@ -76,15 +77,19 @@ function SummaryCard({ label, value, sub }: { label: string; value: string; sub?
 
 const FEED_COLORS: Record<string, string> = {
   dz: '#22c55e',
+  dz_rebop: '#14b8a6',
   jito: '#3b82f6',
   turbine: '#f59e0b',
+  provider_one: '#ef4444',
   pipe: '#a855f7',
 }
 
 const FEED_LABELS: Record<string, string> = {
-  dz: 'Edge',
+  dz: 'Edge Leaders',
+  dz_rebop: 'Edge Retransmits',
   jito: 'Jito Shredstream',
   turbine: 'Turbine',
+  provider_one: 'Provider One',
   pipe: 'Pipe',
 }
 
@@ -114,113 +119,104 @@ function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
   )
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function WinRateTooltip({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null
+function WinRateBar({
+  node,
+  feeds,
+  data,
+}: {
+  node: EdgeScoreboardNode
+  feeds: string[]
+  data: Record<string, string | number>
+}) {
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
+
   return (
-    <div className="bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg">
-      <div className="text-[#e5e5e5] font-medium mb-1.5">{label}</div>
-      <table className="border-spacing-0">
-        <thead>
-          <tr className="text-[#777]">
-            <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
-            <th className="pr-3 py-0.5 text-right font-normal">Win %</th>
-            <th className="py-0.5 text-right font-normal">Shreds</th>
-          </tr>
-        </thead>
-        <tbody>
-          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          {payload.map((entry: any) => {
-            const feed = entry.dataKey ?? ''
-            const shreds = entry.payload?.[`${feed}_shreds`] ?? 0
-            return (
-              <tr key={feed}>
-                <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[feed] ?? '#6b7280' }}>
-                  {FEED_LABELS[feed] ?? feed}
-                </td>
-                <td className="pr-3 py-0.5 text-right font-mono text-[#e5e5e5]">
-                  {Number(entry.value ?? 0).toFixed(1)}%
-                </td>
-                <td className="py-0.5 text-right font-mono text-[#999]">
-                  {Number(shreds).toLocaleString()}
-                </td>
+    <div
+      className="relative flex-1 h-14"
+      onMouseLeave={() => setMousePos(null)}
+      onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
+    >
+      <div className="flex h-full rounded overflow-hidden">
+        {feeds.map((f) => {
+          const pct = Number(data[f] ?? 0)
+          if (pct < 0.1) return null
+          const raw = Number(data[`${f}_raw`] ?? 0)
+          return (
+            <div
+              key={f}
+              style={{ width: `${pct}%`, backgroundColor: FEED_COLORS[f] ?? '#6b7280', minWidth: 0 }}
+              className="flex items-center justify-center overflow-hidden"
+            >
+              {(f === 'dz' || f === 'dz_rebop') && raw >= 2 && (
+                <span className="text-white text-xs font-semibold whitespace-nowrap select-none">
+                  {raw.toFixed(1)}%
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {mousePos && (
+        <div
+          className="fixed z-20 bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none"
+          style={{ left: mousePos.x + 10, top: mousePos.y - 60 }}
+        >
+          <div className="text-[#e5e5e5] font-medium mb-1.5">{node.location}</div>
+          <table className="border-spacing-0">
+            <thead>
+              <tr className="text-[#777]">
+                <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
+                <th className="pr-3 py-0.5 text-right font-normal">Win %</th>
+                <th className="py-0.5 text-right font-normal">Shreds</th>
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody>
+              {feeds.map((f) => {
+                const raw = Number(data[`${f}_raw`] ?? 0)
+                const shreds = Number(data[`${f}_shreds`] ?? 0)
+                return (
+                  <tr key={f}>
+                    <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[f] ?? '#6b7280' }}>
+                      {FEED_LABELS[f] ?? f}
+                    </td>
+                    <td className="pr-3 py-0.5 text-right font-mono text-[#e5e5e5]">{raw.toFixed(1)}%</td>
+                    <td className="py-0.5 text-right font-mono text-[#999]">{shreds.toLocaleString()}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
-}
-
-function makeSlotRaceTooltip(slotLeaders?: Record<string, EdgeScoreboardLeader>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return function SlotRaceTooltip({ active, payload }: any) {
-    if (!active || !payload?.length) return null
-    const slot = payload[0]?.payload?.slot
-    const leader = slot != null ? slotLeaders?.[String(slot)] : undefined
-    return (
-      <div className="bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg">
-        {slot != null && <div className="text-[#e5e5e5] font-medium mb-1.5 font-mono">Slot {slot.toLocaleString()}</div>}
-        {leader && (
-          <div className="mb-1.5 text-[#999] border-b border-[#333] pb-1.5">
-            <div className="text-[#e5e5e5]">{leader.name || leader.pubkey.slice(0, 8) + '...'}</div>
-            {leader.ip && <div><span className="text-[#666]">IP </span><span className="font-mono">{leader.ip}</span></div>}
-            {leader.asn_org && <div><span className="text-[#666]">Host </span>{leader.asn_org}</div>}
-            {leader.city && <div><span className="text-[#666]">Loc </span>{leader.city}{leader.country ? `, ${leader.country}` : ''}</div>}
-          </div>
-        )}
-        <table className="border-spacing-0">
-          <thead>
-            <tr className="text-[#777]">
-              <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
-              <th className="py-0.5 text-right font-normal">Win %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-            {payload.map((entry: any) => {
-              const feed = entry.dataKey ?? ''
-              return (
-                <tr key={feed}>
-                  <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[feed] ?? '#6b7280' }}>
-                    {FEED_LABELS[feed] ?? feed}
-                  </td>
-                  <td className="py-0.5 text-right font-mono text-[#e5e5e5]">
-                    {(entry.value ?? 0).toFixed(1)}%
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    )
-  }
 }
 
 /** Height per node row shared between Win Rate and Recent Slots charts. */
 const NODE_ROW_HEIGHT = 72
 
-function NodeLabel({ node }: { node: EdgeScoreboardNode }) {
+function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const [show, setShow] = useState(false)
   const hasGossip = !!node.gossip_pubkey
 
   return (
     <div
-      className="relative w-12 shrink-0 text-xs text-muted-foreground text-right pr-2 cursor-pointer"
+      className="relative w-14 shrink-0 text-xs text-muted-foreground text-right pr-2 cursor-pointer"
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => setShow(false)}
     >
       {hasGossip ? (
         <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-accent transition-colors">
-          {node.location}
+          {label}
         </Link>
       ) : (
-        node.location
+        label
       )}
-      {show && (node.gossip_ip || node.asn_org) && (
+      {show && (node.name || node.gossip_ip || node.asn_org) && (
         <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap text-left text-foreground">
+          {node.name && (
+            <div className="font-medium mb-1">{node.name}</div>
+          )}
           {node.gossip_ip && (
             <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
           )}
@@ -242,6 +238,16 @@ function NodeLabel({ node }: { node: EdgeScoreboardNode }) {
   )
 }
 
+// nodeDisplayLabel returns a disambiguated label for a node. When multiple nodes
+// share the same metro location (e.g. "ams-mn-bm1" and "ams-mn-bm2" both map to "AMS"),
+// appends the trailing index from the host name so the UI shows "AMS-1" / "AMS-2".
+function nodeDisplayLabel(node: EdgeScoreboardNode, nodes: EdgeScoreboardNode[]): string {
+  const hasDuplicate = nodes.some(n => n.host !== node.host && n.location === node.location)
+  if (!hasDuplicate) return node.location
+  const suffix = node.host.split('-').pop()?.match(/\d+$/)?.[0]
+  return suffix ? `${node.location}-${suffix}` : node.host
+}
+
 function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   const chartData = useMemo(() => {
     const feedSet = new Set<string>()
@@ -255,8 +261,8 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
     })
 
     const nodeRows = [...nodes]
-      .sort((a, b) => (b.stake_sol ?? 0) - (a.stake_sol ?? 0))
-      .map(n => {
+      .sort((a, b) => a.host.localeCompare(b.host))
+      .map((n) => {
         const row: Record<string, string | number> = { location: n.location }
         const rawSum = feeds.reduce((s, f) => s + (n.feeds[f]?.win_rate_pct ?? 0), 0)
         const scale = rawSum > 0 ? 100 / rawSum : 0
@@ -265,7 +271,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
           row[`${f}_shreds`] = n.feeds[f]?.shreds_won ?? 0
           row[`${f}_raw`] = n.feeds[f]?.win_rate_pct ?? 0
         }
-        return { node: n, data: [row] }
+        return { node: n, data: row }
       })
 
     return { nodeRows, feeds }
@@ -278,7 +284,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-medium">Win Rate by Node</h3>
         <div className="flex items-center gap-3">
-          {chartData.feeds.map(f => (
+          {chartData.feeds.map((f) => (
             <div key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
               {FEED_LABELS[f] ?? f}
@@ -286,38 +292,12 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
           ))}
         </div>
       </div>
-      {chartData.nodeRows.map(nr => (
-        <div key={nr.node.node_id} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
-          <NodeLabel node={nr.node} />
-          <div className="flex-1 h-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={nr.data} layout="vertical" barSize={62} margin={{ top: 2, right: 24, bottom: 2, left: 0 }}>
-                <XAxis type="number" domain={[0, 100]} hide />
-                <YAxis type="category" hide dataKey="location" />
-                <Tooltip content={WinRateTooltip} wrapperStyle={{ zIndex: 10 }} />
-                {chartData.feeds.map((f, i) => (
-                  <Bar
-                    key={f}
-                    dataKey={f}
-                    stackId="winrate"
-                    fill={FEED_COLORS[f] ?? '#6b7280'}
-                    radius={i === chartData.feeds.length - 1 ? [0, 4, 4, 0] : undefined}
-                    label={f === 'dz' ? ((props: { x?: number; y?: number; width?: number; height?: number; [k: string]: unknown }) => {
-                      const raw = Number(nr.data[0]['dz_raw'] ?? 0)
-                      return (
-                        <text x={(props.x ?? 0) + (props.width ?? 0) / 2} y={(props.y ?? 0) + (props.height ?? 0) / 2} fill="#fff" fontSize={12} fontWeight={600} textAnchor="middle" dominantBaseline="central">
-                          {`${raw.toFixed(1)}%`}
-                        </text>
-                      )
-                    }) as unknown as boolean : undefined}
-                  />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {chartData.nodeRows.map((nr) => (
+        <div key={nr.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
+          <NodeLabel node={nr.node} label={nodeDisplayLabel(nr.node, nodes)} />
+          <WinRateBar node={nr.node} feeds={chartData.feeds} data={nr.data} />
         </div>
       ))}
-      {/* Static X-axis labels */}
       <div className="flex items-center" style={{ paddingLeft: 48 }}>
         <div className="flex-1 flex justify-between pr-6 text-xs text-muted-foreground">
           <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
@@ -327,36 +307,193 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   )
 }
 
-function RecentSlotsChart({ slots, nodes, slotLeaders }: { slots: EdgeScoreboardSlotRace[]; nodes: EdgeScoreboardNode[]; slotLeaders?: Record<string, EdgeScoreboardLeader> }) {
+function SlotRaceNodeChart({
+  slotData,
+  feeds,
+  slotLeaders,
+}: {
+  slotData: Array<Record<string, number>>
+  feeds: string[]
+  slotLeaders?: Record<string, EdgeScoreboardLeader>
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const plotRef = useRef<uPlot | null>(null)
+  const slotDataRef = useRef(slotData)
+  slotDataRef.current = slotData
+  const slotLeadersRef = useRef(slotLeaders)
+  slotLeadersRef.current = slotLeaders
+  const setHoverRef = useRef<((idx: number | null, vx: number, vy: number) => void) | null>(null)
+
+  const [hover, setHover] = useState<{ idx: number; vx: number; vy: number } | null>(null)
+  setHoverRef.current = (idx, vx, vy) => setHover(idx == null ? null : { idx, vx, vy })
+
+  useEffect(() => {
+    if (!containerRef.current || !slotData.length) return
+
+    const n = slotData.length
+    const height = NODE_ROW_HEIGHT - 4
+
+    const xData = Float64Array.from({ length: n }, (_, i) => i)
+    const yDummy = new Float64Array(n)
+    const uData: uPlot.AlignedData = [xData, yDummy]
+
+    const opts: uPlot.Options = {
+      width: containerRef.current.offsetWidth,
+      height,
+      series: [{}, { show: false }],
+      scales: {
+        x: { time: false, range: () => [-0.5, n - 0.5] },
+        y: { range: () => [0, 100] },
+      },
+      axes: [{ show: false }, { show: false }],
+      padding: [2, 2, 2, 2],
+      cursor: { points: { show: false } },
+      legend: { show: false },
+      hooks: {
+        draw: [
+          (u) => {
+            const ctx = u.ctx
+            ctx.save()
+            const cumulative = new Float64Array(n)
+            for (const feed of feeds) {
+              ctx.fillStyle = FEED_COLORS[feed] ?? '#6b7280'
+              for (let i = 0; i < n; i++) {
+                const val = slotDataRef.current[i][feed] ?? 0
+                if (!val) continue
+                const prev = cumulative[i]
+                const x1 = Math.round(u.valToPos(i - 0.4, 'x', true))
+                const x2 = Math.round(u.valToPos(i + 0.4, 'x', true))
+                const y1 = Math.round(u.valToPos(prev + val, 'y', true))
+                const y2 = Math.round(u.valToPos(prev, 'y', true))
+                if (y2 > y1 && x2 > x1) ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
+                cumulative[i] += val
+              }
+            }
+            ctx.restore()
+          },
+        ],
+        setCursor: [
+          (u) => {
+            const idx = u.cursor.idx
+            if (idx == null || idx < 0 || idx >= slotDataRef.current.length) {
+              setHoverRef.current?.(null, 0, 0)
+              return
+            }
+            const rect = u.over.getBoundingClientRect()
+            const vx = rect.left + (u.cursor.left ?? 0)
+            const vy = rect.top + (u.cursor.top ?? 0)
+            setHoverRef.current?.(idx, vx, vy)
+          },
+        ],
+      },
+    }
+
+    plotRef.current?.destroy()
+    plotRef.current = new uPlot(opts, uData, containerRef.current)
+
+    const ro = new ResizeObserver((entries) => {
+      if (plotRef.current) plotRef.current.setSize({ width: entries[0].contentRect.width, height })
+    })
+    ro.observe(containerRef.current)
+
+    return () => {
+      ro.disconnect()
+      plotRef.current?.destroy()
+      plotRef.current = null
+    }
+  }, [slotData, feeds])
+
+  const hoveredSlot = hover != null ? slotData[hover.idx] : null
+  const hoveredLeader = hoveredSlot ? slotLeadersRef.current?.[String(hoveredSlot['slot'])] : undefined
+  const xPos = hover != null && hover.vx + 10 + 180 > window.innerWidth ? hover.vx - 190 : (hover?.vx ?? 0) + 10
+
+  return (
+    <div className="relative flex-1 h-full">
+      <div ref={containerRef} />
+      {hover && hoveredSlot && (
+        <div
+          className="fixed z-50 bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none"
+          style={{ left: xPos, top: Math.max(0, hover.vy - 60) }}
+        >
+          <div className="font-mono font-semibold text-[#e5e5e5] mb-1.5">
+            Slot {Number(hoveredSlot['slot']).toLocaleString()}
+          </div>
+          {hoveredLeader && (
+            <div className="mb-1.5 pb-1.5 border-b border-[#333] text-[#999]">
+              {hoveredLeader.name && <div className="text-[#e5e5e5]">{hoveredLeader.name}</div>}
+              <div className="font-mono text-[#aaa]">{hoveredLeader.pubkey.slice(0, 8)}...{hoveredLeader.pubkey.slice(-4)}</div>
+              {hoveredLeader.ip && <div><span className="text-[#666]">IP </span><span className="font-mono">{hoveredLeader.ip}</span></div>}
+              {hoveredLeader.asn_org && <div><span className="text-[#666]">Host </span>{hoveredLeader.asn_org}</div>}
+              {hoveredLeader.city && <div><span className="text-[#666]">Loc </span>{hoveredLeader.city}{hoveredLeader.country ? `, ${hoveredLeader.country}` : ''}</div>}
+            </div>
+          )}
+          <table className="border-spacing-0">
+            <thead>
+              <tr className="text-[#777]">
+                <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
+                <th className="py-0.5 text-right font-normal">Win %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {feeds.map((f) => (
+                <tr key={f}>
+                  <td className="pr-3 py-0.5 font-semibold" style={{ color: FEED_COLORS[f] ?? '#6b7280' }}>
+                    {FEED_LABELS[f] ?? f}
+                  </td>
+                  <td className="py-0.5 text-right font-mono text-[#e5e5e5]">
+                    {(hoveredSlot[f] ?? 0).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RecentSlotsChart({
+  slots,
+  nodes,
+  slotLeaders,
+}: {
+  slots: EdgeScoreboardSlotRace[]
+  nodes: EdgeScoreboardNode[]
+  slotLeaders?: Record<string, EdgeScoreboardLeader>
+}) {
   const chartData = useMemo(() => {
     if (!slots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
 
-    const validNodeIds = new Set(nodes.map(n => n.node_id))
-    const filtered = slots.filter(s => validNodeIds.has(s.node_id))
+    const validNodeIds = new Set(nodes.map((n) => n.host))
+    const filtered = slots.filter((s) => validNodeIds.has(s.host))
 
     const feedSet = new Set<string>()
     for (const s of filtered) feedSet.add(s.feed)
-    const feeds = [...feedSet].sort((a, b) => a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b))
+    const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
 
-    // Group: node -> slot -> feed -> win_pct
     const byNode = new Map<string, Map<number, Record<string, number>>>()
     for (const s of filtered) {
-      let nodeMap = byNode.get(s.node_id)
-      if (!nodeMap) { nodeMap = new Map(); byNode.set(s.node_id, nodeMap) }
+      let nodeMap = byNode.get(s.host)
+      if (!nodeMap) {
+        nodeMap = new Map()
+        byNode.set(s.host, nodeMap)
+      }
       let row = nodeMap.get(s.slot)
-      if (!row) { row = {}; nodeMap.set(s.slot, row) }
+      if (!row) {
+        row = {}
+        nodeMap.set(s.slot, row)
+      }
       row[s.feed] = s.win_pct
     }
 
-    const slotNumbers = [...new Set(filtered.map(s => s.slot))].sort((a, b) => a - b)
-
-    // Sort nodes by stake descending (matching Win Rate chart)
-    const sortedNodes = [...nodes].sort((a, b) => (b.stake_sol ?? 0) - (a.stake_sol ?? 0))
+    const slotNumbers = [...new Set(filtered.map((s) => s.slot))].sort((a, b) => a - b)
+    const sortedNodes = [...nodes].sort((a, b) => a.host.localeCompare(b.host))
 
     const nodeCharts = sortedNodes
-      .filter(n => byNode.has(n.node_id))
-      .map(n => {
-        const slotMap = byNode.get(n.node_id)!
+      .filter((n) => byNode.has(n.host))
+      .map((n) => {
+        const slotMap = byNode.get(n.host)!
         const data = slotNumbers.map((slot, idx) => {
           const feedPcts = slotMap.get(slot) ?? {}
           const row: Record<string, number> = { idx, slot }
@@ -369,12 +506,13 @@ function RecentSlotsChart({ slots, nodes, slotLeaders }: { slots: EdgeScoreboard
     return { nodeCharts, feeds, slotCount: slotNumbers.length }
   }, [slots, nodes])
 
-  if (!slots.length) return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <h3 className="text-sm font-medium mb-4">Recent Edge Leader Slots — Win Rate per Slot</h3>
-      <div className="text-sm text-muted-foreground text-center py-12">No recent slot data available.</div>
-    </div>
-  )
+  if (!slots.length)
+    return (
+      <div className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-medium mb-4">Recent Edge Leader Slots — Win Rate per Slot</h3>
+        <div className="text-sm text-muted-foreground text-center py-12">No recent slot data available.</div>
+      </div>
+    )
 
   const { nodeCharts, feeds, slotCount } = chartData
 
@@ -383,7 +521,7 @@ function RecentSlotsChart({ slots, nodes, slotLeaders }: { slots: EdgeScoreboard
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-medium">Recent Edge Leader Slots — Win Rate per Slot</h3>
         <div className="flex items-center gap-3">
-          {feeds.map(f => (
+          {feeds.map((f) => (
             <div key={f} className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
               {FEED_LABELS[f] ?? f}
@@ -391,21 +529,10 @@ function RecentSlotsChart({ slots, nodes, slotLeaders }: { slots: EdgeScoreboard
           ))}
         </div>
       </div>
-      {nodeCharts.map(nc => (
-        <div key={nc.node.node_id} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
-          <NodeLabel node={nc.node} />
-          <div className="flex-1 h-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={nc.data} margin={{ top: 6, right: 0, bottom: 6, left: 0 }}>
-                <XAxis dataKey="idx" hide />
-                <YAxis domain={[0, 100]} hide allowDataOverflow />
-                <Tooltip content={makeSlotRaceTooltip(slotLeaders)} wrapperStyle={{ zIndex: 10 }} />
-                {feeds.map(f => (
-                  <Bar key={f} dataKey={f} stackId="s" fill={FEED_COLORS[f] ?? '#6b7280'} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {nodeCharts.map((nc) => (
+        <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
+          <NodeLabel node={nc.node} label={nodeDisplayLabel(nc.node, nodes)} />
+          <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={slotLeaders} />
         </div>
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
@@ -510,10 +637,11 @@ export function EdgeScoreboardPage() {
 
   const rawWindow = searchParams.get('window')
   const window: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
+  const leadersOnly = searchParams.get('leaders_only') !== 'false'
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['edge-scoreboard', window],
-    queryFn: () => fetchEdgeScoreboard(window),
+    queryKey: ['edge-scoreboard', window, leadersOnly],
+    queryFn: () => fetchEdgeScoreboard(window, leadersOnly),
     refetchInterval: 30_000,
     staleTime: 15_000,
   })
@@ -527,6 +655,15 @@ export function EdgeScoreboardPage() {
     })
   }
 
+  const setLeadersOnly = (v: boolean) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (v) p.delete('leaders_only')
+      else p.set('leaders_only', 'false')
+      return p
+    })
+  }
+
   // Aggregate global Edge stats across all nodes
   const globalStats = useMemo(() => {
     if (!data?.nodes) return null
@@ -536,7 +673,7 @@ export function EdgeScoreboardPage() {
     let totalSlots = 0
 
     // Per-competitor weighted lead times
-    const competitors = ['jito', 'turbine'] as const
+    const competitors = ['jito', 'turbine', 'provider_one'] as const
     const weightedP50: Record<string, number> = {}
     const weightedP95: Record<string, number> = {}
     const competitorSlots: Record<string, number> = {}
@@ -547,13 +684,16 @@ export function EdgeScoreboardPage() {
     }
 
     for (const node of data.nodes) {
-      const dz = node.feeds['dz']
-      if (!dz) continue
-      dzShredsWon += dz.shreds_won
-      dzTotalShreds += dz.total_shreds
+      // Combine dz (Edge Leaders) and dz_rebop (Edge Retransmits) for win rate.
+      // Use win_rate_pct (which uses the normalized max-total denominator) to stay
+      // consistent with the bar chart, then average across nodes.
+      const dzPct = (node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
+      dzShredsWon += dzPct
+      dzTotalShreds++
       totalSlots += node.slots_observed
 
-      if (dz.lead_times) {
+      const dz = node.feeds['dz']
+      if (dz?.lead_times) {
         for (const lt of dz.lead_times) {
           if (lt.loser_feed in weightedP50) {
             weightedP50[lt.loser_feed] += lt.p50_ms * node.slots_observed
@@ -575,7 +715,7 @@ export function EdgeScoreboardPage() {
     }
 
     return {
-      winRate: dzTotalShreds > 0 ? (dzShredsWon / dzTotalShreds) * 100 : 0,
+      winRate: dzTotalShreds > 0 ? dzShredsWon / dzTotalShreds : 0,
       leads,
       totalSlots,
       avgCompleteness:
@@ -590,7 +730,7 @@ export function EdgeScoreboardPage() {
   // Sort nodes by stake weight descending
   const sortedNodes = useMemo(() => {
     if (!data?.nodes) return []
-    return [...data.nodes].sort((a, b) => (b.stake_sol ?? 0) - (a.stake_sol ?? 0))
+    return [...data.nodes].sort((a, b) => a.host.localeCompare(b.host))
   }, [data?.nodes])
 
   const showSkeleton = useDelayedLoading(isLoading)
@@ -620,19 +760,22 @@ export function EdgeScoreboardPage() {
           actions={
             <div className="flex items-center gap-3">
               <div className="flex items-center rounded-md border border-border text-sm">
-                {(['1h', '24h', '7d', '30d', 'all'] as const).map((w) => (
+                {([
+                  [true, 'Edge Leaders'] as const,
+                  [false, 'All Slots'] as const,
+                ]).map(([v, label]) => (
                   <button
-                    key={w}
+                    key={String(v)}
                     type="button"
-                    onClick={() => setWindow(w)}
+                    onClick={() => setLeadersOnly(v)}
                     className={cn(
                       'px-3 py-1.5 transition-colors',
-                      window === w
+                      leadersOnly === v
                         ? 'bg-primary text-primary-foreground'
                         : 'hover:bg-muted'
                     )}
                   >
-                    {w === 'all' ? 'All' : w}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -666,8 +809,9 @@ export function EdgeScoreboardPage() {
         {/* Summary cards */}
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-            <SummaryCard label="Edge Completeness" value={formatPct(globalStats.avgCompleteness)} />
+            <SummaryCard label="Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} />
             <SummaryCard label="Edge Win Rate" value={formatPct(globalStats.winRate)} />
+            <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
                 key={competitor}
@@ -676,7 +820,6 @@ export function EdgeScoreboardPage() {
                 sub={`p95: ${formatMs(lead.p95)}`}
               />
             ))}
-            <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
           </div>
         )}
 
@@ -713,7 +856,7 @@ export function EdgeScoreboardPage() {
                   </tr>
                 ) : (
                   sortedNodes.map((node) => (
-                    <NodeRow key={node.node_id} node={node} />
+                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} />
                   ))
                 )}
               </tbody>
@@ -732,7 +875,7 @@ export function EdgeScoreboardPage() {
   )
 }
 
-function NodeRow({ node }: { node: EdgeScoreboardNode }) {
+function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const [showTooltip, setShowTooltip] = useState(false)
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
@@ -763,15 +906,18 @@ function NodeRow({ node }: { node: EdgeScoreboardNode }) {
         }} onMouseLeave={() => setShowTooltip(false)}>
           {hasGossip ? (
             <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-accent transition-colors">
-              {node.location}
+              {label}
             </Link>
           ) : (
-            <div className="text-sm font-medium">{node.location}</div>
+            <div className="text-sm font-medium">{label}</div>
           )}
           <div className="text-xs text-muted-foreground">{node.metro_name}</div>
           {node.stake_sol > 0 && <div className="text-xs text-muted-foreground">{formatStake(node.stake_sol)} staked</div>}
-          {showTooltip && (node.gossip_ip || node.asn_org) && (
+          {showTooltip && (node.name || node.gossip_ip || node.asn_org) && (
             <div className={cn("absolute left-0 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap", tooltipAbove ? "bottom-full mb-1" : "top-full mt-1")}>
+              {node.name && (
+                <div className="font-medium mb-1">{node.name}</div>
+              )}
               {node.gossip_ip && (
                 <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
               )}

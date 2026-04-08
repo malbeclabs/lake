@@ -20,12 +20,13 @@ const ShredGroupPK = "31fdXyG3x8k5Ache7jKNQsuwaMf44oqYQndoBsT1JfVj"
 // former package-level globals in api/config.
 type API struct {
 	// ClickHouse
-	DB           driver.Conn
-	HealthDB     driver.Conn
-	EnvDBs       map[string]driver.Conn
-	EnvDatabases map[string]string
-	Database     string
-	ShredderDB   string
+	DB            driver.Conn
+	HealthDB      driver.Conn
+	PublicQueryDB driver.Conn
+	EnvDBs        map[string]driver.Conn
+	EnvDatabases  map[string]string
+	Database      string
+	ShredderDB    string
 
 	// PostgreSQL
 	PgPool *pgxpool.Pool

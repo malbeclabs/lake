@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ type EdgeScoreboardFeedStats struct {
 
 // EdgeScoreboardNode holds aggregated stats for a single edge node.
 type EdgeScoreboardNode struct {
-	NodeID        string                              `json:"node_id"`
+	Host          string                              `json:"host"`
 	Location      string                              `json:"location"`
 	MetroName     string                              `json:"metro_name"`
 	Latitude      float64                             `json:"latitude"`
@@ -40,6 +41,7 @@ type EdgeScoreboardNode struct {
 	TotalSlots    uint64                              `json:"total_slots"`
 	SlotsObserved uint64                              `json:"slots_observed"`
 	LastUpdated   time.Time                           `json:"last_updated"`
+	Name          string                              `json:"name,omitempty"`
 	GossipPubkey  string                              `json:"gossip_pubkey,omitempty"`
 	GossipIP      string                              `json:"gossip_ip,omitempty"`
 	ASN           int64                               `json:"asn,omitempty"`
@@ -48,18 +50,9 @@ type EdgeScoreboardNode struct {
 	Country       string                              `json:"country,omitempty"`
 }
 
-// edgeNodeIPs maps edge node IDs to their known IP addresses.
-var edgeNodeIPs = map[string]string{
-	"slc-qa-bm1": "64.130.33.90",
-	"ams-mn-bm1": "23.109.62.84",
-	"fra-mn-bm1": "198.13.138.107",
-	"tyo-mn-bm1": "208.91.107.71",
-	"sin-mn-bm1": "177.54.154.15",
-}
-
 // EdgeScoreboardSlotRace holds per-slot per-feed win data for recent slots.
 type EdgeScoreboardSlotRace struct {
-	NodeID    string  `json:"node_id"`
+	Host      string  `json:"host"`
 	Slot      uint64  `json:"slot"`
 	Feed      string  `json:"feed"`
 	ShredsWon uint64  `json:"shreds_won"`
@@ -79,6 +72,7 @@ type EdgeScoreboardLeader struct {
 // EdgeScoreboardResponse is the response for the edge scoreboard endpoint.
 type EdgeScoreboardResponse struct {
 	Window          string                           `json:"window"`
+	LeadersOnly     bool                             `json:"leaders_only"`
 	GeneratedAt     time.Time                        `json:"generated_at"`
 	CurrentEpoch    uint64                           `json:"current_epoch"`
 	CurrentSlot     uint64                           `json:"current_slot"`
@@ -99,10 +93,11 @@ var validWindows = map[string]string{
 	"all": "",
 }
 
-// isDefaultEdgeScoreboardRequest returns true if the request uses default parameters (window=24h).
+// isDefaultEdgeScoreboardRequest returns true if the request uses default parameters (window=1h, leaders_only=true).
 func isDefaultEdgeScoreboardRequest(r *http.Request) bool {
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
-	return window == "" || window == "24h"
+	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only"))
+	return (window == "" || window == "1h") && (leadersOnly == "" || leadersOnly == "true")
 }
 
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.
@@ -123,10 +118,12 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
 	if _, ok := validWindows[window]; !ok {
-		window = "24h"
+		window = "1h"
 	}
 
-	resp, err := a.FetchEdgeScoreboardData(ctx, window)
+	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only")) != "false"
+
+	resp, err := a.FetchEdgeScoreboardData(ctx, window, leadersOnly)
 	if err != nil {
 		log.Printf("EdgeScoreboard error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -137,37 +134,30 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // FetchEdgeScoreboardData performs the actual edge scoreboard queries.
-func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*EdgeScoreboardResponse, error) {
-	// Excluded nodes — fra-mn-bm2 produces unreliable race data
-	excludedNodes := []string{"fra-mn-bm2", "tyo-mn-bm1"}
-
+// When leadersOnly is true, results are scoped to slots where the leader published via DZ.
+func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leadersOnly bool) (*EdgeScoreboardResponse, error) {
 	interval := validWindows[window]
-	var timeOnlyFilter string
+	var timeFilter string
 	if interval != "" {
-		timeOnlyFilter = fmt.Sprintf("AND event_ts >= now() - INTERVAL %s", interval)
-	}
-	timeFilter := timeOnlyFilter
-	for _, n := range excludedNodes {
-		timeFilter += fmt.Sprintf(" AND node_id != '%s'", n)
+		timeFilter = fmt.Sprintf("AND event_ts >= now() - INTERVAL %s", interval)
 	}
 
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 
 	// Query 1: Per-node slot counts from win-count rows (loser_feed = '')
-	// Uses FINAL to handle ReplacingMergeTree pre-merge duplicates.
 	// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes)
 	query1 := fmt.Sprintf(`
 		SELECT
-			node_id,
+			host,
 			uniqExact(slot) AS total_slots,
 			uniqExactIf(slot, feed = 'dz') AS dz_slots,
 			max(epoch) AS max_epoch,
 			max(slot) AS max_slot,
 			max(event_ts) AS last_updated,
 			uniqExact(feed) AS feed_count
-		FROM %s.slot_feed_races FINAL
+		FROM %s.slot_feed_race_summary
 		WHERE feed_type = 'shred' AND loser_feed = '' %s
-		GROUP BY node_id
+		GROUP BY host
 	`, shredderDB, timeFilter)
 
 	start := time.Now()
@@ -224,82 +214,103 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 	// DZ-leader slot filter: use publisher_shred_stats.is_scheduled_leader to identify
 	// slots where the leader was publishing shreds via DZ. This is the authoritative
 	// source — it comes from the shredder's own observation of DZ multicast traffic.
+	// When leadersOnly is false, we skip this filter and include all slots.
 	dzLeaderCTE := fmt.Sprintf(`dz_leader_slots AS (
 		SELECT DISTINCT slot
 		FROM %s.publisher_shred_stats
 		WHERE is_scheduled_leader = true %s
-	)`, shredderDB, timeOnlyFilter)
+	)`, shredderDB, timeFilter)
 
-	// Query 1b: DZ-leader slot counts per node (overrides dz_slots from query 1)
-	query1b := fmt.Sprintf(`
-		WITH %s
-		SELECT node_id, uniqExact(slot) AS dz_leader_slots
-		FROM %s.slot_feed_races FINAL
-		WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
-			AND slot IN (SELECT slot FROM dz_leader_slots)
-			%s
-		GROUP BY node_id
-	`, dzLeaderCTE, shredderDB, timeFilter)
+	if leadersOnly {
+		// Query 1b: DZ-leader slot counts per node (overrides dz_slots from query 1)
+		query1b := fmt.Sprintf(`
+			WITH %s
+			SELECT host, uniqExact(slot) AS dz_leader_slots
+			FROM %s.slot_feed_race_summary
+			WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+				AND slot IN (SELECT slot FROM dz_leader_slots)
+				%s
+			GROUP BY host
+		`, dzLeaderCTE, shredderDB, timeFilter)
 
-	start = time.Now()
-	rows1b, err := a.envDB(ctx).Query(ctx, query1b)
-	duration = time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
-	if err != nil {
-		return nil, fmt.Errorf("query1b: %w", err)
-	}
-	defer rows1b.Close()
-
-	// Reset dz_slots and update with DZ-leader counts
-	for _, info := range nodeSlots {
-		info.dzSlots = 0
-	}
-	for rows1b.Next() {
-		var nodeID string
-		var dzLeaderSlots uint64
-		if err := rows1b.Scan(&nodeID, &dzLeaderSlots); err != nil {
-			return nil, fmt.Errorf("query1b scan: %w", err)
+		start = time.Now()
+		rows1b, err := a.envDB(ctx).Query(ctx, query1b)
+		duration = time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+		if err != nil {
+			return nil, fmt.Errorf("query1b: %w", err)
 		}
-		if info, ok := nodeSlots[nodeID]; ok {
-			info.dzSlots = dzLeaderSlots
+		defer rows1b.Close()
+
+		// Reset dz_slots and update with DZ-leader counts
+		for _, info := range nodeSlots {
+			info.dzSlots = 0
 		}
-	}
-	if err := rows1b.Err(); err != nil {
-		return nil, fmt.Errorf("query1b rows: %w", err)
+		for rows1b.Next() {
+			var nodeID string
+			var dzLeaderSlots uint64
+			if err := rows1b.Scan(&nodeID, &dzLeaderSlots); err != nil {
+				return nil, fmt.Errorf("query1b scan: %w", err)
+			}
+			if info, ok := nodeSlots[nodeID]; ok {
+				info.dzSlots = dzLeaderSlots
+			}
+		}
+		if err := rows1b.Err(); err != nil {
+			return nil, fmt.Errorf("query1b rows: %w", err)
+		}
 	}
 
 	// Query 2: Per-node per-feed win counts from summary rows (loser_feed = '')
-	// Scoped to DZ-leader slots (where the leader published shreds via DZ).
-	// Uses FINAL for dedup safety.
-	// Win rate uses MAX(SUM(total_shreds)) OVER (PARTITION BY node_id) as the
+	// When leadersOnly, scoped to DZ-leader slots (where the leader published via DZ).
+	// Win rate uses MAX(SUM(total_shreds)) OVER (PARTITION BY host) as the
 	// denominator so all feeds share the same base per node.
-	query2 := fmt.Sprintf(`
-		WITH %s
-		SELECT
-			node_id,
-			feed,
-			shreds_won,
-			total_shreds,
-			round(shreds_won / max_total * 100, 1) AS win_rate_pct
-		FROM (
+	var query2 string
+	if leadersOnly {
+		query2 = fmt.Sprintf(`
+			WITH %s
 			SELECT
-				r.node_id,
-				r.feed,
-				SUM(r.shreds_won) AS shreds_won,
-				SUM(r.total_shreds) AS total_shreds,
-				MAX(SUM(r.total_shreds)) OVER (PARTITION BY r.node_id) AS max_total
-			FROM %s.slot_feed_races AS r FINAL
-			INNER JOIN (
-				SELECT DISTINCT node_id, slot
-				FROM %s.slot_feed_races FINAL
-				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
-					AND slot IN (SELECT slot FROM dz_leader_slots)
-					%s
-			) dz ON r.node_id = dz.node_id AND r.slot = dz.slot
-			WHERE r.feed_type = 'shred' AND r.loser_feed = '' %s
-			GROUP BY r.node_id, r.feed
-		)
-	`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
+				host, feed, shreds_won, total_shreds,
+				round(shreds_won / max_total * 100, 1) AS win_rate_pct
+			FROM (
+				SELECT
+					r.host, r.feed,
+					SUM(r.shreds_won) AS shreds_won,
+					SUM(r.total_shreds) AS total_shreds,
+					MAX(SUM(r.total_shreds)) OVER (PARTITION BY r.host) AS max_total
+				FROM %s.slot_feed_race_summary AS r
+				INNER JOIN (
+					SELECT DISTINCT host, slot
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+						AND slot IN (SELECT slot FROM dz_leader_slots)
+						%s
+				) dz ON r.host = dz.host AND r.slot = dz.slot
+				WHERE r.feed_type = 'shred' AND r.loser_feed = '' %s
+				GROUP BY r.host, r.feed
+			)
+		`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
+	} else {
+		query2 = fmt.Sprintf(`
+			SELECT
+				host, feed, shreds_won, total_shreds,
+				round(shreds_won / max_total * 100, 1) AS win_rate_pct
+			FROM (
+				SELECT
+					host, feed, shreds_won, total_shreds,
+					MAX(total_shreds) OVER (PARTITION BY host) AS max_total
+				FROM (
+					SELECT
+						host, feed,
+						SUM(shreds_won) AS shreds_won,
+						SUM(total_shreds) AS total_shreds
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = '' %s
+					GROUP BY host, feed
+				)
+			)
+		`, shredderDB, timeFilter)
+	}
 
 	start = time.Now()
 	rows2, err := a.envDB(ctx).Query(ctx, query2)
@@ -335,30 +346,42 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 
 	// Query 2b: Pairwise lead times from lead-time rows (loser_feed != '')
 	// Uses quantile() to aggregate per-slot percentiles across slots — never AVG.
-	// Scoped to DZ-leader slots via INNER JOIN for consistency with query 2.
-	// Uses FINAL for dedup safety.
-	query2b := fmt.Sprintf(`
-		WITH %s
-		SELECT
-			r.node_id,
-			r.feed,
-			r.loser_feed,
-			count() AS slot_count,
-			quantile(0.5)(r.lead_time_p50_ms) AS p50_ms,
-			quantile(0.5)(r.lead_time_p95_ms) AS p95_ms
-		FROM %s.slot_feed_races AS r FINAL
-		INNER JOIN (
-			SELECT DISTINCT node_id, slot
-			FROM %s.slot_feed_races FINAL
-			WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
-				AND slot IN (SELECT slot FROM dz_leader_slots)
+	var query2b string
+	if leadersOnly {
+		query2b = fmt.Sprintf(`
+			WITH %s
+			SELECT
+				r.host, r.feed, r.loser_feed,
+				count() AS slot_count,
+				quantile(0.5)(r.lead_time_p50_ms) AS p50_ms,
+				quantile(0.5)(r.lead_time_p95_ms) AS p95_ms
+			FROM %s.slot_feed_race_summary AS r
+			INNER JOIN (
+				SELECT DISTINCT host, slot
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+					AND slot IN (SELECT slot FROM dz_leader_slots)
+					%s
+			) dz ON r.host = dz.host AND r.slot = dz.slot
+			WHERE r.feed_type = 'shred' AND r.loser_feed != ''
+				AND r.lead_time_p50_ms <= 500
 				%s
-		) dz ON r.node_id = dz.node_id AND r.slot = dz.slot
-		WHERE r.feed_type = 'shred' AND r.loser_feed != ''
-			AND r.lead_time_p50_ms <= 500
-			%s
-		GROUP BY r.node_id, r.feed, r.loser_feed
-	`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
+			GROUP BY r.host, r.feed, r.loser_feed
+		`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
+	} else {
+		query2b = fmt.Sprintf(`
+			SELECT
+				host, feed, loser_feed,
+				count() AS slot_count,
+				quantile(0.5)(lead_time_p50_ms) AS p50_ms,
+				quantile(0.5)(lead_time_p95_ms) AS p95_ms
+			FROM %s.slot_feed_race_summary
+			WHERE feed_type = 'shred' AND loser_feed != ''
+				AND lead_time_p50_ms <= 500
+				%s
+			GROUP BY host, feed, loser_feed
+		`, shredderDB, timeFilter)
+	}
 
 	start = time.Now()
 	rows2b, err := a.envDB(ctx).Query(ctx, query2b)
@@ -501,58 +524,60 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 		}
 	}
 
-	// Query 4b: Resolve edge node IPs to gossip pubkeys and geo/ASN details.
-	type gossipInfo struct {
-		pubkey  string
-		ip      string
-		asn     int64
-		asnOrg  string
-		city    string
-		country string
+	// Build the node ID list used by queries 4b and 5.
+	validNodeIDs := make([]string, 0, len(nodeSlots))
+	for id := range nodeSlots {
+		validNodeIDs = append(validNodeIDs, "'"+id+"'")
 	}
-	gossipByNode := make(map[string]*gossipInfo)
+	nodeList := strings.Join(validNodeIDs, ",")
+	nodeCount := len(nodeSlots)
 
-	// Collect IPs for nodes we have data for
-	var lookupIPs []string
-	ipToNode := make(map[string]string)
-	for nodeID := range nodeSlots {
-		if ip, ok := edgeNodeIPs[nodeID]; ok {
-			lookupIPs = append(lookupIPs, ip)
-			ipToNode[ip] = nodeID
-		}
+	// Query 4b: Resolve node identity (pubkey, name, IP, geo) via publisher_shred_stats.
+	// dz_device_code in publisher_shred_stats matches slot_feed_race_summary.host.
+	// We pick the most-recent node_pubkey per host, then join with validatorsapp for name/IP.
+	type nodeIdentity struct {
+		name, gossipPubkey, gossipIP, asnOrg, city, country string
+		asn                                                 int64
 	}
+	nodeIdentities := make(map[string]*nodeIdentity)
 
-	if len(lookupIPs) > 0 {
-		query4b := `
+	if len(validNodeIDs) > 0 {
+		query4b := fmt.Sprintf(`
 			SELECT
-				g.ip,
-				COALESCE(gn.pubkey, ''),
-				g.asn,
-				g.asn_org,
-				g.city,
-				g.country
-			FROM geoip_records_current g
-			LEFT JOIN solana_gossip_nodes_current gn ON gn.gossip_ip = g.ip
-			WHERE g.ip IN (?)
-		`
+				p.dz_device_code,
+				p.node_pubkey,
+				COALESCE(v.name, '') AS name,
+				COALESCE(v.ip, '') AS gossip_ip,
+				COALESCE(g.asn, 0) AS asn,
+				COALESCE(g.asn_org, '') AS asn_org,
+				COALESCE(g.city, '') AS city,
+				COALESCE(g.country, '') AS country
+			FROM (
+				SELECT dz_device_code, argMax(node_pubkey, event_ts) AS node_pubkey
+				FROM %s.publisher_shred_stats
+				WHERE dz_device_code IN (%s)
+				GROUP BY dz_device_code
+			) p
+			LEFT JOIN validatorsapp_validators_current v ON v.account = p.node_pubkey
+			LEFT JOIN geoip_records_current g ON g.ip = v.ip
+		`, shredderDB, nodeList)
+
 		start = time.Now()
-		rows4b, err := a.envDB(ctx).Query(ctx, query4b, lookupIPs)
+		rows4b, err := a.envDB(ctx).Query(ctx, query4b)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 		if err != nil && ctx.Err() == nil {
 			log.Printf("EdgeScoreboard query4b error: %v", err)
-			// Non-fatal: gossip enrichment is optional
 		} else {
 			defer rows4b.Close()
 			for rows4b.Next() {
-				var gi gossipInfo
-				if err := rows4b.Scan(&gi.ip, &gi.pubkey, &gi.asn, &gi.asnOrg, &gi.city, &gi.country); err != nil {
+				var host string
+				var ni nodeIdentity
+				if err := rows4b.Scan(&host, &ni.gossipPubkey, &ni.name, &ni.gossipIP, &ni.asn, &ni.asnOrg, &ni.city, &ni.country); err != nil {
 					log.Printf("EdgeScoreboard query4b scan error: %v", err)
 					break
 				}
-				if nodeID, ok := ipToNode[gi.ip]; ok {
-					gossipByNode[nodeID] = &gi
-				}
+				nodeIdentities[host] = &ni
 			}
 		}
 	}
@@ -561,47 +586,67 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 	// Returns per-slot per-feed win percentage for a time-series chart.
 	var recentSlots []EdgeScoreboardSlotRace
 
-	// Find the most recent 100 slots where DZ participated (leader was DZ-connected)
-	// and ALL valid nodes reported data. This shows DZ winning in every bar since
-	// we only include slots where DZ was actually in the race.
-	validNodeIDs := make([]string, 0, len(nodeSlots))
-	for id := range nodeSlots {
-		validNodeIDs = append(validNodeIDs, "'"+id+"'")
-	}
-	nodeList := strings.Join(validNodeIDs, ",")
-	nodeCount := len(nodeSlots)
-	query5 := fmt.Sprintf(`
-		WITH %s,
-		dz_slots AS (
-			SELECT DISTINCT slot
-			FROM %s.slot_feed_races FINAL
-			WHERE feed_type = 'shred' AND loser_feed = '' AND feed = 'dz'
-				AND slot IN (SELECT slot FROM dz_leader_slots)
-				AND node_id IN (%s)
-				AND slot >= (SELECT max(slot) - 10000 FROM %s.slot_feed_races FINAL WHERE feed_type = 'shred' AND loser_feed = '')
-		),
-		common_slots AS (
-			SELECT slot
-			FROM (
-				SELECT DISTINCT node_id, slot
-				FROM %s.slot_feed_races FINAL
-				WHERE feed_type = 'shred' AND loser_feed = ''
-					AND node_id IN (%s)
-					AND slot IN (SELECT slot FROM dz_slots)
+	// Find the most recent 100 slots where all valid nodes reported data.
+	// When leadersOnly, further restrict to slots where the leader published via DZ.
+	var query5 string
+	if leadersOnly {
+		query5 = fmt.Sprintf(`
+			WITH %s,
+			dz_slots AS (
+				SELECT DISTINCT slot
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND loser_feed = '' AND feed = 'dz'
+					AND slot IN (SELECT slot FROM dz_leader_slots)
+					AND host IN (%s)
+					AND slot >= (SELECT max(slot) - 10000 FROM %s.slot_feed_race_summary WHERE feed_type = 'shred' AND loser_feed = '')
+			),
+			common_slots AS (
+				SELECT slot
+				FROM (
+					SELECT DISTINCT host, slot
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = ''
+						AND host IN (%s)
+						AND slot IN (SELECT slot FROM dz_slots)
+				)
+				GROUP BY slot
+				HAVING count(DISTINCT host) >= %d
+				ORDER BY slot DESC
+				LIMIT 100
 			)
-			GROUP BY slot
-			HAVING count(DISTINCT node_id) >= %d
-			ORDER BY slot DESC
-			LIMIT 100
-		)
-		SELECT r.node_id, r.slot, r.feed, r.shreds_won,
-			round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
-		FROM %s.slot_feed_races AS r FINAL
-		INNER JOIN common_slots cs ON r.slot = cs.slot
-		WHERE r.feed_type = 'shred' AND r.loser_feed = ''
-			AND r.node_id IN (%s)
-		ORDER BY r.node_id, r.slot, r.feed
-	`, dzLeaderCTE, shredderDB, nodeList, shredderDB, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
+			SELECT r.host, r.slot, r.feed, r.shreds_won,
+				round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
+			FROM %s.slot_feed_race_summary AS r
+			INNER JOIN common_slots cs ON r.slot = cs.slot
+			WHERE r.feed_type = 'shred' AND r.loser_feed = ''
+				AND r.host IN (%s)
+			ORDER BY r.host, r.slot, r.feed
+		`, dzLeaderCTE, shredderDB, nodeList, shredderDB, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
+	} else {
+		query5 = fmt.Sprintf(`
+			WITH common_slots AS (
+				SELECT slot
+				FROM (
+					SELECT DISTINCT host, slot
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = ''
+						AND host IN (%s)
+						AND slot >= (SELECT max(slot) - 10000 FROM %s.slot_feed_race_summary WHERE feed_type = 'shred' AND loser_feed = '')
+				)
+				GROUP BY slot
+				HAVING count(DISTINCT host) >= %d
+				ORDER BY slot DESC
+				LIMIT 100
+			)
+			SELECT r.host, r.slot, r.feed, r.shreds_won,
+				round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
+			FROM %s.slot_feed_race_summary AS r
+			INNER JOIN common_slots cs ON r.slot = cs.slot
+			WHERE r.feed_type = 'shred' AND r.loser_feed = ''
+				AND r.host IN (%s)
+			ORDER BY r.host, r.slot, r.feed
+		`, shredderDB, nodeList, shredderDB, nodeCount, shredderDB, nodeList)
+	}
 	start = time.Now()
 	rows5, err := a.envDB(ctx).Query(ctx, query5)
 	duration = time.Since(start)
@@ -613,7 +658,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 		defer rows5.Close()
 		for rows5.Next() {
 			var sr EdgeScoreboardSlotRace
-			if err := rows5.Scan(&sr.NodeID, &sr.Slot, &sr.Feed, &sr.ShredsWon, &sr.WinPct); err != nil {
+			if err := rows5.Scan(&sr.Host, &sr.Slot, &sr.Feed, &sr.ShredsWon, &sr.WinPct); err != nil {
 				log.Printf("EdgeScoreboard query5 scan error: %v", err)
 				break
 			}
@@ -646,12 +691,15 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 			relToAbs[rel] = s
 		}
 
-		// Step 1: Resolve slot -> leader pubkey
+		// Step 1: Resolve slot -> leader pubkey.
+		// Use dim_solana_leader_schedule_history instead of _current because _current only
+		// holds the next epoch's schedule (Solana publishes N+1 during epoch N), so the
+		// shredder's current-epoch slots would never match.
 		query6a := fmt.Sprintf(`
 			SELECT
 				arrayJoin(JSONExtract(slots, 'Array(UInt64)')) AS slot,
 				node_pubkey
-			FROM solana_leader_schedule_current
+			FROM dim_solana_leader_schedule_history
 			WHERE epoch = %d
 			HAVING slot IN (?)
 		`, globalMaxEpoch)
@@ -712,7 +760,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 			infoByPubkey := make(map[string]*leaderInfo)
 			if err != nil && ctx.Err() == nil {
 				log.Printf("EdgeScoreboard query6b error: %v", err)
-			} else {
+			} else if err == nil {
 				defer rows6b.Close()
 				for rows6b.Next() {
 					var pubkey string
@@ -750,7 +798,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 
 		loc := nodeLocations[nodeID]
 		node := EdgeScoreboardNode{
-			NodeID:        nodeID,
+			Host:          nodeID,
 			Location:      loc,
 			TotalSlots:    info.totalSlots,
 			SlotsObserved: info.dzSlots,
@@ -764,18 +812,19 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 			node.Longitude = m.longitude
 		}
 
-		if gi, ok := gossipByNode[nodeID]; ok {
-			node.GossipPubkey = gi.pubkey
-			node.GossipIP = gi.ip
-			node.ASN = gi.asn
-			node.ASNOrg = gi.asnOrg
-			node.City = gi.city
-			node.Country = gi.country
-		}
-
 		if si, ok := stakeByMetro[loc]; ok {
 			node.StakeSol = si.stakeSol
 			node.Validators = si.validators
+		}
+
+		if ni, ok := nodeIdentities[nodeID]; ok {
+			node.Name = ni.name
+			node.GossipPubkey = ni.gossipPubkey
+			node.GossipIP = ni.gossipIP
+			node.ASN = ni.asn
+			node.ASNOrg = ni.asnOrg
+			node.City = ni.city
+			node.Country = ni.country
 		}
 
 		// Attach feed stats
@@ -791,6 +840,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 		nodes = append(nodes, node)
 	}
 
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].Host < nodes[j].Host
+	})
+
 	var completenessPct float64
 	if totalSlots > 0 {
 		completenessPct = float64(dzSlots) / float64(totalSlots) * 100
@@ -798,6 +851,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string) (*Edge
 
 	resp := EdgeScoreboardResponse{
 		Window:          window,
+		LeadersOnly:     leadersOnly,
 		GeneratedAt:     time.Now().UTC(),
 		CurrentEpoch:    globalMaxEpoch,
 		CurrentSlot:     globalMaxSlot,

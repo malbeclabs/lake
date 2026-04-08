@@ -28,7 +28,7 @@ type DBQuerier struct {
 
 // NewDBQuerier creates a new DBQuerier.
 func (a *API) NewDBQuerier() *DBQuerier {
-	return &DBQuerier{db: a.DB}
+	return &DBQuerier{db: a.PublicQueryDB}
 }
 
 // Query executes a SQL query and returns the result.
@@ -139,7 +139,7 @@ type DBSchemaFetcher struct {
 
 // NewDBSchemaFetcher creates a new DBSchemaFetcher.
 func (a *API) NewDBSchemaFetcher() *DBSchemaFetcher {
-	return &DBSchemaFetcher{db: a.DB, database: a.Database}
+	return &DBSchemaFetcher{db: a.PublicQueryDB, database: a.Database}
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.

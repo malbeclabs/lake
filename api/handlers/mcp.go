@@ -135,7 +135,7 @@ func (a *API) registerExecuteSQLTool(server *mcp.Server, r *http.Request) {
 		queryCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 
-		db := a.envDB(ctx)
+		db := a.PublicQueryDB
 
 		rows, err := db.Query(queryCtx, query)
 		duration := time.Since(start)

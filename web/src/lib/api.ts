@@ -4974,7 +4974,7 @@ export interface EdgeScoreboardFeedStats {
 }
 
 export interface EdgeScoreboardNode {
-  node_id: string
+  host: string
   location: string
   metro_name: string
   latitude: number
@@ -4985,6 +4985,7 @@ export interface EdgeScoreboardNode {
   total_slots: number
   slots_observed: number
   last_updated: string
+  name?: string
   gossip_pubkey?: string
   gossip_ip?: string
   asn?: number
@@ -4995,6 +4996,7 @@ export interface EdgeScoreboardNode {
 
 export interface EdgeScoreboardResponse {
   window: string
+  leaders_only: boolean
   generated_at: string
   current_epoch: number
   current_slot: number
@@ -5016,18 +5018,19 @@ export interface EdgeScoreboardLeader {
 }
 
 export interface EdgeScoreboardSlotRace {
-  node_id: string
+  host: string
   slot: number
   feed: string
   shreds_won: number
   win_pct: number
 }
 
-export async function fetchEdgeScoreboard(window: string = '1h'): Promise<EdgeScoreboardResponse> {
+export async function fetchEdgeScoreboard(window: string = '1h', leadersOnly: boolean = true): Promise<EdgeScoreboardResponse> {
   const params = new URLSearchParams()
-  if (window !== '1h') params.set('window', window)
+  params.set('window', window)
+  if (!leadersOnly) params.set('leaders_only', 'false')
   const qs = params.toString()
-  const res = await apiFetch(`/api/dz/edge/scoreboard${qs ? `?${qs}` : ''}`)
+  const res = await apiFetch(`/api/dz/edge/scoreboard?${qs}`)
   if (!res.ok) {
     throw new Error('Failed to fetch edge scoreboard')
   }

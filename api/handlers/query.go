@@ -113,7 +113,7 @@ func (a *API) ExecuteQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Agent queries always run against the mainnet database. To query other
 	// environments, use fully-qualified table names (e.g., lake_devnet.dim_devices_current).
-	rows, err := a.DB.Query(ctx, query)
+	rows, err := a.PublicQueryDB.Query(ctx, query)
 	duration := time.Since(start)
 	if err != nil {
 		metrics.RecordClickHouseQuery(duration, err)

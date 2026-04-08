@@ -347,6 +347,7 @@ func main() {
 	api := &handlers.API{
 		DB:            config.DB,
 		HealthDB:      config.HealthDB,
+		PublicQueryDB: config.PublicQueryDB,
 		EnvDBs:        config.EnvDBs,
 		EnvDatabases:  config.EnvDatabases,
 		Database:      config.Database(),

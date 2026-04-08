@@ -20,6 +20,12 @@ var DB driver.Conn
 // refresh storms from starving the readiness probe.
 var HealthDB driver.Conn
 
+// PublicQueryDB is a ClickHouse connection pool that uses a dedicated read-only
+// user for the AI agent, MCP server, and user-facing query endpoint. Configured
+// via CLICKHOUSE_PUBLIC_QUERY_USERNAME / CLICKHOUSE_PUBLIC_QUERY_PASSWORD.
+// Falls back to DB (main user) if those env vars are not set.
+var PublicQueryDB driver.Conn
+
 // shredderDB is the ClickHouse database name for shredder tables (default: "shredder").
 var shredderDB = "shredder"
 
@@ -238,6 +244,45 @@ func Load() error {
 		slog.Info("connected to ClickHouse", "env", env, "database", dbName)
 	}
 
+	// Create a dedicated connection for public query endpoints (agent, MCP, /api/sql/query).
+	// CLICKHOUSE_PUBLIC_QUERY_USERNAME and CLICKHOUSE_PUBLIC_QUERY_PASSWORD must be set to a
+	// restricted read-only ClickHouse user. This isolates user-facing queries from the internal
+	// API user. Set up a dedicated user in ClickHouse before starting the server.
+	publicUsername := os.Getenv("CLICKHOUSE_PUBLIC_QUERY_USERNAME")
+	if publicUsername == "" {
+		return fmt.Errorf("CLICKHOUSE_PUBLIC_QUERY_USERNAME is required: create a restricted read-only ClickHouse user for agent/MCP/query endpoints and set this env var")
+	}
+	publicPassword := os.Getenv("CLICKHOUSE_PUBLIC_QUERY_PASSWORD")
+	{
+		slog.Info("connecting to ClickHouse with public query user", "addr", cfg.Addr, "database", cfg.Database, "username", publicUsername)
+		publicOpts := &clickhouse.Options{
+			Addr: []string{cfg.Addr},
+			Auth: clickhouse.Auth{
+				Database: cfg.Database,
+				Username: publicUsername,
+				Password: publicPassword,
+			},
+			DialTimeout:     5 * time.Second,
+			MaxOpenConns:    50,
+			MaxIdleConns:    50,
+			ConnMaxLifetime: 10 * time.Minute,
+		}
+		if secure {
+			publicOpts.TLS = &tls.Config{}
+		}
+		publicConn, err := clickhouse.Open(publicOpts)
+		if err != nil {
+			return fmt.Errorf("failed to create public query ClickHouse connection: %w", err)
+		}
+		pingCtx2, pingCancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+		defer pingCancel2()
+		if err := publicConn.Ping(pingCtx2); err != nil {
+			return fmt.Errorf("failed to ping public query ClickHouse connection: %w", err)
+		}
+		PublicQueryDB = publicConn
+		slog.Info("public query ClickHouse connection ready", "username", publicUsername)
+	}
+
 	return nil
 }
 
@@ -253,6 +298,9 @@ func Close() error {
 		if conn != nil {
 			_ = conn.Close()
 		}
+	}
+	if PublicQueryDB != nil && PublicQueryDB != DB {
+		_ = PublicQueryDB.Close()
 	}
 	if DB != nil {
 		return DB.Close()
