@@ -197,10 +197,13 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       ) : (
         label
       )}
-      {show && (node.name || node.gossip_ip || node.asn_org) && (
+      {show && (node.metro_name || node.name || node.gossip_ip || node.asn_org) && (
         <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap text-left text-foreground">
-          {node.name && (
-            <div className="font-medium mb-1">{node.name}</div>
+          {node.metro_name && (
+            <div className="font-medium mb-1">{node.metro_name}</div>
+          )}
+          {node.name && node.name !== node.metro_name && (
+            <div className="text-muted-foreground mb-1">{node.name}</div>
           )}
           {node.gossip_ip && (
             <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
