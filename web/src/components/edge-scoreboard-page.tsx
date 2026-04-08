@@ -74,15 +74,6 @@ const FEED_LABELS: Record<string, string> = {
 }
 
 const SLOTS_PER_EPOCH = 432_000
-const SLOTS_PER_SEC = 2.5
-
-function formatSlotDuration(slots: number): string {
-  const secs = slots / SLOTS_PER_SEC
-  if (secs < 60) return `~${Math.round(secs)}s`
-  if (secs < 3600) return `~${Math.round(secs / 60)}m`
-  if (secs < 86400) return `~${(secs / 3600).toFixed(1)}h`
-  return `~${(secs / 86400).toFixed(1)}d`
-}
 
 function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
   const slotInEpoch = slot % SLOTS_PER_EPOCH
@@ -531,12 +522,14 @@ function RecentSlotsChart({
   slotLeaders,
   leadersOnly,
   slotBuckets,
+  window,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
   slotLeaders?: Record<string, EdgeScoreboardLeader>
   leadersOnly?: boolean
   slotBuckets?: EdgeScoreboardSlotBucket[]
+  window?: TimeWindow
 }) {
   const [bucketed, setBucketed] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -719,8 +712,8 @@ function RecentSlotsChart({
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
         {bucketed
-          ? `${slotCount} buckets · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · ${formatSlotDuration(slotCount * (activeBucketSize ?? 0))}`
-          : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots · ${formatSlotDuration(slotCount)}`}
+          ? `${slotCount} buckets · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · last ${window ?? 'all'}`
+          : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots · last ${window ?? 'all'}`}
       </div>
     </div>
   )
@@ -1084,7 +1077,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} window={activeWindow} />
           </div>
         )}
 
