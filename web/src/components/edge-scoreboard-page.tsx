@@ -16,6 +16,13 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
 
+const VALID_WINDOWS = ['1h', '24h', '7d', '30d', 'all'] as const
+type TimeWindow = (typeof VALID_WINDOWS)[number]
+
+function isValidWindow(v: string | null): v is TimeWindow {
+  return v !== null && (VALID_WINDOWS as readonly string[]).includes(v)
+}
+
 function formatPct(v: number): string {
   return `${v.toFixed(1)}%`
 }
@@ -685,6 +692,9 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 export function EdgeScoreboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
+  const rawWindow = searchParams.get('window')
+  const activeWindow: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
+
   const leadersOnly = searchParams.get('leaders_only') === 'true'
 
   const [showLoader, setShowLoader] = useState(false)
@@ -699,8 +709,8 @@ export function EdgeScoreboardPage() {
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['edge-scoreboard', leadersOnly],
-    queryFn: () => fetchEdgeScoreboard('1h', leadersOnly),
+    queryKey: ['edge-scoreboard', activeWindow, leadersOnly],
+    queryFn: () => fetchEdgeScoreboard(activeWindow, leadersOnly),
     refetchInterval: 30_000,
     staleTime: 15_000,
     placeholderData: keepPreviousData,
@@ -719,6 +729,15 @@ export function EdgeScoreboardPage() {
     const m = Math.round(data.global_total_slots * 0.4 / 60)
     return m < 1 ? '~<1m' : `~${m}m`
   }, [data?.global_total_slots])
+
+  const setWindow = (w: TimeWindow) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (w === '1h') p.delete('window')
+      else p.set('window', w)
+      return p
+    })
+  }
 
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
@@ -820,7 +839,7 @@ export function EdgeScoreboardPage() {
       if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
       setShowShimmer(false)
     }
-  }, [leadersOnly, window])
+  }, [activeWindow, leadersOnly])
 
   // Cancel the debounce if data arrives before the 200ms threshold.
   useEffect(() => {
@@ -864,6 +883,23 @@ export function EdgeScoreboardPage() {
           }
           actions={
             <div className="flex items-center gap-3">
+              <div className="flex items-center rounded-md border border-border text-sm">
+                {VALID_WINDOWS.map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setWindow(w)}
+                    className={cn(
+                      'px-3 py-1.5 transition-colors',
+                      activeWindow === w
+                        ? 'bg-primary text-primary-foreground'
+                        : 'hover:bg-muted'
+                    )}
+                  >
+                    {w === 'all' ? 'All' : w}
+                  </button>
+                ))}
+              </div>
               <div className="flex items-center rounded-md border border-border text-sm">
                 {([
                   [false, 'All Slots'] as const,
