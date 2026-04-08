@@ -41,7 +41,7 @@ type EdgeScoreboardNode struct {
 	StakeSol      float64                             `json:"stake_sol"`
 	Validators    uint64                              `json:"validators"`
 	TotalSlots    uint64                              `json:"total_slots"`
-	SlotsObserved uint64                              `json:"slots_observed"`
+	SlotsObserved uint64                              `json:"slots_observed"` // DZ-participated slots (or DZ-leader slots in leaders_only mode)
 	LastUpdated   time.Time                           `json:"last_updated"`
 	Name          string                              `json:"name,omitempty"`
 	GossipPubkey  string                              `json:"gossip_pubkey,omitempty"`
@@ -197,7 +197,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.maxSlot, &info.lastUpdated, &feedCount); err != nil {
 			return nil, fmt.Errorf("query1 scan: %w", err)
 		}
-		// Skip nodes that only record one feed — they can't produce meaningful race data
+		// Skip nodes that only record one feed in the time window — they can't produce
+		// meaningful race comparisons. Note: a node can appear single-feed if a second
+		// feed joined partway through the window.
 		if feedCount < 2 {
 			continue
 		}
@@ -394,7 +396,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			return fmt.Errorf("query2 rows: %w", err)
 		}
 
-		// q2b: pairwise lead times
+		// q2b: pairwise lead times.
+		// p50_ms = median of per-slot p50 lead times.
+		// p95_ms = 95th percentile of per-slot p95 lead times (conservative tail estimate).
 		var q2b string
 		if leadersOnly {
 			q2b = fmt.Sprintf(`
@@ -403,7 +407,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					r.host, r.feed, r.loser_feed,
 					count() AS slot_count,
 					quantile(0.5)(r.lead_time_p50_ms) AS p50_ms,
-					quantile(0.5)(r.lead_time_p95_ms) AS p95_ms
+					quantile(0.95)(r.lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN (
 					SELECT DISTINCT host, slot
@@ -423,7 +427,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					host, feed, loser_feed,
 					count() AS slot_count,
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
-					quantile(0.5)(lead_time_p95_ms) AS p95_ms
+					quantile(0.95)(lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary
 				WHERE feed_type = 'shred' AND loser_feed != ''
 					AND lead_time_p50_ms <= 500
@@ -637,52 +641,63 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			}
 		}
 
-		if len(localSlots) > 0 && globalMaxEpoch > 0 {
+		if len(localSlots) > 0 {
 			const slotsPerEpoch uint64 = 432_000
-			epochStart := globalMaxEpoch * slotsPerEpoch
 
+			// Group slots by epoch — recent slots may span an epoch boundary, so we
+			// cannot assume all slots belong to globalMaxEpoch.
+			type epochRelSlot struct {
+				epoch uint64
+				rel   uint64
+			}
 			slotSet := make(map[uint64]bool)
 			for _, sr := range localSlots {
 				slotSet[sr.Slot] = true
 			}
-			relativeSlots := make([]uint64, 0, len(slotSet))
-			relToAbs := make(map[uint64]uint64)
+			// relToAbs: (epoch, relSlot) → absSlot
+			relByEpoch := make(map[uint64][]uint64)   // epoch → []relSlot
+			relToAbs := make(map[epochRelSlot]uint64) // (epoch, rel) → absSlot
 			for s := range slotSet {
-				rel := s - epochStart
-				relativeSlots = append(relativeSlots, rel)
-				relToAbs[rel] = s
+				epoch := s / slotsPerEpoch
+				rel := s - epoch*slotsPerEpoch
+				relByEpoch[epoch] = append(relByEpoch[epoch], rel)
+				relToAbs[epochRelSlot{epoch, rel}] = s
 			}
-
-			query6a := fmt.Sprintf(`
-				SELECT
-					arrayJoin(JSONExtract(slots, 'Array(UInt64)')) AS slot,
-					node_pubkey
-				FROM dim_solana_leader_schedule_history
-				WHERE epoch = %d
-				HAVING slot IN (?)
-			`, globalMaxEpoch)
-
-			t = time.Now()
-			rows6a, err := a.envDB(gctx).Query(gctx, query6a, relativeSlots)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
 
 			slotPubkeys := make(map[uint64]string)
 			pubkeySet := make(map[string]bool)
-			if err != nil && gctx.Err() == nil {
-				log.Printf("EdgeScoreboard query6a error: %v", err)
-			} else if err == nil {
-				defer rows6a.Close()
+			for epoch, relSlots := range relByEpoch {
+				query6a := fmt.Sprintf(`
+					SELECT
+						arrayJoin(JSONExtract(slots, 'Array(UInt64)')) AS slot,
+						node_pubkey
+					FROM dim_solana_leader_schedule_history
+					WHERE epoch = %d
+					HAVING slot IN (?)
+				`, epoch)
+
+				t = time.Now()
+				rows6a, err := a.envDB(gctx).Query(gctx, query6a, relSlots)
+				metrics.RecordClickHouseQuery(time.Since(t), err)
+				if err != nil && gctx.Err() == nil {
+					log.Printf("EdgeScoreboard query6a error (epoch %d): %v", epoch, err)
+					continue
+				} else if err != nil {
+					continue
+				}
 				for rows6a.Next() {
 					var relSlot uint64
 					var pubkey string
 					if err := rows6a.Scan(&relSlot, &pubkey); err != nil {
 						log.Printf("EdgeScoreboard query6a scan error: %v", err)
+						rows6a.Close()
 						break
 					}
-					absSlot := relToAbs[relSlot]
+					absSlot := relToAbs[epochRelSlot{epoch, relSlot}]
 					slotPubkeys[absSlot] = pubkey
 					pubkeySet[pubkey] = true
 				}
+				rows6a.Close()
 			}
 
 			if len(pubkeySet) > 0 {
@@ -797,6 +812,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		return nodes[i].Host < nodes[j].Host
 	})
 
+	// completeness_pct is the ratio of DZ-participated slots to total slots summed
+	// across all nodes (not unique slots). This is effectively the slot-count-weighted
+	// average DZ coverage per node, not "fraction of unique slots with any DZ coverage".
 	var completenessPct float64
 	if totalSlots > 0 {
 		completenessPct = float64(dzSlots) / float64(totalSlots) * 100
