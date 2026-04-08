@@ -74,17 +74,18 @@ type EdgeScoreboardLeader struct {
 
 // EdgeScoreboardResponse is the response for the edge scoreboard endpoint.
 type EdgeScoreboardResponse struct {
-	Window          string                           `json:"window"`
-	LeadersOnly     bool                             `json:"leaders_only"`
-	GeneratedAt     time.Time                        `json:"generated_at"`
-	CurrentEpoch    uint64                           `json:"current_epoch"`
-	CurrentSlot     uint64                           `json:"current_slot"`
-	TotalSlots      uint64                           `json:"total_slots"`
-	DZSlots         uint64                           `json:"dz_slots"`
-	CompletenessPct float64                          `json:"completeness_pct"`
-	Nodes           []EdgeScoreboardNode             `json:"nodes"`
-	RecentSlots     []EdgeScoreboardSlotRace         `json:"recent_slots"`
-	SlotLeaders     map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
+	Window             string                           `json:"window"`
+	LeadersOnly        bool                             `json:"leaders_only"`
+	GeneratedAt        time.Time                        `json:"generated_at"`
+	CurrentEpoch       uint64                           `json:"current_epoch"`
+	CurrentSlot        uint64                           `json:"current_slot"`
+	TotalSlots         uint64                           `json:"total_slots"`
+	DZSlots            uint64                           `json:"dz_slots"`
+	TotalDZLeaderSlots uint64                           `json:"total_dz_leader_slots"`
+	CompletenessPct    float64                          `json:"completeness_pct"`
+	Nodes              []EdgeScoreboardNode             `json:"nodes"`
+	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
+	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 }
 
 // validWindows maps window parameter values to ClickHouse interval expressions.
@@ -282,6 +283,33 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					info.dzSlots = count
 				}
 			}
+		}
+	}
+
+	// Query 1c: total DZ-leader slots in the window (global, not per-node).
+	// Used as the denominator for per-node completeness: dz_leader_slots / total_dz_leader_slots.
+	var totalDZLeaderSlots uint64
+	{
+		query1c := fmt.Sprintf(`
+			WITH %s
+			SELECT uniqExact(slot) FROM dz_leader_slots
+		`, dzLeaderCTE)
+		start = time.Now()
+		rows1c, err := a.envDB(ctx).Query(ctx, query1c)
+		duration = time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+		if err != nil {
+			return nil, fmt.Errorf("query1c: %w", err)
+		}
+		if rows1c.Next() {
+			if err := rows1c.Scan(&totalDZLeaderSlots); err != nil {
+				rows1c.Close()
+				return nil, fmt.Errorf("query1c scan: %w", err)
+			}
+		}
+		rows1c.Close()
+		if err := rows1c.Err(); err != nil {
+			return nil, fmt.Errorf("query1c rows: %w", err)
 		}
 	}
 
@@ -825,25 +853,29 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		return nodes[i].Host < nodes[j].Host
 	})
 
-	// completeness_pct is the ratio of DZ-participated slots to total slots summed
-	// across all nodes (not unique slots). This is effectively the slot-count-weighted
-	// average DZ coverage per node, not "fraction of unique slots with any DZ coverage".
+	// completeness_pct: average per-node fraction of global DZ-leader slots observed.
+	// Uses totalDZLeaderSlots as the denominator so nodes missing slots show < 100%.
 	var completenessPct float64
-	if totalSlots > 0 {
-		completenessPct = float64(dzSlots) / float64(totalSlots) * 100
+	if totalDZLeaderSlots > 0 && len(nodes) > 0 {
+		var sumPct float64
+		for i := range nodes {
+			sumPct += float64(nodes[i].DZLeaderSlots) / float64(totalDZLeaderSlots) * 100
+		}
+		completenessPct = sumPct / float64(len(nodes))
 	}
 
 	return &EdgeScoreboardResponse{
-		Window:          window,
-		LeadersOnly:     leadersOnly,
-		GeneratedAt:     time.Now().UTC(),
-		CurrentEpoch:    globalMaxEpoch,
-		CurrentSlot:     globalMaxSlot,
-		TotalSlots:      totalSlots,
-		DZSlots:         dzSlots,
-		CompletenessPct: completenessPct,
-		Nodes:           nodes,
-		RecentSlots:     recentSlots,
-		SlotLeaders:     slotLeaders,
+		Window:             window,
+		LeadersOnly:        leadersOnly,
+		GeneratedAt:        time.Now().UTC(),
+		CurrentEpoch:       globalMaxEpoch,
+		CurrentSlot:        globalMaxSlot,
+		TotalSlots:         totalSlots,
+		DZSlots:            dzSlots,
+		TotalDZLeaderSlots: totalDZLeaderSlots,
+		CompletenessPct:    completenessPct,
+		Nodes:              nodes,
+		RecentSlots:        recentSlots,
+		SlotLeaders:        slotLeaders,
 	}, nil
 }

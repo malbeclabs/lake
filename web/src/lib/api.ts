@@ -5003,6 +5003,7 @@ export interface EdgeScoreboardResponse {
   current_slot: number
   total_slots: number
   dz_slots: number
+  total_dz_leader_slots: number
   completeness_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]

@@ -686,8 +686,8 @@ export function EdgeScoreboardPage() {
       leads,
       totalSlots,
       avgCompleteness:
-        data.nodes.length > 0
-          ? data.nodes.reduce((sum, n) => sum + (n.total_slots > 0 ? n.dz_leader_slots / n.total_slots : 0), 0) /
+        data.nodes.length > 0 && data.total_dz_leader_slots > 0
+          ? data.nodes.reduce((sum, n) => sum + n.dz_leader_slots / data.total_dz_leader_slots, 0) /
             data.nodes.length *
             100
           : 0,
@@ -855,7 +855,7 @@ export function EdgeScoreboardPage() {
                   </tr>
                 ) : (
                   sortedNodes.map((node) => (
-                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} />
+                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} totalDZLeaderSlots={data?.total_dz_leader_slots ?? 0} />
                   ))
                 )}
               </tbody>
@@ -874,12 +874,12 @@ export function EdgeScoreboardPage() {
   )
 }
 
-function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
+function NodeRow({ node, label, totalDZLeaderSlots }: { node: EdgeScoreboardNode; label: string; totalDZLeaderSlots: number }) {
   const [showTooltip, setShowTooltip] = useState(false)
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
-  const completeness = node.total_slots > 0 ? (node.dz_leader_slots / node.total_slots) * 100 : 0
+  const completeness = totalDZLeaderSlots > 0 ? (node.dz_leader_slots / totalDZLeaderSlots) * 100 : 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }
   const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
