@@ -709,11 +709,16 @@ function RecentSlotsChart({
       '30d': 30 * 86400 * SLOTS_PER_SEC,
     }
     const windowSlots = window ? (windowToSlots[window] ?? null) : null
-    // Use the second-to-last raw bucket as maxBucket so the current (partial) bucket is dropped
-    const lastCompleteBucket = rawBuckets.length >= 2 ? rawBuckets[rawBuckets.length - 2] : rawBuckets[rawBuckets.length - 1] ?? 0
-    const maxBucket = currentSlot != null
-      ? Math.floor(currentSlot / apiBucketSize) * apiBucketSize - apiBucketSize
-      : lastCompleteBucket
+    // Clip maxBucket to the minimum per-node max slot_bucket so every node has data
+    // up to the cutoff and no node has trailing nulls on the right edge.
+    const perNodeMax = new Map<string, number>()
+    for (const b of filtered) {
+      if (b.slot_bucket > (perNodeMax.get(b.host) ?? 0)) perNodeMax.set(b.host, b.slot_bucket)
+    }
+    const nodeMaxes = [...perNodeMax.values()].sort((a, b) => a - b)
+    const minNodeMax = nodeMaxes[0] ?? (rawBuckets[rawBuckets.length - 1] ?? 0)
+    // Drop the last bucket (may be partial/ongoing)
+    const maxBucket = minNodeMax > 0 ? minNodeMax - apiBucketSize : 0
     // Align minBucket to apiBucketSize so it matches API bucket boundaries exactly
     const minBucketRaw = windowSlots != null ? maxBucket - windowSlots : rawBuckets[0] ?? 0
     const minBucket = Math.ceil(minBucketRaw / apiBucketSize) * apiBucketSize
