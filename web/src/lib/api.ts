@@ -5009,6 +5009,7 @@ export interface EdgeScoreboardResponse {
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
   slot_buckets?: EdgeScoreboardSlotBucket[]
+  slot_bucket_size?: number
   slot_leaders?: Record<string, EdgeScoreboardLeader>
 }
 

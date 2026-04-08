@@ -587,6 +587,7 @@ function RecentSlotsChart({
   slotLeaders,
   leadersOnly,
   slotBuckets,
+  slotBucketSize,
   window,
   currentSlot,
   bucketed,
@@ -597,6 +598,7 @@ function RecentSlotsChart({
   slotLeaders?: Record<string, EdgeScoreboardLeader>
   leadersOnly?: boolean
   slotBuckets?: EdgeScoreboardSlotBucket[]
+  slotBucketSize?: number
   window?: TimeWindow
   currentSlot?: number
   bucketed: boolean
@@ -680,7 +682,8 @@ function RecentSlotsChart({
     const maxDisplayBuckets = Math.max(10, Math.floor(availableWidth / BAR_MIN_PX))
 
     const rawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
-    const apiBucketSize = rawBuckets.length >= 2 ? rawBuckets[1] - rawBuckets[0] : 1
+    // Use the API-reported bucket size; fall back to inferring from consecutive values.
+    const apiBucketSize = slotBucketSize ?? (rawBuckets.length >= 2 ? rawBuckets[1] - rawBuckets[0] : 1)
 
     // Build the full expected bucket range from current_slot and window so all nodes
     // share exactly the same x-axis, regardless of how much data each node has.
@@ -752,7 +755,7 @@ function RecentSlotsChart({
       })
 
     return { nodeCharts: bucketedNodeCharts, feeds, slotCount: displayBucketStarts.length, bucketSize: displayBucketSize }
-  }, [slotBuckets, nodes, chartWidth, window, currentSlot])
+  }, [slotBuckets, slotBucketSize, nodes, chartWidth, window, currentSlot])
 
   if (!slots.length)
     return (
@@ -1185,7 +1188,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} window={activeWindow} currentSlot={data.current_slot} bucketed={bucketed} setBucketed={setBucketed} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} currentSlot={data.current_slot} bucketed={bucketed} setBucketed={setBucketed} />
           </div>
         )}
 

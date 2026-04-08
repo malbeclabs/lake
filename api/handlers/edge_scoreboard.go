@@ -99,6 +99,7 @@ type EdgeScoreboardResponse struct {
 	Nodes              []EdgeScoreboardNode             `json:"nodes"`
 	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
 	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
+	SlotBucketSize     uint64                           `json:"slot_bucket_size,omitempty"`
 	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 }
 
@@ -397,12 +398,13 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	//   C: stake by metro (q4)
 	//   D: recent slot races (q5) + slot leader enrichment (q6a, q6b)
 	var (
-		feedStats    map[feedKey]*EdgeScoreboardFeedStats
-		metros       = make(map[string]*metroInfo)
-		stakeByMetro = make(map[string]*stakeInfo)
-		recentSlots  []EdgeScoreboardSlotRace
-		slotBuckets  []EdgeScoreboardSlotBucket
-		slotLeaders  = make(map[string]*EdgeScoreboardLeader)
+		feedStats      map[feedKey]*EdgeScoreboardFeedStats
+		metros         = make(map[string]*metroInfo)
+		stakeByMetro   = make(map[string]*stakeInfo)
+		recentSlots    []EdgeScoreboardSlotRace
+		slotBuckets    []EdgeScoreboardSlotBucket
+		slotBucketSize uint64
+		slotLeaders    = make(map[string]*EdgeScoreboardLeader)
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -887,6 +889,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		if targetRange > targetBuckets {
 			bucketSize = targetRange / targetBuckets
 		}
+		slotBucketSize = bucketSize
 
 		// The correct denominator for bucketed win rate is the total shreds across ALL
 		// feeds per bucket, not per-feed total_shreds. Some feeds only have rows when
@@ -1044,6 +1047,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		Nodes:              nodes,
 		RecentSlots:        recentSlots,
 		SlotBuckets:        slotBuckets,
+		SlotBucketSize:     slotBucketSize,
 		SlotLeaders:        slotLeaders,
 	}, nil
 }
