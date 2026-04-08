@@ -646,15 +646,6 @@ export function EdgeScoreboardPage() {
     staleTime: 15_000,
   })
 
-  const setWindow = (w: TimeWindow) => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev)
-      if (w === '1h') p.delete('window')
-      else p.set('window', w)
-      return p
-    })
-  }
-
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
