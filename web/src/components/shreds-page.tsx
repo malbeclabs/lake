@@ -379,7 +379,7 @@ export function ShredsSeatsPage() {
     placeholderData: keepPreviousData,
     refetchInterval: 30000,
   })
-  const isFetching = useDebouncedFetching(rawFetching)
+  const isFetching = useDebouncedFetching(rawFetching && !!data)
   const refresh = useRefreshButton(refetch, rawFetching)
 
   const items = data?.items ?? []
@@ -491,11 +491,11 @@ export function ShredsSeatsPage() {
               <span className="inline-flex items-center gap-1.5 font-medium text-green-600 dark:text-green-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-green-500" /> Active
               </span>
-              <span className="text-muted-foreground">Allocated for the current epoch with 2+ epochs of prepaid balance</span>
+              <span className="text-muted-foreground">Allocated for the current epoch with 1+ epochs of prepaid balance</span>
               <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Expiring
               </span>
-              <span className="text-muted-foreground">Active but less than 2 epochs of balance remaining</span>
+              <span className="text-muted-foreground">Active but less than 1 epoch of balance remaining</span>
               <span className="inline-flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-blue-500" /> Pending
               </span>
@@ -640,7 +640,7 @@ export function ShredsDevicesPage() {
     placeholderData: keepPreviousData,
     refetchInterval: 30000,
   })
-  const isFetchingDevices = useDebouncedFetching(rawFetchingDevices)
+  const isFetchingDevices = useDebouncedFetching(rawFetchingDevices && !!data)
   const refreshDevices = useRefreshButton(refetchDevices, rawFetchingDevices)
 
   const items = data?.items ?? []
@@ -802,7 +802,7 @@ export function ShredsFundersPage() {
     queryFn: fetchShredFunders,
     refetchInterval: 30000,
   })
-  const isFetchingFunders = useDebouncedFetching(rawFetchingFunders)
+  const isFetchingFunders = useDebouncedFetching(rawFetchingFunders && !!data)
   const refreshFunders = useRefreshButton(refetchFunders, rawFetchingFunders)
 
   const filtered = useMemo(() => {
@@ -1008,7 +1008,7 @@ export function ShredsEscrowEventsPage() {
     placeholderData: keepPreviousData,
     refetchInterval: 30000,
   })
-  const isFetchingEvents = useDebouncedFetching(rawFetchingEvents)
+  const isFetchingEvents = useDebouncedFetching(rawFetchingEvents && !!data)
   const refreshEvents = useRefreshButton(refetchEvents, rawFetchingEvents)
 
   const items = data?.items ?? []
