@@ -523,6 +523,7 @@ function RecentSlotsChart({
   leadersOnly,
   slotBuckets,
   window,
+  currentSlot,
   bucketed,
   setBucketed,
 }: {
@@ -532,6 +533,7 @@ function RecentSlotsChart({
   leadersOnly?: boolean
   slotBuckets?: EdgeScoreboardSlotBucket[]
   window?: TimeWindow
+  currentSlot?: number
   bucketed: boolean
   setBucketed: (v: boolean) => void
 }) {
@@ -614,13 +616,27 @@ function RecentSlotsChart({
 
     const rawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
     const apiBucketSize = rawBuckets.length >= 2 ? rawBuckets[1] - rawBuckets[0] : 1
-    // Fill in the full min→max range so all nodes share the same x-axis, even if
-    // some nodes have no data for certain buckets (they'll just render as zero bars).
+
+    // Build the full expected bucket range from current_slot and window so all nodes
+    // share exactly the same x-axis, regardless of how much data each node has.
+    const SLOTS_PER_SEC = 2.5
+    const windowToSlots: Record<string, number> = {
+      '1h':  3600  * SLOTS_PER_SEC,
+      '24h': 86400 * SLOTS_PER_SEC,
+      '7d':  7 * 86400 * SLOTS_PER_SEC,
+      '30d': 30 * 86400 * SLOTS_PER_SEC,
+    }
+    const windowSlots = window ? (windowToSlots[window] ?? null) : null
+    const maxBucket = rawBuckets.length > 0
+      ? (currentSlot != null ? Math.floor(currentSlot / apiBucketSize) * apiBucketSize : rawBuckets[rawBuckets.length - 1])
+      : 0
+    const minBucket = rawBuckets.length > 0
+      ? (windowSlots != null ? Math.max(rawBuckets[0], maxBucket - windowSlots) : rawBuckets[0])
+      : 0
+
     const apiBucketNumbers: number[] = []
-    if (rawBuckets.length > 0) {
-      for (let b = rawBuckets[0]; b <= rawBuckets[rawBuckets.length - 1]; b += apiBucketSize) {
-        apiBucketNumbers.push(b)
-      }
+    for (let b = minBucket; b <= maxBucket; b += apiBucketSize) {
+      apiBucketNumbers.push(b)
     }
     const groupSize = Math.max(1, Math.ceil(apiBucketNumbers.length / maxDisplayBuckets))
     const displayBucketSize = groupSize * apiBucketSize
@@ -664,7 +680,7 @@ function RecentSlotsChart({
       })
 
     return { nodeCharts: bucketedNodeCharts, feeds, slotCount: displayBucketStarts.length, bucketSize: displayBucketSize }
-  }, [slotBuckets, nodes, chartWidth])
+  }, [slotBuckets, nodes, chartWidth, window, currentSlot])
 
   if (!slots.length)
     return (
@@ -1097,7 +1113,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} window={activeWindow} currentSlot={data.current_slot} bucketed={bucketed} setBucketed={setBucketed} />
           </div>
         )}
 

@@ -867,13 +867,25 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 	// Group E: bucketed slot win rates across the full time window (q7) — non-fatal
 	g.Go(func() error {
-		// Compute bucket size from the observed slot range, targeting ~500 fine-grained
-		// buckets. The frontend re-aggregates into display buckets based on chart width.
+		// Compute bucket size from the expected window slot range, targeting ~500 fine-grained
+		// buckets. Using the window (not observed data range) ensures consistent bucket
+		// boundaries regardless of data sparsity. The frontend fills in the full expected
+		// range from current_slot so all nodes share the same x-axis.
+		const slotsPerSec = 2.5
 		const targetBuckets = 500
-		slotRange := globalMaxSlot - globalMinSlot
+		windowSlotRange := map[string]uint64{
+			"1h":  uint64(3600 * slotsPerSec),
+			"24h": uint64(86400 * slotsPerSec),
+			"7d":  uint64(7 * 86400 * slotsPerSec),
+			"30d": uint64(30 * 86400 * slotsPerSec),
+		}
+		targetRange, ok := windowSlotRange[window]
+		if !ok {
+			targetRange = globalMaxSlot - globalMinSlot // "all"
+		}
 		bucketSize := uint64(1)
-		if slotRange > targetBuckets {
-			bucketSize = slotRange / targetBuckets
+		if targetRange > targetBuckets {
+			bucketSize = targetRange / targetBuckets
 		}
 
 		// The correct denominator for bucketed win rate is the total shreds across ALL
