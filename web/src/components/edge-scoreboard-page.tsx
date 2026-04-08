@@ -684,6 +684,9 @@ function RecentSlotsChart({
 
     // Build the full expected bucket range from current_slot and window so all nodes
     // share exactly the same x-axis, regardless of how much data each node has.
+    // maxBucket: the last COMPLETE bucket before current_slot (drop the ongoing bucket
+    // to avoid it appearing to drop to zero as it fills in).
+    // minBucket: aligned to apiBucketSize so it matches API-produced slot_bucket values.
     const SLOTS_PER_SEC = 2.5
     const windowToSlots: Record<string, number> = {
       '1h':  3600  * SLOTS_PER_SEC,
@@ -692,12 +695,14 @@ function RecentSlotsChart({
       '30d': 30 * 86400 * SLOTS_PER_SEC,
     }
     const windowSlots = window ? (windowToSlots[window] ?? null) : null
-    const maxBucket = rawBuckets.length > 0
-      ? (currentSlot != null ? Math.floor(currentSlot / apiBucketSize) * apiBucketSize : rawBuckets[rawBuckets.length - 1])
-      : 0
-    const minBucket = rawBuckets.length > 0
-      ? (windowSlots != null ? Math.max(rawBuckets[0], maxBucket - windowSlots) : rawBuckets[0])
-      : 0
+    // Use the second-to-last raw bucket as maxBucket so the current (partial) bucket is dropped
+    const lastCompleteBucket = rawBuckets.length >= 2 ? rawBuckets[rawBuckets.length - 2] : rawBuckets[rawBuckets.length - 1] ?? 0
+    const maxBucket = currentSlot != null
+      ? Math.floor(currentSlot / apiBucketSize) * apiBucketSize - apiBucketSize
+      : lastCompleteBucket
+    // Align minBucket to apiBucketSize so it matches API bucket boundaries exactly
+    const minBucketRaw = windowSlots != null ? maxBucket - windowSlots : rawBuckets[0] ?? 0
+    const minBucket = Math.ceil(minBucketRaw / apiBucketSize) * apiBucketSize
 
     const apiBucketNumbers: number[] = []
     for (let b = minBucket; b <= maxBucket; b += apiBucketSize) {
@@ -720,7 +725,9 @@ function RecentSlotsChart({
         const displayData = new Map<number, { feedWon: Map<string, number>; bucketTotal: number }>()
         for (const b of filtered) {
           if (b.host !== n.host) continue
-          const apiIdx = apiBucketIndex.get(b.slot_bucket) ?? 0
+          // Skip buckets outside our computed range to avoid polluting the wrong display bucket
+          const apiIdx = apiBucketIndex.get(b.slot_bucket)
+          if (apiIdx === undefined) continue
           const displayStart = apiBucketNumbers[Math.floor(apiIdx / groupSize) * groupSize]
           let agg = displayData.get(displayStart)
           if (!agg) {
