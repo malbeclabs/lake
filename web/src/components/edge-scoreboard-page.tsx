@@ -74,6 +74,15 @@ const FEED_LABELS: Record<string, string> = {
 }
 
 const SLOTS_PER_EPOCH = 432_000
+const SLOTS_PER_SEC = 2.5
+
+function formatSlotDuration(slots: number): string {
+  const secs = slots / SLOTS_PER_SEC
+  if (secs < 60) return `~${Math.round(secs)}s`
+  if (secs < 3600) return `~${Math.round(secs / 60)}m`
+  if (secs < 86400) return `~${(secs / 3600).toFixed(1)}h`
+  return `~${(secs / 86400).toFixed(1)}d`
+}
 
 function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
   const slotInEpoch = slot % SLOTS_PER_EPOCH
@@ -710,8 +719,8 @@ function RecentSlotsChart({
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
         {bucketed
-          ? `${slotCount} buckets · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each`
-          : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots`}
+          ? `${slotCount} buckets · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · ${formatSlotDuration(slotCount * (activeBucketSize ?? 0))}`
+          : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots · ${formatSlotDuration(slotCount)}`}
       </div>
     </div>
   )
