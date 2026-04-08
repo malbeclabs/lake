@@ -63,6 +63,15 @@ type EdgeScoreboardSlotRace struct {
 	WinPct    float64 `json:"win_pct"`
 }
 
+// EdgeScoreboardSlotBucket holds aggregated win-rate data bucketed by slot range,
+// covering the full selected time window.
+type EdgeScoreboardSlotBucket struct {
+	Host       string  `json:"host"`
+	SlotBucket uint64  `json:"slot_bucket"` // first slot of the bucket
+	Feed       string  `json:"feed"`
+	WinPct     float64 `json:"win_pct"` // sum(shreds_won)/sum(total_shreds)*100
+}
+
 // EdgeScoreboardLeader holds leader validator info for a slot.
 type EdgeScoreboardLeader struct {
 	Name    string `json:"name,omitempty"`
@@ -87,6 +96,7 @@ type EdgeScoreboardResponse struct {
 	CompletenessPct    float64                          `json:"completeness_pct"`
 	Nodes              []EdgeScoreboardNode             `json:"nodes"`
 	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
+	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
 	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 }
 
@@ -97,6 +107,16 @@ var validWindows = map[string]string{
 	"7d":  "7 DAY",
 	"30d": "30 DAY",
 	"all": "",
+}
+
+// slotBucketSizes maps time window to slots-per-bucket, targeting ~100 buckets.
+// Solana produces ~2.5 slots/sec: 1h≈9000, 24h≈216000, 7d≈1.5M, 30d≈6.5M slots.
+var slotBucketSizes = map[string]uint64{
+	"1h":  100,
+	"24h": 2000,
+	"7d":  15000,
+	"30d": 64000,
+	"all": 200000,
 }
 
 // edgeScoreboardCacheKey returns the page cache key for a request, or "" if the request
@@ -358,6 +378,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	}
 	nodeList := strings.Join(validNodeIDs, ",")
 	nodeCount := len(nodeSlots)
+	slotWindowMax := globalMaxSlot + 2*slotsPerEpoch
 
 	type metroInfo struct {
 		name      string
@@ -379,6 +400,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		metros       = make(map[string]*metroInfo)
 		stakeByMetro = make(map[string]*stakeInfo)
 		recentSlots  []EdgeScoreboardSlotRace
+		slotBuckets  []EdgeScoreboardSlotBucket
 		slotLeaders  = make(map[string]*EdgeScoreboardLeader)
 	)
 
@@ -632,7 +654,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// Using Go-side literals instead of a max(slot) subquery makes the window
 		// resilient to corrupted outlier rows that could inflate max(slot).
 		slotWindowMin := globalMaxSlot - 10000
-		slotWindowMax := globalMaxSlot + 2*slotsPerEpoch
 
 		var query5 string
 		if leadersOnly {
@@ -831,6 +852,71 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		return nil
 	})
 
+	// Group E: bucketed slot win rates across the full time window (q7) — non-fatal
+	g.Go(func() error {
+		bucketSize, ok := slotBucketSizes[window]
+		if !ok || bucketSize == 0 {
+			bucketSize = 10000
+		}
+
+		var query7 string
+		if leadersOnly {
+			query7 = fmt.Sprintf(`
+				WITH %s
+				SELECT
+					host,
+					intDiv(slot, %d) * %d AS slot_bucket,
+					feed,
+					round(sum(shreds_won) / greatest(sum(total_shreds), 1) * 100, 1) AS win_pct
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND loser_feed = ''
+					AND host IN (%s)
+					AND slot IN (SELECT slot FROM dz_leader_slots)
+					AND slot <= %d
+					%s
+				GROUP BY host, slot_bucket, feed
+				ORDER BY host, slot_bucket, feed
+			`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, nodeList, slotWindowMax, timeFilter)
+		} else {
+			query7 = fmt.Sprintf(`
+				SELECT
+					host,
+					intDiv(slot, %d) * %d AS slot_bucket,
+					feed,
+					round(sum(shreds_won) / greatest(sum(total_shreds), 1) * 100, 1) AS win_pct
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND loser_feed = ''
+					AND host IN (%s)
+					AND slot <= %d
+					%s
+				GROUP BY host, slot_bucket, feed
+				ORDER BY host, slot_bucket, feed
+			`, bucketSize, bucketSize, shredderDB, nodeList, slotWindowMax, timeFilter)
+		}
+
+		t := time.Now()
+		rows7, err := a.envDB(gctx).Query(gctx, query7)
+		metrics.RecordClickHouseQuery(time.Since(t), err)
+		if err != nil && gctx.Err() == nil {
+			log.Printf("EdgeScoreboard query7 error: %v", err)
+			return nil
+		}
+		if err == nil {
+			defer rows7.Close()
+			var localBuckets []EdgeScoreboardSlotBucket
+			for rows7.Next() {
+				var sb EdgeScoreboardSlotBucket
+				if err := rows7.Scan(&sb.Host, &sb.SlotBucket, &sb.Feed, &sb.WinPct); err != nil {
+					log.Printf("EdgeScoreboard query7 scan error: %v", err)
+					break
+				}
+				localBuckets = append(localBuckets, sb)
+			}
+			slotBuckets = localBuckets
+		}
+		return nil
+	})
+
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -902,6 +988,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		CompletenessPct:    completenessPct,
 		Nodes:              nodes,
 		RecentSlots:        recentSlots,
+		SlotBuckets:        slotBuckets,
 		SlotLeaders:        slotLeaders,
 	}, nil
 }

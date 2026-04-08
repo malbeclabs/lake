@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2 } from 'lucide-react'
+import { Trophy, Loader2, Sigma } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import maplibregl from 'maplibre-gl'
@@ -10,6 +10,7 @@ import {
   fetchEdgeScoreboard,
   type EdgeScoreboardNode,
   type EdgeScoreboardSlotRace,
+  type EdgeScoreboardSlotBucket,
   type EdgeScoreboardLeader,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -295,10 +296,12 @@ function SlotRaceNodeChart({
   slotData,
   feeds,
   slotLeaders,
+  bucketSize,
 }: {
   slotData: Array<Record<string, number>>
   feeds: string[]
   slotLeaders?: Record<string, EdgeScoreboardLeader>
+  bucketSize?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
@@ -474,7 +477,9 @@ function SlotRaceNodeChart({
           style={{ left: xPos, top: Math.max(0, hover.vy - 60) }}
         >
           <div className="font-mono font-semibold text-[#e5e5e5] mb-1.5">
-            Slot {Number(hoveredSlot['slot']).toLocaleString()}
+            {bucketSize
+              ? `Slots ${Number(hoveredSlot['slot']).toLocaleString()} – ${(Number(hoveredSlot['slot']) + bucketSize - 1).toLocaleString()}`
+              : `Slot ${Number(hoveredSlot['slot']).toLocaleString()}`}
           </div>
           {hoveredLeader && (
             <div className="mb-1.5 pb-1.5 border-b border-[#333] text-[#999]">
@@ -516,12 +521,16 @@ function RecentSlotsChart({
   nodes,
   slotLeaders,
   leadersOnly,
+  slotBuckets,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
   slotLeaders?: Record<string, EdgeScoreboardLeader>
   leadersOnly?: boolean
+  slotBuckets?: EdgeScoreboardSlotBucket[]
 }) {
+  const [bucketed, setBucketed] = useState(false)
+
   const chartData = useMemo(() => {
     if (!slots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
 
@@ -566,6 +575,58 @@ function RecentSlotsChart({
     return { nodeCharts, feeds, slotCount: slotNumbers.length }
   }, [slots, nodes])
 
+  const bucketedChartData = useMemo(() => {
+    if (!slotBuckets || !slotBuckets.length || !nodes.length) {
+      return { nodeCharts: [], feeds: [] as string[], slotCount: 0, bucketSize: 0 }
+    }
+
+    const validNodeIds = new Set(nodes.map((n) => n.host))
+    const filtered = slotBuckets.filter((b) => validNodeIds.has(b.host))
+
+    const feedSet = new Set<string>()
+    for (const b of filtered) feedSet.add(b.feed)
+    const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
+
+    const byNode = new Map<string, Map<number, Record<string, number>>>()
+    for (const b of filtered) {
+      let nodeMap = byNode.get(b.host)
+      if (!nodeMap) {
+        nodeMap = new Map()
+        byNode.set(b.host, nodeMap)
+      }
+      let row = nodeMap.get(b.slot_bucket)
+      if (!row) {
+        row = {}
+        nodeMap.set(b.slot_bucket, row)
+      }
+      row[b.feed] = b.win_pct
+    }
+
+    const bucketNumbers = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
+    const sortedNodes = [...nodes].sort((a, b) => a.host.localeCompare(b.host))
+
+    const bucketedNodeCharts = sortedNodes
+      .filter((n) => byNode.has(n.host))
+      .map((n) => {
+        const bucketMap = byNode.get(n.host)!
+        const data = bucketNumbers.map((slot_bucket, idx) => {
+          const feedPcts = bucketMap.get(slot_bucket) ?? {}
+          const row: Record<string, number> = { idx, slot: slot_bucket }
+          for (const f of feeds) row[f] = feedPcts[f] ?? 0
+          return row
+        })
+        return { node: n, data }
+      })
+
+    // Compute bucketSize from first two consecutive slot_bucket values
+    let bucketSize = 0
+    if (bucketNumbers.length >= 2) {
+      bucketSize = bucketNumbers[1] - bucketNumbers[0]
+    }
+
+    return { nodeCharts: bucketedNodeCharts, feeds, slotCount: bucketNumbers.length, bucketSize }
+  }, [slotBuckets, nodes])
+
   if (!slots.length)
     return (
       <div className="rounded-lg border border-border bg-card p-4">
@@ -574,7 +635,9 @@ function RecentSlotsChart({
       </div>
     )
 
-  const { nodeCharts, feeds, slotCount } = chartData
+  const activeData = bucketed ? bucketedChartData : chartData
+  const { nodeCharts, feeds, slotCount } = activeData
+  const activeBucketSize = bucketed ? bucketedChartData.bucketSize : undefined
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
@@ -587,16 +650,30 @@ function RecentSlotsChart({
               {FEED_LABELS[f] ?? f}
             </div>
           ))}
+          <button
+            onClick={() => setBucketed(b => !b)}
+            className={cn(
+              'px-2 text-xs rounded-md border transition-colors inline-flex items-center justify-center h-[26px]',
+              bucketed
+                ? 'border-foreground/30 text-foreground bg-muted'
+                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+            title={bucketed ? 'Showing bucketed averages. Click for individual slots.' : 'Showing individual slots. Click to bucket across the full time window.'}
+          >
+            <Sigma className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
       {nodeCharts.map((nc) => (
         <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
           <NodeLabel node={nc.node} label={nodeDisplayLabel(nc.node, nodes)} />
-          <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={slotLeaders} />
+          <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={slotLeaders} bucketSize={activeBucketSize} />
         </div>
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
-        {slotCount} most recent {leadersOnly ? 'Edge leader ' : ''}slots
+        {bucketed
+          ? `${slotCount} buckets across ${leadersOnly ? 'Edge leader ' : ''}slots`
+          : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots`}
       </div>
     </div>
   )
@@ -960,7 +1037,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} />
           </div>
         )}
 

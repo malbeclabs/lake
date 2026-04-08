@@ -5008,6 +5008,7 @@ export interface EdgeScoreboardResponse {
   completeness_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
+  slot_buckets?: EdgeScoreboardSlotBucket[]
   slot_leaders?: Record<string, EdgeScoreboardLeader>
 }
 
@@ -5025,6 +5026,13 @@ export interface EdgeScoreboardSlotRace {
   slot: number
   feed: string
   shreds_won: number
+  win_pct: number
+}
+
+export interface EdgeScoreboardSlotBucket {
+  host: string
+  slot_bucket: number
+  feed: string
   win_pct: number
 }
 
