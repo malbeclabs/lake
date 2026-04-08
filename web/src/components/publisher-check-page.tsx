@@ -1,7 +1,7 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Loader2, AlertCircle, Search, ShieldCheck, ChevronDown, ChevronUp, Info } from 'lucide-react'
+import { Loader2, AlertCircle, Search, ShieldCheck, ChevronDown, ChevronUp, Info, Check, X } from 'lucide-react'
 import { fetchPublisherCheck, type PublisherCheckItem } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
@@ -41,6 +41,84 @@ function formatStakeExact(lamports: number): string {
   return `${(lamports / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 })} SOL`
 }
 
+function ClientFilterDropdown({
+  clientTypes,
+  selected,
+  onToggle,
+}: {
+  clientTypes: string[]
+  selected: Set<string>
+  onToggle: (client: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [open])
+
+  const selectedCount = clientTypes.filter(c => selected.has(c)).length
+  const hasFilter = selected.size > 0
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        className={cn(
+          'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border transition-colors',
+          hasFilter
+            ? 'bg-accent text-accent-foreground border-accent'
+            : 'border-border text-muted-foreground hover:bg-muted'
+        )}
+      >
+        <span>Validator Client</span>
+        {hasFilter && (
+          <span className="bg-primary/10 text-primary px-1 rounded text-[10px] font-medium">
+            {selectedCount}
+          </span>
+        )}
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 min-w-[160px] bg-popover border border-border rounded-md shadow-lg py-1 whitespace-nowrap">
+          {clientTypes.map(client => {
+            const isSelected = selected.has(client)
+            return (
+              <button
+                key={client}
+                onClick={() => onToggle(client)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted transition-colors"
+              >
+                <div className={cn(
+                  'w-3.5 h-3.5 rounded border flex items-center justify-center',
+                  isSelected ? 'bg-primary border-primary' : 'border-muted-foreground/30'
+                )}>
+                  {isSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                </div>
+                <span className={cn(
+                  'capitalize',
+                  isSelected ? 'text-foreground' : 'text-muted-foreground'
+                )}>
+                  {client}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PublisherCheckPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [filterInput, setFilterInput] = useState(searchParams.get('q') || '')
@@ -60,6 +138,17 @@ export function PublisherCheckPage() {
   const showBackups = searchParams.get('backups') === 'true'
   const activeTab = (searchParams.get('tab') || 'epoch') as 'epoch' | 'slots'
   const slots = parseInt(searchParams.get('slots') || '500')
+  const selectedClients = useMemo(() => {
+    const c = searchParams.get('client')
+    if (!c) return new Set<string>()
+    return new Set(c.split(',').filter(Boolean).map(s => s.toLowerCase()))
+  }, [searchParams])
+  const versionFilter = searchParams.get('version') || ''
+  const [versionInput, setVersionInput] = useState(searchParams.get('version') || '')
+
+  useEffect(() => {
+    setVersionInput(searchParams.get('version') || '')
+  }, [searchParams])
 
   const setOffset = useCallback((newOffset: number) => {
     setSearchParams(prev => {
@@ -151,6 +240,27 @@ export function PublisherCheckPage() {
     })
   }, [setSearchParams])
 
+  const handleToggleClient = useCallback((client: string) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      const current = new Set((p.get('client') || '').split(',').filter(Boolean).map(s => s.toLowerCase()))
+      const key = client.toLowerCase()
+      if (current.has(key)) current.delete(key); else current.add(key)
+      if (current.size === 0) p.delete('client'); else p.set('client', [...current].join(','))
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
+  const handleVersionSubmit = useCallback((version: string) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev)
+      if (version) p.set('version', version); else p.delete('version')
+      p.delete('page')
+      return p
+    })
+  }, [setSearchParams])
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['publisher-check', activeTab, activeTab === 'epoch' ? epochs : slots],
     queryFn: () =>
@@ -205,23 +315,44 @@ export function PublisherCheckPage() {
     showBackups ? searchFilteredPublishers : searchFilteredPublishers.filter(pub => !pub.is_backup),
   [searchFilteredPublishers, showBackups])
 
+  const clientTypes = useMemo(() => {
+    if (!data?.publishers) return []
+    const types = new Set<string>()
+    for (const p of data.publishers) {
+      const c = p.validator_client.toLowerCase()
+      if (c) types.add(c)
+    }
+    return [...types].sort()
+  }, [data?.publishers])
+
+  const clientFilteredPublishers = useMemo(() => {
+    let result = nonBackupPublishers
+    if (selectedClients.size > 0) {
+      result = result.filter(pub => selectedClients.has(pub.validator_client.toLowerCase()))
+    }
+    if (versionFilter) {
+      result = result.filter(pub => pub.validator_version.startsWith(versionFilter))
+    }
+    return result
+  }, [nonBackupPublishers, selectedClients, versionFilter])
+
   const filteredPublishers = useMemo(() => {
-    if (activeFilters.size === 0) return nonBackupPublishers
-    return nonBackupPublishers.filter(pub => {
+    if (activeFilters.size === 0) return clientFilteredPublishers
+    return clientFilteredPublishers.filter(pub => {
       if (activeFilters.has('retransmit') && pub.publishing_retransmitted) return true
       if (activeFilters.has('leader') && pub.publishing_leader_shreds) return true
       if (activeFilters.has('not-publishing') && !pub.publishing_leader_shreds && !pub.publishing_retransmitted) return true
       return false
     })
-  }, [nonBackupPublishers, activeFilters])
+  }, [clientFilteredPublishers, activeFilters])
 
   const publishingCount = useMemo(() =>
-    nonBackupPublishers.filter(p => p.publishing_leader_shreds).length,
-  [nonBackupPublishers])
+    clientFilteredPublishers.filter(p => p.publishing_leader_shreds).length,
+  [clientFilteredPublishers])
 
   const publishingStake = useMemo(() =>
-    nonBackupPublishers.filter(p => p.publishing_leader_shreds).reduce((sum, p) => sum + p.activated_stake, 0),
-  [nonBackupPublishers])
+    clientFilteredPublishers.filter(p => p.publishing_leader_shreds).reduce((sum, p) => sum + p.activated_stake, 0),
+  [clientFilteredPublishers])
 
   const totalNetworkStake = data?.total_network_stake ?? 0
 
@@ -430,6 +561,34 @@ export function PublisherCheckPage() {
             >
               Show Backups
             </button>
+            {clientTypes.length > 0 && (
+              <ClientFilterDropdown
+                clientTypes={clientTypes}
+                selected={selectedClients}
+                onToggle={handleToggleClient}
+              />
+            )}
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                placeholder="e.g. 2.2"
+                title="Filter by client version prefix"
+                value={versionInput}
+                onChange={(e) => setVersionInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleVersionSubmit(versionInput) }}
+                onBlur={() => handleVersionSubmit(versionInput)}
+                className="w-20 px-2 py-1.5 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              {versionFilter && (
+                <button
+                  type="button"
+                  onClick={() => { setVersionInput(''); handleVersionSubmit('') }}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
