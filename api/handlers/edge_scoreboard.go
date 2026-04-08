@@ -871,38 +871,66 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			bucketSize = 10000
 		}
 
+		// The correct denominator for bucketed win rate is the total shreds across ALL
+		// feeds per bucket, not per-feed total_shreds. Some feeds only have rows when
+		// they win shreds (0-win slots are absent), so sum(total_shreds) per feed has
+		// a smaller denominator than the shared total, inflating win rates.
+		// Instead: bucket_total = sum(shreds_won across all feeds) = sum(total_shreds
+		// per slot), since every shred in a race is won by exactly one feed.
 		var query7 string
 		if leadersOnly {
 			query7 = fmt.Sprintf(`
-				WITH %s
-				SELECT
-					host,
-					intDiv(slot, %d) * %d AS slot_bucket,
-					feed,
-					round(sum(shreds_won) / greatest(sum(total_shreds), 1) * 100, 1) AS win_pct
-				FROM %s.slot_feed_race_summary
-				WHERE feed_type = 'shred' AND loser_feed = ''
-					AND host IN (%s)
-					AND slot IN (SELECT slot FROM dz_leader_slots)
-					AND slot <= %d
-					%s
-				GROUP BY host, slot_bucket, feed
-				ORDER BY host, slot_bucket, feed
+				WITH %s,
+				per_feed AS (
+					SELECT
+						host,
+						intDiv(slot, %d) * %d AS slot_bucket,
+						feed,
+						sum(shreds_won) AS feed_won
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = ''
+						AND host IN (%s)
+						AND slot IN (SELECT slot FROM dz_leader_slots)
+						AND slot <= %d
+						%s
+					GROUP BY host, slot_bucket, feed
+				),
+				bucket_totals AS (
+					SELECT host, slot_bucket, sum(feed_won) AS bucket_total
+					FROM per_feed
+					GROUP BY host, slot_bucket
+				)
+				SELECT f.host, f.slot_bucket, f.feed,
+					round(f.feed_won / greatest(bt.bucket_total, 1) * 100, 1) AS win_pct
+				FROM per_feed f
+				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
+				ORDER BY f.host, f.slot_bucket, f.feed
 			`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, nodeList, slotWindowMax, timeFilter)
 		} else {
 			query7 = fmt.Sprintf(`
-				SELECT
-					host,
-					intDiv(slot, %d) * %d AS slot_bucket,
-					feed,
-					round(sum(shreds_won) / greatest(sum(total_shreds), 1) * 100, 1) AS win_pct
-				FROM %s.slot_feed_race_summary
-				WHERE feed_type = 'shred' AND loser_feed = ''
-					AND host IN (%s)
-					AND slot <= %d
-					%s
-				GROUP BY host, slot_bucket, feed
-				ORDER BY host, slot_bucket, feed
+				WITH per_feed AS (
+					SELECT
+						host,
+						intDiv(slot, %d) * %d AS slot_bucket,
+						feed,
+						sum(shreds_won) AS feed_won
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = ''
+						AND host IN (%s)
+						AND slot <= %d
+						%s
+					GROUP BY host, slot_bucket, feed
+				),
+				bucket_totals AS (
+					SELECT host, slot_bucket, sum(feed_won) AS bucket_total
+					FROM per_feed
+					GROUP BY host, slot_bucket
+				)
+				SELECT f.host, f.slot_bucket, f.feed,
+					round(f.feed_won / greatest(bt.bucket_total, 1) * 100, 1) AS win_pct
+				FROM per_feed f
+				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
+				ORDER BY f.host, f.slot_bucket, f.feed
 			`, bucketSize, bucketSize, shredderDB, nodeList, slotWindowMax, timeFilter)
 		}
 
