@@ -285,7 +285,7 @@ function useRefreshButton(refetch: () => void, isFetching: boolean, minMs = 400)
   return { spinning: spinning || isFetching, onClick }
 }
 
-function useDebouncedFetching(isFetching: boolean, { delayMs = 150, minMs = 800 } = {}): boolean {
+function useDebouncedFetching(isFetching: boolean, { delayMs = 300, minMs = 800 } = {}): boolean {
   const [visible, setVisible] = useState(false)
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
