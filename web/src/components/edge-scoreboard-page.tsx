@@ -642,14 +642,10 @@ function RecentSlotsChart({
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="mb-4">
-        <h3 className="text-sm font-medium">Recent Edge Leader Slots — Win Rate per Slot</h3>
-        <div className="flex items-center justify-end gap-3 mt-1">
-          {feeds.map((f) => (
-            <div key={f} className="flex items-center gap-1 text-[10px] text-muted-foreground">
-              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
-              {FEED_LABELS[f] ?? f}
-            </div>
-          ))}
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium">
+            {bucketed ? 'Win Rate by Slot Bucket' : 'Win Rate per Slot'}
+          </h3>
           <button
             onClick={() => setBucketed(b => !b)}
             className={cn(
@@ -663,6 +659,14 @@ function RecentSlotsChart({
             <Sigma className="h-3.5 w-3.5" />
           </button>
         </div>
+        <div className="flex items-center justify-end gap-3 mt-1">
+          {feeds.map((f) => (
+            <div key={f} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+              {FEED_LABELS[f] ?? f}
+            </div>
+          ))}
+        </div>
       </div>
       {nodeCharts.map((nc) => (
         <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
@@ -672,7 +676,7 @@ function RecentSlotsChart({
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
         {bucketed
-          ? `${slotCount} buckets across ${leadersOnly ? 'Edge leader ' : ''}slots`
+          ? `${slotCount} buckets · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each`
           : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots`}
       </div>
     </div>
