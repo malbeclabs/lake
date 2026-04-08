@@ -610,6 +610,12 @@ export function EdgeScoreboardPage() {
 
   const [showLoader, setShowLoader] = useState(false)
   const [showShimmer, setShowShimmer] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 5_000)
+    return () => clearInterval(id)
+  }, [])
+
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -620,6 +626,14 @@ export function EdgeScoreboardPage() {
     staleTime: 15_000,
     placeholderData: keepPreviousData,
   })
+
+  const freshness = useMemo(() => {
+    if (!data?.generated_at) return null
+    const ageSec = Math.round((now - new Date(data.generated_at).getTime()) / 1000)
+    if (ageSec < 5) return 'just now'
+    if (ageSec < 60) return `${ageSec}s ago`
+    return `${Math.round(ageSec / 60)}m ago`
+  }, [data?.generated_at, now])
 
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
@@ -756,6 +770,13 @@ export function EdgeScoreboardPage() {
         <PageHeader
           icon={Trophy}
           title="Edge Scoreboard"
+          subtitle={
+            data && freshness ? (
+              <span className="text-sm text-muted-foreground">
+                {data.total_slots.toLocaleString()} slots · updated {freshness}
+              </span>
+            ) : undefined
+          }
           actions={
             <div className="flex items-center gap-3">
               <div className="flex items-center rounded-md border border-border text-sm">
