@@ -155,13 +155,15 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 
-	// Query 1: Per-node slot counts from win-count rows (loser_feed = '')
-	// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes)
+	// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
+	// dz_slots counts slots where dz or dz_rebop participated (all Edge feeds).
+	// In leaders-only mode this value is overridden by query1b with the DZ-leader subset.
+	// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes).
 	query1 := fmt.Sprintf(`
 		SELECT
 			host,
 			uniqExact(slot) AS total_slots,
-			uniqExactIf(slot, feed = 'dz') AS dz_slots,
+			uniqExactIf(slot, feed IN ('dz', 'dz_rebop')) AS dz_slots,
 			max(epoch) AS max_epoch,
 			max(slot) AS max_slot,
 			max(event_ts) AS last_updated,
