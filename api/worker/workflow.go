@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -19,6 +20,7 @@ const (
 	refreshInterval        = 30 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
 	maxConcurrentRefreshes = 2
+	errorAfterFailures     = 3 // log WARN for transient failures, ERROR after this many consecutive failures
 )
 
 // cacheEntry defines a single cache key to refresh.
@@ -30,8 +32,9 @@ type cacheEntry struct {
 
 // Activities holds the logger and API deps for the refresh activity.
 type Activities struct {
-	Log *slog.Logger
-	API *handlers.API
+	Log      *slog.Logger
+	API      *handlers.API
+	failures sync.Map // map[string]int: consecutive failure count per cache key
 }
 
 func (a *Activities) entries() []cacheEntry {
@@ -114,7 +117,6 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	g.SetLimit(maxConcurrentRefreshes)
 
 	for _, entry := range a.entries() {
-		entry := entry
 		g.Go(func() error {
 			a.refresh(gctx, entry.name, entry.key, entry.fn)
 			return nil
@@ -123,7 +125,6 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 
 	// Metro path latency: one fetch per strategy, each written to its own key
 	for _, strategy := range metroPathLatencyStrategies {
-		strategy := strategy
 		g.Go(func() error {
 			a.refresh(gctx, "metro path latency:"+strategy, "metro_path_latency:"+strategy, func(ctx context.Context) (any, error) {
 				return a.API.FetchMetroPathLatencyData(ctx, strategy)
@@ -147,9 +148,16 @@ func (a *Activities) refresh(ctx context.Context, name, key string, fn func(cont
 			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
 			return
 		}
-		a.Log.Error("cache refresh failed", "cache", name, "error", err)
+		n := a.incFailures(key)
+		if n >= errorAfterFailures {
+			a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+		} else {
+			a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+		}
 		return
 	}
+
+	a.failures.Delete(key)
 
 	if err := a.API.WritePageCache(ctx, key, result); err != nil {
 		if ctx.Err() != nil {
@@ -160,6 +168,16 @@ func (a *Activities) refresh(ctx context.Context, name, key string, fn func(cont
 	}
 
 	a.Log.Debug("cache refreshed", "cache", name)
+}
+
+func (a *Activities) incFailures(key string) int {
+	for {
+		v, _ := a.failures.LoadOrStore(key, 1)
+		n := v.(int)
+		if a.failures.CompareAndSwap(key, n, n+1) {
+			return n + 1
+		}
+	}
 }
 
 // PageCacheWorkflow is a long-running workflow that refreshes all page caches
