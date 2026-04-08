@@ -85,6 +85,9 @@ func (a *Activities) entries() []cacheEntry {
 		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "1h", true)
 		}},
+		{"edge scoreboard (all)", "edge_scoreboard:all", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardData(ctx, "1h", false)
+		}},
 		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
 		}},
