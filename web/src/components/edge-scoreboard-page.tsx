@@ -530,6 +530,18 @@ function RecentSlotsChart({
   slotBuckets?: EdgeScoreboardSlotBucket[]
 }) {
   const [bucketed, setBucketed] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [chartWidth, setChartWidth] = useState(800)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setChartWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const chartData = useMemo(() => {
     if (!slots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
@@ -587,45 +599,59 @@ function RecentSlotsChart({
     for (const b of filtered) feedSet.add(b.feed)
     const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
 
-    const byNode = new Map<string, Map<number, Record<string, number>>>()
-    for (const b of filtered) {
-      let nodeMap = byNode.get(b.host)
-      if (!nodeMap) {
-        nodeMap = new Map()
-        byNode.set(b.host, nodeMap)
-      }
-      let row = nodeMap.get(b.slot_bucket)
-      if (!row) {
-        row = {}
-        nodeMap.set(b.slot_bucket, row)
-      }
-      row[b.feed] = b.win_pct
-    }
+    // API returns fine-grained buckets; re-aggregate into display buckets sized to fit the chart.
+    // Each display bucket groups `groupSize` API buckets. We target ~8px per display bar,
+    // accounting for the node label area on the left.
+    const NODE_LABEL_PX = 200
+    const BAR_MIN_PX = 6
+    const availableWidth = Math.max(100, chartWidth - NODE_LABEL_PX)
+    const maxDisplayBuckets = Math.max(10, Math.floor(availableWidth / BAR_MIN_PX))
 
-    const bucketNumbers = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
+    const apiBucketNumbers = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
+    const apiBucketSize = apiBucketNumbers.length >= 2 ? apiBucketNumbers[1] - apiBucketNumbers[0] : 1
+    const groupSize = Math.max(1, Math.ceil(apiBucketNumbers.length / maxDisplayBuckets))
+    const displayBucketSize = groupSize * apiBucketSize
+
+    // Build display bucket index: first slot_bucket of each display bucket
+    const displayBucketStarts = apiBucketNumbers.filter((_, i) => i % groupSize === 0)
+
+    const apiBucketIndex = new Map(apiBucketNumbers.map((slot, i) => [slot, i]))
+
     const sortedNodes = [...nodes].sort((a, b) => a.host.localeCompare(b.host))
 
     const bucketedNodeCharts = sortedNodes
-      .filter((n) => byNode.has(n.host))
+      .filter((n) => filtered.some((b) => b.host === n.host))
       .map((n) => {
-        const bucketMap = byNode.get(n.host)!
-        const data = bucketNumbers.map((slot_bucket, idx) => {
-          const feedPcts = bucketMap.get(slot_bucket) ?? {}
-          const row: Record<string, number> = { idx, slot: slot_bucket }
-          for (const f of feeds) row[f] = feedPcts[f] ?? 0
+        // Aggregate raw counts per display bucket per feed
+        const displayData = new Map<number, { feedWon: Map<string, number>; bucketTotal: number }>()
+        for (const b of filtered) {
+          if (b.host !== n.host) continue
+          const apiIdx = apiBucketIndex.get(b.slot_bucket) ?? 0
+          const displayStart = apiBucketNumbers[Math.floor(apiIdx / groupSize) * groupSize]
+          let agg = displayData.get(displayStart)
+          if (!agg) {
+            agg = { feedWon: new Map(), bucketTotal: 0 }
+            displayData.set(displayStart, agg)
+          }
+          agg.feedWon.set(b.feed, (agg.feedWon.get(b.feed) ?? 0) + b.feed_won)
+          agg.bucketTotal += b.feed_won // bucket_total = sum of all feed_won across feeds
+        }
+
+        const data = displayBucketStarts.map((slot, idx) => {
+          const agg = displayData.get(slot)
+          const row: Record<string, number> = { idx, slot }
+          for (const f of feeds) {
+            const feedWon = agg?.feedWon.get(f) ?? 0
+            const total = agg?.bucketTotal ?? 1
+            row[f] = total > 0 ? Math.round((feedWon / total) * 1000) / 10 : 0
+          }
           return row
         })
         return { node: n, data }
       })
 
-    // Compute bucketSize from first two consecutive slot_bucket values
-    let bucketSize = 0
-    if (bucketNumbers.length >= 2) {
-      bucketSize = bucketNumbers[1] - bucketNumbers[0]
-    }
-
-    return { nodeCharts: bucketedNodeCharts, feeds, slotCount: bucketNumbers.length, bucketSize }
-  }, [slotBuckets, nodes])
+    return { nodeCharts: bucketedNodeCharts, feeds, slotCount: displayBucketStarts.length, bucketSize: displayBucketSize }
+  }, [slotBuckets, nodes, chartWidth])
 
   if (!slots.length)
     return (
@@ -640,7 +666,7 @@ function RecentSlotsChart({
   const activeBucketSize = bucketed ? bucketedChartData.bucketSize : undefined
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div ref={containerRef} className="rounded-lg border border-border bg-card p-4">
       <div className="mb-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">

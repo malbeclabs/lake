@@ -5033,7 +5033,8 @@ export interface EdgeScoreboardSlotBucket {
   host: string
   slot_bucket: number
   feed: string
-  win_pct: number
+  feed_won: number    // sum of shreds_won for this feed in bucket (integer)
+  bucket_total: number // sum of shreds_won across all feeds in bucket (integer)
 }
 
 export async function fetchEdgeScoreboard(window: string = '1h', leadersOnly: boolean = true): Promise<EdgeScoreboardResponse> {

@@ -64,12 +64,14 @@ type EdgeScoreboardSlotRace struct {
 }
 
 // EdgeScoreboardSlotBucket holds aggregated win-rate data bucketed by slot range,
-// covering the full selected time window.
+// covering the full selected time window. Raw counts are returned so the frontend
+// can re-aggregate into display buckets of any size.
 type EdgeScoreboardSlotBucket struct {
-	Host       string  `json:"host"`
-	SlotBucket uint64  `json:"slot_bucket"` // first slot of the bucket
-	Feed       string  `json:"feed"`
-	WinPct     float64 `json:"win_pct"` // sum(shreds_won)/sum(total_shreds)*100
+	Host        string `json:"host"`
+	SlotBucket  uint64 `json:"slot_bucket"` // first slot of the bucket
+	Feed        string `json:"feed"`
+	FeedWon     uint64 `json:"feed_won"`     // sum(shreds_won) for this feed in bucket
+	BucketTotal uint64 `json:"bucket_total"` // sum(shreds_won) across all feeds in bucket
 }
 
 // EdgeScoreboardLeader holds leader validator info for a slot.
@@ -865,9 +867,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 	// Group E: bucketed slot win rates across the full time window (q7) — non-fatal
 	g.Go(func() error {
-		// Compute bucket size from the actual observed slot range, targeting ~100 buckets.
-		// This adapts to however much data is available rather than assuming a full window.
-		const targetBuckets = 100
+		// Compute bucket size from the observed slot range, targeting ~500 fine-grained
+		// buckets. The frontend re-aggregates into display buckets based on chart width.
+		const targetBuckets = 500
 		slotRange := globalMaxSlot - globalMinSlot
 		bucketSize := uint64(1)
 		if slotRange > targetBuckets {
@@ -903,8 +905,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					FROM per_feed
 					GROUP BY host, slot_bucket
 				)
-				SELECT f.host, f.slot_bucket, f.feed,
-					round(f.feed_won / greatest(bt.bucket_total, 1) * 100, 1) AS win_pct
+				SELECT f.host, f.slot_bucket, f.feed, f.feed_won, bt.bucket_total
 				FROM per_feed f
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
@@ -929,8 +930,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					FROM per_feed
 					GROUP BY host, slot_bucket
 				)
-				SELECT f.host, f.slot_bucket, f.feed,
-					round(f.feed_won / greatest(bt.bucket_total, 1) * 100, 1) AS win_pct
+				SELECT f.host, f.slot_bucket, f.feed, f.feed_won, bt.bucket_total
 				FROM per_feed f
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
@@ -949,7 +949,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			var localBuckets []EdgeScoreboardSlotBucket
 			for rows7.Next() {
 				var sb EdgeScoreboardSlotBucket
-				if err := rows7.Scan(&sb.Host, &sb.SlotBucket, &sb.Feed, &sb.WinPct); err != nil {
+				if err := rows7.Scan(&sb.Host, &sb.SlotBucket, &sb.Feed, &sb.FeedWon, &sb.BucketTotal); err != nil {
 					log.Printf("EdgeScoreboard query7 scan error: %v", err)
 					break
 				}
