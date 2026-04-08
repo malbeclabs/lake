@@ -523,6 +523,8 @@ function RecentSlotsChart({
   leadersOnly,
   slotBuckets,
   window,
+  bucketed,
+  setBucketed,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
@@ -530,8 +532,9 @@ function RecentSlotsChart({
   leadersOnly?: boolean
   slotBuckets?: EdgeScoreboardSlotBucket[]
   window?: TimeWindow
+  bucketed: boolean
+  setBucketed: (v: boolean) => void
 }) {
-  const [bucketed, setBucketed] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const [chartWidth, setChartWidth] = useState(800)
 
@@ -609,8 +612,16 @@ function RecentSlotsChart({
     const availableWidth = Math.max(100, chartWidth - NODE_LABEL_PX)
     const maxDisplayBuckets = Math.max(10, Math.floor(availableWidth / BAR_MIN_PX))
 
-    const apiBucketNumbers = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
-    const apiBucketSize = apiBucketNumbers.length >= 2 ? apiBucketNumbers[1] - apiBucketNumbers[0] : 1
+    const rawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
+    const apiBucketSize = rawBuckets.length >= 2 ? rawBuckets[1] - rawBuckets[0] : 1
+    // Fill in the full min→max range so all nodes share the same x-axis, even if
+    // some nodes have no data for certain buckets (they'll just render as zero bars).
+    const apiBucketNumbers: number[] = []
+    if (rawBuckets.length > 0) {
+      for (let b = rawBuckets[0]; b <= rawBuckets[rawBuckets.length - 1]; b += apiBucketSize) {
+        apiBucketNumbers.push(b)
+      }
+    }
     const groupSize = Math.max(1, Math.ceil(apiBucketNumbers.length / maxDisplayBuckets))
     const displayBucketSize = groupSize * apiBucketSize
 
@@ -815,6 +826,15 @@ export function EdgeScoreboardPage() {
   const activeWindow: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
 
   const leadersOnly = searchParams.get('leaders_only') === 'true'
+  const bucketed = searchParams.get('bucketed') === '1'
+  const setBucketed = (v: boolean) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (v) p.set('bucketed', '1')
+      else p.delete('bucketed')
+      return p
+    })
+  }
 
   const [showLoader, setShowLoader] = useState(false)
   const [showShimmer, setShowShimmer] = useState(false)
@@ -1077,7 +1097,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} window={activeWindow} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={data.slot_leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} />
           </div>
         )}
 
