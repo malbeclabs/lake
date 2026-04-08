@@ -655,6 +655,18 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// resilient to corrupted outlier rows that could inflate max(slot).
 		slotWindowMin := globalMaxSlot - 10000
 
+		// For recent slots, dz_leader_slots must NOT use the time window filter.
+		// The time filter is based on event_ts in publisher_shred_stats, which has much
+		// longer history than slot_feed_race_summary. A wide window (e.g. 7d) would pull
+		// in old leader slots that don't exist in the recent slot range, shrinking results.
+		// Instead, scope to the recent slot range directly so the intersection is correct.
+		dzLeaderCTEForRecent := fmt.Sprintf(`dz_leader_slots AS (
+			SELECT DISTINCT slot
+			FROM %s.publisher_shred_stats
+			WHERE is_scheduled_leader = true
+			AND slot BETWEEN %d AND %d
+		)`, shredderDB, slotWindowMin, slotWindowMax)
+
 		var query5 string
 		if leadersOnly {
 			query5 = fmt.Sprintf(`
@@ -688,7 +700,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
 					AND r.host IN (%s)
 				ORDER BY r.host, r.slot, r.feed
-			`, dzLeaderCTE, shredderDB, nodeList, slotWindowMin, slotWindowMax, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
+			`, dzLeaderCTEForRecent, shredderDB, nodeList, slotWindowMin, slotWindowMax, shredderDB, nodeList, nodeCount, shredderDB, nodeList)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH common_slots AS (
