@@ -54,6 +54,21 @@ type EdgeScoreboardNode struct {
 	Country       string                              `json:"country,omitempty"`
 }
 
+// edgeNodeIPs maps known edge node host names to their public IP addresses.
+// Used to enrich node entries with geoip data (ASN, city, country).
+var edgeNodeIPs = map[string]string{
+	"slc-qa-bm1": "64.130.33.90",
+	"nyc-mn-bm1": "64.130.37.175",
+	"ams-mn-bm1": "23.109.62.84",
+	"ams-mn-bm2": "64.34.87.163",
+	"fra-mn-bm1": "198.13.138.107",
+	"fra-mn-bm2": "85.195.100.119",
+	"sin-mn-bm1": "177.54.154.15",
+	"tyo-mn-bm1": "208.91.107.71",
+	"lon-mn-bm2": "64.34.92.15",
+	"tyo-mn-bm2": "206.223.226.183",
+}
+
 // EdgeScoreboardSlotRace holds per-slot per-feed win data for recent slots.
 type EdgeScoreboardSlotRace struct {
 	Host      string  `json:"host"`
@@ -398,11 +413,22 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		validators uint64
 	}
 
-	// Run four independent query groups in parallel:
+	type nodeGeoInfo struct {
+		ip      string
+		asn     int64
+		asnOrg  string
+		city    string
+		country string
+		pubkey  string
+	}
+
+	// Run query groups in parallel:
 	//   A: feed win rates (q2) + lead times (q2b)
 	//   B: metro coordinates (q3)
 	//   C: stake by metro (q4)
 	//   D: recent slot races (q5) + slot leader enrichment (q6a, q6b)
+	//   E: bucketed slot win rates (q7)
+	//   F: node geoip enrichment (q8)
 	var (
 		feedStats      map[feedKey]*EdgeScoreboardFeedStats
 		metros         = make(map[string]*metroInfo)
@@ -411,6 +437,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		slotBuckets    []EdgeScoreboardSlotBucket
 		slotBucketSize uint64
 		slotLeaders    = make(map[string]*EdgeScoreboardLeader)
+		nodeGeo        = make(map[string]*nodeGeoInfo)
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -981,6 +1008,53 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		return nil
 	})
 
+	// Group F: node geoip enrichment via hardcoded host→IP map (non-fatal)
+	g.Go(func() error {
+		ips := make([]string, 0, len(nodeSlots))
+		ipToHost := make(map[string]string)
+		for nodeID := range nodeSlots {
+			if ip, ok := edgeNodeIPs[nodeID]; ok {
+				ips = append(ips, "'"+ip+"'")
+				ipToHost[ip] = nodeID
+			}
+		}
+		if len(ips) == 0 {
+			return nil
+		}
+		ipList := strings.Join(ips, ",")
+		query8 := fmt.Sprintf(`
+			SELECT
+				g.ip,
+				COALESCE(g.asn, 0),
+				COALESCE(g.asn_org, ''),
+				COALESCE(g.city, ''),
+				COALESCE(g.country, ''),
+				COALESCE(gn.pubkey, '')
+			FROM geoip_records_current g
+			LEFT JOIN solana_gossip_nodes_current gn ON gn.gossip_ip = g.ip
+			WHERE g.ip IN (%s)
+		`, ipList)
+		rows8, err := a.envDB(gctx).Query(gctx, query8)
+		if err != nil {
+			log.Printf("EdgeScoreboard query8 (geoip) error: %v", err)
+			return nil
+		}
+		defer rows8.Close()
+		localGeo := make(map[string]*nodeGeoInfo)
+		for rows8.Next() {
+			var gi nodeGeoInfo
+			if err := rows8.Scan(&gi.ip, &gi.asn, &gi.asnOrg, &gi.city, &gi.country, &gi.pubkey); err != nil {
+				log.Printf("EdgeScoreboard query8 scan error: %v", err)
+				break
+			}
+			if host, ok := ipToHost[gi.ip]; ok {
+				localGeo[host] = &gi
+			}
+		}
+		nodeGeo = localGeo
+		return nil
+	})
+
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
@@ -1025,6 +1099,15 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 
 		node.DZLeaderSlots = dzLeaderSlotsByNode[nodeID]
+
+		if gi, ok := nodeGeo[nodeID]; ok {
+			node.GossipIP = gi.ip
+			node.GossipPubkey = gi.pubkey
+			node.ASN = gi.asn
+			node.ASNOrg = gi.asnOrg
+			node.City = gi.city
+			node.Country = gi.country
+		}
 
 		nodes = append(nodes, node)
 	}
