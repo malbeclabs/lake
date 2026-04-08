@@ -651,10 +651,12 @@ export function EdgeScoreboardPage() {
     }
 
     for (const node of data.nodes) {
-      // Combine dz (Edge Leaders) and dz_rebop (Edge Retransmits) for win rate.
-      // Use win_rate_pct (which uses the normalized max-total denominator) to stay
-      // consistent with the bar chart, then average across nodes.
-      const dzPct = (node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
+      // Normalize per-node win rates to sum to 100% (same as the bar chart),
+      // then take the combined DZ fraction. This avoids inflating the average
+      // when dz_rebop has disproportionately large raw values.
+      const rawSum = Object.values(node.feeds).reduce((s, f) => s + (f?.win_rate_pct ?? 0), 0)
+      const scale = rawSum > 0 ? 100 / rawSum : 0
+      const dzPct = ((node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)) * scale
       dzShredsWon += dzPct
       dzTotalShreds++
       totalSlots += node.slots_observed
