@@ -256,7 +256,13 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		if globalMinSlot == ^uint64(0) {
 			globalMinSlot = globalMaxSlot
 		}
-		globalMaxEpoch = globalMaxSlot / slotsPerEpoch
+		// Use the max epoch reported by nodes (from DB), not derived from slot number.
+		// Deriving from slot would be wrong when test data uses small slot numbers in high epochs.
+		for _, info := range nodeSlots {
+			if info.maxSlot <= upperBound && info.maxEpoch > globalMaxEpoch {
+				globalMaxEpoch = info.maxEpoch
+			}
+		}
 	}
 
 	// If no data, return empty response
