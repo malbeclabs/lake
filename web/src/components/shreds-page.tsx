@@ -721,7 +721,7 @@ export function ShredsDevicesPage() {
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <SortHeader field="device" label="Device" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="metro" label="Metro" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="price" label="Price / Epoch" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortHeader field="price" label="Price (USDC) / Epoch" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="granted" label="Granted" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="capacity" label="Capacity" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                   <SortHeader field="available" label="Available" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
