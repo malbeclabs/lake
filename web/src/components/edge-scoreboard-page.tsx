@@ -180,6 +180,7 @@ function WinRateBar({
 
 /** Height per node row shared between Win Rate and Recent Slots charts. */
 const NODE_ROW_HEIGHT = 72
+const NODE_CHART_HEIGHT = 56 // matches WinRateBar h-14, leaving 8px top/bottom padding
 
 function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const [show, setShow] = useState(false)
@@ -295,7 +296,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 }
 
 function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<string, number | null>>; feeds: string[]; bucketSize?: number }) {
-  const height = NODE_ROW_HEIGHT - 4
+  const height = NODE_CHART_HEIGHT
   const [hover, setHover] = useState<{ idx: number; x: number; y: number } | null>(null)
   const n = data.length
 
@@ -425,7 +426,7 @@ function SlotRaceNodeChart({
     isFirstDataRef.current = true
 
     const n = slotData.length
-    const height = NODE_ROW_HEIGHT - 4
+    const height = NODE_CHART_HEIGHT
 
     const xData = Float64Array.from({ length: n }, (_, i) => i)
     const yDummy = new Float64Array(n)
