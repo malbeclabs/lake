@@ -4,7 +4,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { Trophy, Loader2 } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { AreaChart, Area, YAxis, ResponsiveContainer } from 'recharts'
+import { AreaChart, Area, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
@@ -294,12 +294,39 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   )
 }
 
-function BucketedNodeChart({ data, feeds }: { data: Array<Record<string, number | null>>; feeds: string[] }) {
+function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<string, number | null>>; feeds: string[]; bucketSize?: number }) {
   return (
     <div className="flex-1 h-full min-w-0">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
           <YAxis domain={[0, 100]} hide width={0} />
+          <Tooltip
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null
+              const slot = payload[0]?.payload?.slot as number | undefined
+              return (
+                <div className="fixed z-50 bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none">
+                  {slot != null && (
+                    <div className="font-mono font-semibold text-[#e5e5e5] mb-1.5">
+                      {bucketSize
+                        ? `Slots ${slot.toLocaleString()} – ${(slot + bucketSize - 1).toLocaleString()}`
+                        : `Slot ${slot.toLocaleString()}`}
+                    </div>
+                  )}
+                  {[...feeds].reverse().map((f) => {
+                    const val = payload.find(p => p.dataKey === f)?.value as number | null
+                    return val != null ? (
+                      <div key={f} className="flex justify-between gap-4">
+                        <span style={{ color: FEED_COLORS[f] }}>{FEED_LABELS[f] ?? f}</span>
+                        <span className="text-[#e5e5e5] font-mono">{val.toFixed(1)}%</span>
+                      </div>
+                    ) : null
+                  })}
+                </div>
+              )
+            }}
+            position={{ y: -80 }}
+          />
           {feeds.map((f) => (
             <Area
               key={f}
@@ -780,7 +807,7 @@ function RecentSlotsChart({
         <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
           <NodeLabel node={nc.node} label={nodeDisplayLabel(nc.node, nodes)} />
           {bucketed
-            ? <BucketedNodeChart data={nc.data} feeds={feeds} />
+            ? <BucketedNodeChart data={nc.data} feeds={feeds} bucketSize={activeBucketSize} />
             : <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={slotLeaders} />}
         </div>
       ))}
