@@ -702,8 +702,16 @@ function RecentSlotsChart({
     // display buckets keeps the chart readable for long windows.
     const maxDisplayBuckets = 200
 
-    const rawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
-    const apiBucketSize = slotBucketSize ?? (rawBuckets.length >= 2 ? rawBuckets[1] - rawBuckets[0] : 1)
+    const allRawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
+    const apiBucketSize = slotBucketSize ?? (allRawBuckets.length >= 2 ? allRawBuckets[1] - allRawBuckets[0] : 1)
+
+    // Clip to the minimum last bucket across all nodes so all charts end at the same point.
+    const perNodeMax = new Map<string, number>()
+    for (const b of filtered) {
+      if (b.slot_bucket > (perNodeMax.get(b.host) ?? 0)) perNodeMax.set(b.host, b.slot_bucket)
+    }
+    const minLastBucket = Math.min(...perNodeMax.values())
+    const rawBuckets = allRawBuckets.filter(b => b <= minLastBucket)
 
     const groupSize = Math.max(1, Math.ceil(rawBuckets.length / maxDisplayBuckets))
     const displayBucketSize = groupSize * apiBucketSize
