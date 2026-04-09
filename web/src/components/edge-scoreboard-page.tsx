@@ -821,7 +821,11 @@ function RecentSlotsChart({
       <div className="text-xs text-muted-foreground text-center mt-1">
         {bucketed
           ? `${slotCount} groups · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · last ${window ?? 'all'}`
-          : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots · last ${window ?? 'all'}`}
+          : (() => {
+              const sec = Math.round(slotCount / 2.5)
+              const timeEst = sec < 60 ? `~${sec}s` : `~${Math.round(sec / 60)}m`
+              return `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots · ${timeEst}`
+            })()}
       </div>
     </div>
   )
