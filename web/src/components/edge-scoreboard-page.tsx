@@ -776,7 +776,7 @@ function RecentSlotsChart({
           <h3 className="text-sm font-medium">
             {bucketed ? 'Win Rate Trend' : 'Win Rate per Slot'}
           </h3>
-          <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px] -mt-2">
             <button
               onClick={() => setBucketed(false)}
               className={cn(
