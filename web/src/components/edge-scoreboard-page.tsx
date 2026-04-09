@@ -774,7 +774,7 @@ function RecentSlotsChart({
       <div className="mb-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium">
-            {bucketed ? 'Win Rate by Slot Bucket' : 'Win Rate per Slot'}
+            {bucketed ? 'Win Rate Trend' : 'Win Rate per Slot'}
           </h3>
           <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
             <button
@@ -793,7 +793,7 @@ function RecentSlotsChart({
                 bucketed ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
-              Bucketed
+              Trend
             </button>
           </div>
         </div>
@@ -816,7 +816,7 @@ function RecentSlotsChart({
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
         {bucketed
-          ? `${slotCount} buckets · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · last ${window ?? 'all'}`
+          ? `${slotCount} groups · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · last ${window ?? 'all'}`
           : `${slotCount} most recent ${leadersOnly ? 'Edge leader ' : ''}slots · last ${window ?? 'all'}`}
       </div>
     </div>
