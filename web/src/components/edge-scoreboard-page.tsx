@@ -354,7 +354,7 @@ function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<str
       >
         {paths.map(({ feed, color, svgPaths, strokePaths }) => (
           <g key={feed}>
-            {svgPaths.map((d, i) => <path key={i} d={d} fill={color + 'bb'} />)}
+            {svgPaths.map((d, i) => <path key={i} d={d} fill={color} />)}
             {strokePaths.map((d, i) => <path key={i} d={d} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />)}
           </g>
         ))}
