@@ -4,6 +4,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { Trophy, Loader2 } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
+import { AreaChart, Area, YAxis, ResponsiveContainer } from 'recharts'
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
@@ -293,16 +294,40 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   )
 }
 
+function BucketedNodeChart({ data, feeds }: { data: Array<Record<string, number | null>>; feeds: string[] }) {
+  return (
+    <div className="flex-1 h-full min-w-0">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+          <YAxis domain={[0, 100]} hide />
+          {feeds.map((f) => (
+            <Area
+              key={f}
+              type="monotone"
+              dataKey={f}
+              stackId="1"
+              fill={FEED_COLORS[f] + 'bb'}
+              stroke={FEED_COLORS[f]}
+              strokeWidth={1.5}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
+          ))}
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 function SlotRaceNodeChart({
   slotData,
   feeds,
   slotLeaders,
-  bucketSize,
 }: {
   slotData: Array<Record<string, number | null>>
   feeds: string[]
   slotLeaders?: Record<string, EdgeScoreboardLeader>
-  bucketSize?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
@@ -341,8 +366,8 @@ function SlotRaceNodeChart({
         x: { time: false, range: () => [-0.5, n - 0.5] },
         y: { range: () => [0, 100] },
       },
-      axes: [{ show: false, size: 0 }, { show: false, size: 0 }],
-      padding: [2, 2, 2, 0],
+      axes: [{ show: false }, { show: false }],
+      padding: [2, 2, 2, 2],
       cursor: { points: { show: false } },
       legend: { show: false },
       hooks: {
@@ -360,91 +385,7 @@ function SlotRaceNodeChart({
             const currentN = currentData.length
             const cumulative = new Float64Array(currentN)
 
-            if (bucketSize !== undefined) {
-              // Smooth stacked area chart for bucketed mode.
-              // Null values are gaps — the path is split into continuous segments.
-              type Pt = { x: number; y: number }
-              const addSmooth = (pts: Pt[], move: boolean) => {
-                if (pts.length === 0) return
-                if (move) ctx.moveTo(pts[0].x, pts[0].y)
-                else ctx.lineTo(pts[0].x, pts[0].y)
-                for (let i = 1; i < pts.length - 1; i++) {
-                  const mx = (pts[i].x + pts[i + 1].x) / 2
-                  const my = (pts[i].y + pts[i + 1].y) / 2
-                  ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my)
-                }
-                if (pts.length > 1) ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y)
-              }
-
-              for (const feed of feeds) {
-                const color = FEED_COLORS[feed] ?? '#6b7280'
-                const topPts: (Pt | null)[] = Array.from({ length: currentN }, (_, i) => {
-                  const val = currentData[i][feed] as number | null
-                  if (!val) return null
-                  return { x: u.valToPos(i, 'x', true), y: u.valToPos(cumulative[i] + val, 'y', true) }
-                })
-                const botPts: (Pt | null)[] = Array.from({ length: currentN }, (_, i) => {
-                  const val = currentData[i][feed] as number | null
-                  if (!val) return null
-                  return { x: u.valToPos(i, 'x', true), y: u.valToPos(cumulative[i], 'y', true) }
-                })
-
-                // Split into continuous segments at null gaps
-                const segments: Array<{ start: number; end: number }> = []
-                let segStart = -1
-                for (let i = 0; i <= currentN; i++) {
-                  const has = i < currentN && topPts[i] !== null
-                  if (has && segStart === -1) segStart = i
-                  if (!has && segStart !== -1) { segments.push({ start: segStart, end: i - 1 }); segStart = -1 }
-                }
-
-                const leftEdgeX = u.valToPos(-0.5, 'x', true)
-                const rightEdgeX = u.valToPos(currentN - 0.5, 'x', true)
-
-                for (const { start, end } of segments) {
-                  let st = topPts.slice(start, end + 1) as Pt[]
-                  let sb = botPts.slice(start, end + 1) as Pt[]
-                  // Extend first/last segments to chart edges so there's no inset gap
-                  if (start === 0) {
-                    st = [{ x: leftEdgeX, y: st[0].y }, ...st]
-                    sb = [{ x: leftEdgeX, y: sb[0].y }, ...sb]
-                  }
-                  if (end === currentN - 1) {
-                    st = [...st, { x: rightEdgeX, y: st[st.length - 1].y }]
-                    sb = [...sb, { x: rightEdgeX, y: sb[sb.length - 1].y }]
-                  }
-                  ctx.fillStyle = color + 'bb'
-                  ctx.beginPath()
-                  addSmooth(st, true)
-                  addSmooth([...sb].reverse(), false)
-                  ctx.closePath()
-                  ctx.fill()
-                  ctx.strokeStyle = color
-                  ctx.lineWidth = 1.5
-                  ctx.lineJoin = 'round'
-                  ctx.beginPath()
-                  addSmooth(st, true)
-                  ctx.stroke()
-                }
-
-                for (let i = 0; i < currentN; i++) cumulative[i] += (currentData[i][feed] as number | null) ?? 0
-              }
-              // Hover: vertical cursor line
-              const hIdx = hoveredIdxRef.current
-              if (hIdx != null && hIdx >= 0 && hIdx < currentN) {
-                const x = Math.round(u.valToPos(hIdx, 'x', true))
-                const y1 = Math.round(u.valToPos(100, 'y', true))
-                const y2 = Math.round(u.valToPos(0, 'y', true))
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
-                ctx.lineWidth = 1
-                ctx.setLineDash([3, 3])
-                ctx.beginPath()
-                ctx.moveTo(x + 0.5, y1)
-                ctx.lineTo(x + 0.5, y2)
-                ctx.stroke()
-                ctx.setLineDash([])
-              }
-            } else {
+            {
               // Stacked bar chart for individual slot mode
               for (const feed of feeds) {
                 ctx.fillStyle = FEED_COLORS[feed] ?? '#6b7280'
@@ -567,9 +508,7 @@ function SlotRaceNodeChart({
           style={{ left: xPos, top: Math.max(0, hover.vy - 60) }}
         >
           <div className="font-mono font-semibold text-[#e5e5e5] mb-1.5">
-            {bucketSize
-              ? `Slots ${Number(hoveredSlot['slot']).toLocaleString()} – ${(Number(hoveredSlot['slot']) + bucketSize - 1).toLocaleString()}`
-              : `Slot ${Number(hoveredSlot['slot']).toLocaleString()}`}
+            {`Slot ${Number(hoveredSlot['slot']).toLocaleString()}`}
           </div>
           {hoveredLeader && (
             <div className="mb-1.5 pb-1.5 border-b border-[#333] text-[#999]">
@@ -840,7 +779,9 @@ function RecentSlotsChart({
       {nodeCharts.map((nc) => (
         <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
           <NodeLabel node={nc.node} label={nodeDisplayLabel(nc.node, nodes)} />
-          <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={slotLeaders} bucketSize={activeBucketSize} />
+          {bucketed
+            ? <BucketedNodeChart data={nc.data} feeds={feeds} />
+            : <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={slotLeaders} />}
         </div>
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
