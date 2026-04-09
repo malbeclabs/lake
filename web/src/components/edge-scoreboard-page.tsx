@@ -441,7 +441,7 @@ function SlotRaceNodeChart({
       },
       axes: [{ show: false }, { show: false }],
       padding: [2, 2, 2, 2],
-      cursor: { points: { show: false }, y: false },
+      cursor: { points: { show: false }, x: false, y: false },
       legend: { show: false },
       hooks: {
         draw: [
