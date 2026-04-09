@@ -466,8 +466,8 @@ function SlotRaceNodeChart({
                   const val = currentData[i][feed] ?? 0
                   if (!val) continue
                   const prev = cumulative[i]
-                  const x1 = Math.round(u.valToPos(i - 0.4, 'x', true))
-                  const x2 = Math.round(u.valToPos(i + 0.4, 'x', true))
+                  const x1 = Math.round(u.valToPos(i - 0.5, 'x', true))
+                  const x2 = Math.round(u.valToPos(i + 0.5, 'x', true))
                   const y1 = Math.round(u.valToPos(prev + val, 'y', true))
                   const y2 = Math.round(u.valToPos(prev, 'y', true))
                   if (y2 > y1 && x2 > x1) ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
@@ -477,8 +477,8 @@ function SlotRaceNodeChart({
               // Highlight hovered column
               const hIdx = hoveredIdxRef.current
               if (hIdx != null && hIdx >= 0 && hIdx < currentN) {
-                const x1 = Math.round(u.valToPos(hIdx - 0.4, 'x', true))
-                const x2 = Math.round(u.valToPos(hIdx + 0.4, 'x', true))
+                const x1 = Math.round(u.valToPos(hIdx - 0.5, 'x', true))
+                const x2 = Math.round(u.valToPos(hIdx + 0.5, 'x', true))
                 const y1 = Math.round(u.valToPos(100, 'y', true))
                 const y2 = Math.round(u.valToPos(0, 'y', true))
                 const w = x2 - x1
