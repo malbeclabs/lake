@@ -919,12 +919,12 @@ export function EdgeScoreboardPage() {
   const activeWindow: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
 
   const leadersOnly = searchParams.get('leaders_only') === 'true'
-  const bucketed = searchParams.get('bucketed') === '1'
+  const bucketed = searchParams.get('trend') === '1'
   const setBucketed = (v: boolean) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (v) p.set('bucketed', '1')
-      else p.delete('bucketed')
+      if (v) p.set('trend', '1')
+      else p.delete('trend')
       return p
     })
   }
