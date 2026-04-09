@@ -820,7 +820,12 @@ function RecentSlotsChart({
       ))}
       <div className="text-xs text-muted-foreground text-center mt-1">
         {bucketed
-          ? `${slotCount} groups · ~${activeBucketSize?.toLocaleString() ?? '?'} slots each · last ${window ?? 'all'}`
+          ? (() => {
+              const totalSlots = slotCount * (activeBucketSize ?? 1)
+              const sec = Math.round(totalSlots / 2.5)
+              const timeEst = sec < 60 ? `~${sec}s` : sec < 3600 ? `~${Math.round(sec / 60)}m` : `~${Math.round(sec / 3600)}h`
+              return `~${totalSlots.toLocaleString()} slots · ${timeEst} · last ${window ?? 'all'}`
+            })()
           : (() => {
               const sec = Math.round(slotCount / 2.5)
               const timeEst = sec < 60 ? `~${sec}s` : `~${Math.round(sec / 60)}m`
