@@ -4,7 +4,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { Trophy, Loader2 } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { AreaChart, Area, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+
 import maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
@@ -295,54 +295,115 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 }
 
 function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<string, number | null>>; feeds: string[]; bucketSize?: number }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  const height = NODE_ROW_HEIGHT - 4
+  const [hover, setHover] = useState<{ idx: number; x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    setWidth(el.offsetWidth)
+    const ro = new ResizeObserver(entries => setWidth(entries[0].contentRect.width))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const { paths } = useMemo(() => {
+    if (!width || !data.length) return { paths: [], cumEnds: [] }
+    const n = data.length
+    const xAt = (i: number) => (n === 1 ? 0 : (i / (n - 1)) * width)
+    const yAt = (v: number) => height * (1 - v / 100)
+    const cumulative = new Array(n).fill(0)
+    const cumEnds = new Array(n).fill(0)
+
+    const paths = feeds.map(feed => {
+      const color = FEED_COLORS[feed] ?? '#6b7280'
+      type Seg = { i: number; top: number; bot: number }[]
+      const segments: Seg[] = []
+      let cur: Seg = []
+      for (let i = 0; i < n; i++) {
+        const val = data[i][feed] as number | null
+        if (val != null && val > 0) {
+          cur.push({ i, top: cumulative[i] + val, bot: cumulative[i] })
+        } else {
+          if (cur.length) { segments.push(cur); cur = [] }
+        }
+      }
+      if (cur.length) segments.push(cur)
+      for (let i = 0; i < n; i++) cumulative[i] += (data[i][feed] as number | null) ?? 0
+
+      const svgPaths = segments.map(seg => {
+        const top = seg.map(p => `${xAt(p.i).toFixed(1)},${yAt(p.top).toFixed(1)}`).join(' L')
+        const bot = [...seg].reverse().map(p => `${xAt(p.i).toFixed(1)},${yAt(p.bot).toFixed(1)}`).join(' L')
+        return `M${top} L${bot} Z`
+      })
+      const strokePaths = segments.map(seg =>
+        'M' + seg.map(p => `${xAt(p.i).toFixed(1)},${yAt(p.top).toFixed(1)}`).join(' L')
+      )
+      return { feed, color, svgPaths, strokePaths }
+    })
+
+    for (let i = 0; i < n; i++) cumEnds[i] = cumulative[i]
+    return { paths, cumEnds }
+  }, [data, feeds, width, height])
+
+  const hovered = hover != null ? data[hover.idx] : null
+  const hoveredSlot = hovered?.slot as number | undefined
+
   return (
-    <div className="flex-1 h-full min-w-0">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-          <YAxis domain={[0, 100]} hide width={0} />
-          <Tooltip
-            content={({ active, payload }) => {
-              if (!active || !payload?.length) return null
-              const slot = payload[0]?.payload?.slot as number | undefined
-              return (
-                <div className="fixed z-50 bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none">
-                  {slot != null && (
-                    <div className="font-mono font-semibold text-[#e5e5e5] mb-1.5">
-                      {bucketSize
-                        ? `Slots ${slot.toLocaleString()} – ${(slot + bucketSize - 1).toLocaleString()}`
-                        : `Slot ${slot.toLocaleString()}`}
-                    </div>
-                  )}
-                  {[...feeds].reverse().map((f) => {
-                    const val = payload.find(p => p.dataKey === f)?.value as number | null
-                    return val != null ? (
-                      <div key={f} className="flex justify-between gap-4">
-                        <span style={{ color: FEED_COLORS[f] }}>{FEED_LABELS[f] ?? f}</span>
-                        <span className="text-[#e5e5e5] font-mono">{val.toFixed(1)}%</span>
-                      </div>
-                    ) : null
-                  })}
-                </div>
-              )
-            }}
-            position={{ y: -80 }}
+    <div ref={containerRef} className="flex-1 h-full min-w-0 relative">
+      <svg
+        width={width}
+        height={height}
+        style={{ display: 'block' }}
+        onMouseMove={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect()
+          const mx = e.clientX - rect.left
+          const n = data.length
+          const idx = Math.max(0, Math.min(n - 1, Math.round(mx / width * (n - 1))))
+          setHover({ idx, x: e.clientX, y: e.clientY })
+        }}
+        onMouseLeave={() => setHover(null)}
+      >
+        {paths.map(({ feed, color, svgPaths, strokePaths }) => (
+          <g key={feed}>
+            {svgPaths.map((d, i) => <path key={i} d={d} fill={color + 'bb'} />)}
+            {strokePaths.map((d, i) => <path key={i} d={d} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />)}
+          </g>
+        ))}
+        {hover != null && (
+          <line
+            x1={(data.length === 1 ? 0 : (hover.idx / (data.length - 1)) * width)}
+            x2={(data.length === 1 ? 0 : (hover.idx / (data.length - 1)) * width)}
+            y1={0} y2={height}
+            stroke="rgba(255,255,255,0.4)" strokeWidth={1} strokeDasharray="3 3"
           />
-          {feeds.map((f) => (
-            <Area
-              key={f}
-              type="monotone"
-              dataKey={f}
-              stackId="1"
-              fill={FEED_COLORS[f] + 'bb'}
-              stroke={FEED_COLORS[f]}
-              strokeWidth={1.5}
-              dot={false}
-              isAnimationActive={false}
-              connectNulls={false}
-            />
-          ))}
-        </AreaChart>
-      </ResponsiveContainer>
+        )}
+      </svg>
+      {hover && hovered && (
+        <div
+          className="fixed z-50 bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none"
+          style={{ left: hover.x + 10, top: hover.y - 60 }}
+        >
+          {hoveredSlot != null && (
+            <div className="font-mono font-semibold text-[#e5e5e5] mb-1.5">
+              {bucketSize
+                ? `Slots ${hoveredSlot.toLocaleString()} – ${(hoveredSlot + bucketSize - 1).toLocaleString()}`
+                : `Slot ${hoveredSlot.toLocaleString()}`}
+            </div>
+          )}
+          {[...feeds].reverse().map(f => {
+            const val = hovered[f] as number | null
+            return val != null ? (
+              <div key={f} className="flex justify-between gap-4">
+                <span style={{ color: FEED_COLORS[f] }}>{FEED_LABELS[f] ?? f}</span>
+                <span className="text-[#e5e5e5] font-mono">{val.toFixed(1)}%</span>
+              </div>
+            ) : null
+          })}
+        </div>
+      )}
     </div>
   )
 }
