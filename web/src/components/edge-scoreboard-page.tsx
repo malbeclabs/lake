@@ -957,10 +957,15 @@ export function EdgeScoreboardPage() {
   }
   const latestRecentRef = useRef<RecentSlotsSnapshot | null>(null)
   const [stableRecent, setStableRecent] = useState<RecentSlotsSnapshot | null>(null)
+  // Reset snapshot when leadersOnly changes so the chart reflects the new filter immediately.
+  useEffect(() => {
+    latestRecentRef.current = null
+    setStableRecent(null)
+  }, [leadersOnly])
   useEffect(() => {
     if (!data?.generated_at || !data.recent_slots?.length) return
     const prev = latestRecentRef.current
-    if (!prev || new Date(data.generated_at) > new Date(prev.generatedAt)) {
+    if (!prev || new Date(data.generated_at) >= new Date(prev.generatedAt)) {
       const snap: RecentSlotsSnapshot = { generatedAt: data.generated_at, slots: data.recent_slots, leaders: data.slot_leaders }
       latestRecentRef.current = snap
       setStableRecent(snap)
