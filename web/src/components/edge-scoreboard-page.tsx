@@ -516,6 +516,9 @@ function SlotRaceNodeChart({
     plotRef.current?.destroy()
     plotRef.current = new uPlot(opts, uData, containerRef.current)
 
+    const canvas = containerRef.current.querySelector('canvas')
+    if (canvas) canvas.style.borderRadius = '4px'
+
     const ro = new ResizeObserver((entries) => {
       if (plotRef.current) plotRef.current.setSize({ width: entries[0].contentRect.width, height })
     })
