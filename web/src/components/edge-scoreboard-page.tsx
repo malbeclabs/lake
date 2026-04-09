@@ -295,29 +295,16 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 }
 
 function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<string, number | null>>; feeds: string[]; bucketSize?: number }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState(0)
   const height = NODE_ROW_HEIGHT - 4
   const [hover, setHover] = useState<{ idx: number; x: number; y: number } | null>(null)
+  const n = data.length
 
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    setWidth(el.offsetWidth)
-    const ro = new ResizeObserver(entries => setWidth(entries[0].contentRect.width))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  const { paths } = useMemo(() => {
-    if (!width || !data.length) return { paths: [], cumEnds: [] }
-    const n = data.length
-    const xAt = (i: number) => (n === 1 ? 0 : (i / (n - 1)) * width)
-    const yAt = (v: number) => height * (1 - v / 100)
+  // viewBox coords: x = 0..n-1, y = 0..100 (0 = top = 100% win rate)
+  const paths = useMemo(() => {
+    if (!n) return []
     const cumulative = new Array(n).fill(0)
-    const cumEnds = new Array(n).fill(0)
 
-    const paths = feeds.map(feed => {
+    return feeds.map(feed => {
       const color = FEED_COLORS[feed] ?? '#6b7280'
       type Seg = { i: number; top: number; bot: number }[]
       const segments: Seg[] = []
@@ -334,34 +321,33 @@ function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<str
       for (let i = 0; i < n; i++) cumulative[i] += (data[i][feed] as number | null) ?? 0
 
       const svgPaths = segments.map(seg => {
-        const top = seg.map(p => `${xAt(p.i).toFixed(1)},${yAt(p.top).toFixed(1)}`).join(' L')
-        const bot = [...seg].reverse().map(p => `${xAt(p.i).toFixed(1)},${yAt(p.bot).toFixed(1)}`).join(' L')
+        const top = seg.map(p => `${p.i},${(100 - p.top).toFixed(2)}`).join(' L')
+        const bot = [...seg].reverse().map(p => `${p.i},${(100 - p.bot).toFixed(2)}`).join(' L')
         return `M${top} L${bot} Z`
       })
       const strokePaths = segments.map(seg =>
-        'M' + seg.map(p => `${xAt(p.i).toFixed(1)},${yAt(p.top).toFixed(1)}`).join(' L')
+        'M' + seg.map(p => `${p.i},${(100 - p.top).toFixed(2)}`).join(' L')
       )
       return { feed, color, svgPaths, strokePaths }
     })
-
-    for (let i = 0; i < n; i++) cumEnds[i] = cumulative[i]
-    return { paths, cumEnds }
-  }, [data, feeds, width, height])
+  }, [data, feeds, n])
 
   const hovered = hover != null ? data[hover.idx] : null
   const hoveredSlot = hovered?.slot as number | undefined
+  const vbWidth = Math.max(1, n - 1)
 
   return (
-    <div ref={containerRef} className="flex-1 h-full min-w-0 relative">
+    <div className="flex-1 h-full min-w-0 relative">
       <svg
-        width={width}
+        width="100%"
         height={height}
+        viewBox={`0 0 ${vbWidth} 100`}
+        preserveAspectRatio="none"
         style={{ display: 'block' }}
         onMouseMove={(e) => {
           const rect = e.currentTarget.getBoundingClientRect()
           const mx = e.clientX - rect.left
-          const n = data.length
-          const idx = Math.max(0, Math.min(n - 1, Math.round(mx / width * (n - 1))))
+          const idx = Math.max(0, Math.min(n - 1, Math.round((mx / rect.width) * (n - 1))))
           setHover({ idx, x: e.clientX, y: e.clientY })
         }}
         onMouseLeave={() => setHover(null)}
@@ -369,15 +355,14 @@ function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<str
         {paths.map(({ feed, color, svgPaths, strokePaths }) => (
           <g key={feed}>
             {svgPaths.map((d, i) => <path key={i} d={d} fill={color + 'bb'} />)}
-            {strokePaths.map((d, i) => <path key={i} d={d} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />)}
+            {strokePaths.map((d, i) => <path key={i} d={d} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />)}
           </g>
         ))}
         {hover != null && (
           <line
-            x1={(data.length === 1 ? 0 : (hover.idx / (data.length - 1)) * width)}
-            x2={(data.length === 1 ? 0 : (hover.idx / (data.length - 1)) * width)}
-            y1={0} y2={height}
-            stroke="rgba(255,255,255,0.4)" strokeWidth={1} strokeDasharray="3 3"
+            x1={hover.idx} x2={hover.idx}
+            y1={0} y2={100}
+            stroke="rgba(255,255,255,0.4)" strokeWidth={1} strokeDasharray="3 3" vectorEffect="non-scaling-stroke"
           />
         )}
       </svg>
@@ -641,7 +626,6 @@ function RecentSlotsChart({
   slotBuckets,
   slotBucketSize,
   window,
-  currentSlot,
   bucketed,
   setBucketed,
 }: {
@@ -652,22 +636,10 @@ function RecentSlotsChart({
   slotBuckets?: EdgeScoreboardSlotBucket[]
   slotBucketSize?: number
   window?: TimeWindow
-  currentSlot?: number
   bucketed: boolean
   setBucketed: (v: boolean) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [chartWidth, setChartWidth] = useState(800)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) setChartWidth(entry.contentRect.width)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
 
   const chartData = useMemo(() => {
     if (!slots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }
@@ -725,56 +697,18 @@ function RecentSlotsChart({
     for (const b of filtered) feedSet.add(b.feed)
     const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
 
-    // API returns fine-grained buckets; re-aggregate into display buckets sized to fit the chart.
-    // Each display bucket groups `groupSize` API buckets. We target ~8px per display bar,
-    // accounting for the node label area on the left.
-    const NODE_LABEL_PX = 200
-    const BAR_MIN_PX = 6
-    const availableWidth = Math.max(100, chartWidth - NODE_LABEL_PX)
-    const maxDisplayBuckets = Math.max(10, Math.floor(availableWidth / BAR_MIN_PX))
+    // Use the actual API-returned buckets as the x-axis. No theoretical range computation —
+    // the window filter on the API side already scopes the data. Aggregating to at most 200
+    // display buckets keeps the chart readable for long windows.
+    const maxDisplayBuckets = 200
 
     const rawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
-    // Use the API-reported bucket size; fall back to inferring from consecutive values.
     const apiBucketSize = slotBucketSize ?? (rawBuckets.length >= 2 ? rawBuckets[1] - rawBuckets[0] : 1)
 
-    // Build the full expected bucket range from current_slot and window so all nodes
-    // share exactly the same x-axis, regardless of how much data each node has.
-    // maxBucket: the last COMPLETE bucket before current_slot (drop the ongoing bucket
-    // to avoid it appearing to drop to zero as it fills in).
-    // minBucket: aligned to apiBucketSize so it matches API-produced slot_bucket values.
-    const SLOTS_PER_SEC = 2.5
-    const windowToSlots: Record<string, number> = {
-      '1h':  3600  * SLOTS_PER_SEC,
-      '24h': 86400 * SLOTS_PER_SEC,
-      '7d':  7 * 86400 * SLOTS_PER_SEC,
-      '30d': 30 * 86400 * SLOTS_PER_SEC,
-    }
-    const windowSlots = window ? (windowToSlots[window] ?? null) : null
-    // Clip maxBucket to the minimum per-node max slot_bucket so every node has data
-    // up to the cutoff and no node has trailing nulls on the right edge.
-    const perNodeMax = new Map<string, number>()
-    for (const b of filtered) {
-      if (b.slot_bucket > (perNodeMax.get(b.host) ?? 0)) perNodeMax.set(b.host, b.slot_bucket)
-    }
-    const nodeMaxes = [...perNodeMax.values()].sort((a, b) => a - b)
-    const minNodeMax = nodeMaxes[0] ?? (rawBuckets[rawBuckets.length - 1] ?? 0)
-    // Drop the last bucket (may be partial/ongoing)
-    const maxBucket = minNodeMax > 0 ? minNodeMax - apiBucketSize : 0
-    // Align minBucket to apiBucketSize so it matches API bucket boundaries exactly
-    const minBucketRaw = windowSlots != null ? maxBucket - windowSlots : rawBuckets[0] ?? 0
-    const minBucket = Math.ceil(minBucketRaw / apiBucketSize) * apiBucketSize
-
-    const apiBucketNumbers: number[] = []
-    for (let b = minBucket; b <= maxBucket; b += apiBucketSize) {
-      apiBucketNumbers.push(b)
-    }
-    const groupSize = Math.max(1, Math.ceil(apiBucketNumbers.length / maxDisplayBuckets))
+    const groupSize = Math.max(1, Math.ceil(rawBuckets.length / maxDisplayBuckets))
     const displayBucketSize = groupSize * apiBucketSize
-
-    // Build display bucket index: first slot_bucket of each display bucket
-    const displayBucketStarts = apiBucketNumbers.filter((_, i) => i % groupSize === 0)
-
-    const apiBucketIndex = new Map(apiBucketNumbers.map((slot, i) => [slot, i]))
+    const displayBucketStarts = rawBuckets.filter((_, i) => i % groupSize === 0)
+    const apiBucketIndex = new Map(rawBuckets.map((slot, i) => [slot, i]))
 
     const sortedNodes = [...nodes].sort((a, b) => a.host.localeCompare(b.host))
 
@@ -788,7 +722,7 @@ function RecentSlotsChart({
           // Skip buckets outside our computed range to avoid polluting the wrong display bucket
           const apiIdx = apiBucketIndex.get(b.slot_bucket)
           if (apiIdx === undefined) continue
-          const displayStart = apiBucketNumbers[Math.floor(apiIdx / groupSize) * groupSize]
+          const displayStart = rawBuckets[Math.floor(apiIdx / groupSize) * groupSize]
           let agg = displayData.get(displayStart)
           if (!agg) {
             agg = { feedWon: new Map(), bucketTotal: 0 }
@@ -813,7 +747,7 @@ function RecentSlotsChart({
       })
 
     return { nodeCharts: bucketedNodeCharts, feeds, slotCount: displayBucketStarts.length, bucketSize: displayBucketSize }
-  }, [slotBuckets, slotBucketSize, nodes, chartWidth, window, currentSlot])
+  }, [slotBuckets, slotBucketSize, nodes, window])
 
   if (!slots.length)
     return (
@@ -1267,7 +1201,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={stableRecent?.slots ?? data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} currentSlot={data.current_slot} bucketed={bucketed} setBucketed={setBucketed} />
+            <RecentSlotsChart slots={stableRecent?.slots ?? data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} />
           </div>
         )}
 
