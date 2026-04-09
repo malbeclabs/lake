@@ -337,7 +337,7 @@ function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<str
   const vbWidth = Math.max(1, n - 1)
 
   return (
-    <div className="flex-1 h-full min-w-0 relative">
+    <div className="flex-1 h-full min-w-0 relative rounded overflow-hidden">
       <svg
         width="100%"
         height={height}
@@ -573,7 +573,7 @@ function SlotRaceNodeChart({
   const xPos = hover != null && hover.vx + 10 + 180 > window.innerWidth ? hover.vx - 190 : (hover?.vx ?? 0) + 10
 
   return (
-    <div className="relative flex-1 h-full min-w-0 overflow-hidden">
+    <div className="relative flex-1 h-full min-w-0 overflow-hidden rounded">
       <div ref={containerRef} />
       {hover && hoveredSlot && (
         <div
