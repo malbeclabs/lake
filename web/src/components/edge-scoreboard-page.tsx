@@ -299,7 +299,7 @@ function BucketedNodeChart({ data, feeds }: { data: Array<Record<string, number 
     <div className="flex-1 h-full min-w-0">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
-          <YAxis domain={[0, 100]} hide />
+          <YAxis domain={[0, 100]} hide width={0} />
           {feeds.map((f) => (
             <Area
               key={f}
