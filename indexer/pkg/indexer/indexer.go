@@ -199,6 +199,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 			InfluxDB:        cfg.DeviceUsageInfluxClient,
 			Bucket:          cfg.DeviceUsageInfluxBucket,
 			QueryWindow:     cfg.DeviceUsageInfluxQueryWindow,
+			DZEnv:           cfg.DZEnv,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create telemetry usage view: %w", err)

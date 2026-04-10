@@ -97,7 +97,55 @@ var (
 		},
 		[]string{"operation_type", "status"},
 	)
+
+	InfluxQueriesTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_influx_queries_total",
+			Help: "Total number of InfluxDB queries",
+		},
+		[]string{"dz_env", "query_type", "status"},
+	)
+
+	InfluxQueryDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "doublezero_data_indexer_influx_query_duration_seconds",
+			Help:    "Duration of InfluxDB queries",
+			Buckets: prometheus.ExponentialBuckets(0.1, 2, 12), // 0.1s to ~410s
+		},
+		[]string{"dz_env", "query_type"},
+	)
+
+	InfluxQueryRowsReturned = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "doublezero_data_indexer_influx_query_rows_returned",
+			Help:    "Number of rows returned by InfluxDB queries",
+			Buckets: prometheus.ExponentialBuckets(1, 4, 12), // 1 to ~4M rows
+		},
+		[]string{"dz_env", "query_type"},
+	)
 )
+
+// RecordInfluxQuery records metrics for an InfluxDB query.
+// dzEnv is the DZ network environment (e.g. "mainnet-beta", "testnet", "devnet").
+// queryType describes the kind of query (e.g. "interface_usage", "baseline_in_errors", "backfill").
+func RecordInfluxQuery(dzEnv, queryType string, duration time.Duration, rows int, err error) {
+	status := "success"
+	if err != nil {
+		switch {
+		case context.DeadlineExceeded == err || isDeadlineExceeded(err):
+			status = "timeout"
+		case context.Canceled == err || isCanceled(err):
+			status = "cancelled"
+		default:
+			status = "error"
+		}
+	}
+	InfluxQueriesTotal.WithLabelValues(dzEnv, queryType, status).Inc()
+	InfluxQueryDuration.WithLabelValues(dzEnv, queryType).Observe(duration.Seconds())
+	if err == nil {
+		InfluxQueryRowsReturned.WithLabelValues(dzEnv, queryType).Observe(float64(rows))
+	}
+}
 
 // RecordDatabaseQuery records metrics for a ClickHouse query.
 func RecordDatabaseQuery(duration time.Duration, err error) {

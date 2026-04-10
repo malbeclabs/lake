@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/malbeclabs/lake/indexer/pkg/metrics"
 )
 
 // BackfillResult contains the results of a backfill operation
@@ -76,7 +78,9 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 		WHERE time >= '%s' AND time < '%s'
 	`, startTimeUTC.Format(time.RFC3339Nano), endTimeUTC.Format(time.RFC3339Nano))
 
+	queryStart := time.Now()
 	rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
+	metrics.RecordInfluxQuery(v.cfg.DZEnv, "backfill", time.Since(queryStart), len(rows), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query influxdb for backfill: %w", err)
 	}

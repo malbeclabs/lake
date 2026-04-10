@@ -95,6 +95,7 @@ type ViewConfig struct {
 	ClickHouse      clickhouse.Client
 	RefreshInterval time.Duration
 	QueryWindow     time.Duration // How far back to query from InfluxDB
+	DZEnv           string        // DZ network environment (e.g. "mainnet-beta", "testnet", "devnet")
 }
 
 func (cfg *ViewConfig) Validate() error {
@@ -419,6 +420,7 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 
 	rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
 	queryDuration := time.Since(queryStart)
+	metrics.RecordInfluxQuery(v.cfg.DZEnv, "interface_usage", queryDuration, len(rows), err)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, err
@@ -954,6 +956,8 @@ func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time)
 
 			rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
 			counterDuration := time.Since(counterStart)
+			queryType := "baseline_" + strings.ReplaceAll(cf.field, "-", "_")
+			metrics.RecordInfluxQuery(v.cfg.DZEnv, queryType, counterDuration, len(rows), err)
 			if err != nil {
 				v.log.Warn("telemetry/usage: failed to query baseline counter", "counter", cf.field, "error", err, "duration", counterDuration.String())
 				errCh <- fmt.Errorf("failed to query baseline for %s: %w", cf.field, err)
