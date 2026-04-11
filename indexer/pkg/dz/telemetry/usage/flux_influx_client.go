@@ -3,6 +3,7 @@ package dztelemusage
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
@@ -17,6 +18,12 @@ type FluxInfluxDBClient struct {
 	queryAPI api.QueryAPI
 	bucket   string
 }
+
+// defaultFluxHTTPTimeout is the HTTP client timeout for Flux queries.
+// The influxdb-client-go/v2 default is 20s which is too short for pivot queries
+// over a 1-hour window of interface counter data. The Temporal activity
+// StartToCloseTimeout is 5 minutes, so 4 minutes gives a comfortable margin.
+const defaultFluxHTTPTimeout = 4 * time.Minute
 
 // NewFluxInfluxDBClient creates a new InfluxDB client that uses Flux queries.
 // url is the InfluxDB server URL (e.g. "https://us-east-1-1.aws.cloud2.influxdata.com").
@@ -33,7 +40,8 @@ func NewFluxInfluxDBClient(url, token, org, bucket string) (*FluxInfluxDBClient,
 	if bucket == "" {
 		return nil, fmt.Errorf("influxdb bucket is required")
 	}
-	client := influxdb2.NewClient(url, token)
+	opts := influxdb2.DefaultOptions().SetHTTPClient(&http.Client{Timeout: defaultFluxHTTPTimeout})
+	client := influxdb2.NewClientWithOptions(url, token, opts)
 	queryAPI := client.QueryAPI(org)
 	return &FluxInfluxDBClient{
 		client:   client,
