@@ -55,7 +55,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeIntfCounterRow(t *testi
 
 	t.Run("renames _time to time as RFC3339Nano string", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"_time":      fixedTime,
 			"dzd_pubkey": "abc123",
 			"intf":       "eth0",
@@ -78,7 +78,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeIntfCounterRow(t *testi
 
 	t.Run("strips flux metadata columns", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"_time":        fixedTime,
 			"_measurement": "intfCounters",
 			"_start":       fixedTime.Add(-time.Hour),
@@ -102,7 +102,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeIntfCounterRow(t *testi
 
 	t.Run("preserves tag and field columns", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"_time":               fixedTime,
 			"dzd_pubkey":          "pubkey1",
 			"host":                "router1",
@@ -133,7 +133,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeIntfCounterRow(t *testi
 
 	t.Run("output is parseable by extractStringFromRow and extractInt64FromRow", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"_time":      fixedTime,
 			"dzd_pubkey": "pubkey2",
 			"intf":       "eth1",
@@ -162,7 +162,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeIntfCounterRow(t *testi
 		t.Parallel()
 		// Test with nanosecond precision
 		tNano := time.Date(2024, 1, 15, 12, 0, 0, 987654321, time.UTC)
-		row := normalizeIntfCounterRow(map[string]interface{}{"_time": tNano}, tNano)
+		row := normalizeIntfCounterRow(map[string]any{"_time": tNano}, tNano)
 
 		timeStr, ok := row["time"].(string)
 		require.True(t, ok)
@@ -179,7 +179,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeBaselineRow(t *testing.
 
 	t.Run("renames _value to value", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"dzd_pubkey": "abc",
 			"intf":       "eth0",
 			"_value":     int64(42),
@@ -193,7 +193,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeBaselineRow(t *testing.
 	t.Run("strips flux metadata columns", func(t *testing.T) {
 		t.Parallel()
 		fixedTime := time.Now().UTC()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"_time":        fixedTime,
 			"_measurement": "intfCounters",
 			"_start":       fixedTime.Add(-time.Hour),
@@ -216,7 +216,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeBaselineRow(t *testing.
 
 	t.Run("preserves dzd_pubkey and intf", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"dzd_pubkey": "pubkey123",
 			"intf":       "Tunnel501",
 			"_value":     int64(7),
@@ -230,7 +230,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeBaselineRow(t *testing.
 
 	t.Run("output is parseable by extractStringFromRow and extractInt64FromRow", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"dzd_pubkey": "pk1",
 			"intf":       "eth0",
 			"_value":     int64(55),
@@ -252,7 +252,7 @@ func TestLake_TelemetryUsage_FluxInfluxDBClient_normalizeBaselineRow(t *testing.
 
 	t.Run("handles nil _value", func(t *testing.T) {
 		t.Parallel()
-		values := map[string]interface{}{
+		values := map[string]any{
 			"dzd_pubkey": "pk2",
 			"intf":       "eth1",
 			"_value":     nil,

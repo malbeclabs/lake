@@ -130,7 +130,7 @@ var fluxMetaColumns = map[string]bool{
 // normalizeIntfCounterRow converts a Flux pivot record to the row format expected by
 // convertRowsToUsage. It renames _time → time (as RFC3339Nano string) and strips
 // Flux metadata columns.
-func normalizeIntfCounterRow(values map[string]interface{}, t time.Time) map[string]any {
+func normalizeIntfCounterRow(values map[string]any, t time.Time) map[string]any {
 	row := make(map[string]any, len(values))
 	for k, v := range values {
 		if fluxMetaColumns[k] {
@@ -145,7 +145,7 @@ func normalizeIntfCounterRow(values map[string]interface{}, t time.Time) map[str
 
 // normalizeBaselineRow converts a Flux last() record to the row format expected by
 // queryBaselineCounters. It renames _value → value and strips Flux metadata columns.
-func normalizeBaselineRow(values map[string]interface{}) map[string]any {
+func normalizeBaselineRow(values map[string]any) map[string]any {
 	row := make(map[string]any, len(values))
 	for k, v := range values {
 		if fluxMetaColumns[k] {
