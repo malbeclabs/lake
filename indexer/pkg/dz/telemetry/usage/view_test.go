@@ -1430,7 +1430,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// Row 0 (baseline) consumed, rows 1-3 stored = 3 output rows
 		require.Len(t, usage, 3)
