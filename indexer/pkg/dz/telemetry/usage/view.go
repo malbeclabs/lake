@@ -323,7 +323,7 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			v.log.Info("telemetry/usage: queried baselines from clickhouse", "unique_keys", totalKeys, "duration", chDuration.String())
 			baselines = chBaselines
 		} else {
-			v.log.Warn("telemetry/usage: no baseline data in clickhouse (0 rows), will query influxdb — this triggers expensive 10-year scans", "duration", chDuration.String())
+			v.log.Warn("telemetry/usage: no baseline data in clickhouse (0 rows), will query influxdb — this triggers expensive 1-year scans", "duration", chDuration.String())
 		}
 	}
 
@@ -460,7 +460,7 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 		}
 		return nil, fmt.Errorf("failed to execute SQL query: %w", err)
 	}
-	v.log.Debug("telemetry/usage: main influxdb query completed", "rows", len(rows), "duration", queryDuration.String())
+	v.log.Info("telemetry/usage: main influxdb query completed", "rows", len(rows), "duration", queryDuration.String())
 
 	// Baselines are already provided from Refresh() - use them as-is
 
@@ -721,7 +721,7 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 		isFirstRow := key != "" && !firstRowSeen[key]
 
 		// For all counter fields: use value if present, otherwise forward-fill with last known
-		// Sparse counters (errors/discards) have baselines from 10-year query
+		// Sparse counters (errors/discards) have baselines from 1-year query
 		// Non-sparse counters: first row is used as baseline, not stored.
 		// isRate marks counters whose deltas are divided by delta_duration to
 		// produce per-second rates (bps, pps). Only rows carrying at least one
@@ -753,7 +753,7 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 		}
 
 		// For non-sparse counters on first row: extract values and use as baseline, skip storing the row
-		// For sparse counters, we still process and store the first row (they have baselines from 10-year query)
+		// For sparse counters, we still process and store the first row (they have baselines from 1-year query)
 		if isFirstRow {
 			// Check if we have any non-sparse counter values
 			hasNonSparseValues := false
@@ -932,7 +932,7 @@ func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowSt
 }
 
 // queryBaselineCounters queries InfluxDB for the last non-null counter values before the window start
-// for sparse counters (errors/discards) using a 10-year lookback window.
+// for sparse counters (errors/discards) using a 1-year lookback window.
 func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
 	baselines := &CounterBaselines{
 		InDiscards:  make(map[string]*int64),
@@ -955,23 +955,23 @@ func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time)
 		{"out-errors", baselines.OutErrors},
 	}
 
-	// For sparse counters, use a 10-year window directly (they're sparse, so rows are rare).
+	// For sparse counters, use a 1-year window directly (they're sparse, so rows are rare).
 	// NOTE: These queries are expensive on InfluxDB — run sequentially to avoid saturating
 	// the InfluxDB query budget (25m total in 30s). This path only runs when ClickHouse
 	// has no baseline data, which should be rare in steady state.
-	lookbackStart := windowStart.Add(-10 * 365 * 24 * time.Hour)
+	lookbackStart := windowStart.Add(-365 * 24 * time.Hour)
 	v.log.Warn("telemetry/usage: querying baseline counters from influxdb (sequential to avoid rate limits)",
 		"counters", len(counterFields),
 		"from", lookbackStart.UTC(),
 		"to", windowStart.UTC(),
-		"lookback", "10y",
+		"lookback", "1y",
 	)
 
 	hasErrors := false
 	for _, cf := range counterFields {
 		counterStart := time.Now()
 
-		v.log.Debug("telemetry/usage: executing influxdb baseline counter query", "counter", cf.field, "from", lookbackStart.UTC(), "to", windowStart.UTC())
+		v.log.Info("telemetry/usage: executing influxdb baseline counter query", "counter", cf.field, "from", lookbackStart.UTC(), "to", windowStart.UTC())
 		rows, err := v.cfg.InfluxDB.QueryBaselineCounter(ctx, cf.field, lookbackStart, windowStart)
 		counterDuration := time.Since(counterStart)
 		queryType := "baseline_" + strings.ReplaceAll(cf.field, "-", "_")
@@ -996,7 +996,7 @@ func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time)
 				baselineCount++
 			}
 		}
-		v.log.Debug("telemetry/usage: completed baseline counter query", "counter", cf.field, "baselines", baselineCount, "duration", counterDuration.String())
+		v.log.Info("telemetry/usage: completed baseline counter query", "counter", cf.field, "baselines", baselineCount, "duration", counterDuration.String())
 	}
 
 	if hasErrors {

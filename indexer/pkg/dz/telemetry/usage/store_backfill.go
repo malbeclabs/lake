@@ -52,12 +52,13 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	queryStart := time.Now()
 	rows, err := v.cfg.InfluxDB.QueryIntfCounters(ctx, startTimeUTC, endTimeUTC)
-	metrics.RecordInfluxQuery(v.cfg.DZEnv, "backfill", time.Since(queryStart), len(rows), err)
+	queryDuration := time.Since(queryStart)
+	metrics.RecordInfluxQuery(v.cfg.DZEnv, "backfill", queryDuration, len(rows), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query influxdb for backfill: %w", err)
 	}
 
-	v.log.Info("telemetry/usage: backfill queried influxdb", "rows", len(rows))
+	v.log.Info("telemetry/usage: backfill queried influxdb", "rows", len(rows), "duration", queryDuration.String())
 
 	if len(rows) == 0 {
 		return &BackfillResult{
