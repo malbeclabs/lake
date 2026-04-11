@@ -58,6 +58,7 @@ func (c *FluxInfluxDBClient) QueryIntfCounters(ctx context.Context, start, end t
 from(bucket: "%s")
   |> range(start: %s, stop: %s)
   |> filter(fn: (r) => r._measurement == "intfCounters")
+  |> filter(fn: (r) => exists r.dzd_pubkey)
   |> pivot(rowKey: ["_time", "dzd_pubkey", "host", "intf", "model_name", "serial_number"], columnKey: ["_field"], valueColumn: "_value")
 `, c.bucket, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano))
 
@@ -86,6 +87,7 @@ func (c *FluxInfluxDBClient) QueryBaselineCounter(ctx context.Context, field str
 from(bucket: "%s")
   |> range(start: %s, stop: %s)
   |> filter(fn: (r) => r._measurement == "intfCounters" and r._field == "%s")
+  |> filter(fn: (r) => exists r.dzd_pubkey)
   |> filter(fn: (r) => exists r._value)
   |> group(columns: ["dzd_pubkey", "intf"])
   |> last()
