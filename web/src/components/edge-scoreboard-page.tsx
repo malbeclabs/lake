@@ -289,7 +289,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
             const defaultVal = formatPct(chartData.feedAgg[f])
             legendDefaultsRef.current.set(f, defaultVal)
             return (
-              <div key={f} ref={el => { if (el) legendItemRefs.current.set(f, el) }} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <div key={f} ref={el => { if (el) legendItemRefs.current.set(f, el) }} className="flex items-center gap-1 text-[10px] text-muted-foreground transition-opacity duration-150">
                 <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
                 {FEED_LABELS[f] ?? f}
                 <span
@@ -322,13 +322,8 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
                 if (itemEl) {
                   if (!hovered || feed == null) {
                     itemEl.style.opacity = ''
-                    itemEl.style.fontWeight = ''
-                  } else if (f === feed) {
-                    itemEl.style.opacity = '1'
-                    itemEl.style.fontWeight = '600'
                   } else {
-                    itemEl.style.opacity = '0.55'
-                    itemEl.style.fontWeight = ''
+                    itemEl.style.opacity = f === feed ? '1' : '0.5'
                   }
                 }
               }
@@ -1104,7 +1099,7 @@ function RecentSlotsChart({
       (best, [f, v]) => (v != null && (best == null || v > (info.feedData[best] ?? 0)) ? f : best), null
     )
     for (const [f, el] of infoFeedLegendItemRefs.current) {
-      el.style.opacity = ''
+      el.style.opacity = winnerFeed ? (f === winnerFeed ? '1' : '0.5') : ''
       el.style.fontWeight = f === winnerFeed ? '500' : ''
     }
   }, [])
@@ -1722,7 +1717,7 @@ function RecentSlotsChart({
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 mt-3 text-[10px] text-muted-foreground">
           {feeds.map((f) => (
-            <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1">
+            <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1 transition-opacity duration-150">
               <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
               {FEED_LABELS[f] ?? f}
               <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="font-mono text-foreground ml-0.5 inline-block w-[4ch] text-right">—</span>
