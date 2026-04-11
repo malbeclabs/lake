@@ -17,8 +17,9 @@ const (
 	continueAsNewThreshold = 60
 
 	// telemUsageEveryN controls how often telemetry usage refreshes run.
-	// At 60s base interval, 5 iterations = ~5 minutes.
-	telemUsageEveryN = 5
+	// At 60s base interval, 1 iteration = ~1 minute. Source data is reported
+	// at ~2s resolution so indexing every minute keeps data reasonably fresh.
+	telemUsageEveryN = 1
 )
 
 // RegisterWorkflows registers all DZ ingest workflows with the given worker.
