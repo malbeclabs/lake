@@ -182,6 +182,11 @@ func (cfg *ViewConfig) Validate() error {
 	return nil
 }
 
+// baselineCacheTTL is how long the ClickHouse baseline query result is reused
+// before re-querying. Sparse counters (errors/discards) change infrequently, so
+// a 5-minute cache cuts the 17–35 s per-cycle scan down to once every 5 minutes.
+const baselineCacheTTL = 5 * time.Minute
+
 type View struct {
 	log       *slog.Logger
 	cfg       ViewConfig
@@ -189,6 +194,11 @@ type View struct {
 	readyOnce sync.Once
 	readyCh   chan struct{}
 	refreshMu sync.Mutex // prevents concurrent refreshes
+
+	// baselineCache caches the result of queryBaselineCountersFromClickHouse.
+	// refreshMu already serialises refreshes, so no additional lock is needed.
+	baselineCache     *CounterBaselines
+	baselineCacheTime time.Time
 }
 
 func NewView(cfg ViewConfig) (*View, error) {
@@ -852,7 +862,22 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 
 // queryBaselineCountersFromClickHouse queries ClickHouse for the last non-null counter values before the window start
 // for each device/interface combination. Returns error if ClickHouse doesn't have data or query fails.
+//
+// Results are cached for baselineCacheTTL (5 minutes). Sparse counters (errors/discards) change
+// infrequently, so re-running the expensive 7-day GROUP BY scan every 60 s cycle is unnecessary.
+// The cache is keyed on clock time, not windowStart, because refreshes are nearly real-time and
+// the 7-day lookback window barely moves between cycles. The backfill path calls this with
+// arbitrary historical windowStart values and bypasses the cache entirely.
 func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
+	// Use the cache only for near-real-time refreshes (windowStart within 2× baselineCacheTTL of now).
+	// Backfill calls with historical windowStart values bypass the cache.
+	now := v.cfg.Clock.Now()
+	isRealtime := now.Sub(windowStart) < 2*baselineCacheTTL
+	if isRealtime && v.baselineCache != nil && now.Before(v.baselineCacheTime.Add(baselineCacheTTL)) {
+		v.log.Debug("telemetry/usage: using cached baselines from clickhouse", "age", now.Sub(v.baselineCacheTime).Round(time.Second))
+		return v.baselineCache, nil
+	}
+
 	// Query recent data before the window start to find the last non-null values.
 	// Use a 7-day lookback — the indexer writes every few minutes, so the last
 	// non-null value for any sparse counter should be well within this window.
@@ -933,6 +958,12 @@ func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowSt
 
 	if err := rows.Err(); err != nil {
 		v.log.Warn("telemetry/usage: error iterating baseline rows", "error", err)
+	}
+
+	// Populate the cache for real-time refreshes.
+	if isRealtime {
+		v.baselineCache = baselines
+		v.baselineCacheTime = now
 	}
 
 	return baselines, nil
