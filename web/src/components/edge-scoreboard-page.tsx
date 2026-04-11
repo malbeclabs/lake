@@ -881,6 +881,11 @@ function RecentSlotsChart({
   const slotLeadersRef = useRef(slotLeaders)
   slotLeadersRef.current = slotLeaders
 
+  // Track query params from the last live-effect seed so we can detect when they change.
+  // When leadersOnly or window changes, slotsRef.current holds stale data (wrong filter),
+  // so we must fetch fresh instead of seeding from the cached query data.
+  const prevLiveParamsRef = useRef<{ leadersOnly?: boolean; window?: string }>({})
+
   useEffect(() => {
     if (!live || bucketed) {
       liveMaxSlotRef.current = 0
@@ -935,7 +940,11 @@ function RecentSlotsChart({
 
     // Seed immediately from the React Query data if already available, otherwise fetch.
     // This eliminates a duplicate network round-trip on initial load and when re-entering live mode.
-    if (slotsRef.current.length > 0) {
+    // If leadersOnly or window changed, slotsRef.current holds stale data (wrong filter),
+    // so we must fetch fresh to avoid seeding the buffer with mismatched slots.
+    const liveParamsChanged = prevLiveParamsRef.current.leadersOnly !== leadersOnly || prevLiveParamsRef.current.window !== window
+    prevLiveParamsRef.current = { leadersOnly, window }
+    if (!liveParamsChanged && slotsRef.current.length > 0) {
       seedBuffer(slotsRef.current, slotLeadersRef.current)
     } else {
       fetchEdgeScoreboard(window, leadersOnly).then(data => {
