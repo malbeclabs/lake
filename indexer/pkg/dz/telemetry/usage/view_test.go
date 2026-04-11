@@ -521,7 +521,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:Tunnel501": {LinkPK: "link1", LinkSide: "A"},
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, linkLookup, nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, linkLookup, nil)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -576,7 +576,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row should be skipped (used as baseline), so only second row should be stored
 		require.Len(t, usage, 1)
@@ -624,7 +624,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			InErrors: make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		require.Len(t, usage, 2) // first row is baseline, not stored
 
@@ -684,7 +684,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 
 		baselines := &CounterBaselines{}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		require.Len(t, usage, 3) // baseline skipped, 3 rows stored
 
@@ -752,7 +752,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now,
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First row should be skipped (already written), so only rows 2 and 3 should be stored
 		require.Len(t, usage, 2)
@@ -807,7 +807,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First two rows should be skipped (at or before already-written timestamp), only third row stored
 		require.Len(t, usage, 1)
@@ -868,7 +868,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 1)
 
@@ -925,7 +925,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row is skipped (baseline for non-sparse), only second row stored
 		require.Len(t, usage, 1)
@@ -1044,7 +1044,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(2 * time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 1)
 
@@ -1122,7 +1122,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -1209,7 +1209,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			"device1:eth0": now.Add(time.Minute),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		require.Len(t, usage, 2)
 
@@ -1284,7 +1284,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		// No alreadyWritten entries for this key (global maxTime is ahead)
 		alreadyWritten := MaxTimestampsByKey{}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), alreadyWritten)
 		require.NoError(t, err)
 		// First row is consumed as baseline, so we get 2 rows
 		require.Len(t, usage, 2)
@@ -1352,7 +1352,7 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 			OutErrors:   make(map[string]*int64),
 		}
 
-		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		usage, _, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
 		require.NoError(t, err)
 		// First row skipped (baseline), rows 2 and 3 stored
 		require.Len(t, usage, 2)

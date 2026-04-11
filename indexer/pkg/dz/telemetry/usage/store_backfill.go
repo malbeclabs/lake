@@ -71,7 +71,7 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	// Convert rows to InterfaceUsage
 	// Pass nil for alreadyWritten - backfill relies on ReplacingMergeTree for deduplication
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
+	usage, _, err := v.convertRowsToUsage(rows, baselines, linkLookup, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert rows for backfill: %w", err)
 	}

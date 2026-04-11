@@ -182,9 +182,10 @@ func (cfg *ViewConfig) Validate() error {
 	return nil
 }
 
-// baselineCacheTTL is how long the ClickHouse baseline query result is reused
-// before re-querying. Sparse counters (errors/discards) change infrequently, so
-// a 5-minute cache cuts the 17–35 s per-cycle scan down to once every 5 minutes.
+// baselineCacheTTL is the staleness threshold for the baseline cache.
+// During normal operation the cache is updated after every refresh cycle (~60 s),
+// so this threshold is only hit on startup or after the indexer has been paused
+// longer than 5 minutes, triggering a ClickHouse re-query.
 const baselineCacheTTL = 5 * time.Minute
 
 type View struct {
@@ -397,13 +398,19 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	// Convert times to UTC for InfluxDB query (InfluxDB stores times in UTC)
 	queryStartUTC := queryStart.UTC()
 	nowUTC := now.UTC()
-	usage, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
+	usage, endBaselines, err := v.queryInfluxDB(ctx, queryStartUTC, nowUTC, baselines, alreadyWritten)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return result, err
 		}
 		metrics.ViewRefreshTotal.WithLabelValues("telemetry-usage", "error").Inc()
 		return result, fmt.Errorf("failed to query influxdb: %w", err)
+	}
+	// Update the baseline cache with the end-of-window values so the next cycle
+	// uses what was actually processed rather than re-querying ClickHouse.
+	if endBaselines != nil {
+		v.baselineCache = endBaselines
+		v.baselineCacheTime = now
 	}
 
 	v.log.Info("telemetry/usage: queried influxdb", "rows", len(usage), "from", queryStart, "to", now)
@@ -456,7 +463,7 @@ type CounterBaselines struct {
 	OutErrors   map[string]*int64
 }
 
-func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, baselines *CounterBaselines, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, error) {
+func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, baselines *CounterBaselines, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, *CounterBaselines, error) {
 	// InfluxDB uses dzd_pubkey as a tag, which we extract and map to device_pk.
 	v.log.Debug("telemetry/usage: executing main influxdb query", "from", startTime.UTC(), "to", endTime.UTC())
 	queryStart := time.Now()
@@ -466,9 +473,9 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	metrics.RecordInfluxQuery(v.cfg.DZEnv, "interface_usage", queryDuration, len(rows), err)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return nil, err
+			return nil, nil, err
 		}
-		return nil, fmt.Errorf("failed to execute SQL query: %w", err)
+		return nil, nil, fmt.Errorf("failed to execute SQL query: %w", err)
 	}
 	v.log.Info("telemetry/usage: main influxdb query completed", "rows", len(rows), "duration", queryDuration.String())
 
@@ -507,14 +514,14 @@ func (v *View) queryInfluxDB(ctx context.Context, startTime, endTime time.Time, 
 	// Convert rows to InterfaceUsage, tracking last known values per device/interface
 	// We need to process in time order to properly forward-fill nulls
 	convertStart := time.Now()
-	usage, err := v.convertRowsToUsage(rows, baselines, linkLookup, alreadyWritten)
+	usage, endBaselines, err := v.convertRowsToUsage(rows, baselines, linkLookup, alreadyWritten)
 	convertDuration := time.Since(convertStart)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert rows: %w", err)
+		return nil, nil, fmt.Errorf("failed to convert rows: %w", err)
 	}
 	v.log.Debug("telemetry/usage: converted rows to usage data", "usage_records", len(usage), "duration", convertDuration.String())
 
-	return usage, nil
+	return usage, endBaselines, nil
 }
 
 // buildLinkLookup builds a map from "device_pk:intf" to LinkInfo by querying the dz_links_history table
@@ -579,10 +586,13 @@ func (v *View) buildLinkLookup(ctx context.Context) (map[string]LinkInfo, error)
 }
 
 // convertRowsToUsage converts rows to InterfaceUsage, using baselines only for the first null
-// and forward-filling with the last known value for subsequent nulls
-// For non-sparse counters, the first row per device/interface is used as baseline and not stored
+// and forward-filling with the last known value for subsequent nulls.
+// For non-sparse counters, the first row per device/interface is used as baseline and not stored.
+// The second return value is the end-of-window sparse counter baselines (last seen values of
+// in_discards, in_errors, in_fcs_errors, out_discards, out_errors per device/intf key).
+// The caller should store these as the baseline for the next refresh cycle.
 // If alreadyWritten is provided, rows with timestamps <= the max already written for that key are skipped
-func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBaselines, linkLookup map[string]LinkInfo, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, error) {
+func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBaselines, linkLookup map[string]LinkInfo, alreadyWritten MaxTimestampsByKey) ([]InterfaceUsage, *CounterBaselines, error) {
 	// Track last known values per device/interface for each counter
 	// Key: "device_pk:intf", Value: map of counter name to last value
 	lastKnownValues := make(map[string]map[string]*int64)
@@ -857,24 +867,50 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 		usage = append(usage, *u)
 	}
 
-	return usage, nil
+	// Build end-of-window sparse baselines from lastKnownValues so the caller can
+	// carry them forward as the baseline for the next cycle, avoiding a ClickHouse re-query.
+	endBaselines := &CounterBaselines{
+		InDiscards:  make(map[string]*int64),
+		InErrors:    make(map[string]*int64),
+		InFCSErrors: make(map[string]*int64),
+		OutDiscards: make(map[string]*int64),
+		OutErrors:   make(map[string]*int64),
+	}
+	for key, fields := range lastKnownValues {
+		if v := fields["in-discards"]; v != nil {
+			endBaselines.InDiscards[key] = v
+		}
+		if v := fields["in-errors"]; v != nil {
+			endBaselines.InErrors[key] = v
+		}
+		if v := fields["in-fcs-errors"]; v != nil {
+			endBaselines.InFCSErrors[key] = v
+		}
+		if v := fields["out-discards"]; v != nil {
+			endBaselines.OutDiscards[key] = v
+		}
+		if v := fields["out-errors"]; v != nil {
+			endBaselines.OutErrors[key] = v
+		}
+	}
+
+	return usage, endBaselines, nil
 }
 
 // queryBaselineCountersFromClickHouse queries ClickHouse for the last non-null counter values before the window start
 // for each device/interface combination. Returns error if ClickHouse doesn't have data or query fails.
 //
-// Results are cached for baselineCacheTTL (5 minutes). Sparse counters (errors/discards) change
-// infrequently, so re-running the expensive 7-day GROUP BY scan every 60 s cycle is unnecessary.
-// The cache is keyed on clock time, not windowStart, because refreshes are nearly real-time and
-// the 7-day lookback window barely moves between cycles. The backfill path calls this with
-// arbitrary historical windowStart values and bypasses the cache entirely.
+// During steady-state operation the cache is populated after each successful refresh cycle with the
+// end-of-window values from convertRowsToUsage, so this query runs only on startup or after a gap
+// longer than baselineCacheTTL (5 minutes). The backfill path calls this with historical
+// windowStart values and bypasses the cache entirely.
 func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowStart time.Time) (*CounterBaselines, error) {
 	// Use the cache only for near-real-time refreshes (windowStart within 2× baselineCacheTTL of now).
 	// Backfill calls with historical windowStart values bypass the cache.
 	now := v.cfg.Clock.Now()
 	isRealtime := now.Sub(windowStart) < 2*baselineCacheTTL
 	if isRealtime && v.baselineCache != nil && now.Before(v.baselineCacheTime.Add(baselineCacheTTL)) {
-		v.log.Debug("telemetry/usage: using cached baselines from clickhouse", "age", now.Sub(v.baselineCacheTime).Round(time.Second))
+		v.log.Debug("telemetry/usage: using cached baselines", "age", now.Sub(v.baselineCacheTime).Round(time.Second))
 		return v.baselineCache, nil
 	}
 
@@ -958,12 +994,6 @@ func (v *View) queryBaselineCountersFromClickHouse(ctx context.Context, windowSt
 
 	if err := rows.Err(); err != nil {
 		v.log.Warn("telemetry/usage: error iterating baseline rows", "error", err)
-	}
-
-	// Populate the cache for real-time refreshes.
-	if isRealtime {
-		v.baselineCache = baselines
-		v.baselineCacheTime = now
 	}
 
 	return baselines, nil
