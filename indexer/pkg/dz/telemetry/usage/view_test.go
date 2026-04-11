@@ -1369,4 +1369,83 @@ func TestLake_TelemetryUsage_View_convertRowsToUsage(t *testing.T) {
 		require.NotNil(t, usage[1].InErrorsDelta)
 		require.Equal(t, int64(3), *usage[1].InErrorsDelta)
 	})
+
+	t.Run("stale replayed row does not inflate subsequent delta", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			ClickHouse:      mockDB,
+			InfluxDB:        &mockInfluxDBClient{},
+			Bucket:          "test-bucket",
+			RefreshInterval: time.Second,
+			QueryWindow:     time.Hour,
+		})
+		require.NoError(t, err)
+
+		now := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+
+		// Simulate the real-world scenario where the device sends a stale/replayed
+		// reading with a lower octets value (counter regression), followed by a
+		// real reading. Without the high-water mark fix, the next row's delta would
+		// be computed against the stale low value, inflating the bps by ~200x.
+		rows := []map[string]any{
+			{
+				// Baseline row (first row, consumed as baseline, not stored)
+				"time":       now.Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000000),
+			},
+			{
+				// Normal row: +100 bytes over 2s
+				"time":       now.Add(2 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000100),
+			},
+			{
+				// Stale/replayed row: octets regresses back to an old value (lower than previous)
+				"time":       now.Add(4 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(500000), // way lower than 1000100
+			},
+			{
+				// Real row after the stale row: should be computed against the
+				// high-water mark (1000100), not the stale value (500000).
+				"time":       now.Add(6 * time.Second).Format(time.RFC3339Nano),
+				"dzd_pubkey": "device1",
+				"intf":       "eth0",
+				"in-octets":  int64(1000200),
+			},
+		}
+
+		baselines := &CounterBaselines{
+			InDiscards:  make(map[string]*int64),
+			InErrors:    make(map[string]*int64),
+			InFCSErrors: make(map[string]*int64),
+			OutDiscards: make(map[string]*int64),
+			OutErrors:   make(map[string]*int64),
+		}
+
+		usage, err := view.convertRowsToUsage(rows, baselines, make(map[string]LinkInfo), nil)
+		require.NoError(t, err)
+		// Row 0 (baseline) consumed, rows 1-3 stored = 3 output rows
+		require.Len(t, usage, 3)
+
+		// Row 1: normal delta = 1000100 - 1000000 = 100
+		require.NotNil(t, usage[0].InOctetsDelta)
+		require.Equal(t, int64(100), *usage[0].InOctetsDelta)
+
+		// Row 2 (stale): delta is negative (regression), baseline NOT updated
+		require.NotNil(t, usage[1].InOctetsDelta)
+		require.Equal(t, int64(500000-1000100), *usage[1].InOctetsDelta) // negative, stored as-is
+
+		// Row 3 (real): delta must be computed against the high-water mark (1000100),
+		// NOT the stale value (500000). Without the fix this would be 1000200-500000=500200.
+		require.NotNil(t, usage[2].InOctetsDelta)
+		require.Equal(t, int64(1000200-1000100), *usage[2].InOctetsDelta) // 100, not 500200
+	})
 }

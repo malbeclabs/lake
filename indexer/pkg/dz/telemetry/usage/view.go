@@ -816,7 +816,14 @@ func (v *View) convertRowsToUsage(rows []map[string]any, baselines *CounterBasel
 					*cf.deltaDest = &delta
 				}
 
-				lastKnownValues[key][cf.field] = currentValue
+				// For rate (monotonic) counters, only advance the baseline when the
+				// counter moves forward. If the source sends a stale or replayed
+				// reading (counter regresses), keep the previous high-water mark so
+				// the next row's delta is computed against the last valid value
+				// rather than the stale one — preventing inflated bps spikes.
+				if !cf.isRate || previousValue == nil || *currentValue >= *previousValue {
+					lastKnownValues[key][cf.field] = currentValue
+				}
 			}
 		}
 
