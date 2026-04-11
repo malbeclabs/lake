@@ -14,13 +14,21 @@ import (
 )
 
 type mockInfluxDBClient struct {
-	querySQLFunc func(ctx context.Context, sqlQuery string) ([]map[string]any, error)
-	closeFunc    func() error
+	queryIntfCountersFunc    func(ctx context.Context, start, end time.Time) ([]map[string]any, error)
+	queryBaselineCounterFunc func(ctx context.Context, field string, lookbackStart, windowStart time.Time) ([]map[string]any, error)
+	closeFunc                func() error
 }
 
-func (m *mockInfluxDBClient) QuerySQL(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-	if m.querySQLFunc != nil {
-		return m.querySQLFunc(ctx, sqlQuery)
+func (m *mockInfluxDBClient) QueryIntfCounters(ctx context.Context, start, end time.Time) ([]map[string]any, error) {
+	if m.queryIntfCountersFunc != nil {
+		return m.queryIntfCountersFunc(ctx, start, end)
+	}
+	return []map[string]any{}, nil
+}
+
+func (m *mockInfluxDBClient) QueryBaselineCounter(ctx context.Context, field string, lookbackStart, windowStart time.Time) ([]map[string]any, error) {
+	if m.queryBaselineCounterFunc != nil {
+		return m.queryBaselineCounterFunc(ctx, field, lookbackStart, windowStart)
 	}
 	return []map[string]any{}, nil
 }
@@ -370,12 +378,7 @@ func TestLake_TelemetryUsage_View_Ready(t *testing.T) {
 
 		clock := clockwork.NewFakeClock()
 
-		mockInflux := &mockInfluxDBClient{
-			querySQLFunc: func(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-				// Return empty result for baseline queries and main query
-				return []map[string]any{}, nil
-			},
-		}
+		mockInflux := &mockInfluxDBClient{}
 
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
@@ -407,11 +410,7 @@ func TestLake_TelemetryUsage_View_WaitReady(t *testing.T) {
 		// With mock, we can't create tables - they're created via migrations
 
 		clock := clockwork.NewFakeClock()
-		mockInflux := &mockInfluxDBClient{
-			querySQLFunc: func(ctx context.Context, sqlQuery string) ([]map[string]any, error) {
-				return []map[string]any{}, nil
-			},
-		}
+		mockInflux := &mockInfluxDBClient{}
 
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),

@@ -11,26 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
+func TestLake_TelemetryUsage_MockInfluxDBClient_QueryIntfCounters(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns empty results for baseline queries", func(t *testing.T) {
-		t.Parallel()
-		mockDB := testClient(t)
-
-		client := NewMockInfluxDBClient(MockInfluxDBClientConfig{
-			ClickHouse: mockDB,
-			Logger:     laketesting.NewLogger(),
-		})
-
-		// Query with ROW_NUMBER (baseline query pattern)
-		query := `SELECT dzd_pubkey, intf, "in-errors" FROM (SELECT *, ROW_NUMBER() OVER (...) as rn FROM "intfCounters") WHERE rn = 1`
-		results, err := client.QuerySQL(context.Background(), query)
-		require.NoError(t, err)
-		require.Empty(t, results)
-	})
-
-	t.Run("generates mock data for time range query", func(t *testing.T) {
+	t.Run("generates mock data for time range", func(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
@@ -69,9 +53,8 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 		// Query for a 10-minute window (should generate 2 data points per interface)
 		now := time.Now().UTC()
 		start := now.Add(-10 * time.Minute)
-		query := `SELECT * FROM "intfCounters" WHERE time >= '` + start.Format(time.RFC3339Nano) + `' AND time < '` + now.Format(time.RFC3339Nano) + `'`
 
-		results, err := client.QuerySQL(context.Background(), query)
+		results, err := client.QueryIntfCounters(context.Background(), start, now)
 		require.NoError(t, err)
 		require.NotEmpty(t, results)
 
@@ -85,6 +68,12 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 			require.NotNil(t, row["out-octets"])
 			require.NotNil(t, row["in-pkts"])
 			require.NotNil(t, row["out-pkts"])
+
+			// time must be a string (RFC3339Nano parseable)
+			timeStr, ok := row["time"].(string)
+			require.True(t, ok, "time should be a string")
+			_, err := time.Parse(time.RFC3339Nano, timeStr)
+			require.NoError(t, err, "time should be parseable as RFC3339Nano: %s", timeStr)
 		}
 
 		// Verify we have data for our devices
@@ -102,7 +91,6 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
-		// Insert device with empty interfaces
 		svcStore, err := dzsvc.NewStore(dzsvc.StoreConfig{
 			Logger:     laketesting.NewLogger(),
 			ClickHouse: mockDB,
@@ -126,9 +114,8 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 
 		now := time.Now().UTC()
 		start := now.Add(-10 * time.Minute)
-		query := `SELECT * FROM "intfCounters" WHERE time >= '` + start.Format(time.RFC3339Nano) + `' AND time < '` + now.Format(time.RFC3339Nano) + `'`
 
-		results, err := client.QuerySQL(context.Background(), query)
+		results, err := client.QueryIntfCounters(context.Background(), start, now)
 		require.NoError(t, err)
 		// Should still have data with default interfaces
 		require.NotEmpty(t, results)
@@ -138,7 +125,6 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 		t.Parallel()
 		mockDB := testClient(t)
 
-		// Insert test device
 		svcStore, err := dzsvc.NewStore(dzsvc.StoreConfig{
 			Logger:     laketesting.NewLogger(),
 			ClickHouse: mockDB,
@@ -164,9 +150,8 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 
 		now := time.Now().UTC()
 		start := now.Add(-30 * time.Minute) // 30 min window gives us 6 data points
-		query := `SELECT * FROM "intfCounters" WHERE time >= '` + start.Format(time.RFC3339Nano) + `' AND time < '` + now.Format(time.RFC3339Nano) + `'`
 
-		results, err := client.QuerySQL(context.Background(), query)
+		results, err := client.QueryIntfCounters(context.Background(), start, now)
 		require.NoError(t, err)
 
 		// Filter to device4
@@ -189,6 +174,66 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_QuerySQL(t *testing.T) {
 			prevOctets = octets
 		}
 	})
+
+	t.Run("time field format matches what convertRowsToUsage expects", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		svcStore, err := dzsvc.NewStore(dzsvc.StoreConfig{
+			Logger:     laketesting.NewLogger(),
+			ClickHouse: mockDB,
+		})
+		require.NoError(t, err)
+
+		err = svcStore.ReplaceDevices(context.Background(), []dzsvc.Device{
+			{PK: "device5", Code: "DEV5", Interfaces: []dzsvc.Interface{{Name: "eth0", Status: "up"}}},
+		})
+		require.NoError(t, err)
+
+		client := NewMockInfluxDBClient(MockInfluxDBClientConfig{
+			ClickHouse: mockDB,
+			Logger:     laketesting.NewLogger(),
+		})
+
+		now := time.Now().UTC()
+		results, err := client.QueryIntfCounters(context.Background(), now.Add(-10*time.Minute), now)
+		require.NoError(t, err)
+		require.NotEmpty(t, results)
+
+		for _, row := range results {
+			timeVal := extractStringFromRow(row, "time")
+			require.NotNil(t, timeVal, "time key must exist and be a string")
+
+			// Must be parseable by the time formats used in convertRowsToUsage
+			parsed := false
+			for _, format := range []string{time.RFC3339Nano, time.RFC3339} {
+				if _, err := time.Parse(format, *timeVal); err == nil {
+					parsed = true
+					break
+				}
+			}
+			require.True(t, parsed, "time %q must be parseable by RFC3339Nano or RFC3339", *timeVal)
+		}
+	})
+}
+
+func TestLake_TelemetryUsage_MockInfluxDBClient_QueryBaselineCounter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns empty results (no historical data in mock)", func(t *testing.T) {
+		t.Parallel()
+		mockDB := testClient(t)
+
+		client := NewMockInfluxDBClient(MockInfluxDBClientConfig{
+			ClickHouse: mockDB,
+			Logger:     laketesting.NewLogger(),
+		})
+
+		now := time.Now().UTC()
+		results, err := client.QueryBaselineCounter(context.Background(), "in-errors", now.Add(-365*24*time.Hour), now)
+		require.NoError(t, err)
+		require.Empty(t, results)
+	})
 }
 
 func TestLake_TelemetryUsage_MockInfluxDBClient_Close(t *testing.T) {
@@ -205,40 +250,6 @@ func TestLake_TelemetryUsage_MockInfluxDBClient_Close(t *testing.T) {
 
 		err := client.Close()
 		require.NoError(t, err)
-	})
-}
-
-func TestLake_TelemetryUsage_MockInfluxDBClient_parseTimeRange(t *testing.T) {
-	t.Parallel()
-
-	t.Run("parses RFC3339Nano format", func(t *testing.T) {
-		t.Parallel()
-		query := `SELECT * FROM "intfCounters" WHERE time >= '2024-01-15T10:00:00.123456789Z' AND time < '2024-01-15T11:00:00.987654321Z'`
-		start, end, err := parseTimeRange(query)
-		require.NoError(t, err)
-		require.Equal(t, 2024, start.Year())
-		require.Equal(t, time.January, start.Month())
-		require.Equal(t, 15, start.Day())
-		require.Equal(t, 10, start.Hour())
-		require.Equal(t, 11, end.Hour())
-	})
-
-	t.Run("parses RFC3339 format", func(t *testing.T) {
-		t.Parallel()
-		query := `SELECT * FROM "intfCounters" WHERE time >= '2024-01-15T10:00:00Z' AND time < '2024-01-15T11:00:00Z'`
-		start, end, err := parseTimeRange(query)
-		require.NoError(t, err)
-		require.Equal(t, 10, start.Hour())
-		require.Equal(t, 11, end.Hour())
-	})
-
-	t.Run("defaults to last hour when pattern not found", func(t *testing.T) {
-		t.Parallel()
-		query := `SELECT * FROM "intfCounters"`
-		start, end, err := parseTimeRange(query)
-		require.NoError(t, err)
-		require.WithinDuration(t, time.Now().UTC().Add(-time.Hour), start, 5*time.Second)
-		require.WithinDuration(t, time.Now().UTC(), end, 5*time.Second)
 	})
 }
 

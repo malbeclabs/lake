@@ -30,7 +30,7 @@ func BackfillDeviceInterfaceCounters(
 	log *slog.Logger,
 	clickhouseAddr, clickhouseDatabase, clickhouseUsername, clickhousePassword string,
 	clickhouseSecure bool,
-	influxDBHost, influxDBToken, influxDBBucket string,
+	influxDBHost, influxDBToken, influxDBOrg, influxDBBucket string,
 	cfg BackfillDeviceInterfaceCountersConfig,
 ) error {
 	ctx := context.Background()
@@ -42,8 +42,8 @@ func BackfillDeviceInterfaceCounters(
 	}
 	defer chDB.Close()
 
-	// Connect to InfluxDB
-	influxClient, err := dztelemusage.NewSDKInfluxDBClient(influxDBHost, influxDBToken, influxDBBucket)
+	// Connect to InfluxDB using Flux API
+	influxClient, err := dztelemusage.NewFluxInfluxDBClient(influxDBHost, influxDBToken, influxDBOrg, influxDBBucket)
 	if err != nil {
 		return fmt.Errorf("failed to connect to InfluxDB: %w", err)
 	}

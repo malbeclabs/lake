@@ -50,36 +50,8 @@ func (v *View) BackfillForTimeRange(ctx context.Context, startTime, endTime time
 
 	v.log.Info("telemetry/usage: querying influxdb for backfill", "from", startTimeUTC, "to", endTimeUTC)
 
-	sqlQuery := fmt.Sprintf(`
-		SELECT
-			time,
-			dzd_pubkey,
-			host,
-			intf,
-			model_name,
-			serial_number,
-			"carrier-transitions",
-			"in-broadcast-pkts",
-			"in-discards",
-			"in-errors",
-			"in-fcs-errors",
-			"in-multicast-pkts",
-			"in-octets",
-			"in-pkts",
-			"in-unicast-pkts",
-			"out-broadcast-pkts",
-			"out-discards",
-			"out-errors",
-			"out-multicast-pkts",
-			"out-octets",
-			"out-pkts",
-			"out-unicast-pkts"
-		FROM "intfCounters"
-		WHERE time >= '%s' AND time < '%s'
-	`, startTimeUTC.Format(time.RFC3339Nano), endTimeUTC.Format(time.RFC3339Nano))
-
 	queryStart := time.Now()
-	rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
+	rows, err := v.cfg.InfluxDB.QueryIntfCounters(ctx, startTimeUTC, endTimeUTC)
 	metrics.RecordInfluxQuery(v.cfg.DZEnv, "backfill", time.Since(queryStart), len(rows), err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query influxdb for backfill: %w", err)

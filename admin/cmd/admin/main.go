@@ -80,6 +80,7 @@ func run() error {
 	// InfluxDB configuration (for usage backfill)
 	influxURLFlag := flag.String("influx-url", "", "InfluxDB URL (or set INFLUX_URL env var)")
 	influxTokenFlag := flag.String("influx-token", "", "InfluxDB token (or set INFLUX_TOKEN env var)")
+	influxOrgFlag := flag.String("influx-org", "", "InfluxDB organization name or ID (optional; uses token's default org if empty)")
 	influxBucketFlag := flag.String("influx-bucket", "", "InfluxDB bucket (or set INFLUX_BUCKET env var)")
 
 	// Commands
@@ -385,7 +386,7 @@ func run() error {
 			log,
 			*clickhouseAddrFlag, *clickhouseDatabaseFlag, *clickhouseUsernameFlag, *clickhousePasswordFlag,
 			*clickhouseSecureFlag,
-			*influxURLFlag, *influxTokenFlag, *influxBucketFlag,
+			*influxURLFlag, *influxTokenFlag, *influxOrgFlag, *influxBucketFlag,
 			admin.BackfillDeviceInterfaceCountersConfig{
 				StartTime:     startTime,
 				EndTime:       endTime,

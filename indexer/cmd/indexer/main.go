@@ -439,6 +439,7 @@ func run() error {
 	influxURL := os.Getenv("INFLUX_URL")
 	influxToken := os.Getenv("INFLUX_TOKEN")
 	influxBucket := os.Getenv("INFLUX_BUCKET")
+	influxOrg := os.Getenv("INFLUX_ORG") // optional; empty string uses the token's default org
 	var deviceUsageQueryWindow time.Duration
 	if *deviceUsageQueryWindowFlag == 0 {
 		deviceUsageQueryWindow = defaultDeviceUsageInfluxQueryWindow
@@ -455,7 +456,7 @@ func run() error {
 		})
 		influxBucket = "mock-bucket"
 	} else if influxURL != "" && influxToken != "" && influxBucket != "" {
-		influxDBClient, err = dztelemusage.NewSDKInfluxDBClient(influxURL, influxToken, influxBucket)
+		influxDBClient, err = dztelemusage.NewFluxInfluxDBClient(influxURL, influxToken, influxOrg, influxBucket)
 		if err != nil {
 			return fmt.Errorf("failed to create InfluxDB client: %w", err)
 		}
@@ -734,6 +735,7 @@ func run() error {
 				isisS3Region:               *isisS3RegionFlag,
 				influxURL:                  secondaryInfluxURL,
 				influxToken:                secondaryInfluxToken,
+				influxOrg:                  influxOrg,
 				influxBucket:               secondaryInfluxBucket,
 				deviceUsageRefreshInterval: *deviceUsageRefreshIntervalFlag,
 				deviceUsageQueryWindow:     deviceUsageQueryWindow,
@@ -811,6 +813,7 @@ type secondaryNetworkConfig struct {
 	// InfluxDB configuration (optional).
 	influxURL                  string
 	influxToken                string
+	influxOrg                  string
 	influxBucket               string
 	deviceUsageRefreshInterval time.Duration
 	deviceUsageQueryWindow     time.Duration
@@ -879,7 +882,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	// Initialize InfluxDB client for device usage (optional).
 	var influxDBClient dztelemusage.InfluxDBClient
 	if cfg.influxURL != "" && cfg.influxToken != "" && cfg.influxBucket != "" {
-		influxDBClient, err = dztelemusage.NewSDKInfluxDBClient(cfg.influxURL, cfg.influxToken, cfg.influxBucket)
+		influxDBClient, err = dztelemusage.NewFluxInfluxDBClient(cfg.influxURL, cfg.influxToken, cfg.influxOrg, cfg.influxBucket)
 		if err != nil {
 			return fmt.Errorf("failed to create InfluxDB client for %s: %w", env, err)
 		}
