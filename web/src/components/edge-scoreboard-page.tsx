@@ -1653,10 +1653,11 @@ function RecentSlotsChart({
               const slotRange = minSlot && maxSlot && minSlot !== maxSlot
                 ? `${fmtSlot(minSlot)} – ${fmtSlot(maxSlot)}`
                 : minSlot ? `${fmtSlot(minSlot)}` : null
-              const timeNote = liveSlot && maxSlot
-                ? viewEndSlot !== null
-                  ? `${fmtAgo(liveSlot - minSlot)} – ${fmtAgo(liveSlot - maxSlot)}`
-                  : fmtAgo(liveSlot - maxSlot)
+              // Only show time-ago when paused (scrolled to a historical position).
+              // In live-tailing mode the value reflects animation queue depth, not data age
+              // (the page cache is only ~30s stale), so it's misleading to show it there.
+              const timeNote = liveSlot && maxSlot && viewEndSlot !== null
+                ? `${fmtAgo(liveSlot - minSlot)} – ${fmtAgo(liveSlot - maxSlot)}`
                 : null
               if (!slotRange) return null
               return (
