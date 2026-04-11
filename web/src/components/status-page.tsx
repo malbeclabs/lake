@@ -3088,7 +3088,7 @@ export function StatusPage() {
           <StatCard label="Users" value={status.network.users} format="number" href="/dz/users" />
           <StatCard label="Validators on DZ" value={status.network.validators_on_dz} format="number" href="/solana/validators" />
           <StatCard label="SOL Connected" value={status.network.total_stake_sol} format="stake" />
-          <StatCard label="Stake Share" value={status.network.stake_share_pct} format="percent" delta={status.network.stake_share_delta} />
+          <StatCard label="Stake Share" value={status.network.stake_share_pct} format="percent" />
           <StatCard label="Capacity" value={status.network.bandwidth_bps} format="bandwidth" />
           <StatCard label="User Inbound" value={status.network.user_inbound_bps} format="bandwidth" decimals={0} />
         </div>
