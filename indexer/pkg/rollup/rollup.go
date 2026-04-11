@@ -117,8 +117,17 @@ func Start(ctx context.Context, cfg Config) error {
 
 	// Watch the workflow in the background so failures surface in logs.
 	go func() {
-		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil {
-			log.Error("rollup: workflow failed", "id", wfID, "error", err)
+		current := run
+		for {
+			if err := current.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Error("rollup: workflow interrupted, reattaching", "id", wfID, "error", err)
+				current = tc.GetWorkflow(ctx, wfID, "")
+			} else {
+				return
+			}
 		}
 	}()
 

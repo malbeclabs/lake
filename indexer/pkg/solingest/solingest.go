@@ -87,8 +87,17 @@ func Start(ctx context.Context, cfg Config) error {
 	log.Info("solingest: workflow started", "id", wfID)
 
 	go func() {
-		if err := run.Get(ctx, nil); err != nil && ctx.Err() == nil {
-			log.Error("solingest: workflow failed", "id", wfID, "error", err)
+		current := run
+		for {
+			if err := current.Get(ctx, nil); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Error("solingest: workflow interrupted, reattaching", "id", wfID, "error", err)
+				current = tc.GetWorkflow(ctx, wfID, "")
+			} else {
+				return
+			}
 		}
 	}()
 
