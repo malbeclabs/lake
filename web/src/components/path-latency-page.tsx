@@ -684,8 +684,8 @@ export function PathLatencyPage() {
             <SummaryCard
               icon={TrendingUp}
               label="Avg Improvement"
-              value={`+${summary.avgImprovementPct.toFixed(1)}%`}
-              className="text-green-600 dark:text-green-400"
+              value={`${summary.avgImprovementPct >= 0 ? '+' : ''}${summary.avgImprovementPct.toFixed(1)}%`}
+              className={summary.avgImprovementPct >= 0 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}
             />
             <SummaryCard
               icon={Zap}

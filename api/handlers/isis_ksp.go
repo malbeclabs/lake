@@ -73,6 +73,7 @@ func (a *API) loadTopologyGraph(ctx context.Context) (*kspGraph, error) {
 		LEFT JOIN dz_metros_current ma ON da.metro_pk = ma.pk
 		LEFT JOIN dz_metros_current mz ON dz.metro_pk = mz.pk
 		WHERE l.status = 'activated'
+			  AND l.committed_rtt_ns != 1000000000
 	`
 
 	start := time.Now()

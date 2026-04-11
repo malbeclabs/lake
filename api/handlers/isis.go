@@ -1834,15 +1834,13 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*
 	}
 
 	// Convert map to slice and compute summary
-	var totalImprovement float64
+	var improvements []float64
 	var maxImprovement float64
-	var pairsWithInternet int
 
 	for _, path := range pathMap {
 		response.Paths = append(response.Paths, *path)
 		if path.ImprovementPct != nil {
-			pairsWithInternet++
-			totalImprovement += *path.ImprovementPct
+			improvements = append(improvements, *path.ImprovementPct)
 			if *path.ImprovementPct > maxImprovement {
 				maxImprovement = *path.ImprovementPct
 			}
@@ -1850,9 +1848,13 @@ func (a *API) FetchMetroPathLatencyData(ctx context.Context, optimize string) (*
 	}
 
 	response.Summary.TotalPairs = len(response.Paths)
-	response.Summary.PairsWithInternet = pairsWithInternet
-	if pairsWithInternet > 0 {
-		response.Summary.AvgImprovementPct = totalImprovement / float64(pairsWithInternet)
+	response.Summary.PairsWithInternet = len(improvements)
+	if len(improvements) > 0 {
+		var total float64
+		for _, v := range improvements {
+			total += v
+		}
+		response.Summary.AvgImprovementPct = total / float64(len(improvements))
 	}
 	response.Summary.MaxImprovementPct = maxImprovement
 
