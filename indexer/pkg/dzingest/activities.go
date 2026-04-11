@@ -13,6 +13,9 @@ import (
 	dztelemlatency "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/latency"
 	dztelemusage "github.com/malbeclabs/lake/indexer/pkg/dz/telemetry/usage"
 	"github.com/malbeclabs/lake/indexer/pkg/ingestionlog"
+	"go.temporal.io/sdk/temporal"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Activities holds dependencies for DZ ingest activities.
@@ -80,6 +83,18 @@ func (a *Activities) RefreshTelemetryUsage(ctx context.Context) error {
 	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshTelemetryUsage", a.Network, func() (ingestionlog.RefreshResult, error) {
 		result, err := a.TelemUsage.Refresh(ctx)
 		if err != nil {
+			// InfluxDB enforces a rate limit: total query duration in the last 30s cannot
+			// exceed 25 minutes. When this is hit, retrying immediately makes things worse
+			// by consuming more of the rate limit budget. Return non-retryable so Temporal
+			// skips retries and waits for the next natural workflow cycle instead.
+			if status.Code(err) == codes.ResourceExhausted {
+				a.Log.Warn("influxdb rate limit hit, skipping retries until next cycle", "error", err)
+				return result, temporal.NewNonRetryableApplicationError(
+					fmt.Sprintf("telemetry usage refresh: %v", err),
+					"InfluxResourceExhausted",
+					err,
+				)
+			}
 			return result, fmt.Errorf("telemetry usage refresh: %w", err)
 		}
 		return result, nil

@@ -123,6 +123,17 @@ var (
 		},
 		[]string{"dz_env", "query_type"},
 	)
+
+	// InfluxBaselineFallbackTotal counts how many times the baseline query fell back to InfluxDB
+	// because ClickHouse returned 0 rows. High values indicate ClickHouse baseline data is stale
+	// or missing, which triggers expensive 10-year InfluxDB scans.
+	InfluxBaselineFallbackTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "doublezero_data_indexer_influx_baseline_fallback_total",
+			Help: "Total number of times baseline query fell back from ClickHouse to InfluxDB (0 rows from ClickHouse)",
+		},
+		[]string{"dz_env"},
+	)
 )
 
 // RecordInfluxQuery records metrics for an InfluxDB query.

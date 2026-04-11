@@ -264,12 +264,13 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 			v.log.Info("telemetry/usage: queried baselines from clickhouse", "unique_keys", totalKeys, "duration", chDuration.String())
 			baselines = chBaselines
 		} else {
-			v.log.Debug("telemetry/usage: no baseline data in clickhouse (0 rows), will query influxdb", "duration", chDuration.String())
+			v.log.Warn("telemetry/usage: no baseline data in clickhouse (0 rows), will query influxdb — this triggers expensive 10-year scans", "duration", chDuration.String())
 		}
 	}
 
 	if baselines == nil {
-		v.log.Debug("telemetry/usage: querying baselines from influxdb (clickhouse returned 0 baselines)")
+		metrics.InfluxBaselineFallbackTotal.WithLabelValues(v.cfg.DZEnv).Inc()
+		v.log.Warn("telemetry/usage: querying baselines from influxdb (clickhouse returned 0 baselines)")
 		baselineCtx, baselineCancel := context.WithTimeout(ctx, 120*time.Second)
 		defer baselineCancel()
 
@@ -922,76 +923,65 @@ func (v *View) queryBaselineCounters(ctx context.Context, windowStart time.Time)
 		{"out-errors", baselines.OutErrors},
 	}
 
-	v.log.Debug("telemetry/usage: querying baseline counters from influxdb", "counters", len(counterFields))
-	var wg sync.WaitGroup
-	errCh := make(chan error, len(counterFields))
+	// For sparse counters, use a 10-year window directly (they're sparse, so rows are rare).
+	// NOTE: These queries are expensive on InfluxDB — run sequentially to avoid saturating
+	// the InfluxDB query budget (25m total in 30s). This path only runs when ClickHouse
+	// has no baseline data, which should be rare in steady state.
+	lookbackStart := windowStart.Add(-10 * 365 * 24 * time.Hour)
+	v.log.Warn("telemetry/usage: querying baseline counters from influxdb (sequential to avoid rate limits)",
+		"counters", len(counterFields),
+		"from", lookbackStart.UTC(),
+		"to", windowStart.UTC(),
+		"lookback", "10y",
+	)
 
+	hasErrors := false
 	for _, cf := range counterFields {
-		wg.Add(1)
-		go func(cf struct {
-			field    string
-			baseline map[string]*int64
-		}) {
-			defer wg.Done()
-			counterStart := time.Now()
+		counterStart := time.Now()
 
-			// For sparse counters, just use 10-year window directly (they're sparse, so it's fast)
-			lookbackStart := windowStart.Add(-10 * 365 * 24 * time.Hour)
-			sqlQuery := fmt.Sprintf(`
+		sqlQuery := fmt.Sprintf(`
+			SELECT
+				dzd_pubkey,
+				intf,
+				"%s" as value
+			FROM (
 				SELECT
 					dzd_pubkey,
 					intf,
-					"%s" as value
-				FROM (
-					SELECT
-						dzd_pubkey,
-						intf,
-						"%s",
-						ROW_NUMBER() OVER (PARTITION BY dzd_pubkey, intf ORDER BY time DESC) as rn
-					FROM "intfCounters"
-					WHERE time >= '%s' AND time < '%s' AND "%s" IS NOT NULL
-				) ranked
-				WHERE rn = 1
-			`, cf.field, cf.field, lookbackStart.Format(time.RFC3339Nano), windowStart.Format(time.RFC3339Nano), cf.field)
+					"%s",
+					ROW_NUMBER() OVER (PARTITION BY dzd_pubkey, intf ORDER BY time DESC) as rn
+				FROM "intfCounters"
+				WHERE time >= '%s' AND time < '%s' AND "%s" IS NOT NULL
+			) ranked
+			WHERE rn = 1
+		`, cf.field, cf.field, lookbackStart.Format(time.RFC3339Nano), windowStart.Format(time.RFC3339Nano), cf.field)
 
-			rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
-			counterDuration := time.Since(counterStart)
-			queryType := "baseline_" + strings.ReplaceAll(cf.field, "-", "_")
-			metrics.RecordInfluxQuery(v.cfg.DZEnv, queryType, counterDuration, len(rows), err)
-			if err != nil {
-				v.log.Warn("telemetry/usage: failed to query baseline counter", "counter", cf.field, "error", err, "duration", counterDuration.String())
-				errCh <- fmt.Errorf("failed to query baseline for %s: %w", cf.field, err)
-				return
-			}
-
-			baselineCount := 0
-			for _, row := range rows {
-				devicePK := extractStringFromRow(row, "dzd_pubkey")
-				intf := extractStringFromRow(row, "intf")
-				if devicePK == nil || intf == nil {
-					continue
-				}
-				key := fmt.Sprintf("%s:%s", *devicePK, *intf)
-				value := extractInt64FromRow(row, "value")
-				if value != nil {
-					cf.baseline[key] = value
-					baselineCount++
-				}
-			}
-			v.log.Debug("telemetry/usage: completed baseline counter query", "counter", cf.field, "baselines", baselineCount, "duration", counterDuration.String())
-		}(cf)
-	}
-
-	wg.Wait()
-	close(errCh)
-
-	// Check for errors
-	hasErrors := false
-	for err := range errCh {
+		v.log.Debug("telemetry/usage: executing influxdb baseline counter query", "counter", cf.field, "from", lookbackStart.UTC(), "to", windowStart.UTC())
+		rows, err := v.cfg.InfluxDB.QuerySQL(ctx, sqlQuery)
+		counterDuration := time.Since(counterStart)
+		queryType := "baseline_" + strings.ReplaceAll(cf.field, "-", "_")
+		metrics.RecordInfluxQuery(v.cfg.DZEnv, queryType, counterDuration, len(rows), err)
 		if err != nil {
+			v.log.Warn("telemetry/usage: failed to query baseline counter", "counter", cf.field, "error", err, "duration", counterDuration.String())
 			hasErrors = true
-			v.log.Warn("telemetry/usage: baseline counter query error", "error", err)
+			continue
 		}
+
+		baselineCount := 0
+		for _, row := range rows {
+			devicePK := extractStringFromRow(row, "dzd_pubkey")
+			intf := extractStringFromRow(row, "intf")
+			if devicePK == nil || intf == nil {
+				continue
+			}
+			key := fmt.Sprintf("%s:%s", *devicePK, *intf)
+			value := extractInt64FromRow(row, "value")
+			if value != nil {
+				cf.baseline[key] = value
+				baselineCount++
+			}
+		}
+		v.log.Debug("telemetry/usage: completed baseline counter query", "counter", cf.field, "baselines", baselineCount, "duration", counterDuration.String())
 	}
 
 	if hasErrors {
