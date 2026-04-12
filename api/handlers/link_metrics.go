@@ -305,7 +305,7 @@ func (a *API) GetLinkMetrics(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.fetchLinkMetrics(ctx, linkPK, params, include)
 	if err != nil {
-		slog.Error("error fetching link metrics", "error", err, "link_pk", linkPK)
+		logError("error fetching link metrics", "error", err, "link_pk", linkPK)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
