@@ -147,6 +147,7 @@ function getStakeColor(stakeShare: number): string {
 interface HoveredLinkInfo {
   pk: string
   code: string
+  status: string
   linkType: string
   bandwidthBps: number
   latencyUs: number
@@ -1669,6 +1670,12 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         displayOpacity = 1
       }
 
+      // Drained/soft-drained links: always show dashed with reduced opacity
+      if (link.status === 'drained' || link.status === 'soft-drained') {
+        useDash = true
+        displayOpacity = Math.min(displayOpacity, 0.4)
+      }
+
       // Dim all base links when multicast overlay is active (tree segments render on separate layer)
       if (multicastTreesMode && dimOtherLinks && !isSelected && !isHovered) {
         displayOpacity = 0.08
@@ -2137,6 +2144,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
     return {
       pk: link.pk,
       code: link.code,
+      status: link.status,
       linkType: link.link_type,
       bandwidthBps: link.bandwidth_bps,
       latencyUs: link.latency_us,
@@ -2644,6 +2652,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
         setHoveredLink({
           pk,
           code: props.code || '',
+          status: 'activated',
           linkType: 'Inter-Metro',
           bandwidthBps: 0,
           latencyUs: props.avgLatencyUs || 0,

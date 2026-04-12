@@ -126,6 +126,7 @@ interface GlobeArcLink {
   entityType: 'link'
   pk: string
   code: string
+  status: string
   linkType: string
   startLat: number
   startLng: number
@@ -778,7 +779,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
   const buildLinkInfo = useCallback((link: TopologyLink): LinkInfo => {
     const healthInfo = linkSlaStatus.get(link.pk)
     return {
-      pk: link.pk, code: link.code, linkType: link.link_type,
+      pk: link.pk, code: link.code, status: link.status, linkType: link.link_type,
       bandwidthBps: link.bandwidth_bps, latencyUs: link.latency_us,
       jitterUs: link.jitter_us ?? 0, latencyAtoZUs: link.latency_a_to_z_us,
       jitterAtoZUs: link.jitter_a_to_z_us ?? 0, latencyZtoAUs: link.latency_z_to_a_us,
@@ -1401,7 +1402,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
 
       arcs.push({
         entityType: 'link',
-        pk: link.pk, code: link.code, linkType: link.link_type,
+        pk: link.pk, code: link.code, status: link.status, linkType: link.link_type,
         startLat: startPos.lat, startLng: startPos.lng,
         endLat: endPos.lat, endLng: endPos.lng,
         bandwidthBps: link.bandwidth_bps, latencyUs: link.latency_us,
@@ -1759,6 +1760,11 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     // (multicast-tree arcs handle per-publisher rendering separately)
     if (multicastTreesMode && dimOtherLinks) return 'rgba(100,100,100,0.08)'
 
+    // Drained/soft-drained: dim to signal inactive status
+    if (l.status === 'drained' || l.status === 'soft-drained') {
+      return 'rgba(107,114,128,0.4)'
+    }
+
     // Vibrant default gradient for the "living demo" aesthetic
     return ['rgba(0,255,204,0.6)', 'rgba(59,130,246,0.6)']
   }, [selectedItem, linkPathMap, selectedPathIndex, metroLinkPathMap, metroPathSelectedPairs, linkCriticalityMap, removalLink, whatifRemovalMode, linkHealthMode, linkSlaStatus, trafficFlowMode, linkMap, contributorLinksMode, contributorIndexMap, linkTypeMode, criticalityOverlayEnabled, criticalityColors, isisHealthMode, edgeHealthStatus, metroPathModeEnabled, multicastTreesMode, metroClusteringMode, metroIndexMap, dimOtherLinks, isDark, multicastDeviceRoleColorMap, hoveredHighlightPublisherPKs, hoveredDiscrepancyKey])
@@ -1801,6 +1807,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.3
         if (criticalityOverlayEnabled && criticality) return 0.3
+        if (l.status === 'drained' || l.status === 'soft-drained') return 0.3
       }
       return 0
     }
@@ -1819,6 +1826,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.2
         if (criticalityOverlayEnabled && criticality) return 0.2
+        if (l.status === 'drained' || l.status === 'soft-drained') return 0.2
       }
       return 0
     }

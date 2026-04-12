@@ -386,6 +386,7 @@ export function TopologyGraph({
       map.set(link.pk, {
         pk: link.pk,
         code: link.code || `${link.side_a_code || 'Unknown'} — ${link.side_z_code || 'Unknown'}`,
+        status: link.status,
         linkType: link.link_type || 'unknown',
         bandwidthBps: link.bandwidth_bps ?? 0,
         latencyUs: link.latency_us ?? 0,

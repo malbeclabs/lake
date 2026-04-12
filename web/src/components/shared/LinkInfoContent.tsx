@@ -93,7 +93,10 @@ function formatPercent(value: number): string {
 const statusColors: Record<string, string> = {
   activated: 'text-muted-foreground',
   provisioning: 'text-blue-600 dark:text-blue-400',
+  'soft-drained': 'text-amber-600 dark:text-amber-400',
+  drained: 'text-amber-600 dark:text-amber-400',
   maintenance: 'text-amber-600 dark:text-amber-400',
+  suspended: 'text-red-600 dark:text-red-400',
   offline: 'text-red-600 dark:text-red-400',
 }
 
@@ -132,6 +135,15 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
   if (compact) {
     return (
       <div className="space-y-4">
+        {/* Status badge for non-activated links */}
+        {link.status !== 'activated' && (
+          <div className="flex items-center gap-1.5">
+            <span className={`text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/15 ${statusColors[link.status] || 'text-muted-foreground'}`}>
+              {link.status}
+            </span>
+          </div>
+        )}
+
         {/* Endpoints with per-direction latency */}
         <div className="grid grid-cols-2 gap-3">
           <div className="p-2 bg-muted/30 rounded-lg">

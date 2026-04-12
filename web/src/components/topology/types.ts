@@ -4,6 +4,7 @@
 export interface LinkInfo {
   pk: string
   code: string
+  status: string
   linkType: string
   bandwidthBps: number
   latencyUs: number

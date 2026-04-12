@@ -47,6 +47,7 @@ export function linkDetailToInfo(link: LinkDetail): LinkInfoData {
 export function topologyLinkToInfo(link: {
   pk: string
   code: string
+  status: string
   linkType: string
   bandwidthBps: number
   latencyUs: number
@@ -74,7 +75,7 @@ export function topologyLinkToInfo(link: {
   return {
     pk: link.pk,
     code: link.code,
-    status: 'activated', // Topology links are always activated
+    status: link.status,
     linkType: link.linkType,
     bandwidthBps: link.bandwidthBps,
     sideAPk: link.deviceAPk,

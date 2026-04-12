@@ -121,7 +121,14 @@ function LinkHoverContent({ link }: { link: LinkInfo }) {
 
   return (
     <div className="space-y-1">
-      <div className="font-medium">{link.code}</div>
+      <div className="font-medium flex items-center gap-1.5">
+        {link.code}
+        {(link.status === 'drained' || link.status === 'soft-drained') && (
+          <span className="text-[10px] font-normal px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            {link.status === 'soft-drained' ? 'soft-drained' : 'drained'}
+          </span>
+        )}
+      </div>
       <div className="text-[10px] text-muted-foreground">
         {link.deviceACode}{link.interfaceAName && <span className="font-mono"> ({link.interfaceAName})</span>}
         {' ↔ '}
