@@ -322,22 +322,26 @@ function IssueDetails({
                       </div>
                     </div>
                     <div className="text-right">
-                      {linkIssues.map((issue, idx) => (
-                        <div key={idx}>
-                          {issue.issue === 'missing_adjacency' && (
-                            <div className={`text-sm font-medium ${valueColor}`}>
-                              ISIS down
-                            </div>
-                          )}
-                          {issue.issue !== 'no_data' && issue.issue !== 'missing_adjacency' && (
-                            <div className={`text-sm font-medium ${valueColor}`}>
-                              {issue.issue === 'packet_loss'
-                                ? `${issue.value.toFixed(1)}% loss`
-                                : `${issue.value.toFixed(0)}% over SLO`}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                      {(() => {
+                        const hasISISDown = linkIssues.some(i => i.issue === 'missing_adjacency')
+                        return linkIssues.map((issue, idx) => (
+                          <div key={idx}>
+                            {issue.issue === 'missing_adjacency' && (
+                              <div className={`text-sm font-medium ${valueColor}`}>
+                                ISIS down
+                              </div>
+                            )}
+                            {issue.issue !== 'no_data' && issue.issue !== 'missing_adjacency' &&
+                              !(hasISISDown && issue.issue === 'packet_loss') && (
+                              <div className={`text-sm font-medium ${valueColor}`}>
+                                {issue.issue === 'packet_loss'
+                                  ? `${issue.value.toFixed(1)}% loss`
+                                  : `${issue.value.toFixed(0)}% over SLO`}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      })()}
                       {mostRecentSince && (
                         <div
                           className="text-xs text-muted-foreground"
