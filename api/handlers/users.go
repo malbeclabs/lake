@@ -265,8 +265,7 @@ func (a *API) GetUser(w http.ResponseWriter, r *http.Request) {
 				argMax(device_pk, (snapshot_ts, ingested_at, op_id)) as device_pk,
 				argMax(tenant_pk, (snapshot_ts, ingested_at, op_id)) as tenant_pk,
 				argMax(is_deleted, (snapshot_ts, ingested_at, op_id)) as is_deleted
-			FROM dim_dz_users_history
-			WHERE pk = ?
+			FROM (SELECT * FROM dim_dz_users_history WHERE pk = ?)
 			GROUP BY entity_id
 			HAVING pk != ''
 			LIMIT 1
