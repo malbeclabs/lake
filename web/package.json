@@ -33,7 +33,7 @@
     "globe.gl": "^2.45.0",
     "lucide-react": "^1.0.1",
     "maplibre-gl": "^5.16.0",
-    "marked": "^17.0.1",
+    "marked": "18.0.0",
     "popmotion": "^11.0.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
