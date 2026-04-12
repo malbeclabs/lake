@@ -189,7 +189,7 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 
 	insertDevicesTestData(t, api)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices?sort_by=code&sort_dir=asc", nil)
 	rr := httptest.NewRecorder()
 	api.GetDevices(rr, req)
 
@@ -199,7 +199,7 @@ func TestGetDevices_OrderedByCode(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
-	// Verify sorted by code
+	// Verify sorted by code ascending
 	assert.Equal(t, "LAX-CORE-01", response.Items[0].Code)
 	assert.Equal(t, "NYC-CORE-01", response.Items[1].Code)
 	assert.Equal(t, "NYC-EDGE-01", response.Items[2].Code)

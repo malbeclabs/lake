@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, MapPin, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchAllPaginated, fetchMetros } from '@/lib/api'
+import { fetchMetros } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -13,35 +13,6 @@ const PAGE_SIZE = 100
 type SortField = 'code' | 'name' | 'latitude' | 'longitude' | 'devices' | 'users'
 type SortDirection = 'asc' | 'desc'
 
-type NumericFilter = {
-  op: '>' | '>=' | '<' | '<=' | '='
-  value: number
-}
-
-const numericSearchFields: SortField[] = ['latitude', 'longitude', 'devices', 'users']
-
-function parseNumericFilter(input: string): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  return { op, value: Number(match[2]) }
-}
-
-function matchesNumericFilter(value: number, filter: NumericFilter): boolean {
-  switch (filter.op) {
-    case '>':
-      return value > filter.value
-    case '>=':
-      return value >= filter.value
-    case '<':
-      return value < filter.value
-    case '<=':
-      return value <= filter.value
-    case '=':
-      return value === filter.value
-  }
-}
-
 // Parse search filters from URL param
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
@@ -49,7 +20,7 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for metros
-const validFilterFields = ['code', 'name', 'latitude', 'longitude', 'devices', 'users']
+const validFilterFields = ['code', 'name', 'devices', 'users']
 
 // Field prefixes for inline filter
 const metroFieldPrefixes = [
@@ -62,17 +33,16 @@ const metroFieldPrefixes = [
 // Fields that support autocomplete (none for metros)
 const metroAutocompleteFields: string[] = []
 
-// Parse a filter string into field and value
-function parseFilter(filter: string): { field: string; value: string } {
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
     if (validFilterFields.includes(field) && value) {
-      return { field, value }
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function MetrosPage() {
@@ -101,7 +71,9 @@ export function MetrosPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -124,102 +96,16 @@ export function MetrosPage() {
     })
   }, [setSearchParams])
 
+  const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
+  const filterKey = filterParams.join(',')
+
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['metros', 'all'],
-    queryFn: () => fetchAllPaginated(fetchMetros, PAGE_SIZE),
+    queryKey: ['metros', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchMetros(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
-  const metros = response?.items
-  const filteredMetros = useMemo(() => {
-    if (!metros) return []
-    if (!activeFilterRaw) return metros
-
-    // Parse filter inside memo to ensure fresh parsing on each recompute
-    const filter = parseFilter(activeFilterRaw)
-    const searchField = filter.field as SortField | 'all'
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return metros
-
-    const numericFilter = parseNumericFilter(filter.value)
-    if (searchField !== 'all' && numericFilter && numericSearchFields.includes(searchField as SortField)) {
-      const getNumericValue = (metro: typeof metros[number]) => {
-        switch (searchField) {
-          case 'latitude':
-            return metro.latitude
-          case 'longitude':
-            return metro.longitude
-          case 'devices':
-            return metro.device_count
-          case 'users':
-            return metro.user_count
-          default:
-            return 0
-        }
-      }
-      return metros.filter(metro => matchesNumericFilter(getNumericValue(metro), numericFilter))
-    }
-
-    // Text search
-    const getSearchValue = (metro: typeof metros[number], field: string) => {
-      switch (field) {
-        case 'code':
-          return metro.code
-        case 'name':
-          return metro.name || ''
-        default:
-          return ''
-      }
-    }
-
-    if (searchField === 'all') {
-      // Search across all text fields
-      return metros.filter(metro => {
-        const textFields = ['code', 'name']
-        return textFields.some(field => getSearchValue(metro, field).toLowerCase().includes(needle))
-      })
-    }
-
-    return metros.filter(metro => getSearchValue(metro, searchField).toLowerCase().includes(needle))
-  }, [metros, activeFilterRaw])
-  const sortedMetros = useMemo(() => {
-    if (!filteredMetros) return []
-    // Deduplicate by pk to prevent any possible duplicate rows
-    const seen = new Set<string>()
-    const unique = filteredMetros.filter(m => {
-      if (seen.has(m.pk)) return false
-      seen.add(m.pk)
-      return true
-    })
-    const sorted = [...unique].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'code':
-          cmp = a.code.localeCompare(b.code)
-          break
-        case 'name':
-          cmp = (a.name || '').localeCompare(b.name || '')
-          break
-        case 'latitude':
-          cmp = a.latitude - b.latitude
-          break
-        case 'longitude':
-          cmp = a.longitude - b.longitude
-          break
-        case 'devices':
-          cmp = a.device_count - b.device_count
-          break
-        case 'users':
-          cmp = a.user_count - b.user_count
-          break
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [filteredMetros, sortField, sortDirection])
-  const pagedMetros = useMemo(
-    () => sortedMetros.slice(offset, offset + PAGE_SIZE),
-    [sortedMetros, offset]
-  )
+  const metros = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -246,16 +132,17 @@ export function MetrosPage() {
     return sortDirection === 'asc' ? 'ascending' : 'descending'
   }
 
-  const prevFilterRef = useRef(activeFilterRaw)
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
   useEffect(() => {
-    if (prevFilterRef.current === activeFilterRaw) return
-    prevFilterRef.current = activeFilterRaw
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [activeFilterRaw, setSearchParams])
+  }, [allFilters, setSearchParams])
 
   if (isLoading) {
     return (
@@ -360,7 +247,7 @@ export function MetrosPage() {
                 </tr>
               </thead>
               <tbody>
-                {pagedMetros.map((metro) => (
+                {metros.map((metro) => (
                   <tr
                     key={metro.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
@@ -386,7 +273,7 @@ export function MetrosPage() {
                     </td>
                   </tr>
                 ))}
-                {sortedMetros.length === 0 && (
+                {metros.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                       No metros found
@@ -398,7 +285,7 @@ export function MetrosPage() {
           </div>
           {response && (
             <Pagination
-              total={sortedMetros.length}
+              total={response.total}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}

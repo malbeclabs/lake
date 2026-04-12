@@ -23,21 +23,37 @@ type MetroListItem struct {
 	UserCount   uint64  `json:"user_count"`
 }
 
+var metroSortFields = map[string]string{
+	"code":      "code",
+	"name":      "name",
+	"latitude":  "latitude",
+	"longitude": "longitude",
+	"devices":   "device_count",
+	"users":     "user_count",
+}
+
+var metroFilterFields = map[string]FilterFieldConfig{
+	"code":    {Column: "code", Type: FieldTypeText},
+	"name":    {Column: "name", Type: FieldTypeText},
+	"devices": {Column: "device_count", Type: FieldTypeNumeric},
+	"users":   {Column: "user_count", Type: FieldTypeNumeric},
+}
+
 func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "code", metroSortFields)
+	filters := ParseFilters(r)
 	start := time.Now()
 
-	// Get total count
-	countQuery := `SELECT count(*) FROM dz_metros_current`
-	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		logError("metros count query failed", "error", err)
-		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
-		return
+	filterClause, filterArgs := filters.BuildFilterClause(metroFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
 	}
+	orderBy := sort.OrderByClause(metroSortFields)
 
 	query := `
 		WITH device_counts AS (
@@ -52,23 +68,31 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			WHERE u.status = 'activated' AND d.metro_pk IS NOT NULL
 			GROUP BY d.metro_pk
+		),
+		metros_data AS (
+			SELECT
+				m.pk as pk,
+				m.code as code,
+				COALESCE(m.name, '') as name,
+				COALESCE(m.latitude, 0) as latitude,
+				COALESCE(m.longitude, 0) as longitude,
+				COALESCE(dc.device_count, 0) as device_count,
+				COALESCE(uc.user_count, 0) as user_count
+			FROM dz_metros_current m
+			LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
+			LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
 		)
-		SELECT
-			m.pk,
-			m.code,
-			COALESCE(m.name, '') as name,
-			COALESCE(m.latitude, 0) as latitude,
-			COALESCE(m.longitude, 0) as longitude,
-			COALESCE(dc.device_count, 0) as device_count,
-			COALESCE(uc.user_count, 0) as user_count
-		FROM dz_metros_current m
-		LEFT JOIN device_counts dc ON m.pk = dc.metro_pk
-		LEFT JOIN user_counts uc ON m.pk = uc.metro_pk
-		ORDER BY m.code
+		SELECT pk, code, name, latitude, longitude, device_count, user_count, count() OVER () as _total
+		FROM metros_data
+		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	var args []any
+	args = append(args, filterArgs...)
+	args = append(args, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -80,6 +104,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var metros []MetroListItem
+	var total uint64
 	for rows.Next() {
 		var m MetroListItem
 		if err := rows.Scan(
@@ -90,6 +115,7 @@ func (a *API) GetMetros(w http.ResponseWriter, r *http.Request) {
 			&m.Longitude,
 			&m.DeviceCount,
 			&m.UserCount,
+			&total,
 		); err != nil {
 			logError("metros row scan failed", "error", err)
 			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)

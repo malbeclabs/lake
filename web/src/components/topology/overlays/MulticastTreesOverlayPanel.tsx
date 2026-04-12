@@ -237,7 +237,7 @@ export function MulticastTreesOverlayPanel({
   useEffect(() => {
     setError(null)
     fetchMulticastGroups()
-      .then(setGroups)
+      .then(res => setGroups(res.items))
       .catch(err => {
         console.error('Failed to fetch multicast groups:', err)
         setError('Failed to load multicast groups. The database table may not exist yet.')

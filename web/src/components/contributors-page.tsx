@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Building2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
-import { fetchAllPaginated, fetchContributors } from '@/lib/api'
+import { fetchContributors } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
@@ -10,37 +10,8 @@ import { PageHeader } from './page-header'
 
 const PAGE_SIZE = 100
 
-type SortField = 'code' | 'name' | 'devices' | 'sideA' | 'sideZ' | 'links'
+type SortField = 'code' | 'name' | 'devices' | 'sidea' | 'sidez' | 'links'
 type SortDirection = 'asc' | 'desc'
-
-type NumericFilter = {
-  op: '>' | '>=' | '<' | '<=' | '='
-  value: number
-}
-
-const numericSearchFields: SortField[] = ['devices', 'sideA', 'sideZ', 'links']
-
-function parseNumericFilter(input: string): NumericFilter | null {
-  const match = input.trim().match(/^(>=|<=|>|<|==|=)\s*(-?\d+(?:\.\d+)?)$/)
-  if (!match) return null
-  const op = match[1] === '==' ? '=' : (match[1] as NumericFilter['op'])
-  return { op, value: Number(match[2]) }
-}
-
-function matchesNumericFilter(value: number, filter: NumericFilter): boolean {
-  switch (filter.op) {
-    case '>':
-      return value > filter.value
-    case '>=':
-      return value >= filter.value
-    case '<':
-      return value < filter.value
-    case '<=':
-      return value <= filter.value
-    case '=':
-      return value === filter.value
-  }
-}
 
 // Parse search filters from URL param
 function parseSearchFilters(searchParam: string): string[] {
@@ -49,32 +20,31 @@ function parseSearchFilters(searchParam: string): string[] {
 }
 
 // Valid filter fields for contributors
-const validFilterFields = ['code', 'name', 'devices', 'sideA', 'sideZ', 'links']
+const validFilterFields = ['code', 'name', 'devices', 'sidea', 'sidez', 'links']
 
 // Field prefixes for inline filter
 const contributorFieldPrefixes = [
   { prefix: 'code:', description: 'Filter by contributor code' },
   { prefix: 'name:', description: 'Filter by contributor name' },
   { prefix: 'devices:', description: 'Filter by device count (e.g., >5)' },
+  { prefix: 'sidea:', description: 'Filter by side A device count (e.g., >5)' },
+  { prefix: 'sidez:', description: 'Filter by side Z device count (e.g., >5)' },
   { prefix: 'links:', description: 'Filter by link count (e.g., >10)' },
 ]
 
 // Fields that support autocomplete (none for contributors)
 const contributorAutocompleteFields: string[] = []
 
-// Parse a filter string into field and value
-function parseFilter(filter: string): { field: string; value: string } {
+function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')
   if (colonIndex > 0) {
     const field = filter.slice(0, colonIndex).toLowerCase()
     const value = filter.slice(colonIndex + 1)
-    // Handle camelCase fields
-    const normalizedField = field === 'sidea' ? 'sideA' : field === 'sidez' ? 'sideZ' : field
-    if (validFilterFields.includes(normalizedField) && value) {
-      return { field: normalizedField, value }
+    if (validFilterFields.includes(field) && value) {
+      return `${field}:${value}`
     }
   }
-  return { field: 'all', value: filter }
+  return `all:${filter}`
 }
 
 export function ContributorsPage() {
@@ -103,7 +73,9 @@ export function ContributorsPage() {
   const searchFilters = parseSearchFilters(searchParam)
 
   // Combine committed filters with live filter
-  const activeFilterRaw = liveFilter || searchFilters[0] || ''
+  const allFilters = liveFilter
+    ? [...searchFilters, liveFilter]
+    : searchFilters
 
   const removeFilter = useCallback((filterToRemove: string) => {
     const newFilters = searchFilters.filter(f => f !== filterToRemove)
@@ -126,102 +98,16 @@ export function ContributorsPage() {
     })
   }, [setSearchParams])
 
+  const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
+  const filterKey = filterParams.join(',')
+
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['contributors', 'all'],
-    queryFn: () => fetchAllPaginated(fetchContributors, PAGE_SIZE),
+    queryKey: ['contributors', offset, sortField, sortDirection, filterKey],
+    queryFn: () => fetchContributors(PAGE_SIZE, offset, sortField, sortDirection, filterParams.length > 0 ? filterParams : undefined),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
   })
-  const contributors = response?.items
-  const filteredContributors = useMemo(() => {
-    if (!contributors) return []
-    if (!activeFilterRaw) return contributors
-
-    // Parse filter inside memo to ensure fresh parsing on each recompute
-    const filter = parseFilter(activeFilterRaw)
-    const searchField = filter.field as SortField | 'all'
-    const needle = filter.value.trim().toLowerCase()
-    if (!needle) return contributors
-
-    const numericFilter = parseNumericFilter(filter.value)
-    if (searchField !== 'all' && numericFilter && numericSearchFields.includes(searchField as SortField)) {
-      const getNumericValue = (contributor: typeof contributors[number]) => {
-        switch (searchField) {
-          case 'devices':
-            return contributor.device_count
-          case 'sideA':
-            return contributor.side_a_devices
-          case 'sideZ':
-            return contributor.side_z_devices
-          case 'links':
-            return contributor.link_count
-          default:
-            return 0
-        }
-      }
-      return contributors.filter(contributor => matchesNumericFilter(getNumericValue(contributor), numericFilter))
-    }
-
-    // Text search
-    const getSearchValue = (contributor: typeof contributors[number], field: string) => {
-      switch (field) {
-        case 'code':
-          return contributor.code
-        case 'name':
-          return contributor.name || ''
-        default:
-          return ''
-      }
-    }
-
-    if (searchField === 'all') {
-      // Search across all text fields
-      return contributors.filter(contributor => {
-        const textFields = ['code', 'name']
-        return textFields.some(field => getSearchValue(contributor, field).toLowerCase().includes(needle))
-      })
-    }
-
-    return contributors.filter(contributor => getSearchValue(contributor, searchField).toLowerCase().includes(needle))
-  }, [contributors, activeFilterRaw])
-  const sortedContributors = useMemo(() => {
-    if (!filteredContributors) return []
-    // Deduplicate by pk to prevent any possible duplicate rows
-    const seen = new Set<string>()
-    const unique = filteredContributors.filter(c => {
-      if (seen.has(c.pk)) return false
-      seen.add(c.pk)
-      return true
-    })
-    const sorted = [...unique].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'code':
-          cmp = a.code.localeCompare(b.code)
-          break
-        case 'name':
-          cmp = (a.name || '').localeCompare(b.name || '')
-          break
-        case 'devices':
-          cmp = a.device_count - b.device_count
-          break
-        case 'sideA':
-          cmp = a.side_a_devices - b.side_a_devices
-          break
-        case 'sideZ':
-          cmp = a.side_z_devices - b.side_z_devices
-          break
-        case 'links':
-          cmp = a.link_count - b.link_count
-          break
-      }
-      return sortDirection === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [filteredContributors, sortField, sortDirection])
-  const pagedContributors = useMemo(
-    () => sortedContributors.slice(offset, offset + PAGE_SIZE),
-    [sortedContributors, offset]
-  )
+  const contributors = response?.items ?? []
 
   const handleSort = (field: SortField) => {
     setSearchParams(prev => {
@@ -248,16 +134,17 @@ export function ContributorsPage() {
     return sortDirection === 'asc' ? 'ascending' : 'descending'
   }
 
-  const prevFilterRef = useRef(activeFilterRaw)
+  const prevFilterRef = useRef(JSON.stringify(allFilters))
   useEffect(() => {
-    if (prevFilterRef.current === activeFilterRaw) return
-    prevFilterRef.current = activeFilterRaw
+    const key = JSON.stringify(allFilters)
+    if (prevFilterRef.current === key) return
+    prevFilterRef.current = key
     setSearchParams(prev => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
     })
-  }, [activeFilterRaw, setSearchParams])
+  }, [allFilters, setSearchParams])
 
   if (isLoading) {
     return (
@@ -341,16 +228,16 @@ export function ContributorsPage() {
                       <SortIcon field="devices" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sideA')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sideA')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidea')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidea')}>
                       Side A
-                      <SortIcon field="sideA" />
+                      <SortIcon field="sidea" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sideZ')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sideZ')}>
+                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('sidez')}>
+                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('sidez')}>
                       Side Z
-                      <SortIcon field="sideZ" />
+                      <SortIcon field="sidez" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('links')}>
@@ -362,7 +249,7 @@ export function ContributorsPage() {
                 </tr>
               </thead>
               <tbody>
-                {pagedContributors.map((contributor) => (
+                {contributors.map((contributor) => (
                   <tr
                     key={contributor.pk}
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
@@ -388,7 +275,7 @@ export function ContributorsPage() {
                     </td>
                   </tr>
                 ))}
-                {sortedContributors.length === 0 && (
+                {contributors.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                       No contributors found
@@ -400,7 +287,7 @@ export function ContributorsPage() {
           </div>
           {response && (
             <Pagination
-              total={sortedContributors.length}
+              total={response.total}
               limit={PAGE_SIZE}
               offset={offset}
               onOffsetChange={setOffset}

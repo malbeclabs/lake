@@ -22,21 +22,39 @@ type ContributorListItem struct {
 	LinkCount    uint64 `json:"link_count"`
 }
 
+var contributorSortFields = map[string]string{
+	"code":    "code",
+	"name":    "name",
+	"devices": "device_count",
+	"sidea":   "side_a_devices",
+	"sidez":   "side_z_devices",
+	"links":   "link_count",
+}
+
+var contributorFilterFields = map[string]FilterFieldConfig{
+	"code":    {Column: "code", Type: FieldTypeText},
+	"name":    {Column: "name", Type: FieldTypeText},
+	"devices": {Column: "device_count", Type: FieldTypeNumeric},
+	"sidea":   {Column: "side_a_devices", Type: FieldTypeNumeric},
+	"sidez":   {Column: "side_z_devices", Type: FieldTypeNumeric},
+	"links":   {Column: "link_count", Type: FieldTypeNumeric},
+}
+
 func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "code", contributorSortFields)
+	filters := ParseFilters(r)
 	start := time.Now()
 
-	// Get total count
-	countQuery := `SELECT count(*) FROM dz_contributors_current`
-	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		logError("contributors count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	filterClause, filterArgs := filters.BuildFilterClause(contributorFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
 	}
+	orderBy := sort.OrderByClause(contributorSortFields)
 
 	query := `
 		WITH device_counts AS (
@@ -64,25 +82,33 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 			FROM dz_links_current
 			WHERE contributor_pk IS NOT NULL
 			GROUP BY contributor_pk
+		),
+		contributors_data AS (
+			SELECT
+				c.pk as pk,
+				c.code as code,
+				COALESCE(c.name, '') as name,
+				COALESCE(dc.cnt, 0) as device_count,
+				COALESCE(sa.cnt, 0) as side_a_devices,
+				COALESCE(sz.cnt, 0) as side_z_devices,
+				COALESCE(lc.cnt, 0) as link_count
+			FROM dz_contributors_current c
+			LEFT JOIN device_counts dc ON c.pk = dc.contributor_pk
+			LEFT JOIN side_a_counts sa ON c.pk = sa.cpk
+			LEFT JOIN side_z_counts sz ON c.pk = sz.cpk
+			LEFT JOIN link_counts lc ON c.pk = lc.contributor_pk
 		)
-		SELECT
-			c.pk,
-			c.code,
-			COALESCE(c.name, '') as name,
-			COALESCE(dc.cnt, 0) as device_count,
-			COALESCE(sa.cnt, 0) as side_a_devices,
-			COALESCE(sz.cnt, 0) as side_z_devices,
-			COALESCE(lc.cnt, 0) as link_count
-		FROM dz_contributors_current c
-		LEFT JOIN device_counts dc ON c.pk = dc.contributor_pk
-		LEFT JOIN side_a_counts sa ON c.pk = sa.cpk
-		LEFT JOIN side_z_counts sz ON c.pk = sz.cpk
-		LEFT JOIN link_counts lc ON c.pk = lc.contributor_pk
-		ORDER BY c.code
+		SELECT pk, code, name, device_count, side_a_devices, side_z_devices, link_count, count() OVER () as _total
+		FROM contributors_data
+		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	var args []any
+	args = append(args, filterArgs...)
+	args = append(args, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -94,6 +120,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var contributors []ContributorListItem
+	var total uint64
 	for rows.Next() {
 		var c ContributorListItem
 		if err := rows.Scan(
@@ -104,6 +131,7 @@ func (a *API) GetContributors(w http.ResponseWriter, r *http.Request) {
 			&c.SideADevices,
 			&c.SideZDevices,
 			&c.LinkCount,
+			&total,
 		); err != nil {
 			logError("contributors row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

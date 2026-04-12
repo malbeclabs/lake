@@ -70,10 +70,11 @@ func TestGetMulticastGroups_Empty(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var groups []handlers.MulticastGroupListItem
-	err := json.NewDecoder(rr.Body).Decode(&groups)
+	var response handlers.PaginatedResponse[handlers.MulticastGroupListItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
-	assert.Empty(t, groups)
+	assert.Empty(t, response.Items)
+	assert.Equal(t, 0, response.Total)
 }
 
 func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
@@ -87,16 +88,17 @@ func TestGetMulticastGroups_ReturnsRealCounts(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
-	var groups []handlers.MulticastGroupListItem
-	err := json.NewDecoder(rr.Body).Decode(&groups)
+	var response handlers.PaginatedResponse[handlers.MulticastGroupListItem]
+	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
-	require.Len(t, groups, 1)
+	require.Len(t, response.Items, 1)
+	assert.Equal(t, 1, response.Total)
 
 	// The table has publisher_count=0 / subscriber_count=0, but the enrichment
 	// query should compute the real counts from dz_users_current.
-	assert.Equal(t, "test-group", groups[0].Code)
-	assert.Equal(t, uint32(1), groups[0].PublisherCount, "should compute real publisher count from users")
-	assert.Equal(t, uint32(1), groups[0].SubscriberCount, "should compute real subscriber count from users")
+	assert.Equal(t, "test-group", response.Items[0].Code)
+	assert.Equal(t, uint32(1), response.Items[0].PublisherCount, "should compute real publisher count from users")
+	assert.Equal(t, uint32(1), response.Items[0].SubscriberCount, "should compute real subscriber count from users")
 }
 
 func TestGetMulticastGroup_NotFound(t *testing.T) {

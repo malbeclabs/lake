@@ -1914,8 +1914,20 @@ export interface MulticastMembersResponse extends PaginatedResponse<MulticastMem
   subscriber_count: number
 }
 
-export async function fetchMulticastGroups(): Promise<MulticastGroupListItem[]> {
-  const res = await apiFetch('/api/dz/multicast-groups')
+export async function fetchMulticastGroups(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<MulticastGroupListItem>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await apiFetch(`/api/dz/multicast-groups?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch multicast groups')
   }
@@ -2822,8 +2834,20 @@ export interface Device {
   peak_out_bps: number
 }
 
-export async function fetchDevices(limit = 100, offset = 0): Promise<PaginatedResponse<Device>> {
-  const res = await fetchWithRetry(`/api/dz/devices?limit=${limit}&offset=${offset}`)
+export async function fetchDevices(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Device>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/devices?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch devices')
   }
@@ -2877,8 +2901,20 @@ export interface Link {
   loss_percent: number
 }
 
-export async function fetchLinks(limit = 100, offset = 0): Promise<PaginatedResponse<Link>> {
-  const res = await fetchWithRetry(`/api/dz/links?limit=${limit}&offset=${offset}`)
+export async function fetchLinks(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Link>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/links?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch links')
   }
@@ -2910,8 +2946,20 @@ export interface Metro {
   user_count: number
 }
 
-export async function fetchMetros(limit = 100, offset = 0): Promise<PaginatedResponse<Metro>> {
-  const res = await fetchWithRetry(`/api/dz/metros?limit=${limit}&offset=${offset}`)
+export async function fetchMetros(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Metro>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/metros?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch metros')
   }
@@ -2943,8 +2991,20 @@ export interface Contributor {
   link_count: number
 }
 
-export async function fetchContributors(limit = 100, offset = 0): Promise<PaginatedResponse<Contributor>> {
-  const res = await fetchWithRetry(`/api/dz/contributors?limit=${limit}&offset=${offset}`)
+export async function fetchContributors(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Contributor>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/contributors?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch contributors')
   }
@@ -4741,8 +4801,20 @@ export interface Tenant {
   billing_rate: number
 }
 
-export async function fetchTenants(limit = 100, offset = 0): Promise<PaginatedResponse<Tenant>> {
-  const res = await fetchWithRetry(`/api/dz/tenants?limit=${limit}&offset=${offset}`)
+export async function fetchTenants(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<Tenant>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await fetchWithRetry(`/api/dz/tenants?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch tenants')
   }

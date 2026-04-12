@@ -162,7 +162,7 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 
 	insertLinksTestData(t, api)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/dz/links", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/links?sort_by=code&sort_dir=asc", nil)
 	rr := httptest.NewRecorder()
 	api.GetLinks(rr, req)
 
@@ -172,7 +172,7 @@ func TestGetLinks_OrderedByCode(t *testing.T) {
 	err := json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
-	// Verify sorted by code
+	// Verify sorted by code ascending
 	assert.Equal(t, "LAX-INTERNAL", response.Items[0].Code)
 	assert.Equal(t, "NYC-EDGE-001", response.Items[1].Code)
 	assert.Equal(t, "NYC-LAX-001", response.Items[2].Code)

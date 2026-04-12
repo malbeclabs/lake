@@ -30,21 +30,47 @@ type DeviceListItem struct {
 	PeakOutBps      float64 `json:"peak_out_bps"`
 }
 
+var deviceListSortFields = map[string]string{
+	"code":        "code",
+	"type":        "device_type",
+	"contributor": "contributor_code",
+	"metro":       "metro_code",
+	"status":      "status",
+	"users":       "current_users",
+	"in":          "in_bps",
+	"out":         "out_bps",
+	"peakin":      "peak_in_bps",
+	"peakout":     "peak_out_bps",
+}
+
+var deviceListFilterFields = map[string]FilterFieldConfig{
+	"code":        {Column: "code", Type: FieldTypeText},
+	"type":        {Column: "device_type", Type: FieldTypeText},
+	"contributor": {Column: "contributor_code", Type: FieldTypeText},
+	"metro":       {Column: "metro_code", Type: FieldTypeText},
+	"status":      {Column: "status", Type: FieldTypeText},
+	"users":       {Column: "current_users", Type: FieldTypeNumeric},
+	"in":          {Column: "in_bps", Type: FieldTypeBandwidth},
+	"out":         {Column: "out_bps", Type: FieldTypeBandwidth},
+	"peakin":      {Column: "peak_in_bps", Type: FieldTypeBandwidth},
+	"peakout":     {Column: "peak_out_bps", Type: FieldTypeBandwidth},
+}
+
 func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "code", deviceListSortFields)
+	filters := ParseFilters(r)
 	start := time.Now()
 
-	// Get total count
-	countQuery := `SELECT count(*) FROM dz_devices_current`
-	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		logError("devices count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	filterClause, filterArgs := filters.BuildFilterClause(deviceListFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
 	}
+	orderBy := sort.OrderByClause(deviceListSortFields)
 
 	query := `
 		WITH user_counts AS (
@@ -74,34 +100,44 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
 			GROUP BY device_pk
+		),
+		devices_data AS (
+			SELECT
+				d.pk as pk,
+				d.code as code,
+				d.status as status,
+				d.device_type as device_type,
+				COALESCE(d.contributor_pk, '') as contributor_pk,
+				COALESCE(c.code, '') as contributor_code,
+				COALESCE(d.metro_pk, '') as metro_pk,
+				COALESCE(m.code, '') as metro_code,
+				COALESCE(d.public_ip, '') as public_ip,
+				COALESCE(d.max_users, 0) as max_users,
+				COALESCE(uc.user_count, 0) as current_users,
+				COALESCE(tr.in_bps, 0) as in_bps,
+				COALESCE(tr.out_bps, 0) as out_bps,
+				COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
+				COALESCE(pr.peak_out_bps, 0) as peak_out_bps
+			FROM dz_devices_current d
+			LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
+			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
+			LEFT JOIN user_counts uc ON d.pk = uc.device_pk
+			LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
+			LEFT JOIN peak_rates pr ON d.pk = pr.device_pk
 		)
 		SELECT
-			d.pk,
-			d.code,
-			d.status,
-			d.device_type,
-			COALESCE(d.contributor_pk, '') as contributor_pk,
-			COALESCE(c.code, '') as contributor_code,
-			COALESCE(d.metro_pk, '') as metro_pk,
-			COALESCE(m.code, '') as metro_code,
-			COALESCE(d.public_ip, '') as public_ip,
-			COALESCE(d.max_users, 0) as max_users,
-			COALESCE(uc.user_count, 0) as current_users,
-			COALESCE(tr.in_bps, 0) as in_bps,
-			COALESCE(tr.out_bps, 0) as out_bps,
-			COALESCE(pr.peak_in_bps, 0) as peak_in_bps,
-			COALESCE(pr.peak_out_bps, 0) as peak_out_bps
-		FROM dz_devices_current d
-		LEFT JOIN dz_contributors_current c ON d.contributor_pk = c.pk
-		LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
-		LEFT JOIN user_counts uc ON d.pk = uc.device_pk
-		LEFT JOIN traffic_rates tr ON d.pk = tr.device_pk
-		LEFT JOIN peak_rates pr ON d.pk = pr.device_pk
-		ORDER BY d.code
+			pk, code, status, device_type, contributor_pk, contributor_code, metro_pk, metro_code, public_ip, max_users, current_users, in_bps, out_bps, peak_in_bps, peak_out_bps,
+			count() OVER () as _total
+		FROM devices_data
+		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	var args []any
+	args = append(args, filterArgs...)
+	args = append(args, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -113,6 +149,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var devices []DeviceListItem
+	var total uint64
 	for rows.Next() {
 		var d DeviceListItem
 		if err := rows.Scan(
@@ -131,6 +168,7 @@ func (a *API) GetDevices(w http.ResponseWriter, r *http.Request) {
 			&d.OutBps,
 			&d.PeakInBps,
 			&d.PeakOutBps,
+			&total,
 		); err != nil {
 			logError("devices row scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

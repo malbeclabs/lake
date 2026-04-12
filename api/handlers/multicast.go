@@ -26,27 +26,78 @@ type MulticastGroupListItem struct {
 	SubscriberCount uint32 `json:"subscriber_count"`
 }
 
+var multicastGroupSortFields = map[string]string{
+	"code":        "code",
+	"ip":          "multicast_ip",
+	"status":      "status",
+	"publishers":  "publisher_count",
+	"subscribers": "subscriber_count",
+}
+
+var multicastGroupFilterFields = map[string]FilterFieldConfig{
+	"code":        {Column: "code", Type: FieldTypeText},
+	"ip":          {Column: "multicast_ip", Type: FieldTypeText},
+	"status":      {Column: "status", Type: FieldTypeText},
+	"publishers":  {Column: "publisher_count", Type: FieldTypeNumeric},
+	"subscribers": {Column: "subscriber_count", Type: FieldTypeNumeric},
+}
+
 func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
+	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "code", multicastGroupSortFields)
+	filters := ParseFilters(r)
 	start := time.Now()
 
+	filterClause, filterArgs := filters.BuildFilterClause(multicastGroupFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
+	}
+	orderBy := sort.OrderByClause(multicastGroupSortFields)
+
 	query := `
-		SELECT
-			pk,
-			COALESCE(code, '') as code,
-			COALESCE(multicast_ip, '') as multicast_ip,
-			COALESCE(max_bandwidth, 0) as max_bandwidth,
-			COALESCE(status, '') as status,
-			COALESCE(publisher_count, 0) as publisher_count,
-			COALESCE(subscriber_count, 0) as subscriber_count
-		FROM dz_multicast_groups_current
-		WHERE status = 'activated'
-		ORDER BY code
+		WITH pub_sub_counts AS (
+			SELECT
+				group_pk,
+				countIf(mode = 'P') as pub_count,
+				countIf(mode = 'S') as sub_count
+			FROM (
+				SELECT arrayJoin(JSONExtract(u.publishers, 'Array(String)')) as group_pk, 'P' as mode
+				FROM dz_users_current u
+				WHERE u.status = 'activated' AND u.kind = 'multicast' AND JSONLength(u.publishers) > 0
+				UNION ALL
+				SELECT arrayJoin(JSONExtract(u.subscribers, 'Array(String)')) as group_pk, 'S' as mode
+				FROM dz_users_current u
+				WHERE u.status = 'activated' AND u.kind = 'multicast' AND JSONLength(u.subscribers) > 0
+			)
+			GROUP BY group_pk
+		),
+		groups_data AS (
+			SELECT
+				g.pk as pk,
+				COALESCE(g.code, '') as code,
+				COALESCE(g.multicast_ip, '') as multicast_ip,
+				COALESCE(g.max_bandwidth, 0) as max_bandwidth,
+				COALESCE(g.status, '') as status,
+				COALESCE(ps.pub_count, 0) as publisher_count,
+				COALESCE(ps.sub_count, 0) as subscriber_count
+			FROM dz_multicast_groups_current g
+			LEFT JOIN pub_sub_counts ps ON g.pk = ps.group_pk
+		)
+		SELECT pk, code, multicast_ip, max_bandwidth, status, publisher_count, subscriber_count, count() OVER () as _total
+		FROM groups_data
+		WHERE 1=1` + whereFilter + " " + orderBy + `
+		LIMIT ? OFFSET ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query)
+	var args []any
+	args = append(args, filterArgs...)
+	args = append(args, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -58,21 +109,26 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var groups []MulticastGroupListItem
+	var total uint64
 	for rows.Next() {
 		var g MulticastGroupListItem
+		var pubCount, subCount uint64
 		if err := rows.Scan(
 			&g.PK,
 			&g.Code,
 			&g.MulticastIP,
 			&g.MaxBandwidth,
 			&g.Status,
-			&g.PublisherCount,
-			&g.SubscriberCount,
+			&pubCount,
+			&subCount,
+			&total,
 		); err != nil {
 			logError("multicast groups scan error", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		g.PublisherCount = uint32(pubCount)
+		g.SubscriberCount = uint32(subCount)
 		groups = append(groups, g)
 	}
 
@@ -87,61 +143,15 @@ func (a *API) GetMulticastGroups(w http.ResponseWriter, r *http.Request) {
 		groups = []MulticastGroupListItem{}
 	}
 
-	// Compute real pub/sub counts from dz_users_current since the table columns are often 0
-	if len(groups) > 0 {
-		groupPKs := make([]string, len(groups))
-		groupByPK := make(map[string]int, len(groups))
-		for i, g := range groups {
-			groupPKs[i] = g.PK
-			groupByPK[g.PK] = i
-		}
-
-		countsQuery := `
-			SELECT
-				group_pk,
-				countIf(mode = 'P' OR mode = 'P+S') as pub_count,
-				countIf(mode = 'S' OR mode = 'P+S') as sub_count
-			FROM (
-				SELECT
-					arrayJoin(JSONExtract(u.publishers, 'Array(String)')) as group_pk,
-					'P' as mode
-				FROM dz_users_current u
-				WHERE u.status = 'activated' AND u.kind = 'multicast'
-					AND JSONLength(u.publishers) > 0
-				UNION ALL
-				SELECT
-					arrayJoin(JSONExtract(u.subscribers, 'Array(String)')) as group_pk,
-					'S' as mode
-				FROM dz_users_current u
-				WHERE u.status = 'activated' AND u.kind = 'multicast'
-					AND JSONLength(u.subscribers) > 0
-			)
-			WHERE group_pk IN (?)
-			GROUP BY group_pk
-		`
-
-		countRows, err := a.envDB(ctx).Query(ctx, countsQuery, groupPKs)
-		if err != nil {
-			slog.Warn("multicast groups counts query error", "error", err)
-		} else {
-			defer countRows.Close()
-			for countRows.Next() {
-				var gpk string
-				var pubCount, subCount uint64
-				if err := countRows.Scan(&gpk, &pubCount, &subCount); err != nil {
-					logError("multicast groups counts scan error", "error", err)
-					continue
-				}
-				if idx, ok := groupByPK[gpk]; ok {
-					groups[idx].PublisherCount = uint32(pubCount)
-					groups[idx].SubscriberCount = uint32(subCount)
-				}
-			}
-		}
+	response := PaginatedResponse[MulticastGroupListItem]{
+		Items:  groups,
+		Total:  int(total),
+		Limit:  pagination.Limit,
+		Offset: pagination.Offset,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(groups); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logError("failed to encode response", "error", err)
 	}
 }

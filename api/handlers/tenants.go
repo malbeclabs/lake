@@ -23,37 +23,56 @@ type TenantListItem struct {
 	BillingRate   uint64 `json:"billing_rate"`
 }
 
+var tenantSortFields = map[string]string{
+	"code":   "code",
+	"vrf_id": "vrf_id",
+}
+
+var tenantFilterFields = map[string]FilterFieldConfig{
+	"code":  {Column: "code", Type: FieldTypeText},
+	"owner": {Column: "owner_pubkey", Type: FieldTypeText},
+}
+
 func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	pagination := ParsePagination(r, 100)
+	sort := ParseSort(r, "code", tenantSortFields)
+	filters := ParseFilters(r)
 	start := time.Now()
 
-	countQuery := `SELECT count(*) FROM dz_tenants_current`
-	var total uint64
-	if err := a.envDB(ctx).QueryRow(ctx, countQuery).Scan(&total); err != nil {
-		logError("tenants count query failed", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	filterClause, filterArgs := filters.BuildFilterClause(tenantFilterFields)
+	whereFilter := ""
+	if filterClause != "" {
+		whereFilter = " AND " + filterClause
 	}
+	orderBy := sort.OrderByClause(tenantSortFields)
 
 	query := `
-		SELECT
-			pk,
-			COALESCE(owner_pubkey, '') as owner_pubkey,
-			COALESCE(code, '') as code,
-			COALESCE(payment_status, '') as payment_status,
-			vrf_id,
-			metro_routing,
-			route_liveness,
-			billing_rate
-		FROM dz_tenants_current
-		ORDER BY code
+		WITH tenants_data AS (
+			SELECT
+				pk as pk,
+				COALESCE(owner_pubkey, '') as owner_pubkey,
+				COALESCE(code, '') as code,
+				COALESCE(payment_status, '') as payment_status,
+				vrf_id as vrf_id,
+				metro_routing as metro_routing,
+				route_liveness as route_liveness,
+				billing_rate as billing_rate
+			FROM dz_tenants_current
+		)
+		SELECT pk, owner_pubkey, code, payment_status, vrf_id, metro_routing, route_liveness, billing_rate, count() OVER () as _total
+		FROM tenants_data
+		WHERE 1=1` + whereFilter + " " + orderBy + `
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := a.envDB(ctx).Query(ctx, query, pagination.Limit, pagination.Offset)
+	var args []any
+	args = append(args, filterArgs...)
+	args = append(args, pagination.Limit, pagination.Offset)
+
+	rows, err := a.envDB(ctx).Query(ctx, query, args...)
 	duration := time.Since(start)
 	metrics.RecordClickHouseQuery(duration, err)
 
@@ -65,6 +84,7 @@ func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	var tenants []TenantListItem
+	var total uint64
 	for rows.Next() {
 		var t TenantListItem
 		if err := rows.Scan(
@@ -76,6 +96,7 @@ func (a *API) GetTenants(w http.ResponseWriter, r *http.Request) {
 			&t.MetroRouting,
 			&t.RouteLiveness,
 			&t.BillingRate,
+			&total,
 		); err != nil {
 			logError("tenants scan failed", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
