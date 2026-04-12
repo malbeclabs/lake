@@ -20,7 +20,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/lmittmann/tint v1.1.3
-	github.com/malbeclabs/doublezero v0.8.1-0.20260407003546-204a5f006282
+	github.com/malbeclabs/doublezero v0.8.1-0.20260411000652-ad91e7f5035d
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/mr-tron/base58 v1.2.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
