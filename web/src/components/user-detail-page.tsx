@@ -456,7 +456,7 @@ export function UserDetailPage() {
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Owner Pubkey</dt>
                 <dd className="text-sm">
-                  <CopyableText text={user.owner_pubkey} className="font-mono">
+                  <CopyableText text={user.owner_pubkey} className="font-mono" iconPosition="left">
                     <Link to={`/dz/users?search=owner:${user.owner_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline">
                       {user.owner_pubkey.slice(0, 6)}...{user.owner_pubkey.slice(-4)}
                     </Link>
@@ -467,7 +467,7 @@ export function UserDetailPage() {
                 <dt className="text-sm text-muted-foreground">Client IP</dt>
                 <dd className="text-sm">
                   {user.client_ip ? (
-                    <CopyableText text={user.client_ip} className="font-mono">
+                    <CopyableText text={user.client_ip} className="font-mono" iconPosition="left">
                       <Link to={`/dz/users?search=ip:${user.client_ip}`} className="text-blue-600 dark:text-blue-400 hover:underline">
                         {user.client_ip}
                       </Link>
@@ -479,7 +479,7 @@ export function UserDetailPage() {
                 <dt className="text-sm text-muted-foreground">DZ IP</dt>
                 <dd className="text-sm">
                   {user.dz_ip ? (
-                    <CopyableText text={user.dz_ip} className="font-mono" />
+                    <CopyableText text={user.dz_ip} className="font-mono" iconPosition="left" />
                   ) : '—'}
                 </dd>
               </div>
