@@ -176,6 +176,10 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
           const drainStatus = hour.drain_status || ''
           const drainLabel = getDrainLabel(drainStatus)
           const prevStatus = index > 0 ? getEffectiveStatus(hours[index - 1]) : undefined
+          // Re-evaluate collecting client-side: the server flag can be stale if the
+          // API response was cached before the bucket window closed.
+          const isCollecting = hour.collecting &&
+            Date.now() < new Date(hour.hour).getTime() + bucketMinutes * 60 * 1000
           return (
           <div
             key={hour.hour}
@@ -186,13 +190,13 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
             <div className="relative w-full h-6 rounded-sm overflow-hidden cursor-pointer transition-opacity hover:opacity-80">
               <div
                 className={`absolute inset-0 ${
-                  hour.collecting && effectiveStatus === 'no_data'
+                  isCollecting && effectiveStatus === 'no_data'
                     ? (prevStatus && prevStatus !== 'no_data' ? statusColors[prevStatus] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                     : statusColors[effectiveStatus]
                 }`}
                 style={getDrainStripeStyle(drainStatus)}
               />
-              {hour.collecting && (effectiveStatus !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
+              {isCollecting && (effectiveStatus !== 'no_data' || (prevStatus && prevStatus !== 'no_data')) && (
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
               )}
             </div>
@@ -212,7 +216,7 @@ export function StatusTimeline({ hours, committedRttUs, bucketMinutes = 60, time
                     'text-muted-foreground'
                   }`}>
                     {statusLabels[effectiveStatus] || effectiveStatus}
-                    {hour.collecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
+                    {isCollecting && <span className="text-muted-foreground ml-1">(In progress)</span>}
                     {drainLabel && <span className="text-muted-foreground ml-1">({drainLabel})</span>}
                   </div>
                   {/* Reasons */}
