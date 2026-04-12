@@ -187,7 +187,12 @@ function markTrailingCollecting(bars: MergedBar[]): void {
   const now = Date.now()
   for (let i = bars.length - 1; i >= 0; i--) {
     const barEnd = new Date(bars[i].ts).getTime() + bars[i].spanSeconds * 1000
-    if (now - barEnd > 10 * 60 * 1000) break
+    if (now - barEnd > 10 * 60 * 1000) {
+      // Clear stale collecting flags from cached API responses — if this bar's
+      // window closed more than 10 minutes ago it's definitely not in progress.
+      bars[i].collecting = false
+      break
+    }
     // Suppress missing-data flags in the lag window
     bars[i].missingLatency = false
     bars[i].missingTraffic = false

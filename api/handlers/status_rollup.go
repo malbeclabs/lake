@@ -163,8 +163,11 @@ func parseBucketParamsCustom(startTime, endTime time.Time, requestedBuckets int)
 	bucketDuration := time.Duration(bucketSecs) * time.Second
 	startTime = startTime.Truncate(bucketDuration)
 
+	// Use ceiling division so the current in-progress bucket is always included.
+	// Floor division would stop at the last fully-elapsed bucket, leaving the
+	// current partial bucket (which may have rollup data) out of the response.
 	totalSecs := int(endTime.Sub(startTime).Seconds())
-	bucketCount := totalSecs / bucketSecs
+	bucketCount := (totalSecs + bucketSecs - 1) / bucketSecs
 	if bucketCount < 1 {
 		bucketCount = 1
 	}
