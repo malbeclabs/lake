@@ -40,6 +40,16 @@ type Activities struct {
 func (a *Activities) entries() []cacheEntry {
 	api := a.API
 	return []cacheEntry{
+		{"topology", "topology", func(ctx context.Context) (any, error) {
+			resp, err := api.FetchTopologyData(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if resp.Error != "" {
+				return nil, &refreshError{resp.Error}
+			}
+			return resp, nil
+		}},
 		{"status", "status", func(ctx context.Context) (any, error) {
 			resp := api.FetchStatusData(ctx)
 			if resp.Error != "" {

@@ -103,16 +103,28 @@ type TopologyResponse struct {
 }
 
 func (a *API) GetTopology(w http.ResponseWriter, r *http.Request) {
+	// Try to serve from cache first (cache only holds mainnet data)
+	if isMainnet(r.Context()) {
+		if data, err := a.readPageCache(r.Context(), "topology"); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			_, _ = w.Write(data)
+			return
+		}
+	}
+
+	// Cache miss - fetch fresh data
+	w.Header().Set("X-Cache", "MISS")
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	response, err := a.fetchTopologyData(ctx)
+	response, err := a.FetchTopologyData(ctx)
 	if err != nil && dberror.IsTransient(err) {
 		cancel()
 		var retryCancel context.CancelFunc
 		ctx, retryCancel = context.WithTimeout(r.Context(), 10*time.Second)
 		defer retryCancel()
-		response, err = a.fetchTopologyData(ctx)
+		response, err = a.FetchTopologyData(ctx)
 	}
 
 	if err != nil {
@@ -140,8 +152,9 @@ func (a *API) GetTopology(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// fetchTopologyData performs the actual topology data fetch from the database.
-func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
+// FetchTopologyData performs the actual topology data fetch from the database.
+// This is called by both the cache refresh and direct requests.
+func (a *API) FetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 	start := time.Now()
 
 	var metros []Metro
