@@ -51,7 +51,7 @@ func ComputeRollupWorkflow(ctx temporalworkflow.Context, iteration int) error {
 		now := temporalworkflow.Now(ctx)
 		window := BackfillChunkInput{
 			WindowStart: now.Add(-rollupWindow).Truncate(5 * time.Minute),
-			WindowEnd:   now.Truncate(5 * time.Minute),
+			WindowEnd:   now,
 		}
 
 		runIteration(ctx, logger, window)

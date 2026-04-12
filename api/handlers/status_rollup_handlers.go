@@ -153,6 +153,16 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 				drainStatus = currentDrainStatus
 			}
 
+			// Build base hourStatus from latency/loss data (or no_data if unavailable).
+			isisDown := false
+			if rollup != nil {
+				isisDown = rollup.ISISDown
+			}
+			if isCollecting && currentISISDown[pk] {
+				isisDown = true
+			}
+
+			var hourStatus LinkHourStatus
 			if rollup != nil && (rollup.ASamples > 0 || rollup.ZSamples > 0) {
 				// Compute combined avg latency (sample-weighted across both directions)
 				avgLatency := float64(0)
@@ -191,12 +201,7 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 					issueReasons["high_latency"] = true
 				}
 
-				isisDown := rollup.ISISDown
-				if isCollecting && currentISISDown[pk] {
-					isisDown = true
-				}
-
-				hourStatus := LinkHourStatus{
+				hourStatus = LinkHourStatus{
 					Hour:           key,
 					Status:         status,
 					Collecting:     isCollecting,
@@ -212,119 +217,103 @@ func (a *API) fetchLinkHistoryFromRollup(ctx context.Context, timeRange string, 
 					SideZSamples:   rollup.ZSamples,
 					ISISDown:       isisDown,
 				}
-
-				// Add interface counters per side
-				ibk := intfBucketKey{linkPK: pk, bucketTS: bucketStart}
-				hasErrors := false
-				hasDiscards := false
-				hasCarrier := false
-				if sides, ok := intfIndex[ibk]; ok {
-					if a, ok := sides["A"]; ok {
-						hourStatus.SideAInErrors = a.inErrors
-						hourStatus.SideAOutErrors = a.outErrors
-						hourStatus.SideAInFcsErrors = a.inFcsErrors
-						hourStatus.SideAInDiscards = a.inDiscards
-						hourStatus.SideAOutDiscards = a.outDiscards
-						hourStatus.SideACarrierTransitions = a.carrierTransitions
-						if a.inErrors > 0 || a.outErrors > 0 {
-							issueReasons["interface_errors"] = true
-							hasErrors = true
-						}
-						if a.inFcsErrors > 0 {
-							issueReasons["fcs_errors"] = true
-							hasErrors = true
-						}
-						if a.inDiscards > 0 || a.outDiscards > 0 {
-							issueReasons["discards"] = true
-							hasDiscards = true
-						}
-						if a.carrierTransitions > 0 {
-							issueReasons["carrier_transitions"] = true
-							hasCarrier = true
-						}
-					}
-					if z, ok := sides["Z"]; ok {
-						hourStatus.SideZInErrors = z.inErrors
-						hourStatus.SideZOutErrors = z.outErrors
-						hourStatus.SideZInFcsErrors = z.inFcsErrors
-						hourStatus.SideZInDiscards = z.inDiscards
-						hourStatus.SideZOutDiscards = z.outDiscards
-						hourStatus.SideZCarrierTransitions = z.carrierTransitions
-						if z.inErrors > 0 || z.outErrors > 0 {
-							issueReasons["interface_errors"] = true
-							hasErrors = true
-						}
-						if z.inFcsErrors > 0 {
-							issueReasons["fcs_errors"] = true
-							hasErrors = true
-						}
-						if z.inDiscards > 0 || z.outDiscards > 0 {
-							issueReasons["discards"] = true
-							hasDiscards = true
-						}
-						if z.carrierTransitions > 0 {
-							issueReasons["carrier_transitions"] = true
-							hasCarrier = true
-						}
-					}
-				}
-
-				// Upgrade status based on interface issues
-				const InterfaceUnhealthyThreshold = uint64(100)
-				totalErrors := hourStatus.SideAInErrors + hourStatus.SideAOutErrors + hourStatus.SideZInErrors + hourStatus.SideZOutErrors
-				totalDiscards := hourStatus.SideAInDiscards + hourStatus.SideAOutDiscards + hourStatus.SideZInDiscards + hourStatus.SideZOutDiscards
-				totalCarrier := hourStatus.SideACarrierTransitions + hourStatus.SideZCarrierTransitions
-
-				if totalErrors >= InterfaceUnhealthyThreshold || totalDiscards >= InterfaceUnhealthyThreshold || totalCarrier >= InterfaceUnhealthyThreshold {
-					if hourStatus.Status == "healthy" || hourStatus.Status == "degraded" {
-						hourStatus.Status = "unhealthy"
-					}
-				} else if (hasErrors || hasDiscards || hasCarrier) && hourStatus.Status == "healthy" {
-					hourStatus.Status = "degraded"
-				}
-
-				// Utilization
-				if meta.BandwidthBps > 0 {
-					if sides, ok := intfIndex[ibk]; ok {
-						var totalInBps, totalOutBps float64
-						for _, side := range sides {
-							totalInBps += side.inBps
-							totalOutBps += side.outBps
-						}
-						hourStatus.UtilizationInPct = (totalInBps / float64(meta.BandwidthBps)) * 100
-						hourStatus.UtilizationOutPct = (totalOutBps / float64(meta.BandwidthBps)) * 100
-						const HighUtilizationThreshold = 80.0
-						if hourStatus.UtilizationInPct > HighUtilizationThreshold || hourStatus.UtilizationOutPct > HighUtilizationThreshold {
-							issueReasons["high_utilization"] = true
-							if hourStatus.Status == "healthy" {
-								hourStatus.Status = "degraded"
-							}
-						}
-					}
-				}
-
-				if isisDown {
-					issueReasons["missing_adjacency"] = true
-				}
-
-				hourStatuses = append(hourStatuses, hourStatus)
 			} else {
-				// No data for this bucket
-				isisDown := false
-				if rollup != nil {
-					isisDown = rollup.ISISDown
-				}
-				if isCollecting && currentISISDown[pk] {
-					isisDown = true
-				}
-				hourStatuses = append(hourStatuses, LinkHourStatus{
+				hourStatus = LinkHourStatus{
 					Hour:        key,
 					Status:      "no_data",
 					Collecting:  isCollecting,
 					DrainStatus: drainStatus,
 					ISISDown:    isisDown,
-				})
+				}
 			}
+
+			// Apply interface counters from the rollup index.
+			ibk := intfBucketKey{linkPK: pk, bucketTS: bucketStart}
+			hasErrors := false
+			hasDiscards := false
+			hasCarrier := false
+			applyIntfCounters := func(side string, inErr, outErr, inFcs, inDisc, outDisc, carrier uint64) {
+				if side == "A" {
+					hourStatus.SideAInErrors = inErr
+					hourStatus.SideAOutErrors = outErr
+					hourStatus.SideAInFcsErrors = inFcs
+					hourStatus.SideAInDiscards = inDisc
+					hourStatus.SideAOutDiscards = outDisc
+					hourStatus.SideACarrierTransitions = carrier
+				} else {
+					hourStatus.SideZInErrors = inErr
+					hourStatus.SideZOutErrors = outErr
+					hourStatus.SideZInFcsErrors = inFcs
+					hourStatus.SideZInDiscards = inDisc
+					hourStatus.SideZOutDiscards = outDisc
+					hourStatus.SideZCarrierTransitions = carrier
+				}
+				if inErr > 0 || outErr > 0 {
+					issueReasons["interface_errors"] = true
+					hasErrors = true
+				}
+				if inFcs > 0 {
+					issueReasons["fcs_errors"] = true
+					hasErrors = true
+				}
+				if inDisc > 0 || outDisc > 0 {
+					issueReasons["discards"] = true
+					hasDiscards = true
+				}
+				if carrier > 0 {
+					issueReasons["carrier_transitions"] = true
+					hasCarrier = true
+				}
+			}
+			if sides, ok := intfIndex[ibk]; ok {
+				if a, ok := sides["A"]; ok {
+					applyIntfCounters("A", a.inErrors, a.outErrors, a.inFcsErrors, a.inDiscards, a.outDiscards, a.carrierTransitions)
+				}
+				if z, ok := sides["Z"]; ok {
+					applyIntfCounters("Z", z.inErrors, z.outErrors, z.inFcsErrors, z.inDiscards, z.outDiscards, z.carrierTransitions)
+				}
+			}
+
+			// Upgrade status based on interface issues. This applies even when the
+			// base status is no_data — interface counters are a signal in their own right.
+			const InterfaceUnhealthyThreshold = uint64(100)
+			totalErrors := hourStatus.SideAInErrors + hourStatus.SideAOutErrors + hourStatus.SideZInErrors + hourStatus.SideZOutErrors
+			totalDiscards := hourStatus.SideAInDiscards + hourStatus.SideAOutDiscards + hourStatus.SideZInDiscards + hourStatus.SideZOutDiscards
+			totalCarrier := hourStatus.SideACarrierTransitions + hourStatus.SideZCarrierTransitions
+
+			if totalErrors >= InterfaceUnhealthyThreshold || totalDiscards >= InterfaceUnhealthyThreshold || totalCarrier >= InterfaceUnhealthyThreshold {
+				if hourStatus.Status == "healthy" || hourStatus.Status == "degraded" || hourStatus.Status == "no_data" {
+					hourStatus.Status = "unhealthy"
+				}
+			} else if (hasErrors || hasDiscards || hasCarrier) && (hourStatus.Status == "healthy" || hourStatus.Status == "no_data") {
+				hourStatus.Status = "degraded"
+			}
+
+			// Utilization (rollup data only — bps not available from raw fact counters)
+			if meta.BandwidthBps > 0 {
+				if sides, ok := intfIndex[ibk]; ok {
+					var totalInBps, totalOutBps float64
+					for _, side := range sides {
+						totalInBps += side.inBps
+						totalOutBps += side.outBps
+					}
+					hourStatus.UtilizationInPct = (totalInBps / float64(meta.BandwidthBps)) * 100
+					hourStatus.UtilizationOutPct = (totalOutBps / float64(meta.BandwidthBps)) * 100
+					const HighUtilizationThreshold = 80.0
+					if hourStatus.UtilizationInPct > HighUtilizationThreshold || hourStatus.UtilizationOutPct > HighUtilizationThreshold {
+						issueReasons["high_utilization"] = true
+						if hourStatus.Status == "healthy" {
+							hourStatus.Status = "degraded"
+						}
+					}
+				}
+			}
+
+			if isisDown {
+				issueReasons["missing_adjacency"] = true
+			}
+
+			hourStatuses = append(hourStatuses, hourStatus)
 		}
 
 		// Check for no_data buckets
@@ -921,6 +910,15 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 			}
 		}
 
+		isisDown := false
+		if rollup != nil {
+			isisDown = rollup.ISISDown
+		}
+		if isCollecting && currentISISDown[linkPK] {
+			isisDown = true
+		}
+
+		var hs LinkHourStatus
 		if rollup != nil && (rollup.ASamples > 0 || rollup.ZSamples > 0) {
 			totalSamples := rollup.ASamples + rollup.ZSamples
 			avgLatency := float64(0)
@@ -942,12 +940,7 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 				}
 			}
 
-			isisDown := rollup.ISISDown
-			if isCollecting && currentISISDown[linkPK] {
-				isisDown = true
-			}
-
-			hs := LinkHourStatus{
+			hs = LinkHourStatus{
 				Hour:           key,
 				Status:         status,
 				Collecting:     isCollecting,
@@ -963,57 +956,74 @@ func (a *API) fetchSingleLinkHistoryWithParams(ctx context.Context, linkPK strin
 				SideZSamples:   rollup.ZSamples,
 				ISISDown:       isisDown,
 			}
-
-			// Interface counters per side
-			if a, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "A"}]; ok {
-				hs.SideAInErrors = a.InErrors
-				hs.SideAOutErrors = a.OutErrors
-				hs.SideAInFcsErrors = a.InFcsErrors
-				hs.SideAInDiscards = a.InDiscards
-				hs.SideAOutDiscards = a.OutDiscards
-				hs.SideACarrierTransitions = a.CarrierTransitions
-			}
-			if z, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "Z"}]; ok {
-				hs.SideZInErrors = z.InErrors
-				hs.SideZOutErrors = z.OutErrors
-				hs.SideZInFcsErrors = z.InFcsErrors
-				hs.SideZInDiscards = z.InDiscards
-				hs.SideZOutDiscards = z.OutDiscards
-				hs.SideZCarrierTransitions = z.CarrierTransitions
-			}
-
-			// Utilization
-			if meta.BandwidthBps > 0 {
-				var totalInBps, totalOutBps float64
-				if a, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "A"}]; ok {
-					totalInBps += a.AvgInBps
-					totalOutBps += a.AvgOutBps
-				}
-				if z, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "Z"}]; ok {
-					totalInBps += z.AvgInBps
-					totalOutBps += z.AvgOutBps
-				}
-				hs.UtilizationInPct = (totalInBps / float64(meta.BandwidthBps)) * 100
-				hs.UtilizationOutPct = (totalOutBps / float64(meta.BandwidthBps)) * 100
-			}
-
-			hours = append(hours, hs)
 		} else {
-			isisDown := false
-			if rollup != nil {
-				isisDown = rollup.ISISDown
-			}
-			if isCollecting && currentISISDown[linkPK] {
-				isisDown = true
-			}
-			hours = append(hours, LinkHourStatus{
+			hs = LinkHourStatus{
 				Hour:        key,
 				Status:      "no_data",
 				Collecting:  isCollecting,
 				DrainStatus: drainStatus,
 				ISISDown:    isisDown,
-			})
+			}
 		}
+
+		// Apply interface counters. For the collecting bucket use real-time fact data
+		// (avoiding ~5min rollup lag); fall back to rollup index for historical buckets.
+		applyIntfToHS := func(side string, inErr, outErr, inFcs, inDisc, outDisc, carrier uint64) {
+			if side == "A" {
+				hs.SideAInErrors = inErr
+				hs.SideAOutErrors = outErr
+				hs.SideAInFcsErrors = inFcs
+				hs.SideAInDiscards = inDisc
+				hs.SideAOutDiscards = outDisc
+				hs.SideACarrierTransitions = carrier
+			} else {
+				hs.SideZInErrors = inErr
+				hs.SideZOutErrors = outErr
+				hs.SideZInFcsErrors = inFcs
+				hs.SideZInDiscards = inDisc
+				hs.SideZOutDiscards = outDisc
+				hs.SideZCarrierTransitions = carrier
+			}
+		}
+		if a, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "A"}]; ok {
+			applyIntfToHS("A", a.InErrors, a.OutErrors, a.InFcsErrors, a.InDiscards, a.OutDiscards, a.CarrierTransitions)
+		}
+		if z, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "Z"}]; ok {
+			applyIntfToHS("Z", z.InErrors, z.OutErrors, z.InFcsErrors, z.InDiscards, z.OutDiscards, z.CarrierTransitions)
+		}
+
+		// Upgrade status based on interface issues. Applies even when base status is no_data.
+		const InterfaceUnhealthyThreshold = uint64(100)
+		totalErrors := hs.SideAInErrors + hs.SideAOutErrors + hs.SideZInErrors + hs.SideZOutErrors
+		totalDiscards := hs.SideAInDiscards + hs.SideAOutDiscards + hs.SideZInDiscards + hs.SideZOutDiscards
+		totalCarrier := hs.SideACarrierTransitions + hs.SideZCarrierTransitions
+		if totalErrors >= InterfaceUnhealthyThreshold || totalDiscards >= InterfaceUnhealthyThreshold || totalCarrier >= InterfaceUnhealthyThreshold {
+			if hs.Status == "healthy" || hs.Status == "degraded" || hs.Status == "no_data" {
+				hs.Status = "unhealthy"
+			}
+		} else if (hs.SideAInErrors > 0 || hs.SideAOutErrors > 0 || hs.SideZInErrors > 0 || hs.SideZOutErrors > 0 ||
+			hs.SideAInFcsErrors > 0 || hs.SideZInFcsErrors > 0 ||
+			hs.SideAInDiscards > 0 || hs.SideAOutDiscards > 0 || hs.SideZInDiscards > 0 || hs.SideZOutDiscards > 0 ||
+			hs.SideACarrierTransitions > 0 || hs.SideZCarrierTransitions > 0) && (hs.Status == "healthy" || hs.Status == "no_data") {
+			hs.Status = "degraded"
+		}
+
+		// Utilization (rollup data only — bps not available from raw fact counters)
+		if meta.BandwidthBps > 0 {
+			var totalInBps, totalOutBps float64
+			if a, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "A"}]; ok {
+				totalInBps += a.AvgInBps
+				totalOutBps += a.AvgOutBps
+			}
+			if z, ok := intfIndex[sideKey{bucketTS: bucketStart, side: "Z"}]; ok {
+				totalInBps += z.AvgInBps
+				totalOutBps += z.AvgOutBps
+			}
+			hs.UtilizationInPct = (totalInBps / float64(meta.BandwidthBps)) * 100
+			hs.UtilizationOutPct = (totalOutBps / float64(meta.BandwidthBps)) * 100
+		}
+
+		hours = append(hours, hs)
 	}
 
 	return &SingleLinkHistoryResponse{
