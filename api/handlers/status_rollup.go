@@ -906,6 +906,118 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 	return result, nil
 }
 
+// --- Issue link detection (first-pass queries) ---
+
+// linkRollupSummary holds per-link aggregate indicators from a lightweight
+// rollup scan used to identify links that may have issues.
+type linkRollupSummary struct {
+	LinkPK       string
+	BucketCount  uint64
+	AnyISISDown  bool
+	MaxALossPct  float64
+	MaxZLossPct  float64
+	AnyDrained   bool
+	MaxAAvgRttUs float64
+	MaxZAvgRttUs float64
+}
+
+// queryLinkRollupSummary runs a lightweight scan of link_rollup_5m to get
+// per-link issue indicators. Skips FINAL for speed since false positives
+// (from unmerged rows) are acceptable — the caller uses this to identify
+// candidate issue links, not for display.
+func queryLinkRollupSummary(ctx context.Context, db driver.Conn, params bucketParams) (map[string]*linkRollupSummary, error) {
+	var args []any
+	if params.StartTime != nil {
+		args = append(args, *params.StartTime)
+	} else {
+		args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	}
+
+	var endClause string
+	if params.EndTime != nil {
+		args = append(args, *params.EndTime)
+		endClause = fmt.Sprintf(" AND bucket_ts < $%d", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			link_pk,
+			countDistinct(bucket_ts) as bucket_count,
+			max(isis_down) > 0 as any_isis_down,
+			max(a_loss_pct) as max_a_loss_pct,
+			max(z_loss_pct) as max_z_loss_pct,
+			max(status IN ('soft-drained', 'hard-drained')) as any_drained,
+			max(a_avg_rtt_us) as max_a_avg_rtt_us,
+			max(z_avg_rtt_us) as max_z_avg_rtt_us
+		FROM link_rollup_5m
+		WHERE bucket_ts >= $1%s
+		GROUP BY link_pk
+	`, endClause)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("link rollup summary query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*linkRollupSummary)
+	for rows.Next() {
+		var s linkRollupSummary
+		if err := rows.Scan(
+			&s.LinkPK, &s.BucketCount,
+			&s.AnyISISDown, &s.MaxALossPct, &s.MaxZLossPct,
+			&s.AnyDrained, &s.MaxAAvgRttUs, &s.MaxZAvgRttUs,
+		); err != nil {
+			return nil, fmt.Errorf("link rollup summary scan: %w", err)
+		}
+		result[s.LinkPK] = &s
+	}
+	return result, rows.Err()
+}
+
+// queryInterfaceIssueLinkPKs returns distinct link PKs that have any interface
+// errors, discards, or carrier transitions in the time range. Skips FINAL for
+// speed since false positives are acceptable for issue detection.
+func queryInterfaceIssueLinkPKs(ctx context.Context, db driver.Conn, params bucketParams) (map[string]bool, error) {
+	var args []any
+	if params.StartTime != nil {
+		args = append(args, *params.StartTime)
+	} else {
+		args = append(args, time.Now().UTC().Add(-time.Duration(params.TotalMinutes)*time.Minute))
+	}
+
+	var endClause string
+	if params.EndTime != nil {
+		args = append(args, *params.EndTime)
+		endClause = fmt.Sprintf(" AND bucket_ts < $%d", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT link_pk
+		FROM device_interface_rollup_5m
+		WHERE bucket_ts >= $1%s
+		  AND link_pk != ''
+		  AND (in_errors > 0 OR out_errors > 0 OR in_fcs_errors > 0
+		       OR in_discards > 0 OR out_discards > 0 OR carrier_transitions > 0)
+	`, endClause)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("interface issue link PKs query: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var pk string
+		if err := rows.Scan(&pk); err != nil {
+			return nil, fmt.Errorf("interface issue link PKs scan: %w", err)
+		}
+		result[pk] = true
+	}
+	return result, rows.Err()
+}
+
 // --- Helpers ---
 
 // bucketIntervalExpr returns a ClickHouse expression that truncates a timestamp

@@ -836,14 +836,17 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 	params = parseBucketParamsCustom(startTime, now, 24)
 	params.TimeRange = timeRange
 
-	resp, err := a.fetchBulkLinkMetrics(ctx, params, include)
+	issuesOnly := q.Get("has_issues") == "true"
+	resp, err := a.fetchBulkLinkMetrics(ctx, params, include, issuesOnly)
 	if err != nil {
 		slog.Error("error fetching bulk link metrics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	if q.Get("has_issues") == "true" {
+	// Final safety filter: the first-pass is intentionally over-inclusive,
+	// so apply the exact Go-level filter to remove any false positives.
+	if issuesOnly {
 		filterBulkLinkMetricsIssuesOnly(resp)
 	}
 
@@ -852,28 +855,50 @@ func (a *API) GetBulkLinkMetrics(w http.ResponseWriter, r *http.Request) {
 
 // filterBulkLinkMetricsIssuesOnly removes links that have no issues from the response.
 // Keeps links with non-healthy buckets, or that are currently drained/provisioning.
+// Links whose only issue is no_data (e.g., a transient rollup gap) are excluded
+// unless they also have degraded/unhealthy buckets — matching the frontend's default filter.
 func filterBulkLinkMetricsIssuesOnly(resp *BulkLinkMetricsResponse) {
 	for pk, link := range resp.Links {
-		keep := false
+		hasRealIssue := false
+		hasNoData := false
 		for _, b := range link.Buckets {
 			if b.Status == nil {
 				continue
 			}
 			if b.Status.DrainStatus != "" || b.Status.Provisioning {
-				keep = true
+				hasRealIssue = true
 				break
 			}
 			if b.Status.ISISDown {
-				keep = true
+				hasRealIssue = true
 				break
 			}
 			if !b.Status.Collecting && b.Status.Health != "healthy" && b.Status.Health != "" {
-				keep = true
-				break
+				if b.Status.Health == "no_data" {
+					hasNoData = true
+				} else {
+					hasRealIssue = true
+					break
+				}
 			}
 		}
-		if !keep {
+		if !hasRealIssue && !hasNoData {
 			delete(resp.Links, pk)
+			continue
+		}
+		// Links with only no_data: keep only if they also have degraded/unhealthy buckets
+		if !hasRealIssue && hasNoData {
+			hasSevere := false
+			for _, b := range link.Buckets {
+				if b.Status != nil && !b.Status.Collecting &&
+					(b.Status.Health == "unhealthy" || b.Status.Health == "degraded") {
+					hasSevere = true
+					break
+				}
+			}
+			if !hasSevere {
+				delete(resp.Links, pk)
+			}
 		}
 	}
 }
@@ -886,10 +911,12 @@ func (a *API) FetchBulkLinkMetricsData(ctx context.Context) (*BulkLinkMetricsRes
 	params := parseBucketParamsCustom(startTime, now, 24)
 	params.TimeRange = "24h"
 	include := parseLinkMetricsInclude("status,traffic")
-	return a.fetchBulkLinkMetrics(ctx, params, include)
+	return a.fetchBulkLinkMetrics(ctx, params, include, false)
 }
 
 // FetchBulkLinkMetricsIssuesData is the page cache variant that only includes links with issues.
+// It reuses FetchBulkLinkMetricsData (which fetches all links in a single pass) and post-filters,
+// since the page cache worker amortizes the cost and both cache entries share the same query work.
 func (a *API) FetchBulkLinkMetricsIssuesData(ctx context.Context) (*BulkLinkMetricsResponse, error) {
 	resp, err := a.FetchBulkLinkMetricsData(ctx)
 	if err != nil {
@@ -899,8 +926,68 @@ func (a *API) FetchBulkLinkMetricsIssuesData(ctx context.Context) (*BulkLinkMetr
 	return resp, nil
 }
 
-// fetchBulkLinkMetrics runs parallel queries for ALL links and assembles the bulk response.
-func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, include linkMetricsInclude) (*BulkLinkMetricsResponse, error) {
+// determineIssueLinkPKs identifies which links likely have issues based on
+// lightweight first-pass data. Intentionally over-inclusive (false positives OK)
+// to avoid missing any true issue links. The caller applies the exact Go-level
+// filter afterward.
+func determineIssueLinkPKs(
+	metaMap map[string]*statusLinkMeta,
+	rollupSummary map[string]*linkRollupSummary,
+	intfIssuePKs map[string]bool,
+	currentISISDown map[string]bool,
+	params bucketParams,
+) map[string]bool {
+	result := make(map[string]bool)
+
+	for pk, meta := range metaMap {
+		// Drained or provisioning links always count as having issues.
+		if health.IsDrainedStatus(meta.Status) || meta.CommittedRttNs == committedRttProvisioningNs {
+			result[pk] = true
+			continue
+		}
+
+		// Current ISIS down.
+		if currentISISDown[pk] {
+			result[pk] = true
+			continue
+		}
+
+		summary, inRollup := rollupSummary[pk]
+
+		// Any issue indicator from the rollup.
+		if inRollup && (summary.AnyISISDown || summary.AnyDrained) {
+			result[pk] = true
+			continue
+		}
+		if inRollup && (summary.MaxALossPct > 0 || summary.MaxZLossPct > 0) {
+			result[pk] = true
+			continue
+		}
+
+		// Latency overage check (over-inclusive: skips inter-metro WAN filter).
+		if inRollup {
+			committedRttUs := meta.CommittedRttUs
+			if committedRttUs > 0 {
+				if summary.MaxAAvgRttUs > committedRttUs*1.2 || summary.MaxZAvgRttUs > committedRttUs*1.2 {
+					result[pk] = true
+					continue
+				}
+			}
+		}
+	}
+
+	// Interface errors/discards/carrier transitions.
+	for pk := range intfIssuePKs {
+		result[pk] = true
+	}
+
+	return result
+}
+
+// fetchBulkLinkMetrics runs parallel queries and assembles the bulk response.
+// When issuesOnly is true, it runs a lightweight first pass to identify links
+// with issues, then fetches detailed data only for those links.
+func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, include linkMetricsInclude, issuesOnly bool) (*BulkLinkMetricsResponse, error) {
 	db := a.envDB(ctx)
 
 	var bucketDuration time.Duration
@@ -921,32 +1008,44 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 		currentISISDown map[string]bool
 	)
 
-	g, gctx := errgroup.WithContext(ctx)
+	// When issuesOnly, run lightweight first-pass queries to identify which
+	// links have issues, then run the expensive rollup queries only for those.
+	var issuePKSet map[string]bool
+	if issuesOnly {
+		var (
+			rollupSummary  map[string]*linkRollupSummary
+			intfIssuePKSet map[string]bool
+		)
 
-	// Fetch all link metadata (no PK filter)
-	g.Go(func() error {
-		var err error
-		metaMap, err = queryStatusLinkMeta(gctx, db)
-		if err != nil {
-			return fmt.Errorf("bulk link metadata: %w", err)
-		}
-		return nil
-	})
+		g, gctx := errgroup.WithContext(ctx)
 
-	// Latency/status rollup for all links (no PK filter)
-	if include.Latency || include.Status {
 		g.Go(func() error {
 			var err error
-			linkRollupMap, err = queryLinkRollup(gctx, db, params)
+			metaMap, err = queryStatusLinkMeta(gctx, db)
 			if err != nil {
-				return fmt.Errorf("bulk link rollup: %w", err)
+				return fmt.Errorf("bulk link metadata: %w", err)
 			}
 			return nil
 		})
-	}
 
-	// Real-time ISIS adjacency state for collecting bucket
-	if include.Status {
+		g.Go(func() error {
+			var err error
+			rollupSummary, err = queryLinkRollupSummary(gctx, db, params)
+			if err != nil {
+				return fmt.Errorf("link rollup summary: %w", err)
+			}
+			return nil
+		})
+
+		g.Go(func() error {
+			var err error
+			intfIssuePKSet, err = queryInterfaceIssueLinkPKs(gctx, db, params)
+			if err != nil {
+				return fmt.Errorf("interface issue link PKs: %w", err)
+			}
+			return nil
+		})
+
 		g.Go(func() error {
 			var err error
 			currentISISDown, err = queryCurrentISISDown(gctx, db)
@@ -956,24 +1055,115 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 			}
 			return nil
 		})
-	}
 
-	// Traffic (interface rollup) for all links (no PK filter)
-	if include.Traffic {
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
+
+		// Determine which links have issues.
+		issuePKSet = determineIssueLinkPKs(metaMap, rollupSummary, intfIssuePKSet, currentISISDown, params)
+
+		if len(issuePKSet) == 0 {
+			bucketSecs := params.BucketSeconds
+			if bucketSecs == 0 {
+				bucketSecs = params.BucketMinutes * 60
+			}
+			return &BulkLinkMetricsResponse{
+				TimeRange:     params.TimeRange,
+				BucketSeconds: bucketSecs,
+				BucketCount:   params.BucketCount,
+				Links:         make(map[string]*LinkMetricsResponse),
+			}, nil
+		}
+
+		issuePKSlice := make([]string, 0, len(issuePKSet))
+		for pk := range issuePKSet {
+			issuePKSlice = append(issuePKSlice, pk)
+		}
+
+		// Phase 2: run full rollup queries filtered to issue links only.
+		g2, gctx2 := errgroup.WithContext(ctx)
+
+		if include.Latency || include.Status {
+			g2.Go(func() error {
+				var err error
+				linkRollupMap, err = queryLinkRollup(gctx2, db, params, issuePKSlice...)
+				if err != nil {
+					return fmt.Errorf("bulk link rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if include.Traffic {
+			g2.Go(func() error {
+				var err error
+				intfRows, err = queryInterfaceRollup(gctx2, db, params, interfaceRollupOpts{
+					GroupBy: groupByLinkSide,
+					LinkPKs: issuePKSlice,
+				})
+				if err != nil {
+					return fmt.Errorf("bulk interface rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if err := g2.Wait(); err != nil {
+			return nil, err
+		}
+	} else {
+		// Original path: fetch everything for all links.
+		g, gctx := errgroup.WithContext(ctx)
+
 		g.Go(func() error {
 			var err error
-			intfRows, err = queryInterfaceRollup(gctx, db, params, interfaceRollupOpts{
-				GroupBy: groupByLinkSide,
-			})
+			metaMap, err = queryStatusLinkMeta(gctx, db)
 			if err != nil {
-				return fmt.Errorf("bulk interface rollup: %w", err)
+				return fmt.Errorf("bulk link metadata: %w", err)
 			}
 			return nil
 		})
-	}
 
-	if err := g.Wait(); err != nil {
-		return nil, err
+		if include.Latency || include.Status {
+			g.Go(func() error {
+				var err error
+				linkRollupMap, err = queryLinkRollup(gctx, db, params)
+				if err != nil {
+					return fmt.Errorf("bulk link rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if include.Status {
+			g.Go(func() error {
+				var err error
+				currentISISDown, err = queryCurrentISISDown(gctx, db)
+				if err != nil {
+					slog.Warn("failed to query current ISIS state for bulk", "error", err)
+					currentISISDown = nil
+				}
+				return nil
+			})
+		}
+
+		if include.Traffic {
+			g.Go(func() error {
+				var err error
+				intfRows, err = queryInterfaceRollup(gctx, db, params, interfaceRollupOpts{
+					GroupBy: groupByLinkSide,
+				})
+				if err != nil {
+					return fmt.Errorf("bulk interface rollup: %w", err)
+				}
+				return nil
+			})
+		}
+
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Index interface rows by (link_pk, bucket, side)
@@ -992,9 +1182,17 @@ func (a *API) fetchBulkLinkMetrics(ctx context.Context, params bucketParams, inc
 		bucketSecs = params.BucketMinutes * 60
 	}
 
-	// Build per-link responses
-	links := make(map[string]*LinkMetricsResponse, len(metaMap))
+	// Build per-link responses. When issuesOnly, only assemble links in the
+	// issue set; other links were not fetched in the rollup queries.
+	linkCount := len(metaMap)
+	if len(issuePKSet) > 0 {
+		linkCount = len(issuePKSet)
+	}
+	links := make(map[string]*LinkMetricsResponse, linkCount)
 	for linkPK, meta := range metaMap {
+		if len(issuePKSet) > 0 && !issuePKSet[linkPK] {
+			continue
+		}
 		committedRtt := meta.CommittedRttUs
 
 		// For health classification, only consider latency on inter-metro WAN links
