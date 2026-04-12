@@ -546,15 +546,15 @@ export function ShredsSeatsPage() {
                     </td>
                     <td className="px-4 py-3 text-sm whitespace-nowrap group/cell">
                       <span className="inline-flex items-center gap-1">
-                        <Link to={`/dz/devices/${seat.device_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={seat.device_key}>
+                        <Link to={`/dz/devices/${seat.device_key}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={seat.device_key}>
                           {seat.device_code || truncatePK(seat.device_key)}
                         </Link>
-                        <CopyIcon text={seat.device_key} />
+                        <CopyIcon text={seat.device_code || seat.device_key} />
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {seat.metro_pk ? (
-                        <Link to={`/dz/metros/${seat.metro_pk}`} className="text-blue-500 hover:underline font-mono text-xs" title={seat.metro_pk}>
+                        <Link to={`/dz/metros/${seat.metro_pk}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={seat.metro_pk}>
                           {seat.metro_code || truncatePK(seat.metro_pk)}
                         </Link>
                       ) : <span className="text-muted-foreground">{'\u2014'}</span>}
@@ -562,7 +562,7 @@ export function ShredsSeatsPage() {
                     <td className="px-4 py-3 text-sm font-mono group/cell">
                       <span className="inline-flex items-center gap-1">
                         {seat.user_pk ? (
-                          <Link to={`/dz/users/${seat.user_pk}`} className="text-blue-500 hover:underline" title={seat.user_pk}>
+                          <Link to={`/dz/users/${seat.user_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" title={seat.user_pk}>
                             {seat.client_ip}
                           </Link>
                         ) : seat.client_ip}
@@ -732,14 +732,14 @@ export function ShredsDevicesPage() {
                   <tr key={d.device_key} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
                     <td className="px-4 py-3 text-sm group/cell">
                       <span className="inline-flex items-center gap-1">
-                        <Link to={`/dz/devices/${d.device_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={d.device_key}>
+                        <Link to={`/dz/devices/${d.device_key}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={d.device_key}>
                           {d.device_code || truncatePK(d.device_key)}
                         </Link>
                         <CopyIcon text={d.device_key} />
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      <Link to={`/dz/metros/${d.metro_exchange_key}`} className="text-blue-500 hover:underline font-mono text-xs" title={d.metro_exchange_key}>
+                      <Link to={`/dz/metros/${d.metro_exchange_key}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={d.metro_exchange_key}>
                         {d.metro_code || truncatePK(d.metro_exchange_key)}
                       </Link>
                     </td>
@@ -1223,11 +1223,11 @@ export function ShredsEscrowEventsPage() {
                       {new Date(e.event_ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border ${eventTypeBadgeColors[e.event_type] || eventTypeBadgeColors.unknown}`}>
+                      <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border whitespace-nowrap ${eventTypeBadgeColors[e.event_type] || eventTypeBadgeColors.unknown}`}>
                         {eventTypeLabels[e.event_type] || e.event_type}
                       </span>
                       {e.status === 'failed' && (
-                        <span className="ml-1 inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">
+                        <span className="ml-1 inline-flex items-center text-xs px-1.5 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 whitespace-nowrap">
                           FAILED
                         </span>
                       )}
@@ -1236,7 +1236,7 @@ export function ShredsEscrowEventsPage() {
                       <span className="inline-flex items-center gap-1.5 group/cell">
                         <Link
                           to={`/dz/shreds/subscribers?search=seat:${e.client_seat_pk}&status=active,expiring,pending,inactive,closed`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline"
+                          className="text-foreground/85 hover:text-foreground hover:underline"
                         >
                           {truncatePK(e.client_seat_pk)}
                         </Link>
@@ -1277,7 +1277,7 @@ export function ShredsEscrowEventsPage() {
                         href={e.solscan_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                        className="inline-flex items-center gap-1 text-xs text-foreground/85 hover:text-foreground hover:underline"
                         title={e.tx_signature}
                       >
                         {truncatePK(e.tx_signature)}
