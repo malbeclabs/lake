@@ -698,12 +698,28 @@ type interfaceRollupRow struct {
 
 	// Traffic rates (sample-weighted avg across sub-buckets)
 	AvgInBps  float64
+	P50InBps  float64
+	P90InBps  float64
+	P95InBps  float64
+	P99InBps  float64
 	MaxInBps  float64
 	AvgOutBps float64
+	P50OutBps float64
+	P90OutBps float64
+	P95OutBps float64
+	P99OutBps float64
 	MaxOutBps float64
 	AvgInPps  float64
+	P50InPps  float64
+	P90InPps  float64
+	P95InPps  float64
+	P99InPps  float64
 	MaxInPps  float64
 	AvgOutPps float64
+	P50OutPps float64
+	P90OutPps float64
+	P95OutPps float64
+	P99OutPps float64
 	MaxOutPps float64
 
 	// Entity state
@@ -795,14 +811,30 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			sum(in_discards) as total_in_discards,
 			sum(out_discards) as total_out_discards,
 			sum(carrier_transitions) as total_carrier_transitions,
-			-- Traffic rates: avg and max
+			-- Traffic rates: avg, percentiles, and max
 			avg(avg_in_bps) as avg_in_bps,
+			max(p50_in_bps) as p50_in_bps,
+			max(p90_in_bps) as p90_in_bps,
+			max(p95_in_bps) as p95_in_bps,
+			max(p99_in_bps) as p99_in_bps,
 			max(max_in_bps) as max_in_bps,
 			avg(avg_out_bps) as avg_out_bps,
+			max(p50_out_bps) as p50_out_bps,
+			max(p90_out_bps) as p90_out_bps,
+			max(p95_out_bps) as p95_out_bps,
+			max(p99_out_bps) as p99_out_bps,
 			max(max_out_bps) as max_out_bps,
 			avg(avg_in_pps) as avg_in_pps,
+			max(p50_in_pps) as p50_in_pps,
+			max(p90_in_pps) as p90_in_pps,
+			max(p95_in_pps) as p95_in_pps,
+			max(p99_in_pps) as p99_in_pps,
 			max(max_in_pps) as max_in_pps,
 			avg(avg_out_pps) as avg_out_pps,
+			max(p50_out_pps) as p50_out_pps,
+			max(p90_out_pps) as p90_out_pps,
+			max(p95_out_pps) as p95_out_pps,
+			max(p99_out_pps) as p99_out_pps,
 			max(max_out_pps) as max_out_pps,
 			-- Entity state
 			argMax(status, bucket_ts) as agg_status,
@@ -855,8 +887,10 @@ func queryInterfaceRollup(ctx context.Context, db driver.Conn, params bucketPara
 			&r.BucketTS,
 			&r.LinkPK, &r.LinkSide, &r.DevicePK, &r.Intf,
 			&r.InErrors, &r.OutErrors, &r.InFcsErrors, &r.InDiscards, &r.OutDiscards, &r.CarrierTransitions,
-			&r.AvgInBps, &r.MaxInBps, &r.AvgOutBps, &r.MaxOutBps,
-			&r.AvgInPps, &r.MaxInPps, &r.AvgOutPps, &r.MaxOutPps,
+			&r.AvgInBps, &r.P50InBps, &r.P90InBps, &r.P95InBps, &r.P99InBps, &r.MaxInBps,
+			&r.AvgOutBps, &r.P50OutBps, &r.P90OutBps, &r.P95OutBps, &r.P99OutBps, &r.MaxOutBps,
+			&r.AvgInPps, &r.P50InPps, &r.P90InPps, &r.P95InPps, &r.P99InPps, &r.MaxInPps,
+			&r.AvgOutPps, &r.P50OutPps, &r.P90OutPps, &r.P95OutPps, &r.P99OutPps, &r.MaxOutPps,
 			&r.Status, &r.ISISOverload, &r.ISISUnreachable, &r.WasDrained,
 			&r.UserPK,
 		); err != nil {

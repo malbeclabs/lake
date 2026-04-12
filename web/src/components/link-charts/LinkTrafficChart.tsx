@@ -18,7 +18,7 @@ interface LinkTrafficChartProps {
   onCursorTime?: (time: number | null) => void
 }
 
-type AggMode = 'avg' | 'peak'
+type AggMode = 'avg' | 'p50' | 'p90' | 'p95' | 'p99' | 'max'
 type MetricMode = 'bps' | 'pps'
 
 function formatBps(value: number): string {
@@ -37,9 +37,16 @@ function formatPps(value: number): string {
 }
 
 function getTrafficValue(t: LinkMetricsTraffic, side: 'a' | 'z', dir: 'in' | 'out', agg: AggMode, metric: MetricMode): number {
-  const prefix = agg === 'peak' ? (metric === 'bps' ? `side_${side}_max_${dir}_bps` : `side_${side}_max_${dir}_pps`) :
-    (metric === 'bps' ? `side_${side}_${dir}_bps` : `side_${side}_${dir}_pps`)
-  return (t as unknown as Record<string, number>)[prefix] ?? 0
+  const suffix = metric === 'bps' ? 'bps' : 'pps'
+  let key: string
+  if (agg === 'max') {
+    key = `side_${side}_max_${dir}_${suffix}`
+  } else if (agg === 'avg') {
+    key = `side_${side}_${dir}_${suffix}`
+  } else {
+    key = `side_${side}_${agg}_${dir}_${suffix}`
+  }
+  return (t as unknown as Record<string, number>)[key] ?? 0
 }
 
 export function LinkTrafficChart({ data, className, loading, highlightTimeRange, onCursorTime }: LinkTrafficChartProps) {
@@ -247,7 +254,11 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
             className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
           >
             <option value="avg">Avg</option>
-            <option value="peak">Peak</option>
+            <option value="p50">P50</option>
+            <option value="p90">P90</option>
+            <option value="p95">P95</option>
+            <option value="p99">P99</option>
+            <option value="max">Max</option>
           </select>
           <select
             value={metricMode}

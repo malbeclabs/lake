@@ -48,8 +48,16 @@ type DeviceInterfaceTraffic struct {
 	UserPK             string  `json:"user_pk,omitempty"`
 	CYOAType           string  `json:"cyoa_type,omitempty"`
 	InBps              float64 `json:"in_bps"`
-	OutBps             float64 `json:"out_bps"`
+	P50InBps           float64 `json:"p50_in_bps"`
+	P90InBps           float64 `json:"p90_in_bps"`
+	P95InBps           float64 `json:"p95_in_bps"`
+	P99InBps           float64 `json:"p99_in_bps"`
 	MaxInBps           float64 `json:"max_in_bps"`
+	OutBps             float64 `json:"out_bps"`
+	P50OutBps          float64 `json:"p50_out_bps"`
+	P90OutBps          float64 `json:"p90_out_bps"`
+	P95OutBps          float64 `json:"p95_out_bps"`
+	P99OutBps          float64 `json:"p99_out_bps"`
 	MaxOutBps          float64 `json:"max_out_bps"`
 	InErrors           uint64  `json:"in_errors"`
 	OutErrors          uint64  `json:"out_errors"`
@@ -72,12 +80,28 @@ type DeviceMetricsStatus struct {
 // DeviceMetricsTraffic holds aggregated throughput and interface counters.
 type DeviceMetricsTraffic struct {
 	InBps              float64 `json:"in_bps"`
-	OutBps             float64 `json:"out_bps"`
+	P50InBps           float64 `json:"p50_in_bps"`
+	P90InBps           float64 `json:"p90_in_bps"`
+	P95InBps           float64 `json:"p95_in_bps"`
+	P99InBps           float64 `json:"p99_in_bps"`
 	MaxInBps           float64 `json:"max_in_bps"`
+	OutBps             float64 `json:"out_bps"`
+	P50OutBps          float64 `json:"p50_out_bps"`
+	P90OutBps          float64 `json:"p90_out_bps"`
+	P95OutBps          float64 `json:"p95_out_bps"`
+	P99OutBps          float64 `json:"p99_out_bps"`
 	MaxOutBps          float64 `json:"max_out_bps"`
 	InPps              float64 `json:"in_pps"`
-	OutPps             float64 `json:"out_pps"`
+	P50InPps           float64 `json:"p50_in_pps"`
+	P90InPps           float64 `json:"p90_in_pps"`
+	P95InPps           float64 `json:"p95_in_pps"`
+	P99InPps           float64 `json:"p99_in_pps"`
 	MaxInPps           float64 `json:"max_in_pps"`
+	OutPps             float64 `json:"out_pps"`
+	P50OutPps          float64 `json:"p50_out_pps"`
+	P90OutPps          float64 `json:"p90_out_pps"`
+	P95OutPps          float64 `json:"p95_out_pps"`
+	P99OutPps          float64 `json:"p99_out_pps"`
 	MaxOutPps          float64 `json:"max_out_pps"`
 	InErrors           uint64  `json:"in_errors"`
 	OutErrors          uint64  `json:"out_errors"`
@@ -402,12 +426,28 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 		if include.Traffic && row != nil {
 			bucket.Traffic = &DeviceMetricsTraffic{
 				InBps:              row.AvgInBps,
-				OutBps:             row.AvgOutBps,
+				P50InBps:           row.P50InBps,
+				P90InBps:           row.P90InBps,
+				P95InBps:           row.P95InBps,
+				P99InBps:           row.P99InBps,
 				MaxInBps:           row.MaxInBps,
+				OutBps:             row.AvgOutBps,
+				P50OutBps:          row.P50OutBps,
+				P90OutBps:          row.P90OutBps,
+				P95OutBps:          row.P95OutBps,
+				P99OutBps:          row.P99OutBps,
 				MaxOutBps:          row.MaxOutBps,
 				InPps:              row.AvgInPps,
-				OutPps:             row.AvgOutPps,
+				P50InPps:           row.P50InPps,
+				P90InPps:           row.P90InPps,
+				P95InPps:           row.P95InPps,
+				P99InPps:           row.P99InPps,
 				MaxInPps:           row.MaxInPps,
+				OutPps:             row.AvgOutPps,
+				P50OutPps:          row.P50OutPps,
+				P90OutPps:          row.P90OutPps,
+				P95OutPps:          row.P95OutPps,
+				P99OutPps:          row.P99OutPps,
 				MaxOutPps:          row.MaxOutPps,
 				InErrors:           row.InErrors,
 				OutErrors:          row.OutErrors,
@@ -431,8 +471,16 @@ func (a *API) fetchDeviceMetrics(ctx context.Context, devicePK string, params bu
 						UserPK:             ir.UserPK,
 						CYOAType:           cyoaTypes[ir.Intf],
 						InBps:              ir.AvgInBps,
-						OutBps:             ir.AvgOutBps,
+						P50InBps:           ir.P50InBps,
+						P90InBps:           ir.P90InBps,
+						P95InBps:           ir.P95InBps,
+						P99InBps:           ir.P99InBps,
 						MaxInBps:           ir.MaxInBps,
+						OutBps:             ir.AvgOutBps,
+						P50OutBps:          ir.P50OutBps,
+						P90OutBps:          ir.P90OutBps,
+						P95OutBps:          ir.P95OutBps,
+						P99OutBps:          ir.P99OutBps,
 						MaxOutBps:          ir.MaxOutBps,
 						InErrors:           ir.InErrors,
 						OutErrors:          ir.OutErrors,
@@ -728,12 +776,28 @@ func (a *API) fetchBulkDeviceMetrics(ctx context.Context, params bucketParams, i
 			if include.Traffic && row != nil {
 				bucket.Traffic = &DeviceMetricsTraffic{
 					InBps:              row.AvgInBps,
-					OutBps:             row.AvgOutBps,
+					P50InBps:           row.P50InBps,
+					P90InBps:           row.P90InBps,
+					P95InBps:           row.P95InBps,
+					P99InBps:           row.P99InBps,
 					MaxInBps:           row.MaxInBps,
+					OutBps:             row.AvgOutBps,
+					P50OutBps:          row.P50OutBps,
+					P90OutBps:          row.P90OutBps,
+					P95OutBps:          row.P95OutBps,
+					P99OutBps:          row.P99OutBps,
 					MaxOutBps:          row.MaxOutBps,
 					InPps:              row.AvgInPps,
-					OutPps:             row.AvgOutPps,
+					P50InPps:           row.P50InPps,
+					P90InPps:           row.P90InPps,
+					P95InPps:           row.P95InPps,
+					P99InPps:           row.P99InPps,
 					MaxInPps:           row.MaxInPps,
+					OutPps:             row.AvgOutPps,
+					P50OutPps:          row.P50OutPps,
+					P90OutPps:          row.P90OutPps,
+					P95OutPps:          row.P95OutPps,
+					P99OutPps:          row.P99OutPps,
 					MaxOutPps:          row.MaxOutPps,
 					InErrors:           row.InErrors,
 					OutErrors:          row.OutErrors,

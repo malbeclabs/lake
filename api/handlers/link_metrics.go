@@ -97,20 +97,52 @@ type LinkMetricsLatency struct {
 // LinkMetricsTraffic holds per-side throughput and interface counters plus utilization.
 type LinkMetricsTraffic struct {
 	SideAInBps              float64 `json:"side_a_in_bps"`
-	SideAOutBps             float64 `json:"side_a_out_bps"`
-	SideZInBps              float64 `json:"side_z_in_bps"`
-	SideZOutBps             float64 `json:"side_z_out_bps"`
+	SideAP50InBps           float64 `json:"side_a_p50_in_bps"`
+	SideAP90InBps           float64 `json:"side_a_p90_in_bps"`
+	SideAP95InBps           float64 `json:"side_a_p95_in_bps"`
+	SideAP99InBps           float64 `json:"side_a_p99_in_bps"`
 	SideAMaxInBps           float64 `json:"side_a_max_in_bps"`
+	SideAOutBps             float64 `json:"side_a_out_bps"`
+	SideAP50OutBps          float64 `json:"side_a_p50_out_bps"`
+	SideAP90OutBps          float64 `json:"side_a_p90_out_bps"`
+	SideAP95OutBps          float64 `json:"side_a_p95_out_bps"`
+	SideAP99OutBps          float64 `json:"side_a_p99_out_bps"`
 	SideAMaxOutBps          float64 `json:"side_a_max_out_bps"`
+	SideZInBps              float64 `json:"side_z_in_bps"`
+	SideZP50InBps           float64 `json:"side_z_p50_in_bps"`
+	SideZP90InBps           float64 `json:"side_z_p90_in_bps"`
+	SideZP95InBps           float64 `json:"side_z_p95_in_bps"`
+	SideZP99InBps           float64 `json:"side_z_p99_in_bps"`
 	SideZMaxInBps           float64 `json:"side_z_max_in_bps"`
+	SideZOutBps             float64 `json:"side_z_out_bps"`
+	SideZP50OutBps          float64 `json:"side_z_p50_out_bps"`
+	SideZP90OutBps          float64 `json:"side_z_p90_out_bps"`
+	SideZP95OutBps          float64 `json:"side_z_p95_out_bps"`
+	SideZP99OutBps          float64 `json:"side_z_p99_out_bps"`
 	SideZMaxOutBps          float64 `json:"side_z_max_out_bps"`
 	SideAInPps              float64 `json:"side_a_in_pps"`
-	SideAOutPps             float64 `json:"side_a_out_pps"`
-	SideZInPps              float64 `json:"side_z_in_pps"`
-	SideZOutPps             float64 `json:"side_z_out_pps"`
+	SideAP50InPps           float64 `json:"side_a_p50_in_pps"`
+	SideAP90InPps           float64 `json:"side_a_p90_in_pps"`
+	SideAP95InPps           float64 `json:"side_a_p95_in_pps"`
+	SideAP99InPps           float64 `json:"side_a_p99_in_pps"`
 	SideAMaxInPps           float64 `json:"side_a_max_in_pps"`
+	SideAOutPps             float64 `json:"side_a_out_pps"`
+	SideAP50OutPps          float64 `json:"side_a_p50_out_pps"`
+	SideAP90OutPps          float64 `json:"side_a_p90_out_pps"`
+	SideAP95OutPps          float64 `json:"side_a_p95_out_pps"`
+	SideAP99OutPps          float64 `json:"side_a_p99_out_pps"`
 	SideAMaxOutPps          float64 `json:"side_a_max_out_pps"`
+	SideZInPps              float64 `json:"side_z_in_pps"`
+	SideZP50InPps           float64 `json:"side_z_p50_in_pps"`
+	SideZP90InPps           float64 `json:"side_z_p90_in_pps"`
+	SideZP95InPps           float64 `json:"side_z_p95_in_pps"`
+	SideZP99InPps           float64 `json:"side_z_p99_in_pps"`
 	SideZMaxInPps           float64 `json:"side_z_max_in_pps"`
+	SideZOutPps             float64 `json:"side_z_out_pps"`
+	SideZP50OutPps          float64 `json:"side_z_p50_out_pps"`
+	SideZP90OutPps          float64 `json:"side_z_p90_out_pps"`
+	SideZP95OutPps          float64 `json:"side_z_p95_out_pps"`
+	SideZP99OutPps          float64 `json:"side_z_p99_out_pps"`
 	SideZMaxOutPps          float64 `json:"side_z_max_out_pps"`
 	SideAInErrors           uint64  `json:"side_a_in_errors"`
 	SideAOutErrors          uint64  `json:"side_a_out_errors"`
@@ -672,12 +704,28 @@ func buildLinkMetricsTraffic(
 	t := &LinkMetricsTraffic{}
 	if hasA {
 		t.SideAInBps = a.AvgInBps
-		t.SideAOutBps = a.AvgOutBps
+		t.SideAP50InBps = a.P50InBps
+		t.SideAP90InBps = a.P90InBps
+		t.SideAP95InBps = a.P95InBps
+		t.SideAP99InBps = a.P99InBps
 		t.SideAMaxInBps = a.MaxInBps
+		t.SideAOutBps = a.AvgOutBps
+		t.SideAP50OutBps = a.P50OutBps
+		t.SideAP90OutBps = a.P90OutBps
+		t.SideAP95OutBps = a.P95OutBps
+		t.SideAP99OutBps = a.P99OutBps
 		t.SideAMaxOutBps = a.MaxOutBps
 		t.SideAInPps = a.AvgInPps
-		t.SideAOutPps = a.AvgOutPps
+		t.SideAP50InPps = a.P50InPps
+		t.SideAP90InPps = a.P90InPps
+		t.SideAP95InPps = a.P95InPps
+		t.SideAP99InPps = a.P99InPps
 		t.SideAMaxInPps = a.MaxInPps
+		t.SideAOutPps = a.AvgOutPps
+		t.SideAP50OutPps = a.P50OutPps
+		t.SideAP90OutPps = a.P90OutPps
+		t.SideAP95OutPps = a.P95OutPps
+		t.SideAP99OutPps = a.P99OutPps
 		t.SideAMaxOutPps = a.MaxOutPps
 		t.SideAInErrors = a.InErrors
 		t.SideAOutErrors = a.OutErrors
@@ -688,12 +736,28 @@ func buildLinkMetricsTraffic(
 	}
 	if hasZ {
 		t.SideZInBps = z.AvgInBps
-		t.SideZOutBps = z.AvgOutBps
+		t.SideZP50InBps = z.P50InBps
+		t.SideZP90InBps = z.P90InBps
+		t.SideZP95InBps = z.P95InBps
+		t.SideZP99InBps = z.P99InBps
 		t.SideZMaxInBps = z.MaxInBps
+		t.SideZOutBps = z.AvgOutBps
+		t.SideZP50OutBps = z.P50OutBps
+		t.SideZP90OutBps = z.P90OutBps
+		t.SideZP95OutBps = z.P95OutBps
+		t.SideZP99OutBps = z.P99OutBps
 		t.SideZMaxOutBps = z.MaxOutBps
 		t.SideZInPps = z.AvgInPps
-		t.SideZOutPps = z.AvgOutPps
+		t.SideZP50InPps = z.P50InPps
+		t.SideZP90InPps = z.P90InPps
+		t.SideZP95InPps = z.P95InPps
+		t.SideZP99InPps = z.P99InPps
 		t.SideZMaxInPps = z.MaxInPps
+		t.SideZOutPps = z.AvgOutPps
+		t.SideZP50OutPps = z.P50OutPps
+		t.SideZP90OutPps = z.P90OutPps
+		t.SideZP95OutPps = z.P95OutPps
+		t.SideZP99OutPps = z.P99OutPps
 		t.SideZMaxOutPps = z.MaxOutPps
 		t.SideZInErrors = z.InErrors
 		t.SideZOutErrors = z.OutErrors

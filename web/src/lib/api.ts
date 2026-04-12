@@ -5110,20 +5110,52 @@ export interface LinkMetricsLatency {
 
 export interface LinkMetricsTraffic {
   side_a_in_bps: number
-  side_a_out_bps: number
-  side_z_in_bps: number
-  side_z_out_bps: number
+  side_a_p50_in_bps: number
+  side_a_p90_in_bps: number
+  side_a_p95_in_bps: number
+  side_a_p99_in_bps: number
   side_a_max_in_bps: number
+  side_a_out_bps: number
+  side_a_p50_out_bps: number
+  side_a_p90_out_bps: number
+  side_a_p95_out_bps: number
+  side_a_p99_out_bps: number
   side_a_max_out_bps: number
+  side_z_in_bps: number
+  side_z_p50_in_bps: number
+  side_z_p90_in_bps: number
+  side_z_p95_in_bps: number
+  side_z_p99_in_bps: number
   side_z_max_in_bps: number
+  side_z_out_bps: number
+  side_z_p50_out_bps: number
+  side_z_p90_out_bps: number
+  side_z_p95_out_bps: number
+  side_z_p99_out_bps: number
   side_z_max_out_bps: number
   side_a_in_pps: number
-  side_a_out_pps: number
-  side_z_in_pps: number
-  side_z_out_pps: number
+  side_a_p50_in_pps: number
+  side_a_p90_in_pps: number
+  side_a_p95_in_pps: number
+  side_a_p99_in_pps: number
   side_a_max_in_pps: number
+  side_a_out_pps: number
+  side_a_p50_out_pps: number
+  side_a_p90_out_pps: number
+  side_a_p95_out_pps: number
+  side_a_p99_out_pps: number
   side_a_max_out_pps: number
+  side_z_in_pps: number
+  side_z_p50_in_pps: number
+  side_z_p90_in_pps: number
+  side_z_p95_in_pps: number
+  side_z_p99_in_pps: number
   side_z_max_in_pps: number
+  side_z_out_pps: number
+  side_z_p50_out_pps: number
+  side_z_p90_out_pps: number
+  side_z_p95_out_pps: number
+  side_z_p99_out_pps: number
   side_z_max_out_pps: number
   side_a_in_errors: number
   side_a_out_errors: number
@@ -5224,12 +5256,28 @@ export interface DeviceMetricsStatus {
 
 export interface DeviceMetricsTraffic {
   in_bps: number
-  out_bps: number
+  p50_in_bps: number
+  p90_in_bps: number
+  p95_in_bps: number
+  p99_in_bps: number
   max_in_bps: number
+  out_bps: number
+  p50_out_bps: number
+  p90_out_bps: number
+  p95_out_bps: number
+  p99_out_bps: number
   max_out_bps: number
   in_pps: number
-  out_pps: number
+  p50_in_pps: number
+  p90_in_pps: number
+  p95_in_pps: number
+  p99_in_pps: number
   max_in_pps: number
+  out_pps: number
+  p50_out_pps: number
+  p90_out_pps: number
+  p95_out_pps: number
+  p99_out_pps: number
   max_out_pps: number
   in_errors: number
   out_errors: number
@@ -5247,8 +5295,16 @@ export interface DeviceInterfaceTraffic {
   user_pk?: string
   cyoa_type?: string
   in_bps: number
-  out_bps: number
+  p50_in_bps: number
+  p90_in_bps: number
+  p95_in_bps: number
+  p99_in_bps: number
   max_in_bps: number
+  out_bps: number
+  p50_out_bps: number
+  p90_out_bps: number
+  p95_out_bps: number
+  p99_out_bps: number
   max_out_bps: number
   in_errors: number
   out_errors: number

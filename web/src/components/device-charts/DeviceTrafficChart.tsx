@@ -16,7 +16,7 @@ interface DeviceTrafficChartProps {
   onCursorTime?: (time: number | null) => void
 }
 
-type AggMode = 'avg' | 'peak'
+type AggMode = 'avg' | 'p50' | 'p90' | 'p95' | 'p99' | 'max'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
 
@@ -117,8 +117,10 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
         const key = `${intf}:${ts}`
         const d = dataMap.get(key)
         if (d) {
-          const inVal = aggMode === 'peak' ? d.max_in_bps : d.in_bps
-          const outVal = aggMode === 'peak' ? d.max_out_bps : d.out_bps
+          const inKey = aggMode === 'max' ? 'max_in_bps' : aggMode === 'avg' ? 'in_bps' : `${aggMode}_in_bps`
+          const outKey = aggMode === 'max' ? 'max_out_bps' : aggMode === 'avg' ? 'out_bps' : `${aggMode}_out_bps`
+          const inVal = (d as unknown as Record<string, number>)[inKey]
+          const outVal = (d as unknown as Record<string, number>)[outKey]
           inVals.push(inVal || null)
           outVals.push(outVal ? -outVal : null)
         } else {
@@ -384,7 +386,11 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
         className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
       >
         <option value="avg">Avg</option>
-        <option value="peak">Peak</option>
+        <option value="p50">P50</option>
+        <option value="p90">P90</option>
+        <option value="p95">P95</option>
+        <option value="p99">P99</option>
+        <option value="max">Max</option>
       </select>
     </div>
   )
