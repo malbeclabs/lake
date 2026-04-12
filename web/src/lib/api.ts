@@ -1683,6 +1683,45 @@ export async function fetchTopology(): Promise<TopologyResponse> {
   return res.json()
 }
 
+export interface TopologyLinkMetricsEntry {
+  latency_us: number
+  jitter_us: number
+  latency_a_to_z_us: number
+  jitter_a_to_z_us: number
+  latency_z_to_a_us: number
+  jitter_z_to_a_us: number
+  loss_percent: number
+  sample_count: number
+  in_bps: number
+  out_bps: number
+}
+
+export interface TopologyLinkMetricsResponse {
+  metrics: Record<string, TopologyLinkMetricsEntry>
+  error?: string
+}
+
+export async function fetchTopologyLinkMetrics(): Promise<TopologyLinkMetricsResponse> {
+  const res = await fetchWithRetry('/api/topology/link-metrics')
+  if (!res.ok) {
+    throw new Error('Failed to fetch topology link metrics')
+  }
+  return res.json()
+}
+
+export interface TopologyValidatorsResponse {
+  validators: TopologyValidator[]
+  error?: string
+}
+
+export async function fetchTopologyValidators(): Promise<TopologyValidatorsResponse> {
+  const res = await fetchWithRetry('/api/topology/validators')
+  if (!res.ok) {
+    throw new Error('Failed to fetch topology validators')
+  }
+  return res.json()
+}
+
 // ISIS Topology types (graph view)
 export interface ISISNodeData {
   id: string

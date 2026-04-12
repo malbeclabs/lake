@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, lazy, Suspense, Component, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense, Component, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useQuery } from '@tanstack/react-query'
-import { fetchTopology } from '@/lib/api'
+import { fetchTopology, fetchTopologyLinkMetrics, fetchTopologyValidators } from '@/lib/api'
 import { TopologyMap } from '@/components/topology-map'
 import { TopologyGraph } from '@/components/topology-graph'
 import { TopologyProvider } from '@/components/topology'
@@ -100,6 +100,35 @@ export function TopologyPage({ view }: TopologyPageProps) {
     refetchInterval: 60000, // Refresh every minute
   })
 
+  // Eager background fetch for link metrics (latency, jitter, loss, traffic)
+  const { data: linkMetricsData } = useQuery({
+    queryKey: ['topology-link-metrics'],
+    queryFn: fetchTopologyLinkMetrics,
+    refetchInterval: 60000,
+  })
+
+  // Lazy fetch validators only when overlay is active
+  const validatorsEnabled = (searchParams.get('overlays') ?? '').split(',').includes('validators')
+  const { data: validatorsData } = useQuery({
+    queryKey: ['topology-validators'],
+    queryFn: fetchTopologyValidators,
+    refetchInterval: 60000,
+    enabled: validatorsEnabled,
+  })
+
+  // Merge link metrics into base links when available
+  const mergedLinks = useMemo(() => {
+    if (!data?.links) return []
+    if (!linkMetricsData?.metrics) return data.links
+    return data.links.map(link => {
+      const m = linkMetricsData.metrics[link.pk]
+      if (!m) return link
+      return { ...link, ...m }
+    })
+  }, [data?.links, linkMetricsData?.metrics])
+
+  const mergedValidators = validatorsData?.validators ?? data?.validators ?? []
+
   // Handle device selection from graph view
   const handleGraphDeviceSelect = useCallback((devicePK: string | null) => {
     setSearchParams(prev => {
@@ -146,8 +175,8 @@ export function TopologyPage({ view }: TopologyPageProps) {
           <TopologyMap
             metros={data.metros}
             devices={data.devices}
-            links={data.links}
-            validators={data.validators}
+            links={mergedLinks}
+            validators={mergedValidators}
           />
         )}
 
@@ -165,8 +194,8 @@ export function TopologyPage({ view }: TopologyPageProps) {
                 <TopologyGlobe
                   metros={data.metros}
                   devices={data.devices}
-                  links={data.links}
-                  validators={data.validators}
+                  links={mergedLinks}
+                  validators={mergedValidators}
                 />
               </Suspense>
             </GlobeErrorBoundary>

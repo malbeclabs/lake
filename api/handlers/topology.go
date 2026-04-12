@@ -147,7 +147,6 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 	var metros []Metro
 	var devices []Device
 	var links []Link
-	var validators []Validator
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(10)
@@ -236,7 +235,7 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 		return rows.Err()
 	})
 
-	// Fetch activated links with measured latency, jitter, loss, and traffic rates
+	// Fetch activated links (base data only, no latency/traffic metrics)
 	g.Go(func() error {
 		query := `
 			SELECT
@@ -244,57 +243,12 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 				l.side_a_pk, COALESCE(da.code, '') as side_a_code, COALESCE(l.side_a_iface_name, '') as side_a_iface_name, COALESCE(l.side_a_ip, '') as side_a_ip,
 				l.side_z_pk, COALESCE(dz.code, '') as side_z_code, COALESCE(l.side_z_iface_name, '') as side_z_iface_name, COALESCE(l.side_z_ip, '') as side_z_ip,
 				l.contributor_pk, COALESCE(c.code, '') as contributor_code,
-				COALESCE(lat.avg_rtt_us, 0) as latency_us,
-				COALESCE(lat.avg_ipdv_us, 0) as jitter_us,
-				COALESCE(lat_a.avg_rtt_us, 0) as latency_a_to_z_us,
-				COALESCE(lat_a.avg_ipdv_us, 0) as jitter_a_to_z_us,
-				COALESCE(lat_z.avg_rtt_us, 0) as latency_z_to_a_us,
-				COALESCE(lat_z.avg_ipdv_us, 0) as jitter_z_to_a_us,
-				COALESCE(lat.loss_percent, 0) as loss_percent,
-				COALESCE(lat.sample_count, 0) as sample_count,
-				COALESCE(traffic.in_bps, 0) as in_bps,
-				COALESCE(traffic.out_bps, 0) as out_bps,
 				COALESCE(l.committed_rtt_ns, 0) as committed_rtt_ns,
 				COALESCE(l.isis_delay_override_ns, 0) as isis_delay_override_ns
 			FROM dz_links_current l
 			LEFT JOIN dz_devices_current da ON l.side_a_pk = da.pk
 			LEFT JOIN dz_devices_current dz ON l.side_z_pk = dz.pk
 			LEFT JOIN dz_contributors_current c ON l.contributor_pk = c.pk
-			LEFT JOIN (
-				SELECT link_pk,
-					sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
-					sum(a_avg_jitter_us * a_samples + z_avg_jitter_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_ipdv_us,
-					sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent,
-					sum(a_samples + z_samples) as sample_count
-				FROM link_rollup_5m FINAL
-				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
-				GROUP BY link_pk
-			) lat ON l.pk = lat.link_pk
-			LEFT JOIN (
-				SELECT link_pk,
-					sum(a_avg_rtt_us * a_samples) / greatest(sum(a_samples), 1) as avg_rtt_us,
-					sum(a_avg_jitter_us * a_samples) / greatest(sum(a_samples), 1) as avg_ipdv_us
-				FROM link_rollup_5m FINAL
-				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
-				GROUP BY link_pk
-			) lat_a ON l.pk = lat_a.link_pk
-			LEFT JOIN (
-				SELECT link_pk,
-					sum(z_avg_rtt_us * z_samples) / greatest(sum(z_samples), 1) as avg_rtt_us,
-					sum(z_avg_jitter_us * z_samples) / greatest(sum(z_samples), 1) as avg_ipdv_us
-				FROM link_rollup_5m FINAL
-				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
-				GROUP BY link_pk
-			) lat_z ON l.pk = lat_z.link_pk
-			LEFT JOIN (
-				SELECT link_pk,
-					avg(avg_in_bps) as in_bps,
-					avg(avg_out_bps) as out_bps
-				FROM device_interface_rollup_5m
-				WHERE bucket_ts >= now() - INTERVAL 5 MINUTE
-					AND link_pk != ''
-				GROUP BY link_pk
-			) traffic ON l.pk = traffic.link_pk
 			WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query)
@@ -305,93 +259,10 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 
 		for rows.Next() {
 			var l Link
-			if err := rows.Scan(&l.PK, &l.Code, &l.Status, &l.LinkType, &l.BandwidthBps, &l.SideAPK, &l.SideACode, &l.SideAIfaceName, &l.SideAIP, &l.SideZPK, &l.SideZCode, &l.SideZIfaceName, &l.SideZIP, &l.ContributorPK, &l.ContributorCode, &l.LatencyUs, &l.JitterUs, &l.LatencyAtoZUs, &l.JitterAtoZUs, &l.LatencyZtoAUs, &l.JitterZtoAUs, &l.LossPercent, &l.SampleCount, &l.InBps, &l.OutBps, &l.CommittedRttNs, &l.ISISDelayOverrideNs); err != nil {
+			if err := rows.Scan(&l.PK, &l.Code, &l.Status, &l.LinkType, &l.BandwidthBps, &l.SideAPK, &l.SideACode, &l.SideAIfaceName, &l.SideAIP, &l.SideZPK, &l.SideZCode, &l.SideZIfaceName, &l.SideZIP, &l.ContributorPK, &l.ContributorCode, &l.CommittedRttNs, &l.ISISDelayOverrideNs); err != nil {
 				return err
 			}
 			links = append(links, l)
-		}
-		return rows.Err()
-	})
-
-	// Fetch validators on DZ with their GeoIP locations and traffic rates
-	g.Go(func() error {
-		query := `
-			WITH dz_user_ips AS (
-				SELECT
-					client_ip,
-					any(device_pk) as device_pk,
-					any(tunnel_id) as tunnel_id
-				FROM dz_users_current
-				WHERE status = 'activated'
-					AND client_ip != ''
-				GROUP BY client_ip
-			),
-			total_dz_stake AS (
-				SELECT COALESCE(SUM(va.activated_stake_lamports), 0) as total_lamports
-				FROM dz_user_ips u
-				JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
-				JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
-					AND va.epoch_vote_account = 'true'
-					AND va.activated_stake_lamports > 0
-			),
-			user_traffic AS (
-				SELECT
-					user_tunnel_id,
-					CASE WHEN SUM(delta_duration) > 0 THEN SUM(in_octets_delta) * 8 / SUM(delta_duration) ELSE 0 END as in_bps,
-					CASE WHEN SUM(delta_duration) > 0 THEN SUM(out_octets_delta) * 8 / SUM(delta_duration) ELSE 0 END as out_bps
-				FROM fact_dz_device_interface_counters
-				WHERE event_ts > now() - INTERVAL 5 MINUTE
-					AND user_tunnel_id IS NOT NULL
-					AND delta_duration > 0
-					AND in_octets_delta >= 0
-					AND out_octets_delta >= 0
-				GROUP BY user_tunnel_id
-			)
-			SELECT
-				va.vote_pubkey,
-				gn.pubkey as node_pubkey,
-				u.device_pk,
-				u.tunnel_id,
-				geo.latitude,
-				geo.longitude,
-				COALESCE(geo.city, '') as city,
-				COALESCE(geo.country, '') as country,
-				va.activated_stake_lamports / 1e9 as stake_sol,
-				CASE
-					WHEN ts.total_lamports > 0 THEN va.activated_stake_lamports / ts.total_lamports * 100
-					ELSE 0
-				END as stake_share,
-				COALESCE(va.commission_percentage, 0) as commission,
-				COALESCE(gn.version, '') as version,
-				COALESCE(gn.gossip_ip, '') as gossip_ip,
-				COALESCE(gn.gossip_port, 0) as gossip_port,
-				COALESCE(gn.tpuquic_ip, '') as tpu_quic_ip,
-				COALESCE(gn.tpuquic_port, 0) as tpu_quic_port,
-				COALESCE(traffic.in_bps, 0) as in_bps,
-				COALESCE(traffic.out_bps, 0) as out_bps
-			FROM dz_user_ips u
-			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
-			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
-				AND va.epoch_vote_account = 'true'
-				AND va.activated_stake_lamports > 0
-			LEFT JOIN geoip_records_current geo ON gn.gossip_ip = geo.ip
-			LEFT JOIN user_traffic traffic ON u.tunnel_id = traffic.user_tunnel_id
-			CROSS JOIN total_dz_stake ts
-			WHERE geo.latitude IS NOT NULL
-				AND geo.longitude IS NOT NULL
-		`
-		rows, err := a.envDB(ctx).Query(ctx, query)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var v Validator
-			if err := rows.Scan(&v.VotePubkey, &v.NodePubkey, &v.DevicePK, &v.TunnelID, &v.Latitude, &v.Longitude, &v.City, &v.Country, &v.StakeSol, &v.StakeShare, &v.Commission, &v.Version, &v.GossipIP, &v.GossipPort, &v.TPUQuicIP, &v.TPUQuicPort, &v.InBps, &v.OutBps); err != nil {
-				return err
-			}
-			validators = append(validators, v)
 		}
 		return rows.Err()
 	})
@@ -401,11 +272,319 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 	metrics.RecordClickHouseQuery(duration, err)
 
 	return TopologyResponse{
-		Metros:     metros,
-		Devices:    devices,
-		Links:      links,
-		Validators: validators,
+		Metros:  metros,
+		Devices: devices,
+		Links:   links,
 	}, err
+}
+
+// TopologyLinkMetricsEntry holds latency, jitter, loss, and traffic metrics for a single link.
+type TopologyLinkMetricsEntry struct {
+	LatencyUs     float64 `json:"latency_us"`
+	JitterUs      float64 `json:"jitter_us"`
+	LatencyAtoZUs float64 `json:"latency_a_to_z_us"`
+	JitterAtoZUs  float64 `json:"jitter_a_to_z_us"`
+	LatencyZtoAUs float64 `json:"latency_z_to_a_us"`
+	JitterZtoAUs  float64 `json:"jitter_z_to_a_us"`
+	LossPercent   float64 `json:"loss_percent"`
+	SampleCount   uint64  `json:"sample_count"`
+	InBps         float64 `json:"in_bps"`
+	OutBps        float64 `json:"out_bps"`
+}
+
+// TopologyLinkMetricsResponse is the response for GET /api/topology/link-metrics.
+type TopologyLinkMetricsResponse struct {
+	Metrics map[string]TopologyLinkMetricsEntry `json:"metrics"`
+	Error   string                              `json:"error,omitempty"`
+}
+
+func (a *API) GetTopologyLinkMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	response, err := a.fetchTopologyLinkMetrics(ctx)
+	if err != nil && dberror.IsTransient(err) {
+		cancel()
+		var retryCancel context.CancelFunc
+		ctx, retryCancel = context.WithTimeout(r.Context(), 10*time.Second)
+		defer retryCancel()
+		response, err = a.fetchTopologyLinkMetrics(ctx)
+	}
+
+	if err != nil {
+		slog.Warn("topology link metrics query failed", "error", err)
+		response.Error = dberror.UserMessage(err)
+	}
+
+	if response.Metrics == nil {
+		response.Metrics = map[string]TopologyLinkMetricsEntry{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+func (a *API) fetchTopologyLinkMetrics(ctx context.Context) (TopologyLinkMetricsResponse, error) {
+	start := time.Now()
+
+	type latencyRow struct {
+		LinkPK        string
+		LatencyUs     float64
+		JitterUs      float64
+		LatencyAtoZUs float64
+		JitterAtoZUs  float64
+		LatencyZtoAUs float64
+		JitterZtoAUs  float64
+		LossPercent   float64
+		SampleCount   uint64
+	}
+	type trafficRow struct {
+		LinkPK string
+		InBps  float64
+		OutBps float64
+	}
+
+	var latencyRows []latencyRow
+	var trafficRows []trafficRow
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		query := `
+			SELECT
+				lat.link_pk,
+				COALESCE(lat.avg_rtt_us, 0),
+				COALESCE(lat.avg_ipdv_us, 0),
+				COALESCE(lat_a.avg_rtt_us, 0),
+				COALESCE(lat_a.avg_ipdv_us, 0),
+				COALESCE(lat_z.avg_rtt_us, 0),
+				COALESCE(lat_z.avg_ipdv_us, 0),
+				COALESCE(lat.loss_percent, 0),
+				COALESCE(lat.sample_count, 0)
+			FROM (
+				SELECT link_pk,
+					sum(a_avg_rtt_us * a_samples + z_avg_rtt_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_rtt_us,
+					sum(a_avg_jitter_us * a_samples + z_avg_jitter_us * z_samples) / greatest(sum(a_samples + z_samples), 1) as avg_ipdv_us,
+					sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent,
+					sum(a_samples + z_samples) as sample_count
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				GROUP BY link_pk
+			) lat
+			LEFT JOIN (
+				SELECT link_pk,
+					sum(a_avg_rtt_us * a_samples) / greatest(sum(a_samples), 1) as avg_rtt_us,
+					sum(a_avg_jitter_us * a_samples) / greatest(sum(a_samples), 1) as avg_ipdv_us
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				GROUP BY link_pk
+			) lat_a ON lat.link_pk = lat_a.link_pk
+			LEFT JOIN (
+				SELECT link_pk,
+					sum(z_avg_rtt_us * z_samples) / greatest(sum(z_samples), 1) as avg_rtt_us,
+					sum(z_avg_jitter_us * z_samples) / greatest(sum(z_samples), 1) as avg_ipdv_us
+				FROM link_rollup_5m FINAL
+				WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				GROUP BY link_pk
+			) lat_z ON lat.link_pk = lat_z.link_pk
+		`
+		rows, err := a.envDB(ctx).Query(ctx, query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var r latencyRow
+			if err := rows.Scan(&r.LinkPK, &r.LatencyUs, &r.JitterUs, &r.LatencyAtoZUs, &r.JitterAtoZUs, &r.LatencyZtoAUs, &r.JitterZtoAUs, &r.LossPercent, &r.SampleCount); err != nil {
+				return err
+			}
+			latencyRows = append(latencyRows, r)
+		}
+		return rows.Err()
+	})
+
+	g.Go(func() error {
+		query := `
+			SELECT link_pk,
+				avg(avg_in_bps) as in_bps,
+				avg(avg_out_bps) as out_bps
+			FROM device_interface_rollup_5m
+			WHERE bucket_ts >= now() - INTERVAL 5 MINUTE
+				AND link_pk != ''
+			GROUP BY link_pk
+		`
+		rows, err := a.envDB(ctx).Query(ctx, query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var r trafficRow
+			if err := rows.Scan(&r.LinkPK, &r.InBps, &r.OutBps); err != nil {
+				return err
+			}
+			trafficRows = append(trafficRows, r)
+		}
+		return rows.Err()
+	})
+
+	err := g.Wait()
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	result := make(map[string]TopologyLinkMetricsEntry, len(latencyRows))
+	for _, r := range latencyRows {
+		result[r.LinkPK] = TopologyLinkMetricsEntry{
+			LatencyUs:     r.LatencyUs,
+			JitterUs:      r.JitterUs,
+			LatencyAtoZUs: r.LatencyAtoZUs,
+			JitterAtoZUs:  r.JitterAtoZUs,
+			LatencyZtoAUs: r.LatencyZtoAUs,
+			JitterZtoAUs:  r.JitterZtoAUs,
+			LossPercent:   r.LossPercent,
+			SampleCount:   r.SampleCount,
+		}
+	}
+	for _, r := range trafficRows {
+		entry := result[r.LinkPK]
+		entry.InBps = r.InBps
+		entry.OutBps = r.OutBps
+		result[r.LinkPK] = entry
+	}
+
+	return TopologyLinkMetricsResponse{Metrics: result}, err
+}
+
+// TopologyValidatorsResponse is the response for GET /api/topology/validators.
+type TopologyValidatorsResponse struct {
+	Validators []Validator `json:"validators"`
+	Error      string      `json:"error,omitempty"`
+}
+
+func (a *API) GetTopologyValidators(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	response, err := a.fetchTopologyValidators(ctx)
+	if err != nil && dberror.IsTransient(err) {
+		cancel()
+		var retryCancel context.CancelFunc
+		ctx, retryCancel = context.WithTimeout(r.Context(), 10*time.Second)
+		defer retryCancel()
+		response, err = a.fetchTopologyValidators(ctx)
+	}
+
+	if err != nil {
+		slog.Warn("topology validators query failed", "error", err)
+		response.Error = dberror.UserMessage(err)
+	}
+
+	if response.Validators == nil {
+		response.Validators = []Validator{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logError("failed to encode response", "error", err)
+	}
+}
+
+func (a *API) fetchTopologyValidators(ctx context.Context) (TopologyValidatorsResponse, error) {
+	start := time.Now()
+
+	query := `
+		WITH dz_user_ips AS (
+			SELECT
+				client_ip,
+				any(device_pk) as device_pk,
+				any(tunnel_id) as tunnel_id
+			FROM dz_users_current
+			WHERE status = 'activated'
+				AND client_ip != ''
+			GROUP BY client_ip
+		),
+		total_dz_stake AS (
+			SELECT COALESCE(SUM(va.activated_stake_lamports), 0) as total_lamports
+			FROM dz_user_ips u
+			JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
+			JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
+				AND va.epoch_vote_account = 'true'
+				AND va.activated_stake_lamports > 0
+		),
+		user_traffic AS (
+			SELECT
+				user_tunnel_id,
+				CASE WHEN SUM(delta_duration) > 0 THEN SUM(in_octets_delta) * 8 / SUM(delta_duration) ELSE 0 END as in_bps,
+				CASE WHEN SUM(delta_duration) > 0 THEN SUM(out_octets_delta) * 8 / SUM(delta_duration) ELSE 0 END as out_bps
+			FROM fact_dz_device_interface_counters
+			WHERE event_ts > now() - INTERVAL 5 MINUTE
+				AND user_tunnel_id IS NOT NULL
+				AND delta_duration > 0
+				AND in_octets_delta >= 0
+				AND out_octets_delta >= 0
+			GROUP BY user_tunnel_id
+		)
+		SELECT
+			va.vote_pubkey,
+			gn.pubkey as node_pubkey,
+			u.device_pk,
+			u.tunnel_id,
+			geo.latitude,
+			geo.longitude,
+			COALESCE(geo.city, '') as city,
+			COALESCE(geo.country, '') as country,
+			va.activated_stake_lamports / 1e9 as stake_sol,
+			CASE
+				WHEN ts.total_lamports > 0 THEN va.activated_stake_lamports / ts.total_lamports * 100
+				ELSE 0
+			END as stake_share,
+			COALESCE(va.commission_percentage, 0) as commission,
+			COALESCE(gn.version, '') as version,
+			COALESCE(gn.gossip_ip, '') as gossip_ip,
+			COALESCE(gn.gossip_port, 0) as gossip_port,
+			COALESCE(gn.tpuquic_ip, '') as tpu_quic_ip,
+			COALESCE(gn.tpuquic_port, 0) as tpu_quic_port,
+			COALESCE(traffic.in_bps, 0) as in_bps,
+			COALESCE(traffic.out_bps, 0) as out_bps
+		FROM dz_user_ips u
+		JOIN solana_gossip_nodes_current gn ON u.client_ip = gn.gossip_ip
+		JOIN solana_vote_accounts_current va ON gn.pubkey = va.node_pubkey
+			AND va.epoch_vote_account = 'true'
+			AND va.activated_stake_lamports > 0
+		LEFT JOIN geoip_records_current geo ON gn.gossip_ip = geo.ip
+		LEFT JOIN user_traffic traffic ON u.tunnel_id = traffic.user_tunnel_id
+		CROSS JOIN total_dz_stake ts
+		WHERE geo.latitude IS NOT NULL
+			AND geo.longitude IS NOT NULL
+	`
+	rows, err := a.envDB(ctx).Query(ctx, query)
+	if err != nil {
+		duration := time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+		return TopologyValidatorsResponse{}, err
+	}
+	defer rows.Close()
+
+	var validators []Validator
+	for rows.Next() {
+		var v Validator
+		if err := rows.Scan(&v.VotePubkey, &v.NodePubkey, &v.DevicePK, &v.TunnelID, &v.Latitude, &v.Longitude, &v.City, &v.Country, &v.StakeSol, &v.StakeShare, &v.Commission, &v.Version, &v.GossipIP, &v.GossipPort, &v.TPUQuicIP, &v.TPUQuicPort, &v.InBps, &v.OutBps); err != nil {
+			return TopologyValidatorsResponse{}, err
+		}
+		validators = append(validators, v)
+	}
+	if err := rows.Err(); err != nil {
+		return TopologyValidatorsResponse{}, err
+	}
+
+	duration := time.Since(start)
+	metrics.RecordClickHouseQuery(duration, err)
+
+	return TopologyValidatorsResponse{Validators: validators}, nil
 }
 
 // Traffic data point for charts
