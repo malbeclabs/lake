@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Users, AlertCircle, ArrowLeft, RefreshCw } from 'lucide-react'
+import { CopyableText } from '@/components/copyable-text'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups } from '@/lib/api'
@@ -427,7 +428,9 @@ export function UserDetailPage() {
           <Users className="h-8 w-8 text-muted-foreground" />
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-medium font-mono">{user.pk.slice(0, 8)}...{user.pk.slice(-4)}</h1>
+              <h1 className="text-2xl font-medium font-mono">
+                <CopyableText text={user.pk}>{user.pk.slice(0, 8)}...{user.pk.slice(-4)}</CopyableText>
+              </h1>
               {user.is_deleted && (
                 <span className="text-xs px-2 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">Deleted</span>
               )}
@@ -453,24 +456,32 @@ export function UserDetailPage() {
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Owner Pubkey</dt>
                 <dd className="text-sm">
-                  <Link to={`/dz/users?search=owner:${user.owner_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
-                    {user.owner_pubkey.slice(0, 6)}...{user.owner_pubkey.slice(-4)}
-                  </Link>
+                  <CopyableText text={user.owner_pubkey} className="font-mono">
+                    <Link to={`/dz/users?search=owner:${user.owner_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                      {user.owner_pubkey.slice(0, 6)}...{user.owner_pubkey.slice(-4)}
+                    </Link>
+                  </CopyableText>
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Client IP</dt>
                 <dd className="text-sm">
                   {user.client_ip ? (
-                    <Link to={`/dz/users?search=ip:${user.client_ip}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
-                      {user.client_ip}
-                    </Link>
+                    <CopyableText text={user.client_ip} className="font-mono">
+                      <Link to={`/dz/users?search=ip:${user.client_ip}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                        {user.client_ip}
+                      </Link>
+                    </CopyableText>
                   ) : '—'}
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">DZ IP</dt>
-                <dd className="text-sm font-mono">{user.dz_ip || '—'}</dd>
+                <dd className="text-sm">
+                  {user.dz_ip ? (
+                    <CopyableText text={user.dz_ip} className="font-mono" />
+                  ) : '—'}
+                </dd>
               </div>
               {user.tunnel_id > 0 && (
                 <div className="flex justify-between">
