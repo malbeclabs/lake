@@ -217,21 +217,6 @@ export async function fetchTrafficHistoryByInterface(
   return data.interfaces || []
 }
 
-// Latency data point for charts
-export interface LatencyDataPoint {
-  time: string
-  avgRttMs: number
-  p95RttMs: number
-  avgJitter: number
-  lossPct: number
-  avgRttAtoZMs?: number
-  p95RttAtoZMs?: number
-  avgRttZtoAMs?: number
-  p95RttZtoAMs?: number
-  jitterAtoZMs?: number
-  jitterZtoAMs?: number
-}
-
 // Time range options for latency charts
 export type TimeRangePreset = '1h' | '3h' | '6h' | '12h' | '24h' | '3d' | '7d' | '14d' | '30d' | 'custom'
 
@@ -267,38 +252,6 @@ export function getTimeRangeLabel(timeRange: TimeRange): string {
 export function timeRangeToString(timeRange: TimeRange): string {
   if (timeRange.preset === 'custom') return '24h'
   return timeRange.preset
-}
-
-// Fetch latency history for a link with optional time range
-export async function fetchLatencyHistory(
-  pk: string,
-  timeRange?: TimeRange,
-  bucket?: BucketSize,
-  agg?: string
-): Promise<LatencyDataPoint[]> {
-  const params = new URLSearchParams({ pk })
-
-  if (timeRange) {
-    if (timeRange.preset === 'custom' && timeRange.from && timeRange.to) {
-      params.set('from', timeRange.from)
-      params.set('to', timeRange.to)
-    } else if (timeRange.preset !== 'custom') {
-      params.set('range', timeRange.preset)
-    }
-  }
-  if (bucket && bucket !== 'auto') {
-    params.set('bucket', bucket)
-  }
-  if (agg && agg !== 'avg') {
-    params.set('agg', agg)
-  }
-
-  const res = await apiFetch(`/api/topology/link-latency?${params.toString()}`)
-  if (!res.ok) throw new Error(`Latency fetch failed: ${res.status}`)
-  const text = await res.text()
-  if (!text) return []
-  const data = JSON.parse(text)
-  return data.points || []
 }
 
 /** Format a timestamp from chart data for display in legends.

@@ -596,7 +596,6 @@ func main() {
 		// Topology endpoints (ClickHouse only)
 		r.Get("/api/topology", api.GetTopology)
 		r.Get("/api/traffic/entity", api.GetEntityTraffic)
-		r.Get("/api/topology/link-latency", api.GetLinkLatencyHistory)
 		r.Get("/api/topology/latency-comparison", api.GetLatencyComparison)
 		r.Get("/api/topology/latency-history/{origin}/{target}", api.GetLatencyHistory)
 
