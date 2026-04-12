@@ -351,7 +351,8 @@ func main() {
 		EnvDBs:        config.EnvDBs,
 		EnvDatabases:  config.EnvDatabases,
 		Database:      config.Database(),
-		ShredderDB:    config.GetShredderDB(),
+		ShredderDB:      config.GetShredderDB(),
+		GlobalMonitorDB: config.GetGlobalMonitorDB(),
 		PgPool:        config.PgPool,
 		Neo4jClient:   config.Neo4jClient,
 		Neo4jDatabase: config.Neo4jDatabase,
@@ -562,6 +563,14 @@ func main() {
 		r.Get("/api/dz/shreds/devices", api.GetShredDevices)
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
+
+		// Global Monitor routes
+		r.Get("/api/gm/validators/summary", api.GetGMValidatorsSummary)
+		r.Get("/api/gm/validators/{pubkey}", api.GetGMValidator)
+		r.Get("/api/gm/validators", api.GetGMValidators)
+		r.Get("/api/gm/users/summary", api.GetGMUsersSummary)
+		r.Get("/api/gm/users/{id}", api.GetGMUser)
+		r.Get("/api/gm/users", api.GetGMUsers)
 
 		// Solana entity routes
 		r.Get("/api/solana/validators", api.GetValidators)

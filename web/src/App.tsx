@@ -59,6 +59,10 @@ import { EdgeScoreboardPage } from './components/edge-scoreboard-page'
 import { MulticastGroupDetailPage } from '@/components/multicast-group-detail-page'
 import { ValidatorDetailPage } from '@/components/validator-detail-page'
 import { GossipNodeDetailPage } from '@/components/gossip-node-detail-page'
+import { GMValidatorsPage } from '@/pages/gm-validators-page'
+import { GMValidatorDetailPage } from '@/pages/gm-validator-detail-page'
+import { GMUsersPage } from '@/pages/gm-users-page'
+import { GMUserDetailPage } from '@/pages/gm-user-detail-page'
 
 import { DZLedgerPage, SolanaOverviewPage } from '@/components/ledger-page'
 import { SettingsPage } from '@/components/settings-page'
@@ -712,6 +716,12 @@ function AppContent() {
             <Route path="/dz/publisher-check" element={<PublisherCheckPage />} />
             <Route path="/dz/shreds/scoreboard" element={<InternalOnly><EdgeScoreboardPage /></InternalOnly>} />
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+
+            {/* Global Monitor routes */}
+            <Route path="/gm/validators" element={<GMValidatorsPage />} />
+            <Route path="/gm/validators/:pubkey" element={<GMValidatorDetailPage />} />
+            <Route path="/gm/users" element={<GMUsersPage />} />
+            <Route path="/gm/users/:id" element={<GMUserDetailPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />

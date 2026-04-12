@@ -60,6 +60,9 @@ export function Sidebar() {
   const isTrafficRoute = location.pathname.startsWith('/traffic')
   const isDZRoute = location.pathname.startsWith('/dz/')
   const isSolanaRoute = location.pathname.startsWith('/solana/')
+  const isGMRoute = location.pathname.startsWith('/gm/')
+  const isGMValidatorsRoute = location.pathname.startsWith('/gm/validators')
+  const isGMUsersRoute = location.pathname.startsWith('/gm/users')
 
   // Topology sub-routes
   const isTopologyMap = location.pathname === '/topology/map'
@@ -242,6 +245,9 @@ export function Sidebar() {
               <Landmark className="h-4 w-4" />
             </Link>
           )}
+          <Link to="/gm/validators" className={collapsedIconClass(isGMRoute)} title="Global Monitor">
+            <Gauge className="h-4 w-4" />
+          </Link>
         </div>
 
         {/* Footer */}
@@ -533,6 +539,23 @@ export function Sidebar() {
             </div>
           </div>
         )}
+
+        {/* Global Monitor section */}
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Global Monitor</span>
+          </div>
+          <div className="space-y-1">
+            <Link to="/gm/validators" className={navItemClass(isGMValidatorsRoute)}>
+              <Landmark className="h-4 w-4" />
+              Validators
+            </Link>
+            <Link to="/gm/users" className={navItemClass(isGMUsersRoute)}>
+              <Users className="h-4 w-4" />
+              Users
+            </Link>
+          </div>
+        </div>
 
         {/* Spacer */}
         <div className="flex-1" />

@@ -29,6 +29,9 @@ var PublicQueryDB driver.Conn
 // shredderDB is the ClickHouse database name for shredder tables (default: "shredder_qa").
 var shredderDB = "shredder_qa"
 
+// globalMonitorDB is the ClickHouse database name for global monitor tables (default: "global_monitor").
+var globalMonitorDB = "global_monitor"
+
 // EnvDBs maps environment names to their ClickHouse connection pools.
 // The mainnet-beta entry always points to DB.
 var EnvDBs map[string]driver.Conn
@@ -55,6 +58,16 @@ func GetShredderDB() string {
 // SetShredderDB sets the shredder database name.
 func SetShredderDB(db string) {
 	shredderDB = db
+}
+
+// GetGlobalMonitorDB returns the global monitor database name.
+func GetGlobalMonitorDB() string {
+	return globalMonitorDB
+}
+
+// SetGlobalMonitorDB sets the global monitor database name.
+func SetGlobalMonitorDB(db string) {
+	globalMonitorDB = db
 }
 
 // Database returns the configured database name.
@@ -119,6 +132,9 @@ func Load() error {
 	if db := os.Getenv("CLICKHOUSE_SHREDDER_DB"); db != "" {
 		shredderDB = db
 	}
+	if db := os.Getenv("CLICKHOUSE_GLOBAL_MONITOR_DB"); db != "" {
+		globalMonitorDB = db
+	}
 
 	// Build env -> database mapping.
 	// Devnet and testnet databases default to lake_devnet / lake_testnet
@@ -143,7 +159,7 @@ func Load() error {
 
 	secure := os.Getenv("CLICKHOUSE_SECURE") == "true"
 
-	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", shredderDB)
+	slog.Info("connecting to ClickHouse", "addr", cfg.Addr, "database", cfg.Database, "username", cfg.Username, "secure", secure, "shredder_db", shredderDB, "global_monitor_db", globalMonitorDB)
 
 	// Create connection pool
 	opts := &clickhouse.Options{

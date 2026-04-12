@@ -25,8 +25,9 @@ type API struct {
 	PublicQueryDB driver.Conn
 	EnvDBs        map[string]driver.Conn
 	EnvDatabases  map[string]string
-	Database      string
-	ShredderDB    string
+	Database         string
+	ShredderDB       string
+	GlobalMonitorDB  string
 
 	// PostgreSQL
 	PgPool *pgxpool.Pool

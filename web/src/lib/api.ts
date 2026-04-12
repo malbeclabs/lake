@@ -5338,6 +5338,140 @@ export interface ShredDevice {
   available_seats: number
 }
 
+// --- Global Monitor types and functions ---
+
+export interface GMTimePoint {
+  time: string
+  dz_value: number
+  pi_value: number
+}
+
+export interface GMValidatorItem {
+  validator_pubkey: string
+  stake_lamports: number
+  leader_ratio: number
+  target_ip: string
+  metro: string
+  country: string
+  city: string
+  asn_org: string
+  dzd_metro: string
+  dz_availability_pct: number
+  pi_availability_pct: number
+  dz_rtt_ms: number
+  pi_rtt_ms: number
+  rtt_delta_ms: number
+}
+
+export interface GMValidatorsResponse {
+  items: GMValidatorItem[]
+  total: number
+}
+
+export interface GMValidatorSummary {
+  total_validators: number
+  dz_available_pct: number
+  dz_better_rtt_pct: number
+  median_rtt_delta_ms: number
+  availability_ts: GMTimePoint[]
+  rtt_ts: GMTimePoint[]
+}
+
+export interface GMMetroBreakdown {
+  source_metro: string
+  dz_rtt_ms: number
+  pi_rtt_ms: number
+  dz_avail_pct: number
+  pi_avail_pct: number
+  probe_count: number
+}
+
+export interface GMValidatorDetail extends GMValidatorItem {
+  region: string
+  rtt_ts: GMTimePoint[]
+  availability_ts: GMTimePoint[]
+  metro_breakdown: GMMetroBreakdown[]
+}
+
+export interface GMUserItem {
+  user_pubkey: string
+  target_ip: string
+  metro: string
+  country: string
+  city: string
+  asn_org: string
+  dzd_metro: string
+  dz_availability_pct: number
+  pi_availability_pct: number
+  dz_rtt_ms: number
+  pi_rtt_ms: number
+  rtt_delta_ms: number
+  packet_loss_pct: number
+}
+
+export interface GMUsersResponse {
+  items: GMUserItem[]
+  total: number
+}
+
+export interface GMUserSummary {
+  total_users: number
+  dz_available_pct: number
+  dz_better_rtt_pct: number
+  median_rtt_delta_ms: number
+  availability_ts: GMTimePoint[]
+  rtt_ts: GMTimePoint[]
+}
+
+export interface GMUserDetail extends GMUserItem {
+  region: string
+  rtt_ts: GMTimePoint[]
+  availability_ts: GMTimePoint[]
+  metro_breakdown: GMMetroBreakdown[]
+}
+
+export async function fetchGMValidators(range = '24h', probeType = 'icmp'): Promise<GMValidatorsResponse> {
+  const params = new URLSearchParams({ range, probe_type: probeType })
+  const res = await fetchWithRetry(`/api/gm/validators?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch GM validators')
+  return res.json()
+}
+
+export async function fetchGMValidatorsSummary(range = '24h', probeType = 'icmp'): Promise<GMValidatorSummary> {
+  const params = new URLSearchParams({ range, probe_type: probeType })
+  const res = await fetchWithRetry(`/api/gm/validators/summary?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch GM validators summary')
+  return res.json()
+}
+
+export async function fetchGMValidator(pubkey: string, range = '24h', probeType = 'icmp'): Promise<GMValidatorDetail> {
+  const params = new URLSearchParams({ range, probe_type: probeType })
+  const res = await fetchWithRetry(`/api/gm/validators/${encodeURIComponent(pubkey)}?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch GM validator')
+  return res.json()
+}
+
+export async function fetchGMUsers(range = '24h'): Promise<GMUsersResponse> {
+  const params = new URLSearchParams({ range })
+  const res = await fetchWithRetry(`/api/gm/users?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch GM users')
+  return res.json()
+}
+
+export async function fetchGMUsersSummary(range = '24h'): Promise<GMUserSummary> {
+  const params = new URLSearchParams({ range })
+  const res = await fetchWithRetry(`/api/gm/users/summary?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch GM users summary')
+  return res.json()
+}
+
+export async function fetchGMUser(id: string, range = '24h'): Promise<GMUserDetail> {
+  const params = new URLSearchParams({ range })
+  const res = await fetchWithRetry(`/api/gm/users/${encodeURIComponent(id)}?${params}`)
+  if (!res.ok) throw new Error('Failed to fetch GM user')
+  return res.json()
+}
+
 export async function fetchShredDevices(params: {
   limit: number
   offset: number
