@@ -447,7 +447,11 @@ export function LinkHealthTimeline({ data, className, hideBadges, onBarHover, hi
                         ? (prevHealth && prevHealth !== 'no_data' ? healthColors[prevHealth] : 'bg-transparent border border-gray-200/40 dark:border-gray-700/40')
                         : (healthColors[displayHealth] ?? healthColors['no_data'])
                     }`}
-                    style={getDrainStripeStyle(bar.drainStatus)}
+                    style={getDrainStripeStyle(
+                      bar.collecting && displayHealth === 'no_data'
+                        ? (prevBar?.drainStatus ?? bar.drainStatus)
+                        : bar.drainStatus
+                    )}
                   />
                   {bar.collecting && (displayHealth !== 'no_data' || (prevHealth && prevHealth !== 'no_data')) && (
                     <div className="absolute inset-0 bg-gradient-to-r from-transparent via-transparent to-background" />
