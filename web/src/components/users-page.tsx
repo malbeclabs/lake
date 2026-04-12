@@ -342,10 +342,14 @@ export function UsersPage() {
                       {user.dz_ip ? <CopyableText text={user.dz_ip} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {user.device_code ? <CopyableText text={user.device_code} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
+                      {user.device_pk
+                        ? <Link to={`/dz/devices/${user.device_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{user.device_code}</Link>
+                        : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {user.metro_name || user.metro_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {user.metro_pk
+                        ? <Link to={`/dz/metros/${user.metro_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{user.metro_name || user.metro_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {user.tenant_code

@@ -3034,6 +3034,7 @@ export interface User {
   client_ip: string
   device_pk: string
   device_code: string
+  metro_pk: string
   metro_code: string
   metro_name: string
   tenant_pk: string

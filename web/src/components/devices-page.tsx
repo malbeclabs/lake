@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Server, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchDevices } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
@@ -319,11 +319,15 @@ export function DevicesPage() {
                     <td className="px-4 py-3 text-sm text-muted-foreground capitalize">
                       {device.device_type?.replace(/_/g, ' ')}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {device.contributor_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {device.contributor_pk
+                        ? <Link to={`/dz/contributors/${device.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.contributor_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {device.metro_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {device.metro_pk
+                        ? <Link to={`/dz/metros/${device.metro_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{device.metro_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className={`px-4 py-3 text-sm capitalize ${statusColors[device.status] || ''}`}>
                       {device.status}

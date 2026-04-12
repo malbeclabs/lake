@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Loader2, Link2, AlertCircle, ChevronDown, ChevronUp, X } from 'lucide-react'
 import { fetchLinks } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
@@ -366,20 +366,20 @@ export function LinksPage() {
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {link.link_type}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {link.contributor_code || '—'}
+                    <td className="px-4 py-3 text-sm">
+                      {link.contributor_pk
+                        ? <Link to={`/dz/contributors/${link.contributor_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.contributor_code}</Link>
+                        : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                      {link.side_a_code ? <CopyableText text={link.side_a_code} className="font-mono" /> : <span className="font-mono">—</span>}
-                      {link.side_a_metro && (
-                        <span className="ml-1 text-xs">({link.side_a_metro})</span>
-                      )}
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      {link.side_a_code
+                        ? <><Link to={`/dz/devices/${link.side_a_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_a_code}</Link>{link.side_a_metro && <span className="ml-1 text-xs text-muted-foreground">({link.side_a_metro})</span>}</>
+                        : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                      {link.side_z_code ? <CopyableText text={link.side_z_code} className="font-mono" /> : <span className="font-mono">—</span>}
-                      {link.side_z_metro && (
-                        <span className="ml-1 text-xs">({link.side_z_metro})</span>
-                      )}
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      {link.side_z_code
+                        ? <><Link to={`/dz/devices/${link.side_z_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{link.side_z_code}</Link>{link.side_z_metro && <span className="ml-1 text-xs text-muted-foreground">({link.side_z_metro})</span>}</>
+                        : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
                     <td className={`px-4 py-3 text-sm capitalize ${statusColors[link.status] || ''}`}>
                       {link.status}
