@@ -2980,10 +2980,25 @@ export interface User {
   tenant_code: string
   in_bps: number
   out_bps: number
+  is_deleted: boolean
 }
 
-export async function fetchUsers(limit = 100, offset = 0): Promise<PaginatedResponse<User>> {
-  const res = await fetchWithRetry(`/api/dz/users?limit=${limit}&offset=${offset}`)
+export async function fetchUsers(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[],
+  includeDeleted = false
+): Promise<PaginatedResponse<User>> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) {
+    for (const f of filters) params.append('filters', f)
+  }
+  if (includeDeleted) params.set('include_deleted', 'true')
+  const res = await fetchWithRetry(`/api/dz/users?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch users')
   }
@@ -3001,6 +3016,7 @@ export interface UserDetail extends User {
   vote_pubkey: string
   stake_sol: number
   stake_weight_pct: number
+  is_deleted: boolean
 }
 
 export async function fetchUser(pk: string): Promise<UserDetail> {

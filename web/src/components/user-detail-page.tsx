@@ -426,7 +426,12 @@ export function UserDetailPage() {
         <div className="flex items-center gap-3 mb-8">
           <Users className="h-8 w-8 text-muted-foreground" />
           <div>
-            <h1 className="text-2xl font-medium font-mono">{user.pk.slice(0, 8)}...{user.pk.slice(-4)}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-medium font-mono">{user.pk.slice(0, 8)}...{user.pk.slice(-4)}</h1>
+              {user.is_deleted && (
+                <span className="text-xs px-2 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">Deleted</span>
+              )}
+            </div>
             <div className="text-sm text-muted-foreground">{user.kind || 'Unknown type'}</div>
           </div>
         </div>
