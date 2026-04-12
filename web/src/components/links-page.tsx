@@ -7,6 +7,7 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -359,8 +360,8 @@ export function LinksPage() {
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/links/${link.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{link.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={link.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {link.link_type}
@@ -368,14 +369,14 @@ export function LinksPage() {
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {link.contributor_code || '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      <span className="font-mono">{link.side_a_code || '—'}</span>
+                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {link.side_a_code ? <CopyableText text={link.side_a_code} className="font-mono" /> : <span className="font-mono">—</span>}
                       {link.side_a_metro && (
                         <span className="ml-1 text-xs">({link.side_a_metro})</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      <span className="font-mono">{link.side_z_code || '—'}</span>
+                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
+                      {link.side_z_code ? <CopyableText text={link.side_z_code} className="font-mono" /> : <span className="font-mono">—</span>}
                       {link.side_z_metro && (
                         <span className="ml-1 text-xs">({link.side_z_metro})</span>
                       )}

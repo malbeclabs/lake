@@ -7,6 +7,7 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -253,8 +254,8 @@ export function MetrosPage() {
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/metros/${metro.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{metro.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={metro.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {metro.name || '—'}

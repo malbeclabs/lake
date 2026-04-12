@@ -7,6 +7,7 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -312,8 +313,8 @@ export function DevicesPage() {
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/devices/${device.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{device.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={device.code} className="font-mono text-sm" />
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground capitalize">
                       {device.device_type?.replace(/_/g, ' ')}

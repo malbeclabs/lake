@@ -7,6 +7,7 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -239,11 +240,11 @@ export function MulticastGroupsPage() {
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/multicast-groups/${group.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{group.code}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={group.code} className="font-mono text-sm" />
                     </td>
-                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-                      {group.multicast_ip}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={group.multicast_ip} className="text-sm font-mono text-muted-foreground" />
                     </td>
                     <td className="px-4 py-3 text-sm capitalize">
                       {group.status}

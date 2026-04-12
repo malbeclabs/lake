@@ -8,6 +8,7 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -326,22 +327,22 @@ export function UsersPage() {
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/users/${user.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm" title={user.owner_pubkey}>
-                        {truncatePubkey(user.owner_pubkey)}
-                      </span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <CopyableText text={user.owner_pubkey} className="font-mono text-sm">
+                        <span title={user.owner_pubkey}>{truncatePubkey(user.owner_pubkey)}</span>
+                      </CopyableText>
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {user.kind || '—'}
                     </td>
-                    <td className="px-4 py-3 text-sm">
-                      <span className="font-mono">{user.client_ip || '—'}</span>
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      {user.client_ip ? <CopyableText text={user.client_ip} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm">
-                      <span className="font-mono">{user.dz_ip || '—'}</span>
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      {user.dz_ip ? <CopyableText text={user.dz_ip} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-sm">
-                      <span className="font-mono">{user.device_code || '—'}</span>
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      {user.device_code ? <CopyableText text={user.device_code} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">
                       {user.metro_name || user.metro_code || '—'}

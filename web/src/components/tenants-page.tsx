@@ -7,6 +7,7 @@ import { handleRowClick } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
+import { CopyableText } from './copyable-text'
 
 const PAGE_SIZE = 100
 
@@ -235,8 +236,8 @@ export function TenantsPage() {
                     className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
                     onClick={(e) => handleRowClick(e, `/dz/tenants/${tenant.pk}`, navigate)}
                   >
-                    <td className="px-4 py-3">
-                      <span className="font-mono text-sm">{tenant.code || '—'}</span>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {tenant.code ? <CopyableText text={tenant.code} className="font-mono text-sm" /> : <span className="font-mono text-sm text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className="font-mono text-xs text-muted-foreground" title={tenant.pk}>
