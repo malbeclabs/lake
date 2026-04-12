@@ -1761,7 +1761,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
     if (multicastTreesMode && dimOtherLinks) return 'rgba(100,100,100,0.08)'
 
     // Drained/soft-drained: dim to signal inactive status
-    if (l.status === 'drained' || l.status === 'soft-drained') {
+    if (l.status === 'hard-drained' || l.status === 'soft-drained') {
       return 'rgba(107,114,128,0.4)'
     }
 
@@ -1807,7 +1807,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.3
         if (criticalityOverlayEnabled && criticality) return 0.3
-        if (l.status === 'drained' || l.status === 'soft-drained') return 0.3
+        if (l.status === 'hard-drained' || l.status === 'soft-drained') return 0.3
       }
       return 0
     }
@@ -1826,7 +1826,7 @@ export function TopologyGlobe({ metros, devices, links, validators }: TopologyGl
         const criticality = linkCriticalityMap.get(l.pk)
         if (whatifRemovalMode && isRemovedLink) return 0.2
         if (criticalityOverlayEnabled && criticality) return 0.2
-        if (l.status === 'drained' || l.status === 'soft-drained') return 0.2
+        if (l.status === 'hard-drained' || l.status === 'soft-drained') return 0.2
       }
       return 0
     }

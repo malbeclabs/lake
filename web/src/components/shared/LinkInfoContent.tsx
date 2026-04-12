@@ -94,7 +94,7 @@ const statusColors: Record<string, string> = {
   activated: 'text-muted-foreground',
   provisioning: 'text-blue-600 dark:text-blue-400',
   'soft-drained': 'text-amber-600 dark:text-amber-400',
-  drained: 'text-amber-600 dark:text-amber-400',
+  'hard-drained': 'text-amber-600 dark:text-amber-400',
   maintenance: 'text-amber-600 dark:text-amber-400',
   suspended: 'text-red-600 dark:text-red-400',
   offline: 'text-red-600 dark:text-red-400',

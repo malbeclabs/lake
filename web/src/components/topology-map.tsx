@@ -1671,7 +1671,7 @@ export function TopologyMap({ metros, devices, links, validators }: TopologyMapP
       }
 
       // Drained/soft-drained links: always show dashed with reduced opacity
-      if (link.status === 'drained' || link.status === 'soft-drained') {
+      if (link.status === 'hard-drained' || link.status === 'soft-drained') {
         useDash = true
         displayOpacity = Math.min(displayOpacity, 0.4)
       }

@@ -26,7 +26,7 @@ export function LinkDetailsHeader({ link }: LinkDetailsProps) {
         <EntityLink to={`/dz/links/${link.pk}`} state={{ backLabel: 'topology' }}>
           {link.code}
         </EntityLink>
-        {(link.status === 'drained' || link.status === 'soft-drained') && (
+        {(link.status === 'hard-drained' || link.status === 'soft-drained') && (
           <span className="text-[10px] font-normal px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
             {link.status}
           </span>

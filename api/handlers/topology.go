@@ -295,7 +295,7 @@ func (a *API) fetchTopologyData(ctx context.Context) (TopologyResponse, error) {
 					AND link_pk != ''
 				GROUP BY link_pk
 			) traffic ON l.pk = traffic.link_pk
-			WHERE l.status IN ('activated', 'drained', 'soft-drained')
+			WHERE l.status IN ('activated', 'soft-drained', 'hard-drained')
 		`
 		rows, err := a.envDB(ctx).Query(ctx, query)
 		if err != nil {
