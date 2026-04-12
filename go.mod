@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
 	github.com/docker/go-connections v0.6.0
-	github.com/gagliardetto/solana-go v1.16.0
+	github.com/gagliardetto/solana-go v1.17.0
 	github.com/getsentry/sentry-go v0.44.1
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2

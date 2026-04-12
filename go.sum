@@ -122,8 +122,8 @@ github.com/frankban/quicktest v1.13.0 h1:yNZif1OkDfNoDfb9zZa9aXIpejNR4F23Wely0c+
 github.com/frankban/quicktest v1.13.0/go.mod h1:qLE0fzW0VuyUAJgPU19zByoIr0HtCHN/r/VLSOOIySU=
 github.com/gagliardetto/binary v0.8.0 h1:U9ahc45v9HW0d15LoN++vIXSJyqR/pWw8DDlhd7zvxg=
 github.com/gagliardetto/binary v0.8.0/go.mod h1:2tfj51g5o9dnvsc+fL3Jxr22MuWzYXwx9wEoN0XQ7/c=
-github.com/gagliardetto/solana-go v1.16.0 h1:lRPn/NxVmxzXw+vQ3AxH33jQIvj8avx2CKVFsvUhRsY=
-github.com/gagliardetto/solana-go v1.16.0/go.mod h1:2n7osXNoDeUhq1r1lOgCMVkl90yYUVrV9FHGINBWPHU=
+github.com/gagliardetto/solana-go v1.17.0 h1:BeauEbOkngB7K0s+lzv3SnThq7AQbBg7D5+NzLM8QQ0=
+github.com/gagliardetto/solana-go v1.17.0/go.mod h1:B70ImaBF7KnUXmbYA6fFDRYQSS6J7q6fEPzA2bADMJA=
 github.com/gagliardetto/treeout v0.1.4 h1:ozeYerrLCmCubo1TcIjFiOWTTGteOOHND1twdFpgwaw=
 github.com/gagliardetto/treeout v0.1.4/go.mod h1:loUefvXTrlRG5rYmJmExNryyBRh8f89VZhmMOyCyqok=
 github.com/getsentry/sentry-go v0.44.1 h1:/cPtrA5qB7uMRrhgSn9TYtcEF36auGP3Y6+ThvD/yaI=
