@@ -39,7 +39,7 @@ var userSortFields = map[string]string{
 	"device":   "device_code",
 	"metro":    "metro_name",
 	"tenant":   "tenant_code",
-	"status":   "status",
+	"status":   "display_status",
 	"in":       "in_bps",
 	"out":      "out_bps",
 }
@@ -80,6 +80,7 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 
 	var sourceCTE string
 	var isDeletedExpr string
+	var isDeletedCond string
 	var fromTable string
 	if includeDeleted {
 		sourceCTE = `all_users AS (
@@ -97,11 +98,13 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 			GROUP BY entity_id
 			HAVING pk != ''
 		),`
-		isDeletedExpr = "u.is_deleted = 1 as is_deleted"
+		isDeletedCond = "u.is_deleted = 1"
+		isDeletedExpr = isDeletedCond + " as is_deleted"
 		fromTable = "all_users"
 	} else {
 		sourceCTE = ""
-		isDeletedExpr = "false as is_deleted"
+		isDeletedCond = "false"
+		isDeletedExpr = isDeletedCond + " as is_deleted"
 		fromTable = "dz_users_current"
 	}
 
@@ -133,7 +136,8 @@ func (a *API) GetUsers(w http.ResponseWriter, r *http.Request) {
 				COALESCE(t.code, '') as tenant_code,
 				COALESCE(tr.in_bps, 0) as in_bps,
 				COALESCE(tr.out_bps, 0) as out_bps,
-				` + isDeletedExpr + `
+				` + isDeletedExpr + `,
+				CASE WHEN ` + isDeletedCond + ` THEN 'deleted' ELSE u.status END as display_status
 			FROM ` + fromTable + ` u
 			LEFT JOIN dz_devices_current d ON u.device_pk = d.pk
 			LEFT JOIN dz_metros_current m ON d.metro_pk = m.pk
