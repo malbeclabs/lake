@@ -921,7 +921,7 @@ func BuildDrilldownQuery(timeFilter, bucketInterval, devicePk, intfFilter string
 // BuildBurstinessQuery builds the ClickHouse query for the burstiness endpoint.
 // Reads from device_interface_rollup_5m. Each rollup row already represents one
 // 5-minute bucket with max throughput, so we compute P50/P99 across buckets directly.
-func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsUserJoin, needsInterfaceJoin bool, threshold float64, minBps, minPeakBps float64, limit, offset int) string {
+func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL string, needsContributorJoin, needsUserJoin, needsInterfaceJoin bool, threshold float64, minBps, minPeakBps float64, limit, offset int) string {
 	// Validate sort direction
 	dir := "DESC"
 	if sortDir == "ASC" {
@@ -939,6 +939,11 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		orderCol = "p50_bps"
 	case "max_spike_bps":
 		orderCol = "max_spike_bps"
+	}
+
+	var contributorJoinSQL string
+	if needsContributorJoin {
+		contributorJoinSQL = "\n\t\t\tLEFT JOIN dz_contributors_current co ON d.contributor_pk = co.pk"
 	}
 
 	var userJoinSQL, userKindFilter string
@@ -966,7 +971,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 				quantile(0.95)(greatest(f.max_in_bps, f.max_out_bps)) AS p95_bps
 			FROM device_interface_rollup_5m f
 			INNER JOIN dz_devices_current d ON f.device_pk = d.pk
-			LEFT JOIN dz_links_current l ON f.link_pk = l.pk%s%s
+			LEFT JOIN dz_links_current l ON f.link_pk = l.pk%s%s%s
 			WHERE f.%s
 				%s
 				%s
@@ -1010,7 +1015,7 @@ func BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilter
 		FROM spike_results
 		ORDER BY %s %s
 		LIMIT %d OFFSET %d`,
-		userJoinSQL, intfJoinSQL, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter,
+		contributorJoinSQL, userJoinSQL, intfJoinSQL, timeFilter, intfTypeSQL, filterSQL, intfFilterSQL, userKindFilter,
 		minBps,
 		timeFilter,
 		minPeakBps, orderCol, dir, limit, offset)
@@ -1669,9 +1674,9 @@ func (a *API) GetTrafficDashboardBurstiness(w http.ResponseWriter, r *http.Reque
 	}
 	sortDir := strings.ToUpper(r.URL.Query().Get("dir"))
 
-	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, _, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
+	filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, _, _, _, needsContributorJoin, needsUserJoin, needsInterfaceJoin := buildDimensionFilters(r)
 
-	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsUserJoin, needsInterfaceJoin, threshold, minBps, minPeakBps, limit, offset)
+	query := BuildBurstinessQuery(timeFilter, sortMetric, sortDir, filterSQL, intfFilterSQL, intfTypeSQL, userKindSQL, needsContributorJoin, needsUserJoin, needsInterfaceJoin, threshold, minBps, minPeakBps, limit, offset)
 
 	start := time.Now()
 	rows, err := a.envDB(ctx).Query(ctx, query)
