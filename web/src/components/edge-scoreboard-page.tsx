@@ -900,7 +900,7 @@ function RecentSlotsChart({
     // Seed the live buffer from a set of slot races (initial load path).
     // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
     // and queues only a small tail so the animation is visually active right away.
-    const INITIAL_QUEUE_SLOTS = 25 // ~10s of animation at 400ms/slot, matching poll interval
+    const INITIAL_QUEUE_SLOTS = 75 // ~30s of animation at 400ms/slot, matching server cache refresh cycle
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
@@ -939,9 +939,9 @@ function RecentSlotsChart({
       }).catch(() => {})
     }
 
-    // Poll the page cache every 10s. The cache refreshes every 30s, yielding ~75 new slots
-    // each time. At 400ms/slot drain rate, 75 slots take ~30s — keeping animation continuous
-    // as long as there's always queue depth from the previous batch.
+    // Poll every 5s. The server cache refreshes every 30s (~75 new slots each time).
+    // At 400ms/slot drain rate, 75 slots take ~30s — matching the cache cycle. Polling
+    // at 5s means we catch a fresh cache within 5s of it arriving rather than up to 10s.
     const poll = () => {
       const prevMax = liveMaxSlotRef.current
       fetchEdgeScoreboard(window, leadersOnly).then(data => {
@@ -949,7 +949,7 @@ function RecentSlotsChart({
         loadSlots(data, prevMax)
       }).catch(() => {})
     }
-    const pollInterval = setInterval(poll, 10_000)
+    const pollInterval = setInterval(poll, 5_000)
 
     // Single rAF loop drives both the scroll animation and the drain.
     // scrollOffset advances at slotPx/400ms (constant velocity). When it rolls over
@@ -1027,7 +1027,7 @@ function RecentSlotsChart({
 
   // If React Query data arrives after the live effect started but the live effect's
   // own fetch hasn't returned yet, seed the buffer now so the chart isn't blank.
-  const FALLBACK_QUEUE_SLOTS = 25
+  const FALLBACK_QUEUE_SLOTS = 75
   useEffect(() => {
     if (!live || bucketed || !slots.length || slotBufferRef.current.length > 0 || liveEdgeRef.current > 0) return
     const map = new Map<number, EdgeScoreboardSlotRace[]>()
