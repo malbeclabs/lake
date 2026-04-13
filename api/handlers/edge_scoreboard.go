@@ -43,7 +43,7 @@ type EdgeScoreboardNode struct {
 	Validators    uint64                              `json:"validators"`
 	TotalSlots    uint64                              `json:"total_slots"`
 	SlotsObserved uint64                              `json:"slots_observed"`  // view-dependent: DZ-leader slots in leaders_only mode, DZ+dz_rebop in all-slots mode
-	DZLeaderSlots uint64                              `json:"dz_leader_slots"` // always feed='dz' leader slots — used for Edge Leaders Completeness
+	DZLeaderSlots uint64                              `json:"dz_leader_slots"` // slots where the dz feed won shreds and slot was a DZ-leader slot (per-node, informational)
 	LastUpdated   time.Time                           `json:"last_updated"`
 	Name          string                              `json:"name,omitempty"`
 	GossipPubkey  string                              `json:"gossip_pubkey,omitempty"`
@@ -333,7 +333,9 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	)`, publisherDB, timeFilter)
 
 	// Query 1b: DZ-leader slot counts per node — always run regardless of leadersOnly.
-	// Populates dzLeaderSlots (used for Edge Leaders Completeness, always consistent).
+	// Counts slots where the dz feed was present (won shreds OR appeared as a pairwise loser),
+	// intersected with dz_leader_slots from publisher_shred_stats. Using OR loser_feed='dz'
+	// ensures nodes like tyo (where dz loses to dz_rebop every time) still count correctly.
 	// In leaders-only mode, also overrides info.dzSlots so SlotsObserved reflects leader slots.
 	dzLeaderSlotsByNode := make(map[string]uint64)
 	{
@@ -341,7 +343,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			WITH %s
 			SELECT host, uniqExact(slot) AS dz_leader_slots
 			FROM %s.slot_feed_race_summary
-			WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+			WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
 				AND slot IN (SELECT slot FROM dz_leader_slots)
 				%s
 			GROUP BY host
@@ -381,16 +383,17 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 	}
 
-	// Query 1c: DZ-leader slot count and total slot count from slot_feed_race_summary.
-	// feed='dz' rows only appear when the leader is a DZ publisher, so uniqExactIf(slot, feed='dz')
-	// gives DZ-leader slots. Both values come from the same table/window so the ratio is consistent.
+	// Query 1c: DZ-leader slot count and total slot count.
+	// dz_leader_slots comes directly from publisher_shred_stats (is_scheduled_leader=true) —
+	// the authoritative count of slots where the scheduled leader published via DZ.
+	// total_slots is the distinct slot count from slot_feed_race_summary aggregate rows.
 	// completeness_pct = dz_leader_slots / total_slots — fraction of slots with a DZ leader.
 	var totalDZLeaderSlots, globalTotalSlots uint64
 	{
 		query1c := fmt.Sprintf(`
 			WITH %s
 			SELECT
-				uniqExactIf(slot, feed = 'dz' AND slot IN (SELECT slot FROM dz_leader_slots)) AS dz_leader_slots,
+				(SELECT count() FROM dz_leader_slots) AS dz_leader_slots,
 				uniqExact(slot) AS total_slots
 			FROM %s.slot_feed_race_summary
 			WHERE feed_type = 'shred' AND loser_feed = '' %s
@@ -505,7 +508,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					INNER JOIN (
 						SELECT DISTINCT host, slot
 						FROM %s.slot_feed_race_summary
-						WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+						WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
 							AND slot IN (SELECT slot FROM dz_leader_slots)
 							%s
 					) dz ON r.host = dz.host AND r.slot = dz.slot
@@ -575,7 +578,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				INNER JOIN (
 					SELECT DISTINCT host, slot
 					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed = ''
+					WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
 						AND slot IN (SELECT slot FROM dz_leader_slots)
 						%s
 				) dz ON r.host = dz.host AND r.slot = dz.slot
@@ -775,7 +778,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				dz_slots AS (
 					SELECT DISTINCT slot
 					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed = 'dz'
+					WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
 						AND slot IN (SELECT slot FROM dz_leader_slots)
 						AND host IN (SELECT host FROM active_hosts)
 						AND slot BETWEEN %d AND %d

@@ -2154,6 +2154,7 @@ export function EdgeScoreboardPage() {
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium text-right">DZ Edge Win Rate %</th>
+                  <th className="px-4 py-3 font-medium text-right">Completeness</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                 </tr>
@@ -2249,6 +2250,9 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
         {dz ? formatPct(edgeFirstArrival) : '—'}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums text-sm">
+        {node.total_slots > 0 ? formatPct(node.dz_leader_slots / node.total_slots * 100) : '—'}
       </td>
       {['jito', 'turbine'].map(f => {
         const lt = dzLeadByFeed[f]
