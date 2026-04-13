@@ -2150,21 +2150,21 @@ export function EdgeScoreboardPage() {
               </div>
               <div className="flex items-center rounded-md border border-border text-sm">
                 {([
-                  [false, 'All Slots'] as const,
-                  [true, 'Edge Leaders'] as const,
-                ]).map(([v, label]) => (
+                  [false, 'All Slots', 'A comparison of Edge retransmits + Edge leader shreds against other full feeds.'] as const,
+                  [true, 'Edge Leaders', 'A comparison of Edge leader shreds against other hosts, only for the same set of leader shreds that Edge delivers.'] as const,
+                ]).map(([v, label, tooltip]) => (
                   <button
                     key={String(v)}
                     type="button"
                     onClick={() => setLeadersOnly(v)}
                     className={cn(
-                      'px-3 py-1.5 transition-colors',
+                      'px-3 py-1.5 transition-colors flex items-center',
                       leadersOnly === v
                         ? 'bg-primary text-primary-foreground'
                         : 'hover:bg-muted'
                     )}
                   >
-                    {label}
+                    {label}<InfoTooltip text={tooltip} />
                   </button>
                 ))}
               </div>
