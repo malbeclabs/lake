@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
 
-const VALID_WINDOWS = ['1h', '24h', '7d', '30d', 'all'] as const
+const VALID_WINDOWS = ['1h', '24h', '7d', 'all'] as const
 type TimeWindow = (typeof VALID_WINDOWS)[number]
 
 function isValidWindow(v: string | null): v is TimeWindow {
