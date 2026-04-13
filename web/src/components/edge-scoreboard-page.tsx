@@ -1497,8 +1497,10 @@ function RecentSlotsChart({
         const slotMap = byNode.get(n.host)!
         const data = allSlotNumbers.map((slot, idx) => {
           const feedPcts = slotMap.get(slot) ?? {}
+          const total = feeds.reduce((sum, f) => sum + (feedPcts[f] ?? 0), 0)
+          const scale = total > 0 ? 100 / total : 1
           const row: Record<string, number> = { idx, slot }
-          for (const f of feeds) row[f] = feedPcts[f] ?? 0
+          for (const f of feeds) row[f] = Math.round((feedPcts[f] ?? 0) * scale * 10) / 10
           return row
         })
         return { node: n, data }
