@@ -90,31 +90,6 @@ const FEED_LABELS: Record<string, string> = {
   pipe: 'Pipe',
 }
 
-const SLOTS_PER_EPOCH = 432_000
-
-function EpochProgress({ epoch, slot }: { epoch: number; slot: number }) {
-  const slotInEpoch = slot % SLOTS_PER_EPOCH
-  const pct = (slotInEpoch / SLOTS_PER_EPOCH) * 100
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-4 mb-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-sm font-medium">
-          Solana Epoch {epoch.toLocaleString()}
-        </div>
-        <div className="text-sm text-muted-foreground tabular-nums">
-          Slot {slotInEpoch.toLocaleString()} / {SLOTS_PER_EPOCH.toLocaleString()} ({pct.toFixed(1)}%)
-        </div>
-      </div>
-      <div className="h-2 bg-muted rounded-full overflow-hidden">
-        <div
-          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  )
-}
 
 function WinRateBar({
   node,
@@ -2171,13 +2146,6 @@ export function EdgeScoreboardPage() {
                   </div>
                 ))}
               </div>
-              <div className="flex items-center gap-1.5 text-sm text-emerald-500">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                </span>
-                LIVE
-              </div>
             </div>
           }
         />
@@ -2189,10 +2157,6 @@ export function EdgeScoreboardPage() {
           )}
         </div>
 
-        {/* Epoch progress */}
-        {data && data.current_epoch > 0 && (
-          <EpochProgress epoch={data.current_epoch} slot={data.current_slot} />
-        )}
 
         {/* Summary cards */}
         {globalStats && (
