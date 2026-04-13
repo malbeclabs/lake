@@ -169,7 +169,7 @@ function WinRateBar({
             <thead>
               <tr className="text-[#777]">
                 <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
-                <th className="pr-3 py-0.5 text-right font-normal">First Arrival %</th>
+                <th className="pr-3 py-0.5 text-right font-normal">Win Rate %</th>
                 <th className="py-0.5 text-right font-normal">Shreds</th>
               </tr>
             </thead>
@@ -298,7 +298,7 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="mb-4">
-        <h3 className="text-sm font-medium">First Arrival by Node</h3>
+        <h3 className="text-sm font-medium">Win Rate by Node</h3>
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 mt-3">
           {chartData.feeds.map((f) => {
             const defaultVal = formatPct(chartData.feedAgg[f])
@@ -1612,7 +1612,7 @@ function RecentSlotsChart({
   if (!slots.length)
     return (
       <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — First Arrival per Slot</h3>
+        <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — Win Rate per Slot</h3>
         <div className="text-sm text-muted-foreground text-center py-12">No recent slot data available.</div>
       </div>
     )
@@ -1636,7 +1636,7 @@ function RecentSlotsChart({
       <div className="mb-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium flex items-center gap-2">
-            {bucketed ? 'First Arrival Trend' : 'First Arrival per Slot'}
+            {bucketed ? 'Win Rate Trend' : 'Win Rate per Slot'}
             {live && (
               <span className="relative flex items-center">
                 {isPrefetching ? (
@@ -1886,7 +1886,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(
           `<div style="font-size:13px;color:#1a1a2e">` +
           `<strong>${node.location}</strong> — ${node.metro_name}<br/>` +
-          `First Arrival: ${winRate.toFixed(1)}%<br/>` +
+          `Win Rate: ${winRate.toFixed(1)}%<br/>` +
           `Slots: ${node.slots_observed.toLocaleString()}` +
           `</div>`
         ))
@@ -2198,7 +2198,7 @@ export function EdgeScoreboardPage() {
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
             <SummaryCard label="DZ Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
-            <SummaryCard label="DZ Edge First Arrival" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
+            <SummaryCard label="DZ Edge Win Rate" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
             <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
@@ -2227,7 +2227,7 @@ export function EdgeScoreboardPage() {
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium text-right">Completeness</th>
-                  <th className="px-4 py-3 font-medium text-right">DZ Edge First Arrival %</th>
+                  <th className="px-4 py-3 font-medium text-right">DZ Edge Win Rate %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
