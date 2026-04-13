@@ -26,6 +26,7 @@ import {
   Gauge,
   BarChart3,
   Zap,
+  Trophy,
   Sun,
   Moon,
   Layers,
@@ -43,11 +44,10 @@ export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const { features } = useEnv()
-  const { user } = useAuth()
+  useAuth()
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
-  const isInternalUser = !!user?.is_internal_user
-  const { resolvedTheme, setTheme } = useTheme()
+const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
   // Route detection
@@ -88,12 +88,13 @@ export function Sidebar() {
   const isTenantsRoute = location.pathname.startsWith('/dz/tenants')
   const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
-  const isShredsRoute = location.pathname.startsWith('/dz/shreds')
+  const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
+  const isShredsRoute = location.pathname.startsWith('/dz/shreds') && !isScoreboardRoute
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
   const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
-  const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
+  const isEdgeRoute = isShredsRoute || isScoreboardRoute || isPublisherCheckRoute
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -234,8 +235,11 @@ export function Sidebar() {
           <div className="w-6 border-t border-border/50 my-2" />
 
           {/* Entity sections */}
-          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute)} title="DoubleZero">
+          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
             <Server className="h-4 w-4" />
+          </Link>
+          <Link to="/dz/shreds/scoreboard" className={collapsedIconClass(isEdgeRoute)} title="Edge">
+            <Trophy className="h-4 w-4" />
           </Link>
           {hasSolana && (
             <Link to="/solana/validators" className={collapsedIconClass(isSolanaRoute)} title="Solana">
@@ -482,6 +486,19 @@ export function Sidebar() {
               <Radio className="h-4 w-4" />
               Multicast
             </Link>
+          </div>
+        </div>
+
+        {/* Edge section */}
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
+          </div>
+          <div className="space-y-1">
+            <Link to="/dz/shreds/scoreboard" className={navItemClass(isScoreboardRoute)}>
+              <Trophy className="h-4 w-4" />
+              Scoreboard
+            </Link>
             <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
               <ShieldCheck className="h-4 w-4" />
               Publisher Check
@@ -501,11 +518,6 @@ export function Sidebar() {
                 <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
                   Activity
                 </Link>
-                {isInternalUser && (
-                  <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
-                    Scoreboard
-                  </Link>
-                )}
               </>
             )}
           </div>
