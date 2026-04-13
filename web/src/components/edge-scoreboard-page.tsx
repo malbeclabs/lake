@@ -47,13 +47,13 @@ function formatStake(sol: number): string {
 }
 
 
-function InfoTooltip({ text }: { text: string }) {
+function InfoTooltip({ text, direction = 'up' }: { text: string; direction?: 'up' | 'down' }) {
   const [show, setShow] = useState(false)
   return (
     <span className="relative inline-flex items-center ml-1" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
       <span className="text-muted-foreground cursor-help select-none text-xs leading-none">ⓘ</span>
       {show && (
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-30 w-64 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal pointer-events-none">
+        <span className={cn("absolute left-1/2 -translate-x-1/2 z-30 w-64 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal pointer-events-none", direction === 'down' ? 'top-full mt-2' : 'bottom-full mb-2')}>
           {text}
         </span>
       )}
@@ -2164,7 +2164,7 @@ export function EdgeScoreboardPage() {
                         : 'hover:bg-muted'
                     )}
                   >
-                    {label}<InfoTooltip text={tooltip} />
+                    {label}<InfoTooltip text={tooltip} direction="down" />
                   </button>
                 ))}
               </div>
