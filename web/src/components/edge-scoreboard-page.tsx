@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } fr
 import { useDrag } from '@use-gesture/react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronsRight } from 'lucide-react'
+import { Trophy, Loader2, ChevronsRight, Play, Square } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -1681,7 +1681,13 @@ function RecentSlotsChart({
                     : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
-                Live
+                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                  Live
+                  {live && viewEndSlot === null
+                    ? <Square size={10} className="fill-current shrink-0" />
+                    : <Play size={10} className="fill-current shrink-0" />
+                  }
+                </span>
               </button>
             )}
             <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
