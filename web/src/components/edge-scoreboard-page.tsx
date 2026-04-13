@@ -923,19 +923,16 @@ function RecentSlotsChart({
     }
 
     // Seed the live buffer from a set of slot races (initial load path).
+    // All slots go into the immediate buffer so the chart starts at the live edge right away.
+    // New slots from polls animate in from the right going forward.
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
-      // Pre-queue 500 slots (~3 min of drain) so animation continues between polls.
-      const INITIAL_QUEUE_SLOTS = 500
-      const splitIdx = Math.max(viewSlotCount, nums.length - INITIAL_QUEUE_SLOTS)
-      const immediate = nums.slice(0, splitIdx)
-      const toQueue = nums.slice(splitIdx)
-      const immediateSlot = immediate.at(-1) ?? 0
-      slotBufferRef.current = immediate.flatMap(s => map.get(s)!)
-      liveEdgeRef.current = immediateSlot
-      setLiveEdge(immediateSlot)
-      liveQueueRef.current = toQueue.map(s => map.get(s)!)
+      slotBufferRef.current = nums.flatMap(s => map.get(s)!)
+      const latestSlot = nums.at(-1) ?? 0
+      liveEdgeRef.current = latestSlot
+      setLiveEdge(latestSlot)
+      liveQueueRef.current = []
       if (leaders) setLiveLeaders(leaders)
     }
 
@@ -1060,18 +1057,14 @@ function RecentSlotsChart({
       map.get(r.slot)!.push(r)
     }
     nums.sort((a, b) => a - b)
-    const INITIAL_QUEUE_SLOTS = 500
-    const splitIdx = Math.max(viewSlotCount, nums.length - INITIAL_QUEUE_SLOTS)
-    const immediate = nums.slice(0, splitIdx)
-    const toQueue = nums.slice(splitIdx)
-    const immediateSlot = immediate.at(-1) ?? 0
     liveMaxSlotRef.current = nums.at(-1) ?? 0
-    slotBufferRef.current = immediate.flatMap(s => map.get(s)!)
-    liveEdgeRef.current = immediateSlot
-    setLiveEdge(immediateSlot)
-    liveQueueRef.current = toQueue.map(s => map.get(s)!)
+    slotBufferRef.current = nums.flatMap(s => map.get(s)!)
+    const latestSlot = nums.at(-1) ?? 0
+    liveEdgeRef.current = latestSlot
+    setLiveEdge(latestSlot)
+    liveQueueRef.current = []
     if (slotLeaders) setLiveLeaders(slotLeaders)
-  }, [slots, live, bucketed, slotLeaders, viewSlotCount])
+  }, [slots, live, bucketed, slotLeaders])
 
   // In non-live per-slot mode, keep the buffer in sync with the query result so
   // the scroll system works the same way as live mode.
