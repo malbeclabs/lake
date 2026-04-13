@@ -2101,22 +2101,22 @@ export function EdgeScoreboardPage() {
           }
           actions={
             <div className="flex items-center gap-3">
-              <div className="flex items-center rounded-md border border-border text-sm">
+              <div className="flex items-center gap-2 text-sm">
                 {([
                   [false, 'All Slots', 'A comparison of DZ Edge retransmits + DZ Edge leader shreds against other full feeds.'] as const,
                   [true, 'DZ Edge Leaders', 'A comparison of DZ Edge leader shreds against other hosts, only for the same set of leader shreds that DZ Edge delivers.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     {v === true && (
-                      <span className="absolute inset-0 rounded-[3px] ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
+                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
                     )}
                     <button
                       type="button"
                       onClick={() => setLeadersOnly(v)}
                       className={cn(
-                        'px-3 py-1.5 transition-colors',
+                        'px-3 py-1.5 rounded-md border border-border transition-colors',
                         leadersOnly === v
-                          ? 'bg-primary text-primary-foreground'
+                          ? 'bg-primary text-primary-foreground border-primary'
                           : 'hover:bg-muted'
                       )}
                     >

@@ -5173,7 +5173,7 @@ export async function fetchEdgeScoreboard(
 ): Promise<EdgeScoreboardResponse> {
   const params = new URLSearchParams()
   params.set('window', window)
-  if (!leadersOnly) params.set('leaders_only', 'false')
+  if (leadersOnly) params.set('leaders_only', 'true')
   if (opts?.sinceSlot) params.set('since_slot', String(opts.sinceSlot))
   if (opts?.beforeSlot) params.set('before_slot', String(opts.beforeSlot))
   if (opts?.limit) params.set('limit', String(opts.limit))
