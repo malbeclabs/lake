@@ -2184,7 +2184,7 @@ export function EdgeScoreboardPage() {
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
             <SummaryCard label="Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} />
-            <SummaryCard label="First Arrival" value={formatPct(globalStats.winRate)} />
+            <SummaryCard label="Edge First Arrival" value={formatPct(globalStats.winRate)} />
             <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
