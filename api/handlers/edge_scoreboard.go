@@ -795,16 +795,13 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					ORDER BY slot %s
 					LIMIT %d
 				)
-				SELECT host, slot, feed, shreds_won,
-					round(shreds_won / greatest(SUM(shreds_won) OVER (PARTITION BY host, slot), 1) * 100, 1) AS win_pct
-				FROM (
-					SELECT r.host, r.slot, r.feed, r.shreds_won
-					FROM %s.slot_feed_race_summary AS r
-					INNER JOIN common_slots cs ON r.slot = cs.slot
-					WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
-						AND r.host IN (SELECT host FROM active_hosts)
-				)
-				ORDER BY host, slot, feed
+				SELECT r.host, r.slot, r.feed, r.shreds_won,
+					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
+				FROM %s.slot_feed_race_summary AS r
+				INNER JOIN common_slots cs ON r.slot = cs.slot
+				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
+					AND r.host IN (SELECT host FROM active_hosts)
+				ORDER BY r.host, r.slot, r.feed
 			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		} else {
 			query5 = fmt.Sprintf(`
@@ -831,16 +828,13 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					ORDER BY slot %s
 					LIMIT %d
 				)
-				SELECT host, slot, feed, shreds_won,
-					round(shreds_won / greatest(SUM(shreds_won) OVER (PARTITION BY host, slot), 1) * 100, 1) AS win_pct
-				FROM (
-					SELECT r.host, r.slot, r.feed, r.shreds_won
-					FROM %s.slot_feed_race_summary AS r
-					INNER JOIN common_slots cs ON r.slot = cs.slot
-					WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
-						AND r.host IN (SELECT host FROM active_hosts)
-				)
-				ORDER BY host, slot, feed
+				SELECT r.host, r.slot, r.feed, r.shreds_won,
+					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
+				FROM %s.slot_feed_race_summary AS r
+				INNER JOIN common_slots cs ON r.slot = cs.slot
+				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
+					AND r.host IN (SELECT host FROM active_hosts)
+				ORDER BY r.host, r.slot, r.feed
 			`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		}
 		t := time.Now()
