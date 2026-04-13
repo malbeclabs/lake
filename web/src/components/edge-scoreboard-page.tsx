@@ -2223,8 +2223,8 @@ export function EdgeScoreboardPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
-                  <th className="px-4 py-3 font-medium text-right">Completeness<InfoTooltip text="Fraction of all observed slots where this node's scheduled leader was publishing shreds via DZ Edge." /></th>
-                  <th className="px-4 py-3 font-medium text-right">Edge First Arrival %<InfoTooltip text="Percentage of shreds where this DZ Edge node (leader or retransmit) delivered the shred before all other sources." /></th>
+                  <th className="px-4 py-3 font-medium text-right">Completeness</th>
+                  <th className="px-4 py-3 font-medium text-right">Edge First Arrival %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
