@@ -1120,6 +1120,69 @@ func TestTrafficDashboardBurstiness_Empty(t *testing.T) {
 	assert.Empty(t, resp.Entities)
 }
 
+func TestTrafficDashboardBurstiness_WithContributorAndMetroFilter(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	seedDashboardData(t, api)
+
+	tests := []struct {
+		name      string
+		query     string
+		wantIntfs []string
+	}{
+		{
+			name:      "contributor_ACME",
+			query:     "?time_range=1h&contributor=ACME",
+			wantIntfs: []string{"Port-Channel1000"},
+		},
+		{
+			name:      "contributor_BETA",
+			query:     "?time_range=1h&contributor=BETA",
+			wantIntfs: []string{"Ethernet1/1"},
+		},
+		{
+			name:      "contributor_nonexistent",
+			query:     "?time_range=1h&contributor=NOPE",
+			wantIntfs: nil,
+		},
+		{
+			name:      "metro_FRA",
+			query:     "?time_range=1h&metro=FRA",
+			wantIntfs: []string{"Port-Channel1000"},
+		},
+		{
+			name:      "metro_AMS",
+			query:     "?time_range=1h&metro=AMS",
+			wantIntfs: []string{"Ethernet1/1"},
+		},
+		{
+			name:      "metro_nonexistent",
+			query:     "?time_range=1h&metro=NYC",
+			wantIntfs: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/traffic/dashboard/burstiness"+tt.query, nil)
+			rr := httptest.NewRecorder()
+
+			api.GetTrafficDashboardBurstiness(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code, "body: %s", rr.Body.String())
+
+			var resp handlers.BurstinessResponse
+			require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+
+			var gotIntfs []string
+			for _, e := range resp.Entities {
+				gotIntfs = append(gotIntfs, e.Intf)
+			}
+			assert.ElementsMatch(t, tt.wantIntfs, gotIntfs)
+		})
+	}
+}
+
 // --- Health endpoint tests ---
 
 // seedHealthData inserts data with nonzero error/discard/carrier values for health testing.
