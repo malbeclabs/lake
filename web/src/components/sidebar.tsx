@@ -235,11 +235,11 @@ const { resolvedTheme, setTheme } = useTheme()
           <div className="w-6 border-t border-border/50 my-2" />
 
           {/* Entity sections */}
-          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
-            <Server className="h-4 w-4" />
-          </Link>
           <Link to="/dz/shreds/scoreboard" className={collapsedIconClass(isEdgeRoute)} title="Edge">
             <Trophy className="h-4 w-4" />
+          </Link>
+          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
+            <Server className="h-4 w-4" />
           </Link>
           {hasSolana && (
             <Link to="/solana/validators" className={collapsedIconClass(isSolanaRoute)} title="Solana">
@@ -452,6 +452,40 @@ const { resolvedTheme, setTheme } = useTheme()
           </div>
         </div>
 
+        {/* Edge section */}
+        <div className="px-3 pt-4">
+          <div className="px-3 mb-2">
+            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
+          </div>
+          <div className="space-y-1">
+            <Link to="/dz/shreds/scoreboard" className={navItemClass(isScoreboardRoute)}>
+              <Trophy className="h-4 w-4" />
+              Scoreboard
+            </Link>
+            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
+              <ShieldCheck className="h-4 w-4" />
+              Publisher Check
+            </Link>
+            <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
+              <Puzzle className="h-4 w-4" />
+              Shreds
+            </Link>
+            {isShredsRoute && (
+              <>
+                <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
+                  Subscribers
+                </Link>
+                <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
+                  Devices
+                </Link>
+                <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
+                  Activity
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* DoubleZero section - always visible */}
         <div className="px-3 pt-4">
           <div className="px-3 mb-2">
@@ -486,40 +520,6 @@ const { resolvedTheme, setTheme } = useTheme()
               <Radio className="h-4 w-4" />
               Multicast
             </Link>
-          </div>
-        </div>
-
-        {/* Edge section */}
-        <div className="px-3 pt-4">
-          <div className="px-3 mb-2">
-            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
-          </div>
-          <div className="space-y-1">
-            <Link to="/dz/shreds/scoreboard" className={navItemClass(isScoreboardRoute)}>
-              <Trophy className="h-4 w-4" />
-              Scoreboard
-            </Link>
-            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
-              <ShieldCheck className="h-4 w-4" />
-              Publisher Check
-            </Link>
-            <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
-              <Puzzle className="h-4 w-4" />
-              Shreds
-            </Link>
-            {isShredsRoute && (
-              <>
-                <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
-                  Subscribers
-                </Link>
-                <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
-                  Devices
-                </Link>
-                <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
-                  Activity
-                </Link>
-              </>
-            )}
           </div>
         </div>
 
