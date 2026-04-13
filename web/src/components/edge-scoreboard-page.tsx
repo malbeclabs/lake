@@ -1504,13 +1504,18 @@ function RecentSlotsChart({
     const allRawBuckets = [...new Set(filtered.map((b) => b.slot_bucket))].sort((a, b) => a - b)
     const apiBucketSize = slotBucketSize ?? (allRawBuckets.length >= 2 ? allRawBuckets[1] - allRawBuckets[0] : 1)
 
-    // Clip to the minimum last bucket across all nodes so all charts end at the same point.
+    // Clip to the common bucket range across all nodes so all charts start and end at the same point.
+    // Without this, nodes with earlier or later data produce partial first/last buckets with
+    // misleading win rates (visible as spikes at the chart edges).
+    const perNodeMin = new Map<string, number>()
     const perNodeMax = new Map<string, number>()
     for (const b of filtered) {
+      if (perNodeMin.get(b.host) === undefined || b.slot_bucket < perNodeMin.get(b.host)!) perNodeMin.set(b.host, b.slot_bucket)
       if (b.slot_bucket > (perNodeMax.get(b.host) ?? 0)) perNodeMax.set(b.host, b.slot_bucket)
     }
+    const maxFirstBucket = Math.max(...perNodeMin.values())
     const minLastBucket = Math.min(...perNodeMax.values())
-    const rawBuckets = allRawBuckets.filter(b => b <= minLastBucket)
+    const rawBuckets = allRawBuckets.filter(b => b >= maxFirstBucket && b <= minLastBucket)
 
     const groupSize = Math.max(1, Math.ceil(rawBuckets.length / maxDisplayBuckets))
     const displayBucketSize = groupSize * apiBucketSize
