@@ -2153,19 +2153,23 @@ export function EdgeScoreboardPage() {
                   [false, 'All Slots', 'A comparison of Edge retransmits + Edge leader shreds against other full feeds.'] as const,
                   [true, 'Edge Leaders', 'A comparison of Edge leader shreds against other hosts, only for the same set of leader shreds that Edge delivers.'] as const,
                 ]).map(([v, label, tooltip]) => (
-                  <button
-                    key={String(v)}
-                    type="button"
-                    onClick={() => setLeadersOnly(v)}
-                    className={cn(
-                      'px-3 py-1.5 transition-colors flex items-center',
-                      leadersOnly === v
-                        ? 'bg-primary text-primary-foreground'
-                        : 'hover:bg-muted'
-                    )}
-                  >
-                    {label}<InfoTooltip text={tooltip} direction="down" />
-                  </button>
+                  <div key={String(v)} className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => setLeadersOnly(v)}
+                      className={cn(
+                        'px-3 py-1.5 transition-colors',
+                        leadersOnly === v
+                          ? 'bg-primary text-primary-foreground'
+                          : 'hover:bg-muted'
+                      )}
+                    >
+                      {label}
+                    </button>
+                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 z-30 w-64 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                      {tooltip}
+                    </span>
+                  </div>
                 ))}
               </div>
               <div className="flex items-center gap-1.5 text-sm text-emerald-500">
