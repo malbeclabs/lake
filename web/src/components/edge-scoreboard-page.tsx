@@ -1945,30 +1945,14 @@ export function EdgeScoreboardPage() {
     placeholderData: keepPreviousData,
   })
 
-  // Keep recent slots stable across window changes: only update when a newer
-  // response arrives (by generated_at), so switching 1h↔24h doesn't flip the chart.
-  type RecentSlotsSnapshot = {
-    generatedAt: string
-    slots: EdgeScoreboardSlotRace[]
-    leaders: Record<string, EdgeScoreboardLeader> | undefined
-  }
-  const latestRecentRef = useRef<RecentSlotsSnapshot | null>(null)
-  const [stableRecent, setStableRecent] = useState<RecentSlotsSnapshot | null>(null)
-  // Reset snapshot when leadersOnly or window changes so the chart reflects the new data immediately.
-  // Without this, the generated_at guard can silently drop updates when cached data for the new
-  // window has an older timestamp than the current snapshot (e.g. switching 1h→24h).
-  useEffect(() => {
-    latestRecentRef.current = null
-    setStableRecent(null)
-  }, [leadersOnly, activeWindow])
-  useEffect(() => {
-    if (!data?.generated_at || !data.recent_slots?.length) return
-    const prev = latestRecentRef.current
-    if (!prev || new Date(data.generated_at) >= new Date(prev.generatedAt)) {
-      const snap: RecentSlotsSnapshot = { generatedAt: data.generated_at, slots: data.recent_slots, leaders: data.slot_leaders }
-      latestRecentRef.current = snap
-      setStableRecent(snap)
-    }
+  // Derive recent slots snapshot synchronously from `data` so both charts update in the same
+  // render cycle. Using state+useEffect caused a one-render lag between the bucketed chart
+  // (reads data.slot_buckets) and the slot chart (read stableRecent), making them visibly
+  // update at different times when switching views. keepPreviousData already handles the
+  // transition — data never goes blank — so the generated_at guard is not needed.
+  const stableRecent = useMemo(() => {
+    if (!data?.recent_slots?.length) return null
+    return { slots: data.recent_slots, leaders: data.slot_leaders }
   }, [data])
 
   const freshness = useMemo(() => {
@@ -2166,7 +2150,7 @@ export function EdgeScoreboardPage() {
         {data?.nodes && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={stableRecent?.slots ?? data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} />
+            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} />
           </div>
         )}
 
