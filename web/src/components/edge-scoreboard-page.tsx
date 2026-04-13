@@ -923,16 +923,20 @@ function RecentSlotsChart({
     }
 
     // Seed the live buffer from a set of slot races (initial load path).
-    // All slots go into the immediate buffer so the chart starts at the live edge right away.
-    // New slots from polls animate in from the right going forward.
+    // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
+    // and queues only a small tail so the animation is visually active right away.
+    const INITIAL_QUEUE_SLOTS = 12 // ~5s of animation at 400ms/slot
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
-      slotBufferRef.current = nums.flatMap(s => map.get(s)!)
-      const latestSlot = nums.at(-1) ?? 0
-      liveEdgeRef.current = latestSlot
-      setLiveEdge(latestSlot)
-      liveQueueRef.current = []
+      const splitIdx = Math.max(0, nums.length - INITIAL_QUEUE_SLOTS)
+      const immediate = nums.slice(0, splitIdx)
+      const toQueue = nums.slice(splitIdx)
+      const immediateSlot = immediate.at(-1) ?? nums.at(-1) ?? 0
+      slotBufferRef.current = immediate.flatMap(s => map.get(s)!)
+      liveEdgeRef.current = immediateSlot
+      setLiveEdge(immediateSlot)
+      liveQueueRef.current = toQueue.map(s => map.get(s)!)
       if (leaders) setLiveLeaders(leaders)
     }
 
@@ -1048,6 +1052,7 @@ function RecentSlotsChart({
 
   // If React Query data arrives after the live effect started but the live effect's
   // own fetch hasn't returned yet, seed the buffer now so the chart isn't blank.
+  const FALLBACK_QUEUE_SLOTS = 12
   useEffect(() => {
     if (!live || bucketed || !slots.length || slotBufferRef.current.length > 0 || liveEdgeRef.current > 0) return
     const map = new Map<number, EdgeScoreboardSlotRace[]>()
@@ -1058,11 +1063,12 @@ function RecentSlotsChart({
     }
     nums.sort((a, b) => a - b)
     liveMaxSlotRef.current = nums.at(-1) ?? 0
-    slotBufferRef.current = nums.flatMap(s => map.get(s)!)
-    const latestSlot = nums.at(-1) ?? 0
-    liveEdgeRef.current = latestSlot
-    setLiveEdge(latestSlot)
-    liveQueueRef.current = []
+    const splitIdx = Math.max(0, nums.length - FALLBACK_QUEUE_SLOTS)
+    slotBufferRef.current = nums.slice(0, splitIdx).flatMap(s => map.get(s)!)
+    const immediateSlot = nums[splitIdx - 1] ?? nums.at(-1) ?? 0
+    liveEdgeRef.current = immediateSlot
+    setLiveEdge(immediateSlot)
+    liveQueueRef.current = nums.slice(splitIdx).map(s => map.get(s)!)
     if (slotLeaders) setLiveLeaders(slotLeaders)
   }, [slots, live, bucketed, slotLeaders])
 
