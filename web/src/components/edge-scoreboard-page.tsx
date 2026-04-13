@@ -1858,7 +1858,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
 
     for (const node of nodesWithCoords) {
       const dz = node.feeds['dz']
-      const winRate = dz?.win_rate_pct ?? 0
+      const winRate = (dz?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
       const color = winRate >= 50 ? '#22c55e' : '#f59e0b'
 
       const el = document.createElement('div')
@@ -2014,7 +2014,7 @@ export function EdgeScoreboardPage() {
     }
 
     for (const node of data.nodes) {
-      dzShredsWon += node.feeds['dz']?.win_rate_pct ?? 0
+      dzShredsWon += (node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
       dzTotalShreds++
       totalSlots += node.slots_observed
 
@@ -2248,6 +2248,8 @@ function NodeRow({ node, label, globalTotalSlots }: { node: EdgeScoreboardNode; 
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
+  const dzRebop = node.feeds['dz_rebop']
+  const edgeFirstArrival = (dz?.win_rate_pct ?? 0) + (dzRebop?.win_rate_pct ?? 0)
   const completeness = globalTotalSlots > 0 ? (node.dz_leader_slots / globalTotalSlots) * 100 : 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }
@@ -2307,7 +2309,7 @@ function NodeRow({ node, label, globalTotalSlots }: { node: EdgeScoreboardNode; 
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">{formatPct(completeness)}</td>
       <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
-        {dz ? formatPct(dz.win_rate_pct) : '—'}
+        {dz ? formatPct(edgeFirstArrival) : '—'}
       </td>
       {['jito', 'turbine'].map(f => {
         const lt = dzLeadByFeed[f]
