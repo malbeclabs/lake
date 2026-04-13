@@ -2014,13 +2014,7 @@ export function EdgeScoreboardPage() {
     }
 
     for (const node of data.nodes) {
-      // Normalize per-node win rates to sum to 100% (same as the bar chart),
-      // then take the combined DZ fraction. This avoids inflating the average
-      // when dz_rebop has disproportionately large raw values.
-      const rawSum = Object.values(node.feeds).reduce((s, f) => s + (f?.win_rate_pct ?? 0), 0)
-      const scale = rawSum > 0 ? 100 / rawSum : 0
-      const dzPct = ((node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)) * scale
-      dzShredsWon += dzPct
+      dzShredsWon += node.feeds['dz']?.win_rate_pct ?? 0
       dzTotalShreds++
       totalSlots += node.slots_observed
 
@@ -2213,7 +2207,7 @@ export function EdgeScoreboardPage() {
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium text-right">Completeness</th>
-                  <th className="px-4 py-3 font-medium text-right">First Arrival %</th>
+                  <th className="px-4 py-3 font-medium text-right">Edge First Arrival %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
