@@ -83,8 +83,8 @@ const FEED_COLORS: Record<string, string> = {
 }
 
 const FEED_LABELS: Record<string, string> = {
-  dz: 'Edge Leaders',
-  dz_rebop: 'Edge Retransmits',
+  dz: 'DZ Edge Leaders',
+  dz_rebop: 'DZ Edge Retransmits',
   jito: 'Jito Shredstream',
   turbine: 'Turbine',
   pipe: 'Pipe',
@@ -1612,7 +1612,7 @@ function RecentSlotsChart({
   if (!slots.length)
     return (
       <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium mb-4">Recent Edge Leader Slots — First Arrival per Slot</h3>
+        <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — First Arrival per Slot</h3>
         <div className="text-sm text-muted-foreground text-center py-12">No recent slot data available.</div>
       </div>
     )
@@ -2149,8 +2149,8 @@ export function EdgeScoreboardPage() {
               </div>
               <div className="flex items-center rounded-md border border-border text-sm">
                 {([
-                  [false, 'All Slots', 'A comparison of Edge retransmits + Edge leader shreds against other full feeds.'] as const,
-                  [true, 'Edge Leaders', 'A comparison of Edge leader shreds against other hosts, only for the same set of leader shreds that Edge delivers.'] as const,
+                  [false, 'All Slots', 'A comparison of DZ Edge retransmits + DZ Edge leader shreds against other full feeds.'] as const,
+                  [true, 'DZ Edge Leaders', 'A comparison of DZ Edge leader shreds against other hosts, only for the same set of leader shreds that DZ Edge delivers.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     <button
@@ -2197,8 +2197,8 @@ export function EdgeScoreboardPage() {
         {/* Summary cards */}
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-            <SummaryCard label="Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
-            <SummaryCard label="Edge First Arrival" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
+            <SummaryCard label="DZ Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
+            <SummaryCard label="DZ Edge First Arrival" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
             <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
@@ -2227,7 +2227,7 @@ export function EdgeScoreboardPage() {
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
                   <th className="px-4 py-3 font-medium text-right">Completeness</th>
-                  <th className="px-4 py-3 font-medium text-right">Edge First Arrival %</th>
+                  <th className="px-4 py-3 font-medium text-right">DZ Edge First Arrival %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
