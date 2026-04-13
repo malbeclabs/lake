@@ -2153,12 +2153,9 @@ export function EdgeScoreboardPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
-                  <th className="px-4 py-3 font-medium text-right">Completeness</th>
                   <th className="px-4 py-3 font-medium text-right">DZ Edge Win Rate %</th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
-                  <th className="px-4 py-3 font-medium">Sources Measured</th>
-                  <th className="px-4 py-3 font-medium text-right">Last Updated</th>
                 </tr>
               </thead>
               <tbody>
@@ -2196,7 +2193,6 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const dz = node.feeds['dz']
   const dzRebop = node.feeds['dz_rebop']
   const edgeFirstArrival = (dz?.win_rate_pct ?? 0) + (dzRebop?.win_rate_pct ?? 0)
-  const completeness = node.total_slots > 0 ? (node.dz_leader_slots / node.total_slots) * 100 : 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }
   const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
@@ -2206,8 +2202,6 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
     }
   }
 
-  const updated = new Date(node.last_updated)
-  const timeStr = updated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const hasGossip = !!node.gossip_pubkey
 
   return (
@@ -2253,7 +2247,6 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
           )}
         </div>
       </td>
-      <td className="px-4 py-3 text-right tabular-nums text-sm">{formatPct(completeness)}</td>
       <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
         {dz ? formatPct(edgeFirstArrival) : '—'}
       </td>
@@ -2265,18 +2258,6 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
           </td>
         )
       })}
-      <td className="px-4 py-3 text-sm">
-        <div className="flex flex-col gap-1">
-          {Object.keys(node.feeds).sort((a, b) => a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)).map(f => (
-            <span key={f} className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium w-fit" style={{ backgroundColor: `${FEED_COLORS[f] ?? '#6b7280'}20`, color: FEED_COLORS[f] ?? '#6b7280' }}>
-              {FEED_LABELS[f] ?? f}
-            </span>
-          ))}
-        </div>
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums text-sm text-muted-foreground">
-        {timeStr}
-      </td>
     </tr>
   )
 }
