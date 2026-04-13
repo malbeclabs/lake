@@ -122,6 +122,7 @@ type EdgeScoreboardResponse struct {
 var validWindows = map[string]string{
 	"1h":  "1 HOUR",
 	"24h": "24 HOUR",
+	"3d":  "3 DAY",
 	"7d":  "7 DAY",
 	"30d": "30 DAY",
 	"all": "",
@@ -981,6 +982,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			windowSlotRange := map[string]uint64{
 				"1h":  uint64(3600 * slotsPerSec),
 				"24h": uint64(86400 * slotsPerSec),
+				"3d":  uint64(3 * 86400 * slotsPerSec),
 				"7d":  uint64(7 * 86400 * slotsPerSec),
 				"30d": uint64(30 * 86400 * slotsPerSec),
 			}

@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
 
-const VALID_WINDOWS = ['1h', '24h', '7d', 'all'] as const
+const VALID_WINDOWS = ['1h', '24h', '3d', '7d'] as const
 type TimeWindow = (typeof VALID_WINDOWS)[number]
 
 function isValidWindow(v: string | null): v is TimeWindow {
@@ -2133,7 +2133,7 @@ export function EdgeScoreboardPage() {
                         : 'hover:bg-muted'
                     )}
                   >
-                    {w === 'all' ? 'All' : w}
+                    {w}
                   </button>
                 ))}
               </div>
