@@ -1900,7 +1900,7 @@ export function EdgeScoreboardPage() {
   const rawWindow = searchParams.get('window')
   const activeWindow: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '1h'
 
-  const leadersOnly = searchParams.get('leaders_only') === 'true'
+  const leadersOnly = searchParams.get('leaders_only') !== 'false'
   const bucketed = searchParams.get('trend') === '1'
   const setBucketed = (v: boolean) => {
     setSearchParams((prev) => {
@@ -1988,7 +1988,7 @@ export function EdgeScoreboardPage() {
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (v) p.set('leaders_only', 'true')
+      if (!v) p.set('leaders_only', 'false')
       else p.delete('leaders_only')
       return p
     })
