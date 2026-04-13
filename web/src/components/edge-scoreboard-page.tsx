@@ -2089,7 +2089,7 @@ export function EdgeScoreboardPage() {
                   [true, 'DZ Edge Leaders', 'A comparison of DZ Edge leader shreds against other hosts, only for the same set of leader shreds that DZ Edge delivers.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
-                    {v === true && (
+                    {v === true && leadersOnly !== true && (
                       <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
                     )}
                     <button

@@ -500,22 +500,21 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					round(shreds_won / max_total * 100, 1) AS win_rate_pct
 				FROM (
 					SELECT
-						r.host, r.feed,
-						SUM(r.shreds_won) AS shreds_won,
-						SUM(r.total_shreds) AS total_shreds,
-						MAX(SUM(r.total_shreds)) OVER (PARTITION BY r.host) AS max_total
-					FROM %s.slot_feed_race_summary AS r
-					INNER JOIN (
-						SELECT DISTINCT host, slot
+						host, feed, shreds_won, total_shreds,
+						MAX(total_shreds) OVER (PARTITION BY host) AS max_total
+					FROM (
+						SELECT
+							host, feed,
+							SUM(shreds_won) AS shreds_won,
+							SUM(total_shreds) AS total_shreds
 						FROM %s.slot_feed_race_summary
-						WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
+						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
 							AND slot IN (SELECT slot FROM dz_leader_slots)
 							%s
-					) dz ON r.host = dz.host AND r.slot = dz.slot
-					WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s) %s
-					GROUP BY r.host, r.feed
+						GROUP BY host, feed
+					)
 				)
-			`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, scoreboardFeeds, timeFilter)
+			`, dzLeaderCTE, shredderDB, scoreboardFeeds, timeFilter)
 			} else {
 				q2 = fmt.Sprintf(`
 				SELECT
@@ -570,23 +569,17 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				q2b = fmt.Sprintf(`
 				WITH %s
 				SELECT
-					r.host, r.feed, r.loser_feed,
+					host, feed, loser_feed,
 					count() AS slot_count,
-					quantile(0.5)(r.lead_time_p50_ms) AS p50_ms,
-					quantile(0.95)(r.lead_time_p95_ms) AS p95_ms
-				FROM %s.slot_feed_race_summary AS r
-				INNER JOIN (
-					SELECT DISTINCT host, slot
-					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
-						AND slot IN (SELECT slot FROM dz_leader_slots)
-						%s
-				) dz ON r.host = dz.host AND r.slot = dz.slot
-				WHERE r.feed_type = 'shred' AND r.loser_feed IN (%s)
-					AND r.lead_time_p50_ms <= 500
+					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
+					quantile(0.95)(lead_time_p95_ms) AS p95_ms
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND loser_feed IN (%s)
+					AND slot IN (SELECT slot FROM dz_leader_slots)
+					AND lead_time_p50_ms <= 500
 					%s
-				GROUP BY r.host, r.feed, r.loser_feed
-			`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, scoreboardLoserFeeds, timeFilter)
+				GROUP BY host, feed, loser_feed
+			`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, timeFilter)
 			} else {
 				q2b = fmt.Sprintf(`
 				SELECT
@@ -777,12 +770,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				),
 				dz_slots AS (
 					SELECT DISTINCT slot
-					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
-						AND slot IN (SELECT slot FROM dz_leader_slots)
-						AND host IN (SELECT host FROM active_hosts)
-						AND slot BETWEEN %d AND %d
-						%s
+					FROM dz_leader_slots
+					WHERE slot BETWEEN %d AND %d
 				),
 				common_slots AS (
 					SELECT slot
@@ -805,7 +794,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
+			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
