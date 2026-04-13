@@ -900,7 +900,7 @@ function RecentSlotsChart({
     // Seed the live buffer from a set of slot races (initial load path).
     // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
     // and queues only a small tail so the animation is visually active right away.
-    const INITIAL_QUEUE_SLOTS = 12 // ~5s of animation at 400ms/slot
+    const INITIAL_QUEUE_SLOTS = 25 // ~10s of animation at 400ms/slot, matching poll interval
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
@@ -1027,7 +1027,7 @@ function RecentSlotsChart({
 
   // If React Query data arrives after the live effect started but the live effect's
   // own fetch hasn't returned yet, seed the buffer now so the chart isn't blank.
-  const FALLBACK_QUEUE_SLOTS = 12
+  const FALLBACK_QUEUE_SLOTS = 25
   useEffect(() => {
     if (!live || bucketed || !slots.length || slotBufferRef.current.length > 0 || liveEdgeRef.current > 0) return
     const map = new Map<number, EdgeScoreboardSlotRace[]>()
