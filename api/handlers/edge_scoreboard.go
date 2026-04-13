@@ -144,11 +144,11 @@ func edgeScoreboardCacheKey(r *http.Request) string {
 	if window != "" && window != "24h" {
 		return ""
 	}
-	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only")) != "false"
+	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only")) == "true"
 	if leadersOnly {
-		return "edge_scoreboard"
+		return "edge_scoreboard:leaders"
 	}
-	return "edge_scoreboard:all"
+	return "edge_scoreboard"
 }
 
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.

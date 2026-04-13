@@ -96,10 +96,10 @@ func (a *Activities) entries() []cacheEntry {
 			return api.FetchPublisherCheckData(ctx, "", 2, 0)
 		}},
 		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
-			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
-		}},
-		{"edge scoreboard (all)", "edge_scoreboard:all", func(ctx context.Context) (any, error) {
 			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)
+		}},
+		{"edge scoreboard (leaders)", "edge_scoreboard:leaders", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
 		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
