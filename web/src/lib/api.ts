@@ -1297,6 +1297,7 @@ export interface NonActivatedLink {
   side_z_metro: string
   status: string
   since: string
+  active_incident_types?: string[]
 }
 
 export interface ISISDeviceIssue {

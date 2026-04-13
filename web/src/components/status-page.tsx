@@ -222,6 +222,32 @@ function formatDuration(since: string): string {
   return `${diffMins}m`
 }
 
+function drainIncidentLabel(incidentType: string): string {
+  const labels: Record<string, string> = {
+    packet_loss: 'Packet Loss',
+    isis_down: 'ISIS Down',
+    fcs: 'FCS Errors',
+    errors: 'Interface Errors',
+    discards: 'Discards',
+    carrier: 'Carrier Events',
+    no_data: 'No Data',
+  }
+  return labels[incidentType] ?? incidentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function drainIncidentColor(incidentType: string): string {
+  const colors: Record<string, string> = {
+    packet_loss: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    isis_down:   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    fcs:         'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    errors:      'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+    discards:    'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    carrier:     'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    no_data:     'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  }
+  return colors[incidentType] ?? 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+}
+
 function IssueDetails({
   issues,
   nonActivatedLinks,
@@ -467,6 +493,24 @@ function IssueDetails({
                     <div className="text-xs text-muted-foreground">
                       {link.side_a_metro} → {link.side_z_metro} · {link.link_type}
                     </div>
+                    {link.status !== 'provisioning' && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {link.active_incident_types && link.active_incident_types.length > 0 ? (
+                          link.active_incident_types.map((t) => (
+                            <span
+                              key={t}
+                              className={`text-xs rounded-full px-2 py-0.5 font-medium ${drainIncidentColor(t)}`}
+                            >
+                              {drainIncidentLabel(t)}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs rounded-full px-2 py-0.5 font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                            Planned Maintenance
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="text-right">
