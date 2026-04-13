@@ -47,10 +47,27 @@ function formatStake(sol: number): string {
 }
 
 
-function SummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function InfoTooltip({ text }: { text: string }) {
+  const [show, setShow] = useState(false)
+  return (
+    <span className="relative inline-flex items-center ml-1" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      <span className="text-muted-foreground cursor-help select-none text-xs leading-none">ⓘ</span>
+      {show && (
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-30 w-64 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal pointer-events-none">
+          {text}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function SummaryCard({ label, value, sub, tooltip }: { label: string; value: string; sub?: string; tooltip?: string }) {
   return (
     <div className="bg-card border border-border rounded-lg p-4">
-      <div className="text-sm text-muted-foreground mb-1">{label}</div>
+      <div className="text-sm text-muted-foreground mb-1 flex items-center">
+        {label}
+        {tooltip && <InfoTooltip text={tooltip} />}
+      </div>
       <div className="text-2xl font-semibold tabular-nums">{value}</div>
       {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
     </div>
@@ -2177,8 +2194,8 @@ export function EdgeScoreboardPage() {
         {/* Summary cards */}
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-            <SummaryCard label="Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} />
-            <SummaryCard label="Edge First Arrival" value={formatPct(globalStats.winRate)} />
+            <SummaryCard label="Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
+            <SummaryCard label="Edge First Arrival" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
             <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
@@ -2206,8 +2223,8 @@ export function EdgeScoreboardPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Node</th>
-                  <th className="px-4 py-3 font-medium text-right">Completeness</th>
-                  <th className="px-4 py-3 font-medium text-right">Edge First Arrival %</th>
+                  <th className="px-4 py-3 font-medium text-right">Completeness<InfoTooltip text="Fraction of all observed slots where this node's scheduled leader was publishing shreds via DZ Edge." /></th>
+                  <th className="px-4 py-3 font-medium text-right">Edge First Arrival %<InfoTooltip text="Percentage of shreds where this DZ Edge node (leader or retransmit) delivered the shred before all other sources." /></th>
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
