@@ -1967,14 +1967,6 @@ export function EdgeScoreboardPage() {
     return `${Math.round(ageSec / 60)}m ago`
   }, [data?.generated_at, now])
 
-  const setWindow = (w: TimeWindow) => {
-    setSearchParams((prev) => {
-      const p = new URLSearchParams(prev)
-      if (w === '1h') p.delete('window')
-      else p.set('window', w)
-      return p
-    })
-  }
 
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
@@ -2105,23 +2097,6 @@ export function EdgeScoreboardPage() {
           }
           actions={
             <div className="flex items-center gap-3">
-              <div className="flex items-center rounded-md border border-border text-sm">
-                {VALID_WINDOWS.map((w) => (
-                  <button
-                    key={w}
-                    type="button"
-                    onClick={() => setWindow(w)}
-                    className={cn(
-                      'px-3 py-1.5 transition-colors',
-                      activeWindow === w
-                        ? 'bg-primary text-primary-foreground'
-                        : 'hover:bg-muted'
-                    )}
-                  >
-                    {w}
-                  </button>
-                ))}
-              </div>
               <div className="flex items-center rounded-md border border-border text-sm">
                 {([
                   [false, 'All Slots', 'A comparison of DZ Edge retransmits + DZ Edge leader shreds against other full feeds.'] as const,
