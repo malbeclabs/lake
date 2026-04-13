@@ -135,7 +135,7 @@ func edgeScoreboardCacheKey(r *http.Request) string {
 		return ""
 	}
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
-	if window != "" && window != "1h" {
+	if window != "" && window != "24h" {
 		return ""
 	}
 	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only")) != "false"
