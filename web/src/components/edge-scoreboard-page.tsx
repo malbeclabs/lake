@@ -1915,13 +1915,14 @@ export function EdgeScoreboardPage() {
 
   const [live, setLive] = useState(true)
 
-  const [showLoader, setShowLoader] = useState(false)
-  const [showShimmer, setShowShimmer] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 5_000)
     return () => clearInterval(id)
   }, [])
+
+  const [showLoader, setShowLoader] = useState(false)
+  const [showShimmer, setShowShimmer] = useState(false)
 
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1966,7 +1967,6 @@ export function EdgeScoreboardPage() {
     if (ageSec < 60) return `${ageSec}s ago`
     return `${Math.round(ageSec / 60)}m ago`
   }, [data?.generated_at, now])
-
 
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
@@ -2089,10 +2089,8 @@ export function EdgeScoreboardPage() {
           icon={Trophy}
           title="Edge Scoreboard"
           subtitle={
-            data && freshness ? (
-              <span className="text-sm text-muted-foreground">
-                {data.global_total_slots.toLocaleString()} slots · updated {freshness}
-              </span>
+            freshness ? (
+              <span className="text-sm text-muted-foreground">updated {freshness}</span>
             ) : undefined
           }
           actions={
