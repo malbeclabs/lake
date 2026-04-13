@@ -175,13 +175,14 @@ type NonActivatedDevice struct {
 }
 
 type NonActivatedLink struct {
-	PK         string `json:"pk"`
-	Code       string `json:"code"`
-	LinkType   string `json:"link_type"`
-	SideAMetro string `json:"side_a_metro"`
-	SideZMetro string `json:"side_z_metro"`
-	Status     string `json:"status"`
-	Since      string `json:"since"` // ISO timestamp when entered this status
+	PK                  string   `json:"pk"`
+	Code                string   `json:"code"`
+	LinkType            string   `json:"link_type"`
+	SideAMetro          string   `json:"side_a_metro"`
+	SideZMetro          string   `json:"side_z_metro"`
+	Status              string   `json:"status"`
+	Since               string   `json:"since"` // ISO timestamp when entered this status
+	ActiveIncidentTypes []string `json:"active_incident_types,omitempty"`
 }
 
 type ISISDeviceIssue struct {
@@ -1107,8 +1108,51 @@ func (a *API) FetchStatusData(ctx context.Context) *StatusResponse {
 			}
 			links = append(links, link)
 		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+
+		// Enrich drained links (not provisioning) with active incident types
+		var drainedPKs []string
+		for _, l := range links {
+			if l.Status != "provisioning" {
+				drainedPKs = append(drainedPKs, l.PK)
+			}
+		}
+		if len(drainedPKs) > 0 {
+			incidentRows, err := a.envDB(ctx).Query(ctx,
+				`SELECT entity_pk, groupArray(distinct incident_type) AS incident_types
+				 FROM link_incidents_v
+				 WHERE entity_pk IN ?
+				   AND is_ongoing = 1
+				 GROUP BY entity_pk`,
+				drainedPKs,
+			)
+			if err == nil {
+				defer incidentRows.Close()
+				activeByPK := make(map[string][]string)
+				for incidentRows.Next() {
+					var pk string
+					var types []string
+					if err := incidentRows.Scan(&pk, &types); err != nil {
+						slog.Warn("status: failed to scan incident row", "err", err)
+						continue
+					}
+					activeByPK[pk] = types
+				}
+				if err := incidentRows.Err(); err != nil {
+					slog.Warn("status: incident rows iteration error", "err", err)
+				}
+				for i := range links {
+					if types, ok := activeByPK[links[i].PK]; ok {
+						links[i].ActiveIncidentTypes = types
+					}
+				}
+			}
+		}
+
 		resp.Alerts.Links = links
-		return rows.Err()
+		return nil
 	})
 
 	// ISIS device issues (overload, unreachable)
