@@ -118,6 +118,12 @@ type EdgeScoreboardResponse struct {
 	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 }
 
+// scoreboardFeeds is the whitelist of feed names included in edge scoreboard results.
+const scoreboardFeeds = `'dz', 'dz_rebop', 'jito', 'turbine'`
+
+// scoreboardLoserFeeds is the whitelist of competitor feeds shown in lead-time comparisons.
+const scoreboardLoserFeeds = `'jito', 'turbine'`
+
 // validWindows maps window parameter values to ClickHouse interval expressions.
 var validWindows = map[string]string{
 	"1h":  "1 HOUR",
@@ -503,10 +509,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							AND slot IN (SELECT slot FROM dz_leader_slots)
 							%s
 					) dz ON r.host = dz.host AND r.slot = dz.slot
-					WHERE r.feed_type = 'shred' AND r.loser_feed = '' %s
+					WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s) %s
 					GROUP BY r.host, r.feed
 				)
-			`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
+			`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, scoreboardFeeds, timeFilter)
 			} else {
 				q2 = fmt.Sprintf(`
 				SELECT
@@ -522,11 +528,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							SUM(shreds_won) AS shreds_won,
 							SUM(total_shreds) AS total_shreds
 						FROM %s.slot_feed_race_summary
-						WHERE feed_type = 'shred' AND loser_feed = '' %s
+						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s) %s
 						GROUP BY host, feed
 					)
 				)
-			`, shredderDB, timeFilter)
+			`, shredderDB, scoreboardFeeds, timeFilter)
 			}
 
 			t := time.Now()
@@ -573,11 +579,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						AND slot IN (SELECT slot FROM dz_leader_slots)
 						%s
 				) dz ON r.host = dz.host AND r.slot = dz.slot
-				WHERE r.feed_type = 'shred' AND r.loser_feed != ''
+				WHERE r.feed_type = 'shred' AND r.loser_feed IN (%s)
 					AND r.lead_time_p50_ms <= 500
 					%s
 				GROUP BY r.host, r.feed, r.loser_feed
-			`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, timeFilter)
+			`, dzLeaderCTE, shredderDB, shredderDB, timeFilter, scoreboardLoserFeeds, timeFilter)
 			} else {
 				q2b = fmt.Sprintf(`
 				SELECT
@@ -586,11 +592,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary
-				WHERE feed_type = 'shred' AND loser_feed != ''
+				WHERE feed_type = 'shred' AND loser_feed IN (%s)
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, feed, loser_feed
-			`, shredderDB, timeFilter)
+			`, shredderDB, scoreboardLoserFeeds, timeFilter)
 			}
 
 			t = time.Now()
@@ -793,10 +799,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
-				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
+				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, shredderDB, orderDir, slotLimit, shredderDB)
+			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
@@ -826,10 +832,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
-				WHERE r.feed_type = 'shred' AND r.loser_feed = ''
+				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB)
+			`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
@@ -1013,7 +1019,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						feed,
 						sum(shreds_won) AS feed_won
 					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND loser_feed = ''
+					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
 						AND host IN (%s)
 						AND slot IN (SELECT slot FROM dz_leader_slots)
 						AND slot <= %d
@@ -1029,7 +1035,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM per_feed f
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
-			`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, nodeList, slotWindowMax, timeFilter)
+			`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
 			} else {
 				query7 = fmt.Sprintf(`
 				WITH per_feed AS (
@@ -1039,7 +1045,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						feed,
 						sum(shreds_won) AS feed_won
 					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND loser_feed = ''
+					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
 						AND host IN (%s)
 						AND slot <= %d
 						%s
@@ -1054,7 +1060,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM per_feed f
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
-			`, bucketSize, bucketSize, shredderDB, nodeList, slotWindowMax, timeFilter)
+			`, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
 			}
 
 			t := time.Now()

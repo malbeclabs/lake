@@ -79,7 +79,6 @@ const FEED_COLORS: Record<string, string> = {
   dz_rebop: '#14b8a6',
   jito: '#3b82f6',
   turbine: '#f59e0b',
-  provider_one: '#ef4444',
   pipe: '#a855f7',
 }
 
@@ -88,7 +87,6 @@ const FEED_LABELS: Record<string, string> = {
   dz_rebop: 'Edge Retransmits',
   jito: 'Jito Shredstream',
   turbine: 'Turbine',
-  provider_one: 'Provider One',
   pipe: 'Pipe',
 }
 
@@ -2020,7 +2018,7 @@ export function EdgeScoreboardPage() {
     let totalSlots = 0
 
     // Per-competitor weighted lead times
-    const competitors = ['jito', 'turbine', 'provider_one'] as const
+    const competitors = ['jito', 'turbine'] as const
     const weightedP50: Record<string, number> = {}
     const weightedP95: Record<string, number> = {}
     const competitorSlots: Record<string, number> = {}
