@@ -2170,7 +2170,7 @@ export function EdgeScoreboardPage() {
                   </tr>
                 ) : (
                   sortedNodes.map((node) => (
-                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} globalTotalSlots={data?.global_total_slots ?? 0} />
+                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} />
                   ))
                 )}
               </tbody>
@@ -2189,14 +2189,14 @@ export function EdgeScoreboardPage() {
   )
 }
 
-function NodeRow({ node, label, globalTotalSlots }: { node: EdgeScoreboardNode; label: string; globalTotalSlots: number }) {
+function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const [showTooltip, setShowTooltip] = useState(false)
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
   const dzRebop = node.feeds['dz_rebop']
   const edgeFirstArrival = (dz?.win_rate_pct ?? 0) + (dzRebop?.win_rate_pct ?? 0)
-  const completeness = globalTotalSlots > 0 ? (node.dz_leader_slots / globalTotalSlots) * 100 : 0
+  const completeness = node.total_slots > 0 ? (node.dz_leader_slots / node.total_slots) * 100 : 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }
   const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
