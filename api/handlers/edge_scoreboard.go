@@ -212,6 +212,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	}
 
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
+	publisherDB := fmt.Sprintf("`%s`", a.PublisherDB)
 
 	// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
 	// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
@@ -322,7 +323,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		SELECT DISTINCT slot
 		FROM %s.publisher_shred_stats
 		WHERE is_scheduled_leader = true %s
-	)`, shredderDB, timeFilter)
+	)`, publisherDB, timeFilter)
 
 	// Query 1b: DZ-leader slot counts per node — always run regardless of leadersOnly.
 	// Populates dzLeaderSlots (used for Edge Leaders Completeness, always consistent).
@@ -737,7 +738,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			FROM %s.publisher_shred_stats
 			WHERE is_scheduled_leader = true
 			AND slot BETWEEN %d AND %d
-		)`, shredderDB, slotWindowMin, slotWindowMax)
+		)`, publisherDB, slotWindowMin, slotWindowMax)
 
 		// slotFilter restricts slots for cursor-based fetches. sinceSlot fetches forward (ASC),
 		// beforeSlot fetches backward (DESC, the default).

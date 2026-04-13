@@ -13,13 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createShredderTables creates the slot_feed_race_summary and publisher_shred_stats tables in the shredder DB.
+// createShredderTables creates the slot_feed_race_summary and publisher_shred_stats tables in the shredder/publisher DBs.
 func createShredderTables(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.ShredderDB + "`"
+	publisherDB := "`" + api.PublisherDB + "`"
 	err := api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
 	require.NoError(t, err)
+	if publisherDB != db {
+		err = api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", publisherDB))
+		require.NoError(t, err)
+	}
 	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.slot_feed_race_summary (
 			event_ts DateTime64(3),
@@ -66,7 +71,7 @@ func createShredderTables(t *testing.T, api *handlers.API) {
 		) ENGINE = MergeTree
 		PARTITION BY toYYYYMM(event_ts)
 		ORDER BY (slot, node_pubkey)
-	`, db))
+	`, publisherDB))
 	require.NoError(t, err)
 }
 
@@ -105,7 +110,7 @@ func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 			 1000000000, 'dz-user-1', 'slc-qa-bm1', 'slc',
 			 %d, %d, 100, 80, 60, 20,
 			 79, false, 0, 1000000, true)
-	`, "`"+api.ShredderDB+"`", epoch, slot1))
+	`, "`"+api.PublisherDB+"`", epoch, slot1))
 	require.NoError(t, err)
 
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
