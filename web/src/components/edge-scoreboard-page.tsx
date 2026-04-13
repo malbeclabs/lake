@@ -36,9 +36,6 @@ function formatMs(v: number): string {
   return `${v.toFixed(1)}ms`
 }
 
-function formatNumber(v: number): string {
-  return v.toLocaleString()
-}
 
 function formatStake(sol: number): string {
   if (sol >= 1_000_000) return `${(sol / 1_000_000).toFixed(1)}M SOL`
@@ -1872,8 +1869,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
         .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(
           `<div style="font-size:13px;color:#1a1a2e">` +
           `<strong>${node.location}</strong> — ${node.metro_name}<br/>` +
-          `Win Rate: ${winRate.toFixed(1)}%<br/>` +
-          `Slots: ${node.slots_observed.toLocaleString()}` +
+          `Win Rate: ${winRate.toFixed(1)}%` +
           `</div>`
         ))
         .addTo(map)
@@ -1978,7 +1974,6 @@ export function EdgeScoreboardPage() {
 
     let dzShredsWon = 0
     let dzTotalShreds = 0
-    let totalSlots = 0
 
     // Per-competitor weighted lead times
     const competitors = ['jito', 'turbine'] as const
@@ -1994,7 +1989,6 @@ export function EdgeScoreboardPage() {
     for (const node of data.nodes) {
       dzShredsWon += (node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
       dzTotalShreds++
-      totalSlots += node.slots_observed
 
       const dz = node.feeds['dz']
       if (dz?.lead_times) {
@@ -2021,7 +2015,6 @@ export function EdgeScoreboardPage() {
     return {
       winRate: dzTotalShreds > 0 ? dzShredsWon / dzTotalShreds : 0,
       leads,
-      totalSlots,
       avgCompleteness: data.completeness_pct,
     }
   }, [data?.nodes])
@@ -2134,7 +2127,6 @@ export function EdgeScoreboardPage() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
             <SummaryCard label="DZ Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
             <SummaryCard label="DZ Edge Win Rate" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
-            <SummaryCard label="Slots Observed" value={formatNumber(globalStats.totalSlots)} sub={`${formatNumber(data?.nodes?.length ? Math.round(globalStats.totalSlots / data.nodes.length) : 0)} avg/host`} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
                 key={competitor}
@@ -2166,7 +2158,6 @@ export function EdgeScoreboardPage() {
                   <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                   <th className="px-4 py-3 font-medium">Sources Measured</th>
-                  <th className="px-4 py-3 font-medium text-right">Slots</th>
                   <th className="px-4 py-3 font-medium text-right">Last Updated</th>
                 </tr>
               </thead>
@@ -2282,9 +2273,6 @@ function NodeRow({ node, label, globalTotalSlots }: { node: EdgeScoreboardNode; 
             </span>
           ))}
         </div>
-      </td>
-      <td className="px-4 py-3 text-right tabular-nums text-sm">
-        {formatNumber(node.slots_observed)}
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm text-muted-foreground">
         {timeStr}
