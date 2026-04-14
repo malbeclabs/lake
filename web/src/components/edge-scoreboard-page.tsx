@@ -1746,28 +1746,9 @@ function RecentSlotsChart({
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 mt-2 text-xs text-muted-foreground">
-          {feeds.map((f) => (
-            <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1.5 transition-opacity duration-150">
-              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
-              {FEED_LABELS[f] ?? f}
-              <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="tabular-nums text-foreground ml-0.5 inline-block w-[4ch] text-right">—</span>
-            </div>
-          ))}
-        </div>
-        {bucketed && (
-          /* Spacer matching the slot info bar height so bars align with WinRateChart */
-          <div className="h-1" />
-        )}
       </div>
-      {/* Slot info bar — always visible, DOM-managed to avoid re-render flicker */}
-      {!bucketed && (
-        <div className="h-4 flex items-center gap-2 px-1 text-[10px] overflow-hidden justify-end">
-          <span ref={infoLeaderRef} className="text-muted-foreground truncate" />
-          <span ref={infoSlotRef} className="font-mono text-foreground/80 shrink-0" />
-        </div>
-      )}
-      <div ref={chartRowsRef} className="relative">
+      <div className="flex gap-0">
+        <div ref={chartRowsRef} className="relative flex-1 min-w-0">
         {/* Left-edge indicator: fixed at the chart boundary, shows while overscrolling or fetching */}
         {!bucketed && (overscrollPx > 0 || isPrefetching) && (
           <div className="absolute left-[130px] inset-y-0 flex items-center pointer-events-none z-10">
@@ -1802,7 +1783,26 @@ function RecentSlotsChart({
             </div>{/* end mask wrapper */}
           </div>
         ))}
-      </div>
+        </div>{/* end chart rows */}
+        {/* Right info panel */}
+        <div className="w-44 shrink-0 border-l border-border pl-4 flex flex-col justify-center gap-3">
+          <div className="flex flex-col gap-2">
+            {feeds.map((f) => (
+              <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1.5 text-xs transition-opacity duration-150">
+                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+                <span className="text-muted-foreground flex-1 truncate">{FEED_LABELS[f] ?? f}</span>
+                <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="tabular-nums text-foreground w-[4ch] text-right shrink-0">—</span>
+              </div>
+            ))}
+          </div>
+          {!bucketed && (
+            <div className="border-t border-border pt-2 flex flex-col gap-0.5">
+              <span ref={infoSlotRef} className="text-xs tabular-nums text-muted-foreground" />
+              <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug" />
+            </div>
+          )}
+        </div>
+      </div>{/* end flex container */}
       {!bucketed && (
         <div className="flex items-center justify-end gap-1 mt-1">
           <span className="text-[10px] text-muted-foreground mr-1">Slots</span>
