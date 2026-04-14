@@ -919,6 +919,14 @@ function RecentSlotsChart({
             if (slotNum) { liveEdgeRef.current = slotNum }
           }
         }
+        // Drive dragFracPx at rAF rate (60fps) rather than pointer-event rate (~120Hz+)
+        // so sub-slot CSS updates don't trigger React re-renders faster than the display.
+        if (isDraggingRef.current && viewEndSlotRef.current !== null) {
+          const slotPxVal = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCountRef.current)
+          const rawEnd = viewEndSlotRef.current
+          const frac = -(rawEnd - Math.floor(rawEnd)) * slotPxVal
+          setDragFracPx(frac)
+        }
       }
       drainRafId = requestAnimationFrame(tick)
     }
@@ -1236,11 +1244,9 @@ function RecentSlotsChart({
         } else {
           setOverscrollPx(0)
           viewEndSlotRef.current = rawEnd
-          // Only trigger re-render at slot boundaries (same pattern as inertia).
-          // dragFracPx provides smooth sub-slot positioning between boundaries.
-          const slotted = Math.floor(rawEnd)
-          setViewEndSlot(slotted)
-          setDragFracPx(-(rawEnd - slotted) * px())
+          // Only trigger re-render at slot boundaries — sub-slot CSS offset is driven
+          // by the rAF drain loop at 60fps rather than at pointer-event rate.
+          setViewEndSlot(Math.floor(rawEnd))
         }
         setIsDragging(true)
       }
@@ -1266,13 +1272,13 @@ function RecentSlotsChart({
         // drag right → slot decreases → inertia velocity is negative
         const slotVelocityPerSecond = -(vx * dirX) / px() * 1000
 
-        if (Math.abs(slotVelocityPerSecond) > 1) {
+        if (Math.abs(slotVelocityPerSecond) > 0.5) {
           // Custom rAF-based inertia with sub-slot CSS translate for smooth deceleration.
           // The fractional offset (inertiaFracPx) is updated every frame — since it's not
           // in activeSlots deps, those re-renders only update the CSS transform (cheap).
           // setViewEndSlot only fires at slot boundaries (expensive but infrequent).
-          const timeConstant = 600
-          const power = 0.8
+          const timeConstant = 1200
+          const power = 1.2
           const target = Math.max(minEnd, Math.min(liveEdge,
             currentEnd + slotVelocityPerSecond / 1000 * power * timeConstant))
           const from = currentEnd
