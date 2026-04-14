@@ -818,8 +818,11 @@ function RecentSlotsChart({
       if (leaders) setLiveLeaders(leaders)
     }
 
-    const loadSlots = (data: Awaited<ReturnType<typeof fetchEdgeScoreboard>>, prevMax: number) => {
+    const loadSlots = (data: Awaited<ReturnType<typeof fetchEdgeScoreboard>>) => {
       const { map, nums } = bySlotOrdered(data.recent_slots)
+      // Read liveMaxSlotRef at resolve time (not call time) so concurrent polls don't
+      // both see the same stale prevMax and double-queue the same slots.
+      const prevMax = liveMaxSlotRef.current
       const newNums = prevMax > 0 ? nums.filter(n => n > prevMax) : nums
       if (!newNums.length) return
       liveMaxSlotRef.current = nums.at(-1) ?? liveMaxSlotRef.current
@@ -846,10 +849,9 @@ function RecentSlotsChart({
     // At 400ms/slot drain rate, 75 slots take ~30s — matching the cache cycle. Polling
     // at 5s means we catch a fresh cache within 5s of it arriving rather than up to 10s.
     const poll = () => {
-      const prevMax = liveMaxSlotRef.current
       fetchEdgeScoreboard(window, leadersOnly).then(data => {
         if (cancelled) return
-        loadSlots(data, prevMax)
+        loadSlots(data)
       }).catch(() => {})
     }
     const pollInterval = setInterval(poll, 5_000)
@@ -886,7 +888,9 @@ function RecentSlotsChart({
               slotBufferRef.current = newBuf.filter(r => keepBuf.has(r.slot))
               const slotNum = races[0]?.slot
               scrollOff -= slotPx
-              if (slotNum) { liveEdgeRef.current = slotNum; setLiveEdge(slotNum) }
+              // Guard: never allow liveEdge to go backward (defence against any stale
+              // duplicates that sneak into the queue despite the prevMax fix).
+              if (slotNum && slotNum >= liveEdgeRef.current) { liveEdgeRef.current = slotNum; setLiveEdge(slotNum) }
             } else {
               scrollOff = 0
             }
