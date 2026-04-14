@@ -81,7 +81,7 @@ const FEED_COLORS: Record<string, string> = {
   dz_edge: '#0ea5e9',  // sky-500 — primary DZ
   dz: '#38bdf8',       // sky-400 — lighter
   dz_rebop: '#0284c7', // sky-600 — darker
-  jito: '#2dd4bf',     // teal-400 — clearly distinct from sky
+  jito: '#f59e0b',     // amber-500
   turbine: '#94a3b8',  // slate-400 — neutral
   pipe: '#e879f9',
   other: '#374151',
