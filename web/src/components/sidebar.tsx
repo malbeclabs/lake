@@ -20,7 +20,6 @@ import {
   Map,
   Network,
   Shield,
-  ShieldCheck,
   Wrench,
   ShieldAlert,
   Gauge,
@@ -89,12 +88,12 @@ const { resolvedTheme, setTheme } = useTheme()
   const isUsersRoute = location.pathname.startsWith('/dz/users')
   const isMulticastGroupsRoute = location.pathname.startsWith('/dz/multicast-groups')
   const isScoreboardRoute = location.pathname === '/dz/shreds/scoreboard'
-  const isShredsRoute = location.pathname.startsWith('/dz/shreds') && !isScoreboardRoute
+  const isShredsPublishersRoute = location.pathname === '/dz/shreds/publishers' || location.pathname === '/dz/publisher-check'
   const isShredsSeatsRoute = location.pathname === '/dz/shreds/subscribers'
   const isShredsDevicesRoute = location.pathname === '/dz/shreds/devices'
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
-  const isPublisherCheckRoute = location.pathname === '/dz/publisher-check'
-  const isEdgeRoute = isShredsRoute || isScoreboardRoute || isPublisherCheckRoute
+  const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
+  const isEdgeRoute = isShredsRoute
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -458,20 +457,18 @@ const { resolvedTheme, setTheme } = useTheme()
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
           </div>
           <div className="space-y-1">
-            <Link to="/dz/shreds/scoreboard" className={navItemClass(isScoreboardRoute)}>
-              <Trophy className="h-4 w-4" />
-              Scoreboard
-            </Link>
-            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
-              <ShieldCheck className="h-4 w-4" />
-              Publisher Check
-            </Link>
-            <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
+            <Link to="/dz/shreds/scoreboard" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Puzzle className="h-4 w-4" />
               Shreds
             </Link>
             {isShredsRoute && (
               <>
+                <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
+                  Scoreboard
+                </Link>
+                <Link to="/dz/shreds/publishers" className={subNavItemClass(isShredsPublishersRoute)}>
+                  Publishers
+                </Link>
                 <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
                   Subscribers
                 </Link>

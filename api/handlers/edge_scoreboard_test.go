@@ -213,10 +213,13 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
 	assert.Equal(t, 80.0, dzFeed.WinRatePct)
 
-	// Check pairwise lead times for SLC DZ feed
-	assert.Len(t, dzFeed.LeadTimes, 2, "slc dz should have 2 pairwise lead times")
+	// Check pairwise lead times — now attached to the synthetic dz_edge feed
+	// (combines dz + dz_rebop best-per-slot lead vs each loser).
+	dzEdgeFeed, ok := slc.Feeds["dz_edge"]
+	require.True(t, ok, "dz_edge feed should exist for slc")
+	assert.Len(t, dzEdgeFeed.LeadTimes, 2, "slc dz_edge should have 2 pairwise lead times")
 	ltMap := make(map[string]handlers.EdgeScoreboardLeadTime)
-	for _, lt := range dzFeed.LeadTimes {
+	for _, lt := range dzEdgeFeed.LeadTimes {
 		ltMap[lt.LoserFeed] = lt
 	}
 	assert.InDelta(t, 1.5, ltMap["turbine"].P50Ms, 0.1)
@@ -240,8 +243,10 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
 	assert.Equal(t, 70.0, dzFeed.WinRatePct)
 
-	// Check pairwise lead times for FRA DZ feed
-	assert.Len(t, dzFeed.LeadTimes, 2, "fra dz should have 2 pairwise lead times")
+	// Check pairwise lead times for FRA — attached to dz_edge synthetic feed.
+	dzEdgeFeed, ok = fra.Feeds["dz_edge"]
+	require.True(t, ok, "dz_edge feed should exist for fra")
+	assert.Len(t, dzEdgeFeed.LeadTimes, 2, "fra dz_edge should have 2 pairwise lead times")
 }
 
 func TestGetEdgeScoreboard_WindowParam(t *testing.T) {
