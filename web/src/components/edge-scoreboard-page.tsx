@@ -1864,12 +1864,12 @@ export function EdgeScoreboardPage() {
     })
   }
 
-  const rawSlotCount = parseInt(searchParams.get('slot_count') ?? '100')
-  const viewSlotCount = [50, 100, 200, 300].includes(rawSlotCount) ? rawSlotCount : 100
+  const rawSlotCount = parseInt(searchParams.get('slot_count') ?? '300')
+  const viewSlotCount = [50, 100, 200, 300].includes(rawSlotCount) ? rawSlotCount : 300
   const setViewSlotCount = (n: number) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (n === 100) p.delete('slot_count')
+      if (n === 300) p.delete('slot_count')
       else p.set('slot_count', String(n))
       return p
     })
