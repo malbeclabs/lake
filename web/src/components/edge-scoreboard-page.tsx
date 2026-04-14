@@ -1790,13 +1790,13 @@ function RecentSlotsChart({
         {/* Right info panel */}
         <div className="w-60 shrink-0 border-l border-border flex flex-col">
           {!bucketed && (
-            <div className="border-b border-border px-5 py-3.5 flex flex-col gap-0.5">
+            <div className="border-b border-border px-5 pt-4 pb-4 flex flex-col">
               <span ref={infoSlotRef} className="text-xs font-semibold tabular-nums tracking-wide" />
-              <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate mt-1.5" />
-              <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
+              <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate mt-2" />
+              <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-1" />
             </div>
           )}
-          <div className="flex-1 flex flex-col justify-center px-5 py-5 gap-3.5">
+          <div className="flex-1 flex flex-col justify-center px-5 py-4 gap-3">
             {feeds.map((f) => (
               <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-2.5 transition-opacity duration-150">
                 <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
