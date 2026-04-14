@@ -1346,7 +1346,9 @@ function RecentSlotsChart({
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, granular, applyInfoBar])
 
 
-  if (!slots.length)
+  // Don't show "no data" once the live buffer is seeded (liveEdge > 0) — the chart
+  // renders from slotBufferRef even when the page-cache prop is empty.
+  if (!slots.length && !liveEdge)
     return (
       <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
         {!bare && <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — Win Rate per Slot</h3>}
