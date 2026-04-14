@@ -135,9 +135,9 @@ var validWindows = map[string]string{
 }
 
 // edgeScoreboardCacheKey returns the page cache key for a request, or "" if the request
-// is not eligible for caching (non-default window, cursor, or limit).
+// is not eligible for caching (non-default window or cursor mode).
 func edgeScoreboardCacheKey(r *http.Request) string {
-	if r.URL.Query().Get("since_slot") != "" || r.URL.Query().Get("before_slot") != "" || r.URL.Query().Get("limit") != "" {
+	if r.URL.Query().Get("since_slot") != "" || r.URL.Query().Get("before_slot") != "" {
 		return ""
 	}
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
