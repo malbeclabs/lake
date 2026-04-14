@@ -110,10 +110,10 @@ type EdgeScoreboardResponse struct {
 	GlobalTotalSlots   uint64                           `json:"global_total_slots"`
 	DZSlots            uint64                           `json:"dz_slots"`
 	TotalDZLeaderSlots uint64                           `json:"total_dz_leader_slots"`
-	CompletenessPct      float64                          `json:"completeness_pct"`
-	PublisherCount       uint64                           `json:"publisher_count"`
-	PublishingCount      uint64                           `json:"publishing_count"`
-	PublishingStakePct   float64                          `json:"publishing_stake_pct"`
+	CompletenessPct    float64                          `json:"completeness_pct"`
+	PublisherCount     uint64                           `json:"publisher_count"`
+	PublishingCount    uint64                           `json:"publishing_count"`
+	PublishingStakePct float64                          `json:"publishing_stake_pct"`
 	Nodes              []EdgeScoreboardNode             `json:"nodes"`
 	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
 	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
@@ -463,7 +463,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		metrics.RecordClickHouseQuery(duration, err)
 		if err != nil {
 			log.Printf("EdgeScoreboard query1d error: %v", err)
-			err = nil
 		}
 	}
 
