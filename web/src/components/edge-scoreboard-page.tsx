@@ -2060,7 +2060,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
         const lt = dzLeadByFeed[f]
         return (
           <td key={f} className="px-4 py-3 text-right tabular-nums text-sm">
-            {lt ? <>{formatMs(lt.p50)} <span className="text-muted-foreground">({formatMs(lt.p95)})</span></> : '—'}
+            {lt ? <><AnimatedStat value={lt.p50} fmt={formatMs} /> <span className="text-muted-foreground">(<AnimatedStat value={lt.p95} fmt={formatMs} />)</span></> : '—'}
           </td>
         )
       })}
