@@ -6,8 +6,6 @@ import { Trophy, Loader2, ChevronsRight, Play, Square } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
-import maplibregl from 'maplibre-gl'
-import 'maplibre-gl/dist/maplibre-gl.css'
 import {
   fetchEdgeScoreboard,
   type EdgeScoreboardNode,
@@ -16,7 +14,6 @@ import {
   type EdgeScoreboardLeader,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
 import { Section } from './traffic-dashboard/section'
 
@@ -1846,93 +1843,6 @@ function RecentSlotsChart({
   )
 }
 
-function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
-  const mapContainer = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<maplibregl.Map | null>(null)
-  const { resolvedTheme } = useTheme()
-
-  const nodesWithCoords = useMemo(() =>
-    nodes.filter(n => n.latitude !== 0 || n.longitude !== 0),
-    [nodes]
-  )
-
-  useEffect(() => {
-    if (!mapContainer.current || nodesWithCoords.length === 0) return
-    if (mapRef.current) {
-      mapRef.current.remove()
-      mapRef.current = null
-    }
-
-    const tileVariant = resolvedTheme === 'dark' ? 'dark_all' : 'light_all'
-    const map = new maplibregl.Map({
-      container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          carto: {
-            type: 'raster',
-            tiles: [`https://a.basemaps.cartocdn.com/${tileVariant}/{z}/{x}/{y}.png`],
-            tileSize: 256,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-          },
-        },
-        layers: [{
-          id: 'carto-tiles',
-          type: 'raster',
-          source: 'carto',
-          minzoom: 0,
-          maxzoom: 22,
-        }],
-      },
-      center: [0, 30],
-      zoom: 1,
-      attributionControl: false,
-      interactive: false,
-    })
-
-    // Fit map to show all node markers
-    const bounds = new maplibregl.LngLatBounds()
-    for (const node of nodesWithCoords) {
-      bounds.extend([node.longitude, node.latitude])
-    }
-    map.fitBounds(bounds, { padding: 60, maxZoom: 8 })
-
-    for (const node of nodesWithCoords) {
-      const winRate = node.feeds['dz_edge']?.win_rate_pct ?? 0
-      const color = winRate >= 50 ? '#22c55e' : '#f59e0b'
-
-      const el = document.createElement('div')
-      el.style.cssText = `background:${color};color:white;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer;`
-      el.textContent = `${node.location} ${winRate.toFixed(0)}%`
-
-      new maplibregl.Marker({ element: el })
-        .setLngLat([node.longitude, node.latitude])
-        .setPopup(new maplibregl.Popup({ offset: 25 }).setHTML(
-          `<div style="font-size:13px;color:#1a1a2e">` +
-          `<strong>${node.location}</strong> — ${node.metro_name}<br/>` +
-          `Win Rate: ${winRate.toFixed(1)}%` +
-          `</div>`
-        ))
-        .addTo(map)
-    }
-
-    mapRef.current = map
-
-    return () => {
-      map.remove()
-      mapRef.current = null
-    }
-  }, [nodesWithCoords, resolvedTheme])
-
-  if (nodesWithCoords.length === 0) return null
-
-  return (
-    <div className="rounded-lg border border-border overflow-hidden">
-      <div ref={mapContainer} className="h-[350px] w-full" />
-    </div>
-  )
-}
-
 export function EdgeScoreboardPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -2221,12 +2131,6 @@ export function EdgeScoreboardPage() {
           </div>
         )}
 
-        {/* Map */}
-        {data?.nodes && (
-          <div className="mt-8">
-            <NodeMap nodes={data.nodes} />
-          </div>
-        )}
       </div>
     </div>
   )
