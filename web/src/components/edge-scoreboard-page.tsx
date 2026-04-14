@@ -581,10 +581,10 @@ function SlotRaceNodeChart({
                   const val = currentData[i][feed] ?? 0
                   if (!val) continue
                   const prev = cumulative[i]
-                  const x1 = Math.floor(u.valToPos(i - 0.5, 'x', true))
-                  const x2 = Math.ceil(u.valToPos(i + 0.5, 'x', true))
-                  const y1 = Math.floor(u.valToPos(prev + val, 'y', true))
-                  const y2 = Math.ceil(u.valToPos(prev, 'y', true))
+                  const x1 = Math.round(u.valToPos(i - 0.5, 'x', true))
+                  const x2 = Math.round(u.valToPos(i + 0.5, 'x', true))
+                  const y1 = Math.round(u.valToPos(prev + val, 'y', true))
+                  const y2 = Math.round(u.valToPos(prev, 'y', true))
                   if (y2 > y1 && x2 > x1) ctx.fillRect(x1, y1, x2 - x1, y2 - y1)
                   cumulative[i] += val
                 }
