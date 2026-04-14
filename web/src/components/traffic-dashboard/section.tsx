@@ -37,14 +37,14 @@ export function Section({
               <h2 className="text-sm font-semibold">{title}</h2>
               {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
             </div>
-            {!open && progress !== undefined && (
+            {progress !== undefined && (
               <span className="text-sm tabular-nums text-muted-foreground">{progress.toFixed(1)}%</span>
             )}
           </div>
           {description && (
             <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
           )}
-          {!open && progress !== undefined && (
+          {progress !== undefined && (
             <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-2">
               <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }} />
             </div>
