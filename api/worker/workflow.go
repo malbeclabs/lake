@@ -163,7 +163,7 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(parentCtx, 45*time.Second)
+		ctx, cancel := context.WithTimeout(parentCtx, 90*time.Second)
 		result, err := fn(ctx)
 		cancel()
 
