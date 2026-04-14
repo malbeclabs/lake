@@ -1631,7 +1631,7 @@ func (a *API) GetMulticastGroupShredStats(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.ShredderDB)
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
 
 	query := fmt.Sprintf(`
 		SELECT

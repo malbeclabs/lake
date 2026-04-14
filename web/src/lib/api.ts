@@ -5135,6 +5135,9 @@ export interface EdgeScoreboardResponse {
   dz_slots: number
   total_dz_leader_slots: number
   completeness_pct: number
+  publisher_count: number
+  publishing_count: number
+  publishing_stake_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
   slot_buckets?: EdgeScoreboardSlotBucket[]
@@ -5174,7 +5177,7 @@ export async function fetchEdgeScoreboard(
 ): Promise<EdgeScoreboardResponse> {
   const params = new URLSearchParams()
   params.set('window', window)
-  if (!leadersOnly) params.set('leaders_only', 'false')
+  if (leadersOnly) params.set('leaders_only', 'true')
   if (opts?.sinceSlot) params.set('since_slot', String(opts.sinceSlot))
   if (opts?.beforeSlot) params.set('before_slot', String(opts.beforeSlot))
   if (opts?.limit) params.set('limit', String(opts.limit))
