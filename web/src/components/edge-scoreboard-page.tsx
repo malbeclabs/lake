@@ -1917,6 +1917,15 @@ export function EdgeScoreboardPage() {
           </div>
         )}
 
+        {/* Win Rate by Slot chart */}
+        {data?.nodes && (
+          <div className="mb-6">
+            <Section title="Win Rate by Slot" defaultOpen={true}>
+              <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} bare />
+            </Section>
+          </div>
+        )}
+
         {/* Node detail table */}
         <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
           <div className="overflow-x-auto">
@@ -1946,14 +1955,6 @@ export function EdgeScoreboardPage() {
           </div>
         </div>
 
-        {/* Collapsible charts */}
-        {data?.nodes && (
-          <div className="space-y-4">
-            <Section title="Win Rate by Slot" defaultOpen={false}>
-              <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} bare />
-            </Section>
-          </div>
-        )}
 
       </div>
     </div>
