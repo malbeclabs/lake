@@ -84,6 +84,7 @@ const FEED_COLORS: Record<string, string> = {
   jito: '#374151',
   turbine: '#1f2937',
   pipe: '#e879f9',
+  other: '#374151',
 }
 
 const FEED_LABELS: Record<string, string> = {
@@ -93,6 +94,28 @@ const FEED_LABELS: Record<string, string> = {
   jito: 'Jito Shredstream',
   turbine: 'Turbine',
   pipe: 'Pipe',
+  other: 'Other',
+}
+
+// Feeds considered "DZ" for simplified view grouping.
+const DZ_FEED_KEYS = new Set(['dz_edge', 'dz', 'dz_rebop'])
+
+// Map a raw feed name to the key used in the chart data.
+// In simplified mode, all DZ feeds collapse to 'dz_edge' and competitors to 'other'.
+function feedKeyForMode(feed: string, granular: boolean): string | null {
+  if (granular) return feed in FEED_COLORS ? feed : null
+  if (DZ_FEED_KEYS.has(feed)) return 'dz_edge'
+  if (feed in FEED_COLORS) return 'other'
+  return null
+}
+
+// Priority for feed ordering in chart (lower = rendered first / bottom of stack).
+function feedSortPriority(f: string): number {
+  if (f === 'dz_edge') return 0
+  if (f === 'dz') return 1
+  if (f === 'dz_rebop') return 2
+  if (f === 'other') return 10
+  return 5
 }
 
 
@@ -648,6 +671,7 @@ function RecentSlotsChart({
   viewSlotCount,
   setViewSlotCount,
   bare,
+  granular,
   scrollToLiveRef,
   toggleLiveRef,
   onViewEndSlotChange,
@@ -666,6 +690,7 @@ function RecentSlotsChart({
   viewSlotCount: number
   setViewSlotCount: (n: number) => void
   bare?: boolean
+  granular?: boolean
   scrollToLiveRef?: React.RefObject<(() => void) | null>
   toggleLiveRef?: React.RefObject<(() => void) | null>
   onViewEndSlotChange?: (slot: number | null) => void
@@ -1293,13 +1318,16 @@ function RecentSlotsChart({
 
     const validNodeIds = new Set(nodes.map((n) => n.host))
     const filtered = activeSlots.filter((s) => validNodeIds.has(s.host))
+    const feedKey = (f: string) => feedKeyForMode(f, granular ?? false)
 
     const feedSet = new Set<string>()
-    for (const s of filtered) if (s.feed in FEED_COLORS) feedSet.add(s.feed)
-    const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
+    for (const s of filtered) { const k = feedKey(s.feed); if (k) feedSet.add(k) }
+    const feeds = [...feedSet].sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
 
     const byNode = new Map<string, Map<number, Record<string, number>>>()
     for (const s of filtered) {
+      const k = feedKey(s.feed)
+      if (!k) continue
       let nodeMap = byNode.get(s.host)
       if (!nodeMap) {
         nodeMap = new Map()
@@ -1310,7 +1338,7 @@ function RecentSlotsChart({
         row = {}
         nodeMap.set(s.slot, row)
       }
-      row[s.feed] = s.win_pct
+      row[k] = (row[k] ?? 0) + s.win_pct  // accumulate (handles merged feeds in simplified mode)
     }
 
     // Use all slots from activeSlots as the shared x-axis so every node's data array
@@ -1337,7 +1365,7 @@ function RecentSlotsChart({
     const slotNumbers = allSlotNumbers
 
     return { nodeCharts, feeds, slotCount: slotNumbers.length }
-  }, [activeSlots, nodes])
+  }, [activeSlots, nodes, granular])
 
   const bucketedChartData = useMemo(() => {
     if (!slotBuckets || !slotBuckets.length || !nodes.length) {
@@ -1347,9 +1375,10 @@ function RecentSlotsChart({
     const validNodeIds = new Set(nodes.map((n) => n.host))
     const filtered = slotBuckets.filter((b) => validNodeIds.has(b.host))
 
+    const feedKey = (f: string) => feedKeyForMode(f, granular ?? false)
     const feedSet = new Set<string>()
-    for (const b of filtered) if (b.feed in FEED_COLORS) feedSet.add(b.feed)
-    const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
+    for (const b of filtered) { const k = feedKey(b.feed); if (k) feedSet.add(k) }
+    const feeds = [...feedSet].sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
 
     // Use the actual API-returned buckets as the x-axis. No theoretical range computation —
     // the window filter on the API side already scopes the data. Aggregating to at most 200
@@ -1395,7 +1424,8 @@ function RecentSlotsChart({
             agg = { feedWon: new Map(), bucketTotal: 0 }
             displayData.set(displayStart, agg)
           }
-          agg.feedWon.set(b.feed, (agg.feedWon.get(b.feed) ?? 0) + b.feed_won)
+          const bk = feedKey(b.feed)
+          if (bk) agg.feedWon.set(bk, (agg.feedWon.get(bk) ?? 0) + b.feed_won)
           agg.bucketTotal += b.feed_won // bucket_total = sum of all feed_won across feeds
         }
 
@@ -1414,7 +1444,7 @@ function RecentSlotsChart({
       })
 
     return { nodeCharts: bucketedNodeCharts, feeds, slotCount: displayBucketStarts.length, bucketSize: displayBucketSize }
-  }, [slotBuckets, slotBucketSize, nodes, window])
+  }, [slotBuckets, slotBucketSize, nodes, window, granular])
 
   const activeData = bucketed ? bucketedChartData : chartData
   const { nodeCharts, feeds, slotCount } = activeData
@@ -1428,15 +1458,23 @@ function RecentSlotsChart({
     if (!lastSlot) return
     const slotNum = lastSlot.slot
     const slotRaces = activeSlots.filter(s => s.slot === slotNum)
-    // Average win_pct per feed across all nodes for the latest slot.
-    const feedTotals: Record<string, { sum: number; count: number }> = {}
+    const fk = (f: string) => feedKeyForMode(f, granular ?? false)
+
+    // Sum feed wins per node first (handles merged feeds in simplified mode), then average across nodes.
+    const nodeFeeds: Record<string, Record<string, number>> = {}
     for (const r of slotRaces) {
-      if (!feedTotals[r.feed]) feedTotals[r.feed] = { sum: 0, count: 0 }
-      feedTotals[r.feed].sum += r.win_pct
-      feedTotals[r.feed].count++
+      const k = fk(r.feed)
+      if (!k) continue
+      if (!nodeFeeds[r.host]) nodeFeeds[r.host] = {}
+      nodeFeeds[r.host][k] = (nodeFeeds[r.host][k] ?? 0) + r.win_pct
     }
+    const nodeList = Object.values(nodeFeeds)
     const feedData: Record<string, number | null> = {}
-    for (const f of feeds) feedData[f] = feedTotals[f] ? feedTotals[f].sum / feedTotals[f].count : 0
+    for (const f of feeds) {
+      const sum = nodeList.reduce((acc, nf) => acc + (nf[f] ?? 0), 0)
+      feedData[f] = nodeList.length > 0 ? sum / nodeList.length : 0
+    }
+
     // Normalize so values sum to 100%, matching the stacked chart visualization.
     const total = feeds.reduce((sum, f) => sum + (feedData[f] ?? 0), 0)
     if (total > 0) {
@@ -1448,7 +1486,7 @@ function RecentSlotsChart({
     const info: SlotHoverInfo = { slot: slotNum, leader, feedData }
     defaultInfoRef.current = info
     if (!isHoveredRef.current) applyInfoBar(info)
-  }, [activeSlots, feeds, slotLeaders, liveLeaders, live, bucketed, applyInfoBar])
+  }, [activeSlots, feeds, slotLeaders, liveLeaders, live, bucketed, granular, applyInfoBar])
 
   if (!slots.length)
     return (
@@ -1690,6 +1728,16 @@ export function EdgeScoreboardPage() {
       const p = new URLSearchParams(prev)
       if (v) p.set('trend', '1')
       else p.delete('trend')
+      return p
+    })
+  }
+
+  const granular = searchParams.get('granular') === '1'
+  const setGranular = (v: boolean) => {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev)
+      if (v) p.set('granular', '1')
+      else p.delete('granular')
       return p
     })
   }
@@ -1968,6 +2016,21 @@ export function EdgeScoreboardPage() {
               defaultOpen={true}
               action={
                 <div className="flex items-center gap-2">
+                  <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
+                    <button
+                      onClick={() => setGranular(false)}
+                      className={cn('px-2.5 transition-colors', !granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+                    >
+                      DZ vs Other
+                    </button>
+                    <button
+                      onClick={() => setGranular(true)}
+                      className={cn('px-2.5 transition-colors border-l border-border', granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+                    >
+                      All Feeds
+                    </button>
+                  </div>
+                  <div className="w-px h-4 bg-border mx-1" />
                   {!bucketed && live && viewEndSlot !== null && (
                     <button
                       onClick={() => scrollToLiveRef.current?.()}
@@ -2033,6 +2096,7 @@ export function EdgeScoreboardPage() {
                 viewSlotCount={viewSlotCount}
                 setViewSlotCount={setViewSlotCount}
                 bare
+                granular={granular}
                 scrollToLiveRef={scrollToLiveRef}
                 toggleLiveRef={toggleLiveRef}
                 onViewEndSlotChange={setViewEndSlot}
