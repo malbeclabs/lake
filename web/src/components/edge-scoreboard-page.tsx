@@ -18,6 +18,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { PageHeader } from './page-header'
+import { Section } from './traffic-dashboard/section'
 
 const VALID_WINDOWS = ['1h', '24h', '3d', '7d'] as const
 type TimeWindow = (typeof VALID_WINDOWS)[number]
@@ -858,6 +859,7 @@ function RecentSlotsChart({
   setLive,
   viewSlotCount,
   setViewSlotCount,
+  bare,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
@@ -872,6 +874,7 @@ function RecentSlotsChart({
   setLive: (v: boolean) => void
   viewSlotCount: number
   setViewSlotCount: (n: number) => void
+  bare?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewSlotCountRef = useRef(viewSlotCount)
@@ -1627,8 +1630,8 @@ function RecentSlotsChart({
 
   if (!slots.length)
     return (
-      <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — Win Rate per Slot</h3>
+      <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
+        {!bare && <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — Win Rate per Slot</h3>}
         <div className="text-sm text-muted-foreground text-center py-12">No recent slot data available.</div>
       </div>
     )
@@ -1636,7 +1639,7 @@ function RecentSlotsChart({
   return (
     <div
       ref={containerRef}
-      className="rounded-lg border border-border bg-card p-4"
+      className={bare ? "pt-2" : "rounded-lg border border-border bg-card p-4"}
       style={{
         touchAction: bucketed ? undefined : 'pan-y',
         cursor: bucketed ? undefined : isDragging ? 'grabbing' : 'grab',
@@ -1651,7 +1654,7 @@ function RecentSlotsChart({
     >
       <div className="mb-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium flex items-center gap-2">
+          {!bare && <h3 className="text-sm font-medium flex items-center gap-2">
             {bucketed ? 'Win Rate Trend' : 'Win Rate per Slot'}
             {live && (
               <span className="relative flex items-center">
@@ -1693,7 +1696,7 @@ function RecentSlotsChart({
                 </span>
               )
             })()}
-          </h3>
+          </h3>}
           <div className="flex items-center gap-2 -mt-2">
             {!bucketed && live && viewEndSlot !== null && (
               <button
@@ -2178,14 +2181,13 @@ export function EdgeScoreboardPage() {
 
         {/* Charts row */}
         {data?.nodes && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div className="mb-8">
             <WinRateChart nodes={data.nodes} />
-            <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} />
           </div>
         )}
 
         {/* Node detail table */}
-        <div className="border border-border rounded-lg overflow-hidden bg-card">
+        <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
           <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead>
@@ -2213,6 +2215,15 @@ export function EdgeScoreboardPage() {
             </table>
           </div>
         </div>
+
+        {/* Win Rate by Slot — collapsible */}
+        {data?.nodes && (
+          <div className="mb-6">
+            <Section title="Win Rate by Slot" defaultOpen={false}>
+              <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} bare />
+            </Section>
+          </div>
+        )}
 
         {/* Map */}
         {data?.nodes && (
