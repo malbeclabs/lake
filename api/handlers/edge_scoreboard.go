@@ -693,93 +693,74 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2c rows: %w", err)
 			}
 
-			// q2b: pairwise lead times for the synthetic dz_edge feed.
-			// In leadersOnly mode this is dz only (leader path). Otherwise it's the
-			// best of dz + dz_rebop per slot (leader + retransmit), so the column
-			// matches the dz_edge win-rate framing.
-			// Per slot, pick the DZ feed with the smallest p50 lead vs the loser
-			// (argMin), then aggregate across slots:
-			//   p50_ms = median of per-slot best p50 leads.
-			//   p95_ms = 95th percentile of the matching feed's p95 (conservative tail).
+			// q2b: pairwise lead times for DZ leader path vs competitor feeds.
+			// Aggregated directly from raw rows (quantile over lead_time_p50_ms /
+			// lead_time_p95_ms) — the older per-slot argMin CTE form timed out on
+			// the 24h × all-slots variant. We use feed='dz' in both modes since the
+			// leader path is the cleanest "DZ won by X ms" signal; dz_rebop win
+			// rates are reflected in q2c's dz_edge aggregate.
 			var q2b string
-			edgeFeeds := "'dz', 'dz_rebop'"
 			if leadersOnly {
-				edgeFeeds = "'dz'"
 				q2b = fmt.Sprintf(`
-				WITH %s,
-				per_slot AS (
-					SELECT
-						host, slot, loser_feed,
-						argMin(lead_time_p50_ms, lead_time_p50_ms) AS p50,
-						argMin(lead_time_p95_ms, lead_time_p50_ms) AS p95
-					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND feed IN (%s) AND loser_feed IN (%s)
-						AND slot IN (SELECT slot FROM dz_leader_slots)
-						AND lead_time_p50_ms <= 500
-						%s
-					GROUP BY host, slot, loser_feed
-				)
+				WITH %s
 				SELECT
 					host, loser_feed,
 					count() AS slot_count,
-					quantile(0.5)(p50) AS p50_ms,
-					quantile(0.95)(p95) AS p95_ms
-				FROM per_slot
+					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
+					quantile(0.95)(lead_time_p95_ms) AS p95_ms
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed IN (%s)
+					AND slot IN (SELECT slot FROM dz_leader_slots)
+					AND lead_time_p50_ms <= 500
+					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, dzLeaderCTE, shredderDB, edgeFeeds, scoreboardLoserFeeds, timeFilter)
+`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, timeFilter)
 			} else {
 				q2b = fmt.Sprintf(`
-				WITH per_slot AS (
-					SELECT
-						host, slot, loser_feed,
-						argMin(lead_time_p50_ms, lead_time_p50_ms) AS p50,
-						argMin(lead_time_p95_ms, lead_time_p50_ms) AS p95
-					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND feed IN (%s) AND loser_feed IN (%s)
-						AND lead_time_p50_ms <= 500
-						%s
-					GROUP BY host, slot, loser_feed
-				)
 				SELECT
 					host, loser_feed,
 					count() AS slot_count,
-					quantile(0.5)(p50) AS p50_ms,
-					quantile(0.95)(p95) AS p95_ms
-				FROM per_slot
+					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
+					quantile(0.95)(lead_time_p95_ms) AS p95_ms
+				FROM %s.slot_feed_race_summary
+				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed IN (%s)
+					AND lead_time_p50_ms <= 500
+					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, shredderDB, edgeFeeds, scoreboardLoserFeeds, timeFilter)
+`, shredderDB, scoreboardLoserFeeds, timeFilter)
 			}
 
 			t = time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
 			metrics.RecordClickHouseQuery(time.Since(t), err)
-			if err != nil && gctx.Err() == nil {
-				log.Printf("EdgeScoreboard query2b error: %v", err)
-			} else if err == nil {
-				defer rows2b.Close()
-				for rows2b.Next() {
-					var nodeID, loserFeed string
-					var slotCount uint64
-					var p50, p95 float64
-					if err := rows2b.Scan(&nodeID, &loserFeed, &slotCount, &p50, &p95); err != nil {
-						log.Printf("EdgeScoreboard query2b scan error: %v", err)
-						break
-					}
-					key := feedKey{nodeID, "dz_edge"}
-					fs, ok := localFeedStats[key]
-					if !ok {
-						fs = &EdgeScoreboardFeedStats{}
-						localFeedStats[key] = fs
-					}
-					fs.LeadTimes = append(fs.LeadTimes, EdgeScoreboardLeadTime{
-						LoserFeed: loserFeed,
-						P50Ms:     p50,
-						P95Ms:     p95,
-						SlotCount: slotCount,
-					})
+			if err != nil {
+				return fmt.Errorf("query2b: %w", err)
+			}
+			defer rows2b.Close()
+			for rows2b.Next() {
+				var nodeID, loserFeed string
+				var slotCount uint64
+				var p50, p95 float64
+				if err := rows2b.Scan(&nodeID, &loserFeed, &slotCount, &p50, &p95); err != nil {
+					return fmt.Errorf("query2b scan: %w", err)
 				}
+				key := feedKey{nodeID, "dz_edge"}
+				fs, ok := localFeedStats[key]
+				if !ok {
+					fs = &EdgeScoreboardFeedStats{}
+					localFeedStats[key] = fs
+				}
+				fs.LeadTimes = append(fs.LeadTimes, EdgeScoreboardLeadTime{
+					LoserFeed: loserFeed,
+					P50Ms:     p50,
+					P95Ms:     p95,
+					SlotCount: slotCount,
+				})
+			}
+			if err := rows2b.Err(); err != nil {
+				return fmt.Errorf("query2b rows: %w", err)
 			}
 
 			feedStats = localFeedStats
