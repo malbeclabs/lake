@@ -37,10 +37,10 @@ function formatMs(v: number): string {
 
 function windowLabel(w: TimeWindow): string {
   const labels: Record<TimeWindow, string> = {
-    '1h': 'Past 1 hour',
-    '24h': 'Past 24 hours',
-    '3d': 'Past 3 days',
-    '7d': 'Past 7 days',
+    '1h': 'past 1 hour',
+    '24h': 'past 24 hours',
+    '3d': 'past 3 days',
+    '7d': 'past 7 days',
   }
   return labels[w] ?? w
 }
@@ -78,13 +78,13 @@ function WinRateGauge({ value }: { value: number }) {
 }
 
 const FEED_COLORS: Record<string, string> = {
-  dz_edge: '#059669',
+  dz_edge: '#10b981',
   dz: '#10b981',
-  dz_rebop: '#34d399',
+  dz_rebop: '#10b981',
   jito: '#374151',
   turbine: '#1f2937',
   pipe: '#e879f9',
-  other: '#374151',
+  other: '#6b7280',
 }
 
 const FEED_LABELS: Record<string, string> = {
@@ -1915,9 +1915,9 @@ export function EdgeScoreboardPage() {
           icon={Trophy}
           title="Edge Scoreboard"
           subtitle={
-            <span className="text-sm text-muted-foreground flex items-center gap-2">
+            <span className="text-xs text-muted-foreground/50 flex items-center gap-2">
               <span>{windowLabel(activeWindow)}</span>
-              {freshness && <span className="opacity-60">· updated {freshness}</span>}
+              {freshness && <span>· updated {freshness}</span>}
             </span>
           }
           actions={
@@ -2036,7 +2036,7 @@ export function EdgeScoreboardPage() {
                   {!bucketed && live && viewEndSlot !== null && (
                     <button
                       onClick={() => scrollToLiveRef.current?.()}
-                      className="text-[#059669] hover:text-[#047857] transition-colors"
+                      className="text-[#10b981] hover:text-[#059669] transition-colors"
                     >
                       <ChevronsRight size={16} />
                     </button>
@@ -2047,7 +2047,7 @@ export function EdgeScoreboardPage() {
                       className={cn(
                         'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                         live && viewEndSlot === null
-                          ? 'border-[#059669] bg-[#059669]/10 text-[#059669] hover:bg-[#059669]/20'
+                          ? 'border-[#10b981] bg-[#10b981]/10 text-[#10b981] hover:bg-[#059669]/20'
                           : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
