@@ -10,7 +10,7 @@ interface StatCardProps {
   href?: string // Optional link to entity listing page
 }
 
-export function useAnimatedNumber(target: number | undefined, duration = 500) {
+function useAnimatedNumber(target: number | undefined, duration = 500) {
   const [current, setCurrent] = useState<number | undefined>(undefined)
   const prevRef = useRef<number | undefined>(undefined)
 

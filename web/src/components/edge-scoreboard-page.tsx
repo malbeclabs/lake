@@ -14,8 +14,26 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
-import { useAnimatedNumber } from './stat-card'
 
+function useAnimatedNumber(target: number | undefined, duration = 500) {
+  const [current, setCurrent] = useState<number | undefined>(undefined)
+  const prevRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (target === undefined) return
+    const start = prevRef.current ?? target
+    const startTime = performance.now()
+    const animate = (time: number) => {
+      const elapsed = time - startTime
+      const progress = Math.min(elapsed / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setCurrent(start + (target - start) * eased)
+      if (progress < 1) requestAnimationFrame(animate)
+      else prevRef.current = target
+    }
+    requestAnimationFrame(animate)
+  }, [target, duration])
+  return current
+}
 
 const VALID_WINDOWS = ['1h', '24h', '3d', '7d'] as const
 type TimeWindow = (typeof VALID_WINDOWS)[number]
