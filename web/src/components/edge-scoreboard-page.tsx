@@ -1466,7 +1466,7 @@ function RecentSlotsChart({
           </div>
         ))}
         {/* Arrow navigation */}
-        <div className="flex items-center gap-1 pt-1 pl-[64px]">
+        <div className="flex items-center justify-center gap-1 pt-1">
           <button
             onClick={() => stepSlots(-1)}
             className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
