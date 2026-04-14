@@ -87,8 +87,8 @@ const FEED_LABELS: Record<string, string> = {
 
 
 /** Height per node row in the Recent Slots chart. */
-const NODE_ROW_HEIGHT = 52
-const NODE_CHART_HEIGHT = 36
+const NODE_ROW_HEIGHT = 36
+const NODE_CHART_HEIGHT = 24
 
 function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const [show, setShow] = useState(false)
