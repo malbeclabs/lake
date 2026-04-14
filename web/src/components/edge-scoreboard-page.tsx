@@ -121,7 +121,7 @@ const FEED_COLORS: Record<string, string> = {
   jito: '#f59e0b',     // amber-500
   turbine: '#fb7185',  // rose-400
   pipe: '#e879f9',
-  other: '#374151',
+  other: '#1f2937',
 }
 
 const FEED_LABELS: Record<string, string> = {
