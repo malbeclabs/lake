@@ -1462,3 +1462,267 @@ func TestLake_TelemetryLatency_View_Refresh_ErrorHandling(t *testing.T) {
 		require.Equal(t, uint64(0), count, "should have no samples after error")
 	})
 }
+
+func TestTrimNullBytes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    []byte
+		expected string
+	}{
+		{"version string with trailing nulls", append([]byte("1.2.3"), make([]byte, 11)...), "1.2.3"},
+		{"full array with no nulls", []byte("1234567890abcdef"), "1234567890abcdef"},
+		{"all zeros", make([]byte, 16), ""},
+		{"single char", append([]byte("v"), make([]byte, 15)...), "v"},
+		{"commit hash", append([]byte("abc123de"), make([]byte, 0)...), "abc123de"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := trimNullBytes(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestLake_TelemetryLatency_View_AgentVersionCommit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("agent version and commit are stored in sample headers", func(t *testing.T) {
+		t.Parallel()
+
+		db := testClient(t)
+
+		devicePK1 := [32]byte{1, 2, 3, 4}
+		devicePK2 := [32]byte{5, 6, 7, 8}
+		linkPK := [32]byte{9, 10, 11, 12}
+		contributorPK := [32]byte{13, 14, 15, 16}
+		metroPK := [32]byte{17, 18, 19, 20}
+		ownerPubkey := [32]byte{21, 22, 23, 24}
+		publicIP1 := [4]byte{192, 168, 1, 1}
+		publicIP2 := [4]byte{192, 168, 1, 2}
+		tunnelNet := [5]byte{10, 0, 0, 0, 24}
+
+		svcMockRPC := &MockServiceabilityRPC{
+			getProgramDataFunc: func(ctx context.Context) (*serviceability.ProgramData, error) {
+				return &serviceability.ProgramData{
+					Contributors: []serviceability.Contributor{
+						{PubKey: contributorPK, Owner: ownerPubkey, Code: "CONTRIB"},
+					},
+					Devices: []serviceability.Device{
+						{
+							PubKey: devicePK1, Owner: ownerPubkey,
+							Status: serviceability.DeviceStatusActivated, DeviceType: serviceability.DeviceDeviceTypeHybrid,
+							Code: "DEV1", PublicIp: publicIP1,
+							ContributorPubKey: contributorPK, ExchangePubKey: metroPK,
+						},
+						{
+							PubKey: devicePK2, Owner: ownerPubkey,
+							Status: serviceability.DeviceStatusActivated, DeviceType: serviceability.DeviceDeviceTypeHybrid,
+							Code: "DEV2", PublicIp: publicIP2,
+							ContributorPubKey: contributorPK, ExchangePubKey: metroPK,
+						},
+					},
+					Links: []serviceability.Link{
+						{
+							PubKey: linkPK, Owner: ownerPubkey,
+							Status: serviceability.LinkStatusActivated, Code: "LINK1",
+							TunnelNet: tunnelNet, ContributorPubKey: contributorPK,
+							SideAPubKey: devicePK1, SideZPubKey: devicePK2,
+							SideAIfaceName: "eth0", SideZIfaceName: "eth1",
+							LinkType: serviceability.LinkLinkTypeWAN,
+						},
+					},
+					Exchanges: []serviceability.Exchange{
+						{PubKey: metroPK, Code: "METRO1", Name: "Test Metro"},
+					},
+				}, nil
+			},
+		}
+
+		svcView, err := dzsvc.NewView(dzsvc.ViewConfig{
+			Logger:            laketesting.NewLogger(),
+			Clock:             clockwork.NewFakeClock(),
+			ServiceabilityRPC: svcMockRPC,
+			RefreshInterval:   time.Second,
+			ClickHouse:        db,
+		})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		_, err = svcView.Refresh(ctx)
+		require.NoError(t, err)
+
+		originPK := solana.PublicKeyFromBytes(devicePK1[:])
+		targetPK := solana.PublicKeyFromBytes(devicePK2[:])
+		linkPKPubKey := solana.PublicKeyFromBytes(linkPK[:])
+
+		// Set up agent version and commit as null-padded byte arrays
+		var agentVersion [16]uint8
+		copy(agentVersion[:], "1.5.0")
+		var agentCommit [8]uint8
+		copy(agentCommit[:], "abc123d")
+
+		mockTelemetryRPC := &mockTelemetryRPCWithSamples{
+			samples: map[string]*telemetry.DeviceLatencySamples{
+				key(originPK, targetPK, linkPKPubKey, 100): {
+					DeviceLatencySamplesHeader: telemetry.DeviceLatencySamplesHeader{
+						StartTimestampMicroseconds:   1_600_000_000_000_000,
+						SamplingIntervalMicroseconds: 100_000,
+						AgentVersion:                 agentVersion,
+						AgentCommit:                  agentCommit,
+					},
+					Samples: []uint32{5000},
+				},
+			},
+		}
+
+		view, err := NewView(ViewConfig{
+			Logger:                 laketesting.NewLogger(),
+			Clock:                  clockwork.NewFakeClock(),
+			TelemetryRPC:           mockTelemetryRPC,
+			EpochRPC:               &mockEpochRPCWithEpoch{epoch: 100},
+			MaxConcurrency:         32,
+			InternetLatencyAgentPK: solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112"),
+			InternetDataProviders:  []string{"test-provider"},
+			ClickHouse:             db,
+			Serviceability:         svcView,
+			RefreshInterval:        time.Second,
+		})
+		require.NoError(t, err)
+
+		_, err = view.Refresh(ctx)
+		require.NoError(t, err)
+
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		var storedVersion, storedCommit string
+		rows, err := conn.Query(ctx, "SELECT agent_version, agent_commit FROM fact_dz_device_link_latency_sample_header LIMIT 1")
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		require.NoError(t, rows.Scan(&storedVersion, &storedCommit))
+		rows.Close()
+
+		require.Equal(t, "1.5.0", storedVersion)
+		require.Equal(t, "abc123d", storedCommit)
+	})
+
+	t.Run("zero-value agent fields produce empty strings", func(t *testing.T) {
+		t.Parallel()
+
+		db := testClient(t)
+
+		devicePK1 := [32]byte{1, 2, 3, 4}
+		devicePK2 := [32]byte{5, 6, 7, 8}
+		linkPK := [32]byte{9, 10, 11, 12}
+		contributorPK := [32]byte{13, 14, 15, 16}
+		metroPK := [32]byte{17, 18, 19, 20}
+		ownerPubkey := [32]byte{21, 22, 23, 24}
+		publicIP1 := [4]byte{192, 168, 1, 1}
+		publicIP2 := [4]byte{192, 168, 1, 2}
+		tunnelNet := [5]byte{10, 0, 0, 0, 24}
+
+		svcMockRPC := &MockServiceabilityRPC{
+			getProgramDataFunc: func(ctx context.Context) (*serviceability.ProgramData, error) {
+				return &serviceability.ProgramData{
+					Contributors: []serviceability.Contributor{
+						{PubKey: contributorPK, Owner: ownerPubkey, Code: "CONTRIB"},
+					},
+					Devices: []serviceability.Device{
+						{
+							PubKey: devicePK1, Owner: ownerPubkey,
+							Status: serviceability.DeviceStatusActivated, DeviceType: serviceability.DeviceDeviceTypeHybrid,
+							Code: "DEV1", PublicIp: publicIP1,
+							ContributorPubKey: contributorPK, ExchangePubKey: metroPK,
+						},
+						{
+							PubKey: devicePK2, Owner: ownerPubkey,
+							Status: serviceability.DeviceStatusActivated, DeviceType: serviceability.DeviceDeviceTypeHybrid,
+							Code: "DEV2", PublicIp: publicIP2,
+							ContributorPubKey: contributorPK, ExchangePubKey: metroPK,
+						},
+					},
+					Links: []serviceability.Link{
+						{
+							PubKey: linkPK, Owner: ownerPubkey,
+							Status: serviceability.LinkStatusActivated, Code: "LINK1",
+							TunnelNet: tunnelNet, ContributorPubKey: contributorPK,
+							SideAPubKey: devicePK1, SideZPubKey: devicePK2,
+							SideAIfaceName: "eth0", SideZIfaceName: "eth1",
+							LinkType: serviceability.LinkLinkTypeWAN,
+						},
+					},
+					Exchanges: []serviceability.Exchange{
+						{PubKey: metroPK, Code: "METRO1", Name: "Test Metro"},
+					},
+				}, nil
+			},
+		}
+
+		svcView, err := dzsvc.NewView(dzsvc.ViewConfig{
+			Logger:            laketesting.NewLogger(),
+			Clock:             clockwork.NewFakeClock(),
+			ServiceabilityRPC: svcMockRPC,
+			RefreshInterval:   time.Second,
+			ClickHouse:        db,
+		})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		_, err = svcView.Refresh(ctx)
+		require.NoError(t, err)
+
+		originPK := solana.PublicKeyFromBytes(devicePK1[:])
+		targetPK := solana.PublicKeyFromBytes(devicePK2[:])
+		linkPKPubKey := solana.PublicKeyFromBytes(linkPK[:])
+
+		// Zero-value agent version and commit (V0 accounts or pre-version agents)
+		mockTelemetryRPC := &mockTelemetryRPCWithSamples{
+			samples: map[string]*telemetry.DeviceLatencySamples{
+				key(originPK, targetPK, linkPKPubKey, 100): {
+					DeviceLatencySamplesHeader: telemetry.DeviceLatencySamplesHeader{
+						StartTimestampMicroseconds:   1_600_000_000_000_000,
+						SamplingIntervalMicroseconds: 100_000,
+						// AgentVersion and AgentCommit are zero-value
+					},
+					Samples: []uint32{5000},
+				},
+			},
+		}
+
+		view, err := NewView(ViewConfig{
+			Logger:                 laketesting.NewLogger(),
+			Clock:                  clockwork.NewFakeClock(),
+			TelemetryRPC:           mockTelemetryRPC,
+			EpochRPC:               &mockEpochRPCWithEpoch{epoch: 100},
+			MaxConcurrency:         32,
+			InternetLatencyAgentPK: solana.MustPublicKeyFromBase58("So11111111111111111111111111111111111111112"),
+			InternetDataProviders:  []string{"test-provider"},
+			ClickHouse:             db,
+			Serviceability:         svcView,
+			RefreshInterval:        time.Second,
+		})
+		require.NoError(t, err)
+
+		_, err = view.Refresh(ctx)
+		require.NoError(t, err)
+
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		var storedVersion, storedCommit string
+		rows, err := conn.Query(ctx, "SELECT agent_version, agent_commit FROM fact_dz_device_link_latency_sample_header LIMIT 1")
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		require.NoError(t, rows.Scan(&storedVersion, &storedCommit))
+		rows.Close()
+
+		require.Equal(t, "", storedVersion, "zero-value AgentVersion should produce empty string")
+		require.Equal(t, "", storedCommit, "zero-value AgentCommit should produce empty string")
+	})
+}

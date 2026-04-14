@@ -1,6 +1,7 @@
 package dztelemlatency
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -147,6 +148,8 @@ func (v *View) refreshDeviceLinkTelemetrySamples(ctx context.Context, devices []
 							StartTimestampUs:   hdr.StartTimestampMicroseconds,
 							SamplingIntervalUs: hdr.SamplingIntervalMicroseconds,
 							LatestSampleIndex:  latestIdx,
+							AgentVersion:       trimNullBytes(hdr.AgentVersion[:]),
+							AgentCommit:        trimNullBytes(hdr.AgentCommit[:]),
 						})
 
 						if len(tail) > 0 {
@@ -202,4 +205,9 @@ done:
 		v.log.Debug("telemetry/device-link: sample refresh completed", "links", linksProcessed, "samples", len(allSamples), "headers", len(allHeaders))
 	}
 	return nil
+}
+
+// trimNullBytes converts a null-padded byte array to a string, removing trailing zero bytes.
+func trimNullBytes(b []byte) string {
+	return string(bytes.TrimRight(b, "\x00"))
 }
