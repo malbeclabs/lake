@@ -978,7 +978,7 @@ function RecentSlotsChart({
   // Line 2 (slot): slot number (fixed) + single leader text span (variable content, no show/hide).
   // When null is passed (mouse left), fall back to defaultInfoRef (most-recent slot).
   const infoSlotRef = useRef<HTMLSpanElement>(null)
-  const infoLeaderNameRef = useRef<HTMLSpanElement>(null)
+  const infoLeaderNameRef = useRef<HTMLAnchorElement>(null)
   const infoLeaderRef = useRef<HTMLSpanElement>(null)
   const infoFeedValueRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
   const infoFeedBarFillRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -991,7 +991,15 @@ function RecentSlotsChart({
     if (infoSlotRef.current) infoSlotRef.current.textContent = `Slot ${info.slot.toLocaleString()}`
     if (infoLeaderNameRef.current) {
       const l = info.leader
-      infoLeaderNameRef.current.textContent = l?.name ?? (l ? `${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}` : '')
+      const a = infoLeaderNameRef.current
+      a.textContent = l?.name ?? (l ? `${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}` : '')
+      if (l?.pubkey) {
+        a.setAttribute('href', `/solana/gossip-nodes/${l.pubkey}`)
+        a.style.pointerEvents = ''
+      } else {
+        a.removeAttribute('href')
+        a.style.pointerEvents = 'none'
+      }
     }
     if (infoLeaderRef.current) {
       const l = info.leader
@@ -1510,7 +1518,7 @@ function RecentSlotsChart({
           </div>
           <div className="mt-5 flex flex-col gap-0.5">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
-            <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
+            <a ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors" />
             <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
           </div>
         </div>
