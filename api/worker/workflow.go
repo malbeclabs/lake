@@ -19,8 +19,7 @@ const (
 
 	refreshInterval        = 30 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
-	maxConcurrentRefreshes = 2
-	errorAfterFailures     = 3 // log WARN for transient failures, ERROR after this many consecutive failures
+	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
 )
 
 // cacheEntry defines a single cache key to refresh.
@@ -126,8 +125,13 @@ func (e *refreshError) Error() string { return e.msg }
 // RefreshCaches refreshes all page cache entries, writing results to Postgres.
 func (a *Activities) RefreshCaches(ctx context.Context) error {
 	start := time.Now()
+	// Run all entries fully in parallel. With ~21 entries at 2-wide concurrency,
+	// the batch took longer than the 30s refresh interval, causing each entry to
+	// effectively refresh only once every few minutes. Fully parallel execution
+	// means the activity completes in max(entry_times) rather than sum/2, so the
+	// 30s sleep actually achieves a ~30s refresh cycle. Each entry has its own
+	// 45s timeout, so failures remain bounded.
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrentRefreshes)
 
 	for _, entry := range a.entries() {
 		g.Go(func() error {
