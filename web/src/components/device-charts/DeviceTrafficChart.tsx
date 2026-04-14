@@ -396,16 +396,9 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
       </select>
       <button
         onClick={() => setBidirectional(!bidirectional)}
-        className={`px-3 py-1.5 text-sm border rounded-md transition-colors inline-flex items-center gap-1.5 ${
-          bidirectional
-            ? 'border-foreground/30 text-foreground bg-muted'
-            : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-        }`}
-        title={bidirectional
-          ? 'Rx and Tx are shown separately (Rx up, Tx down). Click to combine into a single line per interface.'
-          : 'Rx and Tx are combined into a single line per interface. Click to split into separate Rx (up) and Tx (down).'}
+        className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
       >
-        {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
+        {bidirectional ? 'Rx/Tx ±' : 'All +'}
       </button>
     </div>
   )
