@@ -421,26 +421,26 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 	}
 
-	// Query 1d: Count of distinct publishers (node_pubkey) in publisher_shred_stats.
+	// Query 1d: Count of active publishers using the same method as the publisher check page —
+	// activated DZ users with configured publishers and a matched gossip + stake account.
 	var publisherCount uint64
 	{
-		query1d := fmt.Sprintf(`
-			SELECT uniqExact(node_pubkey)
-			FROM %s.publisher_shred_stats
-			WHERE 1=1 %s
-		SETTINGS final=1
-`, publisherDB, timeFilter)
 		start = time.Now()
-		rows1d, err := a.envDB(ctx).Query(ctx, query1d)
+		err = a.envDB(ctx).QueryRow(ctx,
+			`SELECT count()
+			 FROM dz_users_current u
+			 LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
+			 LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
+			 WHERE u.status = 'activated'
+			   AND JSONLength(u.publishers) > 0
+			   AND v.vote_pubkey != ''
+			   AND g.pubkey != ''`,
+		).Scan(&publisherCount)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 		if err != nil {
 			log.Printf("EdgeScoreboard query1d error: %v", err)
-		} else {
-			if rows1d.Next() {
-				_ = rows1d.Scan(&publisherCount)
-			}
-			rows1d.Close()
+			err = nil
 		}
 	}
 
