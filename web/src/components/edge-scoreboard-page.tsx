@@ -1916,7 +1916,7 @@ export function EdgeScoreboardPage() {
                     className={cn(
                       'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                       live && viewEndSlot === null
-                        ? 'border-[#10b981] bg-[#10b981]/10 text-[#10b981] hover:bg-[#059669]/20'
+                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
                         : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                     )}
                   >
