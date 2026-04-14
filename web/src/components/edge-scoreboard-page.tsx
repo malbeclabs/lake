@@ -746,6 +746,8 @@ function RecentSlotsChart({
   // LIVE_BUFFER_SIZE so uPlot never re-initialises and the slide animation fires.
   const liveMaxSlotRef = useRef(0)
   const liveQueueRef = useRef<EdgeScoreboardSlotRace[][]>([])
+  // Ref to the latest poll function so scrollToLive can trigger an immediate refresh.
+  const pollRef = useRef<(() => void) | null>(null)
   // liveEdge: the slot number drain considers the right edge of the live window.
   // Only advances via drain, so computeViewByEnd(buf, null, liveEdge) and
   // scrollToLive both target the same value — eliminating the jump on transition.
@@ -854,6 +856,7 @@ function RecentSlotsChart({
         loadSlots(data)
       }).catch(() => {})
     }
+    pollRef.current = poll
     const pollInterval = setInterval(poll, 5_000)
 
     // Single rAF loop drives both the scroll animation and the drain.
@@ -925,6 +928,7 @@ function RecentSlotsChart({
       cancelled = true
       clearInterval(pollInterval)
       cancelAnimationFrame(drainRafId)
+      pollRef.current = null
       liveMaxSlotRef.current = 0
       liveQueueRef.current = []
       // Don't clear the buffer — non-live mode will overwrite it with slots next render.
@@ -1031,8 +1035,10 @@ function RecentSlotsChart({
   const isDraggingRef = useRef(isDragging)
   isDraggingRef.current = isDragging
   const [overscrollPx, setOverscrollPx] = useState(0)
-  // Sub-slot fractional offset applied as CSS translate during inertia so bars glide
-  // smoothly between slot boundaries without triggering activeSlots recomputation.
+  // Sub-slot fractional offsets applied as CSS translate so bars glide smoothly between
+  // slot boundaries without triggering activeSlots recomputation.
+  // dragFracPx: active during pointer drag (same pattern as inertiaFracPx during momentum).
+  const [dragFracPx, setDragFracPx] = useState(0)
   const [inertiaFracPx, setInertiaFracPx] = useState(0)
   const [isInertia, setIsInertia] = useState(false)
   const [isScrollingToLive, setIsScrollingToLive] = useState(false)
@@ -1095,6 +1101,10 @@ function RecentSlotsChart({
 
     // Start live mode (no-op if already live) so drain + SSE begin.
     if (!liveRef.current) setLive(true)
+
+    // Immediately poll to refill the queue without waiting for the next scheduled poll.
+    // This eliminates the potential freeze when the queue was drained while scrolled back.
+    pollRef.current?.()
 
     // If liveEdge is already known and we're already at it, snap and done.
     if (liveEdgeRef.current > 0 && effectiveStart >= liveEdgeRef.current) {
@@ -1215,16 +1225,22 @@ function RecentSlotsChart({
           setOverscrollPx(Math.min(350, rawOverflowPx * 0.35))
           viewEndSlotRef.current = minEnd
           setViewEndSlot(minEnd)
+          setDragFracPx(0)
         } else if (rawEnd > liveEdge) {
           // Past the right (live) edge: anchor at liveEdge, grow CSS transform leftward.
           const rawOverflowPx = (rawEnd - liveEdge) * px()
           setOverscrollPx(-Math.min(350, rawOverflowPx * 0.35))
           viewEndSlotRef.current = liveEdge
           setViewEndSlot(liveEdge)
+          setDragFracPx(0)
         } else {
           setOverscrollPx(0)
           viewEndSlotRef.current = rawEnd
-          setViewEndSlot(rawEnd)
+          // Only trigger re-render at slot boundaries (same pattern as inertia).
+          // dragFracPx provides smooth sub-slot positioning between boundaries.
+          const slotted = Math.floor(rawEnd)
+          setViewEndSlot(slotted)
+          setDragFracPx(-(rawEnd - slotted) * px())
         }
         setIsDragging(true)
       }
@@ -1232,6 +1248,7 @@ function RecentSlotsChart({
       if (last) {
         setIsDragging(false)
         setOverscrollPx(0)  // CSS transition snaps back
+        setDragFracPx(0)
 
         const nums = slotNums()
         const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
@@ -1339,7 +1356,17 @@ function RecentSlotsChart({
       // is unaffected by buffer growth — no offset adjustment needed.
       const existingSlots = new Set(slotBufferRef.current.map(r => r.slot))
       const newRaces = data.recent_slots.filter((r: EdgeScoreboardSlotRace) => !existingSlots.has(r.slot))
-      if (newRaces.length) slotBufferRef.current = [...newRaces, ...slotBufferRef.current]
+      if (!newRaces.length) return
+      slotBufferRef.current = [...newRaces, ...slotBufferRef.current]
+      // If the user is still pinned at the old left edge, shift the view to the new
+      // left edge so the loaded history becomes immediately visible without another drag.
+      const oldMinEnd = oldestSlot + viewSlotCountRef.current - 1
+      if (!isDraggingRef.current && viewEndSlotRef.current !== null && Math.abs(viewEndSlotRef.current - oldMinEnd) < 2) {
+        const newNums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
+        const newMinEnd = (newNums[0] ?? 0) + viewSlotCountRef.current - 1
+        viewEndSlotRef.current = newMinEnd
+        setViewEndSlot(newMinEnd)
+      }
     }).catch(() => {
       prefetchedBoundariesRef.current.delete(oldestSlot)
     }).finally(() => {
@@ -1584,7 +1611,7 @@ function RecentSlotsChart({
             <div
               className="flex"
               style={{
-                transform: `translateX(${overscrollPx + inertiaFracPx - (live && viewEndSlot === null && !isDragging ? scrollOffset : 0)}px)`,
+                transform: `translateX(${overscrollPx + dragFracPx + inertiaFracPx - (live && viewEndSlot === null && !isDragging ? scrollOffset : 0)}px)`,
                 transition: (isDragging || isInertia || (live && viewEndSlot === null)) ? undefined : 'transform 0.15s cubic-bezier(0.2, 0, 0, 1)',
                 willChange: 'transform',
               }}
