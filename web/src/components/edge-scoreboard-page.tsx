@@ -1,8 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
-import { useDrag } from '@use-gesture/react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronsRight, Play, Square, Layers } from 'lucide-react'
+import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -876,7 +875,7 @@ function RecentSlotsChart({
       const dt = lastTime === null ? 0 : Math.min(now - lastTime, 400)
       lastTime = now
       const slotPx = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
-      const inTail = !isDraggingRef.current && viewEndSlotRef.current === null
+      const inTail = viewEndSlotRef.current === null
       if (inTail) {
         // Only advance when there's something to drain — prevents scroll from oscillating
         // back to 0 when the queue is empty (e.g. right after init or between polls).
@@ -964,8 +963,6 @@ function RecentSlotsChart({
     slotBufferRef.current = slots
   }
 
-  // Drag-to-scroll: click/touch and drag left/right to navigate the timeline with momentum.
-  const momentumStopRef = useRef<{ stop: () => void } | null>(null)
   const liveRef = useRef(live)
   liveRef.current = live
   // Info bar DOM refs — updated directly to avoid React re-render flicker.
@@ -1031,16 +1028,6 @@ function RecentSlotsChart({
     return () => document.removeEventListener('mousemove', onDocMove)
   }, [updateInfoBar])
 
-  const [isDragging, setIsDragging] = useState(false)
-  const isDraggingRef = useRef(isDragging)
-  isDraggingRef.current = isDragging
-  const [overscrollPx, setOverscrollPx] = useState(0)
-  // Sub-slot fractional offsets applied as CSS translate so bars glide smoothly between
-  // slot boundaries without triggering activeSlots recomputation.
-  // dragFracPx: set via CSS custom property (--drag-frac) on chartRowsRef so pointer
-  // events bypass React entirely between slot boundaries — zero re-renders during drag.
-  const [inertiaFracPx, setInertiaFracPx] = useState(0)
-  const [isInertia, setIsInertia] = useState(false)
   const [isScrollingToLive, setIsScrollingToLive] = useState(false)
   // scrollOffset: 0→slotPx at constant velocity, driven by a single rAF loop that also
   // pops the drain queue at rollover. Both setScrollOffset+setLiveEdge fire in the same
@@ -1059,11 +1046,6 @@ function RecentSlotsChart({
   //      then wait for drain to set liveEdgeRef before starting the tween.
   const scrollToLiveAnimRef = useRef<number | null>(null)
   const scrollToLive = () => {
-    momentumStopRef.current?.stop()
-    momentumStopRef.current = null
-    setInertiaFracPx(0)
-    setIsInertia(false)
-
     if (scrollToLiveAnimRef.current !== null) {
       cancelAnimationFrame(scrollToLiveAnimRef.current)
       scrollToLiveAnimRef.current = null
@@ -1189,157 +1171,22 @@ function RecentSlotsChart({
   if (scrollToLiveRef) scrollToLiveRef.current = scrollToLive
   if (toggleLiveRef) toggleLiveRef.current = toggleLive
 
-  // Captured at the start of each drag gesture so we can compute position from
-  // cumulative movement rather than accumulating per-frame incremental deltas.
-  const dragStartSlotRef = useRef<number>(0)
-
-  useDrag(
-    ({ movement: [mx], velocity: [vx], direction: [dirX], first, last, active }) => {
-      const slotNums = () => [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
-      const px = () => Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
-
-      if (active) {
-        // Cancel any running inertia — only when it's actually running to avoid no-op re-renders.
-        if (momentumStopRef.current) {
-          momentumStopRef.current.stop()
-          momentumStopRef.current = null
-          setInertiaFracPx(0)
-        }
-
-        const nums = slotNums()
-        const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
-        const oldestSlot = nums[0] ?? 0
-        const minEnd = oldestSlot + viewSlotCount - 1
-
-        if (first) {
-          // Capture the slot position at drag start so rawEnd = startSlot - totalMovement/px.
-          // This makes overscroll accumulate correctly — delta-based math resets each frame
-          // when viewEndSlotRef is frozen at minEnd during overscroll.
-          dragStartSlotRef.current = viewEndSlotRef.current ?? liveEdge
-          setIsDragging(true)
-        }
-
-        // Use cumulative movement from gesture start, not incremental delta.
-        // drag right (mx > 0) = back in time = rawEnd decreases
-        const rawEnd = dragStartSlotRef.current - mx / px()
-
-        if (rawEnd < minEnd) {
-          // Past the left edge: anchor data at minEnd (no content change), grow CSS transform.
-          const rawOverflowPx = (minEnd - rawEnd) * px()
-          setOverscrollPx(Math.min(350, rawOverflowPx * 0.35))
-          viewEndSlotRef.current = minEnd
-          setViewEndSlot(minEnd)
-          chartRowsRef.current?.style.removeProperty('--drag-frac')
-        } else if (rawEnd > liveEdge) {
-          // Past the right (live) edge: anchor at liveEdge, grow CSS transform leftward.
-          const rawOverflowPx = (rawEnd - liveEdge) * px()
-          setOverscrollPx(-Math.min(350, rawOverflowPx * 0.35))
-          viewEndSlotRef.current = liveEdge
-          setViewEndSlot(liveEdge)
-          chartRowsRef.current?.style.removeProperty('--drag-frac')
-        } else {
-          setOverscrollPx(0)
-          viewEndSlotRef.current = rawEnd
-          // Only trigger activeSlots recomputation at slot boundaries.
-          // Sub-slot glide uses a CSS custom property set directly on the DOM — zero React
-          // re-renders between slot boundaries, pointer events handled at native speed.
-          setViewEndSlot(Math.floor(rawEnd))
-          const slotPxVal = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCount)
-          chartRowsRef.current?.style.setProperty('--drag-frac', `${-(rawEnd - Math.floor(rawEnd)) * slotPxVal}px`)
-        }
-      }
-
-      if (last) {
-        setIsDragging(false)
-        setOverscrollPx(0)  // CSS transition snaps back
-        chartRowsRef.current?.style.removeProperty('--drag-frac')
-
-        const nums = slotNums()
-        const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
-        const oldestSlot = nums[0] ?? 0
-        const minEnd = oldestSlot + viewSlotCount - 1
-        const currentEnd = viewEndSlotRef.current ?? liveEdge
-
-        // If the user released at/past the live edge, animate smoothly into live.
-        if (currentEnd >= liveEdge) {
-          scrollToLive()
-          return
-        }
-
-        // velocity[0] = px/ms magnitude, direction[0] = sign.
-        // drag right → slot decreases → inertia velocity is negative
-        const slotVelocityPerSecond = -(vx * dirX) / px() * 1000
-
-        if (Math.abs(slotVelocityPerSecond) > 0.5) {
-          // Custom rAF-based inertia with sub-slot CSS translate for smooth deceleration.
-          // The fractional offset (inertiaFracPx) is updated every frame — since it's not
-          // in activeSlots deps, those re-renders only update the CSS transform (cheap).
-          // setViewEndSlot only fires at slot boundaries (expensive but infrequent).
-          const timeConstant = 1200
-          const power = 1.2
-          const target = Math.max(minEnd, Math.min(liveEdge,
-            currentEnd + slotVelocityPerSecond / 1000 * power * timeConstant))
-          const from = currentEnd
-          const startTime = performance.now()
-          let lastCommitted = Math.floor(currentEnd)
-          let rafHandle: number | null = null
-
-          const tick = () => {
-            const elapsed = performance.now() - startTime
-            const decay = Math.exp(-elapsed / timeConstant)
-            const value = target + (from - target) * decay
-            const clamped = Math.max(minEnd, Math.min(liveEdge, value))
-
-            const slotPxNow = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
-            const committed = Math.floor(clamped)
-            const fracPx = -(clamped - committed) * slotPxNow
-
-            viewEndSlotRef.current = clamped
-
-            // Only re-render with new slot data at boundaries; sub-slot moves use cheap fracPx re-render
-            if (committed !== lastCommitted) {
-              lastCommitted = committed
-              setViewEndSlot(committed)
-            }
-            setInertiaFracPx(fracPx)
-
-            // Stop when close enough to target
-            const remainingSlots = Math.abs(clamped - target)
-            const velocitySlotsSec = Math.abs((from - target) / timeConstant * decay * 1000)
-            if (remainingSlots < 0.5 || velocitySlotsSec < 0.5) {
-              const finalSlot = Math.round(clamped)
-              viewEndSlotRef.current = finalSlot
-              setViewEndSlot(finalSlot)
-              setInertiaFracPx(0)
-              setIsInertia(false)
-              momentumStopRef.current = null
-              if (finalSlot >= liveEdgeRef.current - 1) scrollToLive()
-              return
-            }
-
-            rafHandle = requestAnimationFrame(tick)
-          }
-
-          setIsInertia(true)
-          rafHandle = requestAnimationFrame(tick)
-          momentumStopRef.current = {
-            stop: () => {
-              if (rafHandle !== null) cancelAnimationFrame(rafHandle)
-              setInertiaFracPx(0)
-              setIsInertia(false)
-            }
-          }
-        }
-      }
-    },
-    {
-      target: containerRef,
-      axis: 'x',
-      pointer: { capture: true, touch: true },
-      filterTaps: true,
-      enabled: true,
+  // Step N slots forward (positive) or backward (negative).
+  const stepSlots = (direction: 1 | -1) => {
+    const nums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
+    const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
+    const oldestSlot = nums[0] ?? 0
+    const minEnd = oldestSlot + viewSlotCount - 1
+    const current = viewEndSlotRef.current ?? liveEdge
+    const next = current + direction * viewSlotCount
+    if (direction > 0 && next >= liveEdge) {
+      scrollToLive()
+      return
     }
-  )
+    const clamped = Math.max(minEnd, Math.min(liveEdge, next))
+    viewEndSlotRef.current = clamped
+    setViewEndSlot(clamped)
+  }
 
   // Prefetch older slots when user scrolls near the buffer start (infinite scroll backwards).
   useEffect(() => {
@@ -1365,7 +1212,7 @@ function RecentSlotsChart({
       // If the user is still pinned at the old left edge, shift the view to the new
       // left edge so the loaded history becomes immediately visible without another drag.
       const oldMinEnd = oldestSlot + viewSlotCountRef.current - 1
-      if (!isDraggingRef.current && viewEndSlotRef.current !== null && Math.abs(viewEndSlotRef.current - oldMinEnd) < 2) {
+      if (viewEndSlotRef.current !== null && Math.abs(viewEndSlotRef.current - oldMinEnd) < 2) {
         const newNums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
         const newMinEnd = (newNums[0] ?? 0) + viewSlotCountRef.current - 1
         viewEndSlotRef.current = newMinEnd
@@ -1497,8 +1344,6 @@ function RecentSlotsChart({
       ref={containerRef}
       className={bare ? "pt-2" : "rounded-lg border border-border bg-card p-4"}
       style={{
-        touchAction: 'pan-y',
-        cursor: isDragging ? 'grabbing' : 'grab',
         userSelect: 'none',
       }}
       onPointerDown={(e) => {
@@ -1559,7 +1404,7 @@ function RecentSlotsChart({
                 onClick={scrollToLive}
                 className="text-sky-400 hover:text-sky-300 transition-colors"
               >
-                <ChevronsRight size={16} />
+                <ChevronRight size={16} />
               </button>
             )}
             <button
@@ -1593,13 +1438,10 @@ function RecentSlotsChart({
       </div>}
       <div className="flex gap-0">
         <div ref={chartRowsRef} className="relative flex-1 min-w-0">
-        {/* Left-edge indicator: fixed at the chart boundary, shows while overscrolling or fetching */}
-        {(overscrollPx > 0 || isPrefetching) && (
-          <div className="absolute left-[138px] inset-y-0 flex items-center pointer-events-none z-10">
-            {isPrefetching
-              ? <Loader2 size={14} className="animate-spin text-muted-foreground/60" />
-              : <ChevronsRight size={14} className="text-muted-foreground/40 rotate-180" />
-            }
+        {/* Left-edge indicator: shows while fetching older history */}
+        {isPrefetching && (
+          <div className="absolute left-[64px] inset-y-0 flex items-center pointer-events-none z-10">
+            <Loader2 size={14} className="animate-spin text-muted-foreground/60" />
           </div>
         )}
         {nodeCharts.map((nc) => (
@@ -1615,16 +1457,32 @@ function RecentSlotsChart({
             <div
               className="flex"
               style={{
-                transform: `translateX(calc(var(--drag-frac, 0px) + ${overscrollPx + inertiaFracPx - (live && viewEndSlot === null && !isDragging ? scrollOffset : 0)}px))`,
-                transition: (isDragging || isInertia || (live && viewEndSlot === null)) ? undefined : 'transform 0.15s cubic-bezier(0.2, 0, 0, 1)',
-                willChange: 'transform',
+                transform: `translateX(${live && viewEndSlot === null ? -scrollOffset : 0}px)`,
               }}
             >
-              <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={live ? (liveLeaders ?? slotLeaders) : slotLeaders} animated={viewEndSlot !== null} dragging={isDragging || isInertia || isScrollingToLive} liveScrollOffset={live && viewEndSlot === null && !isDragging ? scrollOffset : 0} viewSlotCount={viewSlotCount} onHover={updateInfoBar} />
+              <SlotRaceNodeChart slotData={nc.data} feeds={feeds} slotLeaders={live ? (liveLeaders ?? slotLeaders) : slotLeaders} animated={viewEndSlot !== null} dragging={isScrollingToLive} liveScrollOffset={live && viewEndSlot === null ? scrollOffset : 0} viewSlotCount={viewSlotCount} onHover={updateInfoBar} />
             </div>
             </div>{/* end mask wrapper */}
           </div>
         ))}
+        {/* Arrow navigation */}
+        <div className="flex items-center gap-1 pt-1 pl-[64px]">
+          <button
+            onClick={() => stepSlots(-1)}
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="Back"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <button
+            onClick={() => stepSlots(1)}
+            disabled={viewEndSlot === null}
+            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 transition-colors"
+            title="Forward"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
         </div>{/* end chart rows */}
         {/* Right info panel */}
         <div className="w-60 shrink-0 border-l border-border flex flex-col px-5 py-5">
@@ -2050,7 +1908,7 @@ export function EdgeScoreboardPage() {
                       onClick={() => scrollToLiveRef.current?.()}
                       className="text-[#0ea5e9] hover:text-[#0284c7] transition-colors"
                     >
-                      <ChevronsRight size={16} />
+                      <ChevronRight size={16} />
                     </button>
                   )}
                   <button
