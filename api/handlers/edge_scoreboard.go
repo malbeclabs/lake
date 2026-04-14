@@ -1061,10 +1061,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
+					AND r.slot BETWEEN %d AND %d
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
 			SETTINGS final=1
-`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
+`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds, slotWindowMin, slotWindowMax)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
@@ -1095,10 +1096,11 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM %s.slot_feed_race_summary AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
+					AND r.slot BETWEEN %d AND %d
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
 			SETTINGS final=1
-`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
+`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds, slotWindowMin, slotWindowMax)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
