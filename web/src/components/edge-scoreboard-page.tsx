@@ -132,9 +132,9 @@ function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, numbe
 }
 
 const FEED_COLORS: Record<string, string> = {
-  dz_edge: '#0ea5e9',  // sky-500 — primary DZ
-  dz: '#38bdf8',       // sky-400 — lighter
-  dz_rebop: '#0284c7', // sky-600 — darker
+  dz_edge: '#10b981',  // emerald-500 — primary DZ
+  dz: '#34d399',       // emerald-400 — lighter
+  dz_rebop: '#059669', // emerald-600 — darker
   jito: '#f59e0b',     // amber-500
   turbine: '#fb7185',  // rose-400
   pipe: '#e879f9',
@@ -295,7 +295,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
-        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#0ea5e9] transition-colors">
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#10b981] transition-colors">
           {label}
         </Link>
       ) : (
@@ -1911,7 +1911,7 @@ export function EdgeScoreboardPage() {
                     className={cn(
                       'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                       live && viewEndSlot === null
-                        ? 'border-[#0ea5e9] bg-[#0ea5e9]/10 text-[#0ea5e9] hover:bg-[#0284c7]/20'
+                        ? 'border-[#10b981] bg-[#10b981]/10 text-[#10b981] hover:bg-[#059669]/20'
                         : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                     )}
                   >
@@ -2029,7 +2029,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           }
         }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#0ea5e9] transition-colors">
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#10b981] transition-colors">
               {label}
             </Link>
           ) : (
