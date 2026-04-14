@@ -520,6 +520,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	// expensive and only needed for the full scoreboard view.
 	var (
 		feedStats      map[feedKey]*EdgeScoreboardFeedStats
+		leadTimeStats  map[feedKey][]EdgeScoreboardLeadTime
 		metros         = make(map[string]*metroInfo)
 		stakeByMetro   = make(map[string]*stakeInfo)
 		recentSlots    []EdgeScoreboardSlotRace
@@ -693,16 +694,18 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2c rows: %w", err)
 			}
 
-			// q2b: pairwise lead times for the synthetic dz_edge feed.
-			// In leadersOnly mode this is dz only (leader path). Otherwise it's the
-			// best of dz + dz_rebop per slot (leader + retransmit), so the column
-			// matches the dz_edge win-rate framing.
-			// Per slot, pick the DZ feed with the smallest p50 lead vs the loser
-			// (argMin), then aggregate across slots:
-			//   p50_ms = median of per-slot best p50 leads.
-			//   p95_ms = 95th percentile of the matching feed's p95 (conservative tail).
-			var q2b string
+			feedStats = localFeedStats
+			return nil
+		})
+
+		// Group A2: pairwise lead times (q2b) for the synthetic dz_edge feed.
+		// Runs in parallel with Group A so it is never starved by q2+q2c consuming
+		// the 45s budget, which caused intermittent empty lead-time columns.
+		// In leadersOnly mode uses dz only (leader path); otherwise dz+dz_rebop
+		// (best per slot), matching the dz_edge win-rate framing.
+		g.Go(func() error {
 			edgeFeeds := "'dz', 'dz_rebop'"
+			var q2b string
 			if leadersOnly {
 				edgeFeeds = "'dz'"
 				q2b = fmt.Sprintf(`
@@ -751,38 +754,34 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			SETTINGS final=1
 `, shredderDB, edgeFeeds, scoreboardLoserFeeds, timeFilter)
 			}
-
-			t = time.Now()
+			t := time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
 			metrics.RecordClickHouseQuery(time.Since(t), err)
 			if err != nil && gctx.Err() == nil {
 				log.Printf("EdgeScoreboard query2b error: %v", err)
-			} else if err == nil {
-				defer rows2b.Close()
-				for rows2b.Next() {
-					var nodeID, loserFeed string
-					var slotCount uint64
-					var p50, p95 float64
-					if err := rows2b.Scan(&nodeID, &loserFeed, &slotCount, &p50, &p95); err != nil {
-						log.Printf("EdgeScoreboard query2b scan error: %v", err)
-						break
-					}
-					key := feedKey{nodeID, "dz_edge"}
-					fs, ok := localFeedStats[key]
-					if !ok {
-						fs = &EdgeScoreboardFeedStats{}
-						localFeedStats[key] = fs
-					}
-					fs.LeadTimes = append(fs.LeadTimes, EdgeScoreboardLeadTime{
-						LoserFeed: loserFeed,
-						P50Ms:     p50,
-						P95Ms:     p95,
-						SlotCount: slotCount,
-					})
-				}
+				return nil
+			} else if err != nil {
+				return nil
 			}
-
-			feedStats = localFeedStats
+			defer rows2b.Close()
+			local := make(map[feedKey][]EdgeScoreboardLeadTime)
+			for rows2b.Next() {
+				var nodeID, loserFeed string
+				var slotCount uint64
+				var p50, p95 float64
+				if err := rows2b.Scan(&nodeID, &loserFeed, &slotCount, &p50, &p95); err != nil {
+					log.Printf("EdgeScoreboard query2b scan error: %v", err)
+					break
+				}
+				key := feedKey{nodeID, "dz_edge"}
+				local[key] = append(local[key], EdgeScoreboardLeadTime{
+					LoserFeed: loserFeed,
+					P50Ms:     p50,
+					P95Ms:     p95,
+					SlotCount: slotCount,
+				})
+			}
+			leadTimeStats = local
 			return nil
 		})
 
@@ -1291,6 +1290,19 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 	if err := g.Wait(); err != nil {
 		return nil, err
+	}
+
+	// Merge lead times from Group A2 into feedStats.
+	for key, lts := range leadTimeStats {
+		if feedStats == nil {
+			break
+		}
+		fs, ok := feedStats[key]
+		if !ok {
+			fs = &EdgeScoreboardFeedStats{}
+			feedStats[key] = fs
+		}
+		fs.LeadTimes = lts
 	}
 
 	// Assemble response
