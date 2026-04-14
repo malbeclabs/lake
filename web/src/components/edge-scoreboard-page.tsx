@@ -856,6 +856,12 @@ function RecentSlotsChart({
   slotsRef.current = slots
   const slotLeadersRef = useRef(slotLeaders)
   slotLeadersRef.current = slotLeaders
+  // Refs for the bucketed ticker (reads feeds/granular without adding them to effect deps).
+  const bucketedFeedsRef = useRef<string[]>([])
+  const bucketedGranularRef = useRef<boolean | undefined>(undefined)
+  const bucketedTickerQueueRef = useRef<EdgeScoreboardSlotRace[][]>([])   // new slots from polls
+  const bucketedTickerCycleRef = useRef<EdgeScoreboardSlotRace[][]>([])   // round-robin pool
+  const bucketedTickerMaxRef = useRef(0)
 
   // Track query params from the last live-effect seed so we can detect when they change.
   // When leadersOnly or window changes, slotsRef.current holds stale data (wrong filter),
@@ -1098,6 +1104,112 @@ function RecentSlotsChart({
       applyInfoBar(defaultInfoRef.current)
     }
   }, [applyInfoBar])
+
+  // Bucketed ticker: when in trend view + live, animate the info bar by cycling through
+  // individual slots at 400ms/slot — same cadence as the live chart ticker — so the sidebar
+  // still shows per-slot leader/feed data rather than being frozen on aggregate averages.
+  useEffect(() => {
+    if (!bucketed || !live) {
+      bucketedTickerQueueRef.current = []
+      bucketedTickerCycleRef.current = []
+      bucketedTickerMaxRef.current = 0
+      return
+    }
+
+    let cancelled = false
+
+    const groupBySlot = (races: EdgeScoreboardSlotRace[]) => {
+      const map = new Map<number, EdgeScoreboardSlotRace[]>()
+      const nums: number[] = []
+      for (const r of races) {
+        if (!map.has(r.slot)) { map.set(r.slot, []); nums.push(r.slot) }
+        map.get(r.slot)!.push(r)
+      }
+      return { map, nums: nums.sort((a, b) => a - b) }
+    }
+
+    const computeFeedData = (races: EdgeScoreboardSlotRace[]) => {
+      const feeds = bucketedFeedsRef.current
+      const gran = bucketedGranularRef.current ?? false
+      const fk = (f: string) => feedKeyForMode(f, gran)
+      const nodeFeeds: Record<string, Record<string, number>> = {}
+      for (const r of races) {
+        const k = fk(r.feed)
+        if (!k) continue
+        if (!nodeFeeds[r.host]) nodeFeeds[r.host] = {}
+        nodeFeeds[r.host][k] = (nodeFeeds[r.host][k] ?? 0) + r.win_pct
+      }
+      const nodeList = Object.values(nodeFeeds)
+      const feedData: Record<string, number | null> = {}
+      for (const f of feeds) {
+        const sum = nodeList.reduce((acc, nf) => acc + (nf[f] ?? 0), 0)
+        feedData[f] = nodeList.length > 0 ? sum / nodeList.length : 0
+      }
+      const total = feeds.reduce((s, f) => s + (feedData[f] ?? 0), 0)
+      if (total > 0) {
+        const scale = 100 / total
+        for (const f of feeds) feedData[f] = Math.round((feedData[f] ?? 0) * scale * 10) / 10
+      }
+      return feedData
+    }
+
+    // Seed cycle pool from available slot data.
+    const { map, nums } = groupBySlot(slotsRef.current)
+    bucketedTickerMaxRef.current = nums.at(-1) ?? 0
+    bucketedTickerCycleRef.current = nums.map(s => map.get(s)!)
+
+    // Poll for new slots every 5s.
+    const poll = () => {
+      const prevMax = bucketedTickerMaxRef.current
+      fetchEdgeScoreboard(window, leadersOnly).then(data => {
+        if (cancelled) return
+        const { map: m, nums: ns } = groupBySlot(data.recent_slots)
+        const newNums = prevMax > 0 ? ns.filter(n => n > prevMax) : []
+        if (!newNums.length) return
+        bucketedTickerMaxRef.current = ns.at(-1) ?? bucketedTickerMaxRef.current
+        bucketedTickerQueueRef.current.push(...newNums.map(s => m.get(s)!))
+        bucketedTickerCycleRef.current.push(...newNums.map(s => m.get(s)!))
+      }).catch(() => {})
+    }
+    const pollInterval = setInterval(poll, 5_000)
+
+    // Drain at 400ms/slot; cycle through all known slots when no new ones queued.
+    let lastTime: number | null = null
+    let elapsed = 0
+    let cycleIdx = 0
+    let drainRafId = 0
+
+    const tick = (now: number) => {
+      if (cancelled) return
+      const dt = lastTime === null ? 0 : Math.min(now - lastTime, 400)
+      lastTime = now
+      elapsed += dt
+      if (elapsed >= 400) {
+        elapsed -= 400
+        let races: EdgeScoreboardSlotRace[] | undefined
+        if (bucketedTickerQueueRef.current.length > 0) {
+          races = bucketedTickerQueueRef.current.shift()
+        } else if (bucketedTickerCycleRef.current.length > 0) {
+          races = bucketedTickerCycleRef.current[cycleIdx % bucketedTickerCycleRef.current.length]
+          cycleIdx++
+        }
+        if (races) {
+          const slotNum = races[0]?.slot ?? 0
+          const feedData = computeFeedData(races)
+          const leader = slotLeadersRef.current?.[String(slotNum)]
+          applyInfoBar({ slot: slotNum, feedData, leader })
+        }
+      }
+      drainRafId = requestAnimationFrame(tick)
+    }
+    drainRafId = requestAnimationFrame(tick)
+
+    return () => {
+      cancelled = true
+      clearInterval(pollInterval)
+      cancelAnimationFrame(drainRafId)
+    }
+  }, [bucketed, live, window, leadersOnly, applyInfoBar])
 
   // Ref to the chart rows container — used to clear hover info when mouse leaves the area.
   const chartRowsRef = useRef<HTMLDivElement>(null)
@@ -1578,6 +1690,9 @@ function RecentSlotsChart({
   const activeData = bucketed ? bucketedChartData : chartData
   const { nodeCharts, feeds, slotCount } = activeData
   const activeBucketSize = bucketed ? bucketedChartData.bucketSize : undefined
+  // Keep refs in sync for the bucketed ticker effect.
+  bucketedFeedsRef.current = feeds
+  bucketedGranularRef.current = granular
 
   // Keep defaultInfoRef up-to-date with the most-recent visible slot so the
   // info bar always shows live data even when nothing is hovered.
@@ -1617,10 +1732,10 @@ function RecentSlotsChart({
     if (!isHoveredRef.current) applyInfoBar(info)
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, bucketed, granular, applyInfoBar])
 
-  // In bucketed (trend) mode the per-slot effect above is skipped, so populate the
-  // legend with overall window averages derived from the node feed stats.
+  // In bucketed (trend) mode without live streaming, populate the legend with overall
+  // window averages so it isn't blank. The live bucketed ticker handles the live case.
   useEffect(() => {
-    if (!bucketed || !nodes.length || !feeds.length) return
+    if (!bucketed || live || !nodes.length || !feeds.length) return
     const feedData: Record<string, number | null> = {}
     for (const f of feeds) {
       const sum = nodes.reduce((acc, n) => acc + (n.feeds[f]?.win_rate_pct ?? 0), 0)
@@ -1632,7 +1747,7 @@ function RecentSlotsChart({
       for (const f of feeds) feedData[f] = Math.round((feedData[f] ?? 0) * scale * 10) / 10
     }
     applyInfoBar({ slot: 0, feedData })
-  }, [bucketed, nodes, feeds, applyInfoBar])
+  }, [bucketed, live, nodes, feeds, applyInfoBar])
 
   if (!slots.length)
     return (
