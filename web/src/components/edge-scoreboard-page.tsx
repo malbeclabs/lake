@@ -2100,7 +2100,7 @@ export function EdgeScoreboardPage() {
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
                 <div key={competitor}>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Lead vs {FEED_LABELS[competitor] ?? competitor}</span>
+                    <span className="text-sm text-muted-foreground">DZ Edge vs {FEED_LABELS[competitor] ?? competitor}</span>
                     <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatMs(lead.p50)}</span>
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">p95: {formatMs(lead.p95)}</div>
