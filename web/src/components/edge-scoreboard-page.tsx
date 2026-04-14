@@ -132,11 +132,11 @@ function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, numbe
 }
 
 const FEED_COLORS: Record<string, string> = {
-  dz_edge: '#0ea5e9',  // sky-500 — primary DZ
-  dz: '#38bdf8',       // sky-400 — lighter
-  dz_rebop: '#0284c7', // sky-600 — darker
-  jito: '#f59e0b',     // amber-500
-  turbine: '#fb7185',  // rose-400
+  dz_edge: '#10b981',  // emerald-500 — primary DZ
+  dz: '#34d399',       // emerald-400 — lighter
+  dz_rebop: '#059669', // emerald-600 — darker
+  jito: '#fbbf24',     // amber-400 — brighter
+  turbine: '#f43f5e',  // rose-500 — more saturated
   pipe: '#e879f9',
   other: '#1f2937',
 }
@@ -233,8 +233,11 @@ function feedSortPriority(f: string): number {
   if (f === 'dz_edge') return 0
   if (f === 'dz') return 1
   if (f === 'dz_rebop') return 2
+  if (f === 'jito') return 5
+  if (f === 'turbine') return 6
+  if (f === 'pipe') return 7
   if (f === 'other') return 10
-  return 5
+  return 8
 }
 
 
@@ -295,7 +298,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
-        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#0ea5e9] transition-colors">
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#10b981] transition-colors">
           {label}
         </Link>
       ) : (
@@ -975,7 +978,7 @@ function RecentSlotsChart({
   // Line 2 (slot): slot number (fixed) + single leader text span (variable content, no show/hide).
   // When null is passed (mouse left), fall back to defaultInfoRef (most-recent slot).
   const infoSlotRef = useRef<HTMLSpanElement>(null)
-  const infoLeaderNameRef = useRef<HTMLSpanElement>(null)
+  const infoLeaderNameRef = useRef<HTMLAnchorElement>(null)
   const infoLeaderRef = useRef<HTMLSpanElement>(null)
   const infoFeedValueRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
   const infoFeedBarFillRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -988,7 +991,15 @@ function RecentSlotsChart({
     if (infoSlotRef.current) infoSlotRef.current.textContent = `Slot ${info.slot.toLocaleString()}`
     if (infoLeaderNameRef.current) {
       const l = info.leader
-      infoLeaderNameRef.current.textContent = l?.name ?? (l ? `${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}` : '')
+      const a = infoLeaderNameRef.current
+      a.textContent = l?.name ?? (l ? `${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}` : '')
+      if (l?.pubkey) {
+        a.setAttribute('href', `/solana/gossip-nodes/${l.pubkey}`)
+        a.style.pointerEvents = ''
+      } else {
+        a.removeAttribute('href')
+        a.style.pointerEvents = 'none'
+      }
     }
     if (infoLeaderRef.current) {
       const l = info.leader
@@ -1364,14 +1375,14 @@ function RecentSlotsChart({
             {live && (
               <span className="relative flex items-center">
                 {isPrefetching ? (
-                  <Loader2 size={12} className="animate-spin text-sky-500/50" />
+                  <Loader2 size={12} className="animate-spin text-emerald-500/50" />
                 ) : viewEndSlot === null ? (
                   <>
-                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-sky-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500" />
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                   </>
                 ) : (
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500/30" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500/30" />
                 )}
               </span>
             )}
@@ -1406,7 +1417,7 @@ function RecentSlotsChart({
             {live && viewEndSlot !== null && (
               <button
                 onClick={scrollToLive}
-                className="text-sky-400 hover:text-sky-300 transition-colors"
+                className="text-emerald-400 hover:text-emerald-300 transition-colors"
               >
                 <ChevronRight size={16} />
               </button>
@@ -1425,7 +1436,7 @@ function RecentSlotsChart({
               className={cn(
                 'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                 live && viewEndSlot === null
-                  ? 'border-sky-500 bg-sky-500/10 text-sky-400 hover:bg-sky-500/20'
+                  ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
@@ -1507,7 +1518,7 @@ function RecentSlotsChart({
           </div>
           <div className="mt-5 flex flex-col gap-0.5">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
-            <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
+            <a ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors" />
             <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
           </div>
         </div>
@@ -1800,7 +1811,7 @@ export function EdgeScoreboardPage() {
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     {v === true && leadersOnly !== true && (
-                      <span className="absolute inset-0 rounded-md ring-1 ring-sky-400/40 shadow-[0_0_8px_2px_rgba(56,189,248,0.2)] animate-pulse pointer-events-none" />
+                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
                     )}
                     <button
                       type="button"
@@ -1808,7 +1819,7 @@ export function EdgeScoreboardPage() {
                       className={cn(
                         'px-3 py-1.5 rounded-md border border-border transition-colors',
                         leadersOnly === v
-                          ? 'bg-primary text-primary-foreground border-primary'
+                          ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
                           : 'hover:bg-muted'
                       )}
                     >
@@ -1854,18 +1865,20 @@ export function EdgeScoreboardPage() {
 
             {/* Middle: metrics */}
             <div className="border-l border-border flex-1 p-6 flex flex-col justify-center gap-4 min-w-0">
-              <StackedBar
-                popoverSide="right"
-                dzTotalPct={globalStats.winRate}
-                segments={Object.keys(globalStats.feedRatesGranular)
-                  .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
-                  .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
-                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(animWinRate ?? globalStats.winRate)}</span>
-                </div>
-              </StackedBar>
+              <div className="pb-2">
+                <StackedBar
+                  popoverSide="right"
+                  dzTotalPct={globalStats.winRate}
+                  segments={Object.keys(globalStats.feedRatesGranular)
+                    .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
+                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
+                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(animWinRate ?? globalStats.winRate)}</span>
+                  </div>
+                </StackedBar>
+              </div>
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
                 <div key={competitor}>
                   <div className="flex items-center justify-between">
@@ -1891,21 +1904,15 @@ export function EdgeScoreboardPage() {
               <div className="flex items-center px-4 py-3">
                 <h2 className="text-sm font-semibold flex-1">Win Rate by Slot</h2>
                 <div className="flex items-center gap-2">
-                  {live && viewEndSlot !== null && (
-                    <button
-                      onClick={() => scrollToLiveRef.current?.()}
-                      className="text-[#0ea5e9] hover:text-[#0284c7] transition-colors"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  )}
                   <div className="relative group">
                     <button
                       type="button"
                       onClick={() => setGranular(!granular)}
                       className={cn(
-                        'p-1.5 rounded-md border border-border transition-colors',
-                        granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        'h-[26px] w-[26px] inline-flex items-center justify-center rounded-md border transition-colors',
+                        granular
+                          ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
                       <Layers size={15} />
@@ -1919,7 +1926,7 @@ export function EdgeScoreboardPage() {
                     className={cn(
                       'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                       live && viewEndSlot === null
-                        ? 'border-[#0ea5e9] bg-[#0ea5e9]/10 text-[#0ea5e9] hover:bg-[#0284c7]/20'
+                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
                         : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                     )}
                   >
@@ -2037,7 +2044,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           }
         }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#0ea5e9] transition-colors">
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#10b981] transition-colors">
               {label}
             </Link>
           ) : (

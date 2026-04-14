@@ -938,6 +938,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						WHERE feed_type = 'shred' AND loser_feed = ''
 							AND host IN (SELECT host FROM active_hosts)
 							AND slot IN (SELECT slot FROM dz_slots)
+							%s
 					)
 					GROUP BY slot
 					HAVING count(DISTINCT host) >= (SELECT count() FROM active_hosts)
@@ -952,7 +953,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
 			SETTINGS final=1
-`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
+`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
