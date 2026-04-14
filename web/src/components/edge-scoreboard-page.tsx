@@ -1891,14 +1891,6 @@ export function EdgeScoreboardPage() {
               <div className="flex items-center px-4 py-3">
                 <h2 className="text-sm font-semibold flex-1">Win Rate by Slot</h2>
                 <div className="flex items-center gap-2">
-                  {live && viewEndSlot !== null && (
-                    <button
-                      onClick={() => scrollToLiveRef.current?.()}
-                      className="text-[#0ea5e9] hover:text-[#0284c7] transition-colors"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                  )}
                   <div className="relative group">
                     <button
                       type="button"
