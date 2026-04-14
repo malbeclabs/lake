@@ -24,20 +24,27 @@ function formatBps(bps: number): string {
 }
 
 const statusColors: Record<string, string> = {
-  activated: 'text-muted-foreground',
-  provisioning: 'text-blue-600 dark:text-blue-400',
-  maintenance: 'text-amber-600 dark:text-amber-400',
-  offline: 'text-red-600 dark:text-red-400',
+  activated: 'bg-muted/60 text-muted-foreground',
+  provisioning: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  maintenance: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  offline: 'bg-red-500/10 text-red-600 dark:text-red-400',
 }
 
 export function DeviceDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
-  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
-  const { data: device, isLoading, error } = useQuery({
+  const {
+    data: device,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['device', pk],
     queryFn: () => fetchDevice(pk!),
     enabled: !!pk,
@@ -45,7 +52,11 @@ export function DeviceDetailPage() {
 
   const metricsParams = useMemo(() => toDeviceMetricsParams(timeRange), [timeRange])
 
-  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
+  const {
+    data: metrics,
+    isLoading: metricsLoading,
+    isFetching: metricsFetching,
+  } = useQuery({
     queryKey: ['deviceMetrics', pk, metricsParams],
     queryFn: () => fetchDeviceMetrics(pk!, metricsParams),
     enabled: !!pk,
@@ -67,10 +78,7 @@ export function DeviceDetailPage() {
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Device not found</div>
-          <Link
-            to="/dz/devices"
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
+          <Link to="/dz/devices" className="text-sm text-muted-foreground hover:text-foreground">
             Back to devices
           </Link>
         </div>
@@ -94,20 +102,27 @@ export function DeviceDetailPage() {
         </Link>
 
         {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <Server className="h-8 w-8 text-muted-foreground" />
-          <div>
-            <h1 className="text-2xl font-medium font-mono">
-              <CopyableText text={device.code} />
-            </h1>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground font-mono">
-                <CopyableText text={device.pk} />
-              </span>
-              <span className={`text-sm capitalize ${statusColors[device.status] || 'text-muted-foreground'}`}>
-                {device.status}
-              </span>
+        <div className="flex flex-col sm:flex-row sm:items-end gap-2 sm:gap-5 mb-8">
+          <div className="flex items-center gap-3">
+            <Server className="hidden sm:block h-8 w-8 text-muted-foreground shrink-0" />
+            <div>
+              <h1 className="text-2xl font-medium font-mono">
+                <CopyableText text={device.code} />
+              </h1>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground font-mono">
+                  <CopyableText text={device.pk} />
+                </span>
+              </div>
             </div>
+          </div>
+          <div>
+            {' '}
+            <span
+              className={`text-xs capitalize px-2 py-0.5 rounded-full ${statusColors[device.status] || 'bg-muted/60 text-muted-foreground'}`}
+            >
+              {device.status}
+            </span>
           </div>
         </div>
       </div>
@@ -121,10 +136,11 @@ export function DeviceDetailPage() {
             <div className="text-xs text-muted-foreground">Public IP</div>
           </div>
           <div className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium">
+            <div className="text-sm sm:text-base font-medium">
               <span className="text-muted-foreground text-xs">In:</span> {formatBps(device.in_bps)}
               <span className="mx-2 text-muted-foreground">|</span>
-              <span className="text-muted-foreground text-xs">Out:</span> {formatBps(device.out_bps)}
+              <span className="text-muted-foreground text-xs">Out:</span>{' '}
+              {formatBps(device.out_bps)}
             </div>
             <div className="text-xs text-muted-foreground">Current Traffic</div>
           </div>
@@ -133,7 +149,8 @@ export function DeviceDetailPage() {
               {device.current_users} / {device.max_users} users
               {device.max_users > 0 && (
                 <span className="text-muted-foreground text-xs ml-1">
-                  ({((device.current_users / device.max_users) * 100).toFixed(0)}%)
+                  ({((device.current_users / device.max_users) * 100).toFixed(0)}
+                  %)
                 </span>
               )}
             </div>
@@ -154,7 +171,11 @@ export function DeviceDetailPage() {
             className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="Refresh"
           >
-            {metricsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {metricsFetching ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
           </button>
           <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
         </div>
@@ -172,9 +193,25 @@ export function DeviceDetailPage() {
         )}
         {metrics && (
           <div className="space-y-4">
-            <DeviceHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
-            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <DeviceTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <DeviceHealthTimeline
+              data={metrics}
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
+            <DeviceInterfaceIssuesChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <DeviceTrafficChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
           </div>
         )}
       </div>

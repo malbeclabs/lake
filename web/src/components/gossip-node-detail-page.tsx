@@ -20,13 +20,19 @@ export function GossipNodeDetailPage() {
   const { pubkey } = useParams<{ pubkey: string }>()
   const navigate = useNavigate()
 
-  const { data: node, isLoading, error } = useQuery({
+  const {
+    data: node,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['gossip-node', pubkey],
     queryFn: () => fetchGossipNode(pubkey!),
     enabled: !!pubkey,
   })
 
-  useDocumentTitle(node?.pubkey ? `${node.pubkey.slice(0, 8)}...${node.pubkey.slice(-4)}` : 'Gossip Node')
+  useDocumentTitle(
+    node?.pubkey ? `${node.pubkey.slice(0, 8)}...${node.pubkey.slice(-4)}` : 'Gossip Node',
+  )
 
   if (isLoading) {
     return (
@@ -66,14 +72,18 @@ export function GossipNodeDetailPage() {
         </button>
 
         {/* Header */}
-        <div className="flex items-center gap-3 mb-8">
-          <Radio className="h-8 w-8 text-muted-foreground" />
-          <div>
-            <h1 className="text-2xl font-medium font-mono">{node.pubkey.slice(0, 8)}...{node.pubkey.slice(-4)}</h1>
-            <div className="text-sm text-muted-foreground">
-              {node.city && node.country
-                ? `${node.city}, ${node.country}`
-                : node.city || node.country || 'Unknown location'}
+        <div className="flex flex-col xs:flex-row xs:items-center gap-3 mb-8">
+          <div className="flex flex-row gap-3">
+            <Radio className="h-8 w-8 text-muted-foreground" />
+            <div>
+              <h1 className="text-2xl font-medium font-mono">
+                {node.pubkey.slice(0, 8)}...{node.pubkey.slice(-4)}
+              </h1>
+              <div className="text-sm text-muted-foreground">
+                {node.city && node.country
+                  ? `${node.city}, ${node.country}`
+                  : node.city || node.country || 'Unknown location'}
+              </div>
             </div>
           </div>
           <div className="ml-4 flex items-center gap-3">
@@ -140,7 +150,10 @@ export function GossipNodeDetailPage() {
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">Vote Account</dt>
                   <dd className="text-sm">
-                    <Link to={`/solana/validators/${node.vote_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                    <Link
+                      to={`/solana/validators/${node.vote_pubkey}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                    >
                       {truncatePubkey(node.vote_pubkey)}
                     </Link>
                   </dd>
@@ -162,40 +175,60 @@ export function GossipNodeDetailPage() {
                   <dt className="text-sm text-muted-foreground">User</dt>
                   <dd className="text-sm">
                     {node.user_pk ? (
-                      <Link to={`/dz/users/${node.user_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                      <Link
+                        to={`/dz/users/${node.user_pk}`}
+                        className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                      >
                         {truncatePubkey(node.user_pk)}
                       </Link>
-                    ) : '—'}
+                    ) : (
+                      '—'
+                    )}
                   </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">Owner</dt>
                   <dd className="text-sm">
                     {node.owner_pubkey ? (
-                      <Link to={`/dz/users?search=owner:${node.owner_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                      <Link
+                        to={`/dz/users?search=owner:${node.owner_pubkey}`}
+                        className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                      >
                         {truncatePubkey(node.owner_pubkey)}
                       </Link>
-                    ) : '—'}
+                    ) : (
+                      '—'
+                    )}
                   </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">Device</dt>
                   <dd className="text-sm">
                     {node.device_pk ? (
-                      <Link to={`/dz/devices/${node.device_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                      <Link
+                        to={`/dz/devices/${node.device_pk}`}
+                        className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                      >
                         {node.device_code}
                       </Link>
-                    ) : '—'}
+                    ) : (
+                      '—'
+                    )}
                   </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">Metro</dt>
                   <dd className="text-sm">
                     {node.metro_pk ? (
-                      <Link to={`/dz/metros/${node.metro_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                      <Link
+                        to={`/dz/metros/${node.metro_pk}`}
+                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                      >
                         {node.metro_code}
                       </Link>
-                    ) : '—'}
+                    ) : (
+                      '—'
+                    )}
                   </dd>
                 </div>
               </dl>

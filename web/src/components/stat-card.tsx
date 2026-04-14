@@ -44,7 +44,7 @@ function useAnimatedNumber(target: number | undefined, duration = 500) {
 function formatValue(
   value: number | undefined,
   format: 'number' | 'stake' | 'bandwidth' | 'percent',
-  decimals?: number
+  decimals?: number,
 ): string {
   if (value === undefined) return '—'
 
@@ -77,7 +77,9 @@ function formatValue(
       return `${value.toFixed(decimals ?? 1)}%`
     case 'number':
     default:
-      return value.toLocaleString('en-US', { maximumFractionDigits: decimals ?? 0 })
+      return value.toLocaleString('en-US', {
+        maximumFractionDigits: decimals ?? 0,
+      })
   }
 }
 
@@ -105,7 +107,7 @@ export function StatCard({ label, value, format, decimals, delta, href }: StatCa
 
   const content = (
     <>
-      <div className="text-4xl font-medium tabular-nums tracking-tight mb-1">
+      <div className="text-2xl lg:text-3xl font-medium tabular-nums tracking-tight mb-1 ">
         {isLoading ? (
           showSkeleton ? (
             <span className="inline-block h-10 w-16 rounded bg-muted animate-pulse" />
@@ -116,7 +118,9 @@ export function StatCard({ label, value, format, decimals, delta, href }: StatCa
           <span className="inline-flex items-baseline gap-2">
             {formatValue(animatedValue, format, decimals)}
             {showDelta && (
-              <span className={`text-sm font-normal ${delta > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              <span
+                className={`text-sm font-normal ${delta > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}
+              >
                 {formatDelta(delta)}
               </span>
             )}
@@ -129,11 +133,18 @@ export function StatCard({ label, value, format, decimals, delta, href }: StatCa
 
   if (href) {
     return (
-      <Link to={href} className="text-center block transition-opacity hover:opacity-70">
+      <Link
+        to={href}
+        className="text-center block rounded-[0.3rem] bg-muted/50 hover:bg-muted transition-colors p-2 lg:p-4"
+      >
         {content}
       </Link>
     )
   }
 
-  return <div className="text-center">{content}</div>
+  return (
+    <div className="text-center rounded-[0.3rem] bg-muted/50 hover:bg-muted transition-colors p-2 lg:p-4">
+      {content}
+    </div>
+  )
 }

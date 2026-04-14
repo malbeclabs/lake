@@ -1,8 +1,17 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { CheckCircle2, AlertTriangle, History, Info, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import {
+  CheckCircle2,
+  AlertTriangle,
+  History,
+  Info,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+} from 'lucide-react'
 import { fetchBulkDeviceMetrics, fetchDeviceMetrics } from '@/lib/api'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import type { DeviceMetricsResponse } from '@/lib/api'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
 import { DeviceInterfaceIssuesChart } from '@/components/device-charts/DeviceInterfaceIssuesChart'
@@ -56,9 +65,9 @@ interface DeviceStatusTimelinesProps {
   onTimeRangeChange?: (range: TimeRange) => void
   issueFilters?: string[]
   healthFilters?: string[]
-  devicesWithIssues?: Map<string, string[]>  // Map of device code -> issue reasons (from filter time range)
-  devicesWithHealth?: Map<string, string>    // Map of device code -> health status (from filter time range)
-  expandedDevicePk?: string                  // Device PK to auto-expand (from URL param)
+  devicesWithIssues?: Map<string, string[]> // Map of device code -> issue reasons (from filter time range)
+  devicesWithHealth?: Map<string, string> // Map of device code -> health status (from filter time range)
+  expandedDevicePk?: string // Device PK to auto-expand (from URL param)
 }
 
 interface DerivedDeviceInfo {
@@ -73,7 +82,7 @@ interface DerivedDeviceInfo {
   drainStatus: string
   isisOverload: boolean
   isisUnreachable: boolean
-  health: string  // worst health across buckets
+  health: string // worst health across buckets
 }
 
 function deriveDeviceInfo(metrics: DeviceMetricsResponse): DerivedDeviceInfo {
@@ -180,7 +189,9 @@ function DeviceInfoPopover({ deviceMetrics }: { deviceMetrics: DeviceMetricsResp
             </div>
             <div>
               <div className="text-muted-foreground">Type</div>
-              <div className="font-medium capitalize">{deviceMetrics.device_type?.replace(/_/g, ' ')}</div>
+              <div className="font-medium capitalize">
+                {deviceMetrics.device_type?.replace(/_/g, ' ')}
+              </div>
             </div>
             {(deviceMetrics.max_users ?? 0) > 0 && (
               <div>
@@ -195,9 +206,15 @@ function DeviceInfoPopover({ deviceMetrics }: { deviceMetrics: DeviceMetricsResp
   )
 }
 
-const cardClass = "rounded-lg border border-border p-4"
+const cardClass = 'rounded-lg border border-border p-4'
 
-function ExpandedDeviceCharts({ devicePk, timeRange, deviceMetrics, highlightTimeRange, onCursorTime }: {
+function ExpandedDeviceCharts({
+  devicePk,
+  timeRange,
+  deviceMetrics,
+  highlightTimeRange,
+  onCursorTime,
+}: {
   devicePk: string
   timeRange: string
   deviceMetrics: DeviceMetricsResponse
@@ -211,12 +228,14 @@ function ExpandedDeviceCharts({ devicePk, timeRange, deviceMetrics, highlightTim
     staleTime: 30_000,
   })
 
-  const hasIssues = deviceMetrics.buckets.some(b => b.traffic && (
-    b.traffic.in_errors + b.traffic.out_errors > 0 ||
-    b.traffic.in_fcs_errors > 0 ||
-    b.traffic.in_discards + b.traffic.out_discards > 0 ||
-    b.traffic.carrier_transitions > 0
-  ))
+  const hasIssues = deviceMetrics.buckets.some(
+    (b) =>
+      b.traffic &&
+      (b.traffic.in_errors + b.traffic.out_errors > 0 ||
+        b.traffic.in_fcs_errors > 0 ||
+        b.traffic.in_discards + b.traffic.out_discards > 0 ||
+        b.traffic.carrier_transitions > 0),
+  )
   if (!hasIssues) return null
 
   // Use per-interface data if available, fall back to bulk aggregate
@@ -224,7 +243,13 @@ function ExpandedDeviceCharts({ devicePk, timeRange, deviceMetrics, highlightTim
 
   return (
     <div className="px-4 pb-4 pt-2 space-y-4">
-      <DeviceInterfaceIssuesChart data={chartData} loading={isLoading} className={cardClass} highlightTimeRange={highlightTimeRange} onCursorTime={onCursorTime} />
+      <DeviceInterfaceIssuesChart
+        data={chartData}
+        loading={isLoading}
+        className={cardClass}
+        highlightTimeRange={highlightTimeRange}
+        onCursorTime={onCursorTime}
+      />
     </div>
   )
 }
@@ -237,9 +262,18 @@ interface DeviceRowProps {
   timeRange?: string
 }
 
-function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExpanded = false, timeRange = '24h' }: DeviceRowProps) {
+function DeviceRow({
+  deviceMetrics,
+  derivedInfo,
+  devicesWithIssues,
+  initiallyExpanded = false,
+  timeRange = '24h',
+}: DeviceRowProps) {
   const [expanded, setExpanded] = useState(initiallyExpanded)
-  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
   // Expand when initiallyExpanded prop changes to true
@@ -249,9 +283,10 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
     }
   }, [initiallyExpanded])
 
-  const issueReasons = devicesWithIssues && devicesWithIssues.size > 0
-    ? (devicesWithIssues.get(derivedInfo.code) ?? [])
-    : derivedInfo.issueReasons
+  const issueReasons =
+    devicesWithIssues && devicesWithIssues.size > 0
+      ? (devicesWithIssues.get(derivedInfo.code) ?? [])
+      : derivedInfo.issueReasons
 
   const nowMinutes = Math.floor(Date.now() / 60000)
   const recentIssues = useMemo(() => {
@@ -308,7 +343,12 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
     const cutoff = nowMinutes * 60 - 30 * 60
     let worstHealth = 'healthy'
     let isisIssue = false
-    const priority: Record<string, number> = { unhealthy: 3, degraded: 2, no_data: 1, healthy: 0 }
+    const priority: Record<string, number> = {
+      unhealthy: 3,
+      degraded: 2,
+      no_data: 1,
+      healthy: 0,
+    }
     for (const b of deviceMetrics.buckets) {
       const ts = new Date(b.ts).getTime() / 1000
       if (ts < cutoff) continue
@@ -330,28 +370,39 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
         ? 'border-l-amber-500'
         : 'border-l-transparent'
 
-  const hasExpandableContent = issueReasons.some(r =>
-    r === 'interface_errors' || r === 'fcs_errors' || r === 'discards' || r === 'carrier_transitions'
+  const hasExpandableContent = issueReasons.some(
+    (r) =>
+      r === 'interface_errors' ||
+      r === 'fcs_errors' ||
+      r === 'discards' ||
+      r === 'carrier_transitions',
   )
 
   return (
-    <div id={`device-row-${derivedInfo.pk}`} className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}>
+    <div
+      id={`device-row-${derivedInfo.pk}`}
+      className={`border-b border-border last:border-b-0 border-l-2 ${leftBorderColor}`}
+    >
       <div
         className={`px-4 py-3 transition-colors ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30' : ''}`}
         onClick={hasExpandableContent ? () => setExpanded(!expanded) : undefined}
       >
         <div className="flex items-start gap-4">
           {/* Expand/collapse indicator */}
-          <div className="flex-shrink-0 w-5 pt-0.5">
+          <div className="shrink-0 w-5 pt-0.5">
             {hasExpandableContent ? (
-              expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              expanded ? (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )
             ) : (
               <div className="w-4" />
             )}
           </div>
 
           {/* Device info */}
-          <div className="flex-shrink-0 w-44">
+          <div className="shrink-0 w-44">
             <div className="flex items-center gap-1.5">
               <Link
                 to={`/dz/devices/${derivedInfo.pk}`}
@@ -364,43 +415,82 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
               <DeviceInfoPopover deviceMetrics={deviceMetrics} />
             </div>
             <div className="text-xs text-muted-foreground">
-              {derivedInfo.contributor}{derivedInfo.metro && ` \u00b7 ${derivedInfo.metro}`}
+              {derivedInfo.contributor}
+              {derivedInfo.metro && ` \u00b7 ${derivedInfo.metro}`}
             </div>
             {issueReasons.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-1">
                 {issueReasons.includes('interface_errors') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('interface_errors') ? 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400' : dimBadgeClass}`}>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('interface_errors') ? 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400' : dimBadgeClass}`}
+                  >
                     Interface Errors
                   </span>
                 )}
                 {issueReasons.includes('fcs_errors') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('fcs_errors') ? '' : dimBadgeClass}`} style={isBadgeActive('fcs_errors') ? { backgroundColor: 'rgba(249, 115, 22, 0.15)', color: '#ea580c' } : undefined}>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('fcs_errors') ? '' : dimBadgeClass}`}
+                    style={
+                      isBadgeActive('fcs_errors')
+                        ? {
+                            backgroundColor: 'rgba(249, 115, 22, 0.15)',
+                            color: '#ea580c',
+                          }
+                        : undefined
+                    }
+                  >
                     FCS Errors
                   </span>
                 )}
                 {issueReasons.includes('discards') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('discards') ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400' : dimBadgeClass}`}>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('discards') ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400' : dimBadgeClass}`}
+                  >
                     Discards
                   </span>
                 )}
                 {issueReasons.includes('carrier_transitions') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('carrier_transitions') ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400' : dimBadgeClass}`}>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('carrier_transitions') ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400' : dimBadgeClass}`}
+                  >
                     Carrier Transitions
                   </span>
                 )}
                 {issueReasons.includes('drained') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('drained') ? 'bg-slate-500/15 text-slate-600 dark:text-slate-400' : dimBadgeClass}`}>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('drained') ? 'bg-slate-500/15 text-slate-600 dark:text-slate-400' : dimBadgeClass}`}
+                  >
                     Drained
                   </span>
                 )}
                 {issueReasons.includes('no_data') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('no_data') ? '' : dimBadgeClass}`} style={isBadgeActive('no_data') ? { backgroundColor: 'rgba(236, 72, 153, 0.15)', color: '#db2777' } : undefined}>No Data</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('no_data') ? '' : dimBadgeClass}`}
+                    style={
+                      isBadgeActive('no_data')
+                        ? {
+                            backgroundColor: 'rgba(236, 72, 153, 0.15)',
+                            color: '#db2777',
+                          }
+                        : undefined
+                    }
+                  >
+                    No Data
+                  </span>
                 )}
                 {issueReasons.includes('isis_overload') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('isis_overload') ? 'bg-red-600/15 text-red-700 dark:text-red-400' : dimBadgeClass}`}>ISIS Overload</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('isis_overload') ? 'bg-red-600/15 text-red-700 dark:text-red-400' : dimBadgeClass}`}
+                  >
+                    ISIS Overload
+                  </span>
                 )}
                 {issueReasons.includes('isis_unreachable') && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('isis_unreachable') ? 'bg-red-800/15 text-red-800 dark:text-red-400' : dimBadgeClass}`}>ISIS Unreachable</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-all ${isBadgeActive('isis_unreachable') ? 'bg-red-800/15 text-red-800 dark:text-red-400' : dimBadgeClass}`}
+                  >
+                    ISIS Unreachable
+                  </span>
                 )}
               </div>
             )}
@@ -408,7 +498,12 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 
           {/* Timeline */}
           <div className="flex-1 min-w-0">
-            <DeviceHealthTimeline data={deviceMetrics} hideBadges onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
+            <DeviceHealthTimeline
+              data={deviceMetrics}
+              hideBadges
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
           </div>
         </div>
       </div>
@@ -430,7 +525,15 @@ function DeviceRow({ deviceMetrics, derivedInfo, devicesWithIssues, initiallyExp
 export function DeviceStatusTimelines({
   timeRange = '24h',
   onTimeRangeChange,
-  issueFilters = ['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained', 'isis_overload', 'isis_unreachable'],
+  issueFilters = [
+    'interface_errors',
+    'fcs_errors',
+    'discards',
+    'carrier_transitions',
+    'drained',
+    'isis_overload',
+    'isis_unreachable',
+  ],
   healthFilters = ['healthy', 'degraded', 'unhealthy', 'disabled'],
   devicesWithIssues,
   devicesWithHealth,
@@ -447,7 +550,12 @@ export function DeviceStatusTimelines({
 
   const { data, isLoading, isPlaceholderData, error } = useQuery({
     queryKey: ['bulk-device-metrics', timeRange],
-    queryFn: () => fetchBulkDeviceMetrics({ range: timeRange, include: ['status', 'traffic'], hasIssues: true }),
+    queryFn: () =>
+      fetchBulkDeviceMetrics({
+        range: timeRange,
+        include: ['status', 'traffic'],
+        hasIssues: true,
+      }),
     refetchInterval: 60_000,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
@@ -456,7 +564,7 @@ export function DeviceStatusTimelines({
   // Convert the Record<string, DeviceMetricsResponse> into an array with derived info
   const devicesArray = useMemo(() => {
     if (!data?.devices) return []
-    return Object.values(data.devices).map(metrics => ({
+    return Object.values(data.devices).map((metrics) => ({
       metrics,
       derived: deriveDeviceInfo(metrics),
     }))
@@ -484,7 +592,7 @@ export function DeviceStatusTimelines({
   }
 
   // Check which issue filters are selected
-  const issueTypesSelected = issueFilters.filter(f => f !== 'no_issues')
+  const issueTypesSelected = issueFilters.filter((f) => f !== 'no_issues')
   const noIssuesSelected = issueFilters.includes('no_issues')
 
   // Filter and sort devices by recency of issues
@@ -492,17 +600,19 @@ export function DeviceStatusTimelines({
     if (devicesArray.length === 0) return []
 
     const filtered = devicesArray.filter(({ derived }) => {
-      const issueReasons = devicesWithIssues && devicesWithIssues.size > 0
-        ? (devicesWithIssues.get(derived.code) ?? [])
-        : derived.issueReasons
+      const issueReasons =
+        devicesWithIssues && devicesWithIssues.size > 0
+          ? (devicesWithIssues.get(derived.code) ?? [])
+          : derived.issueReasons
       const hasIssues = issueReasons.length > 0
 
       // Devices with only no_data or no_probes are shown based on health filter (no separate issue toggle)
-      const hasOnlyNoData = issueReasons.length > 0 && issueReasons.every(r => r === 'no_data' || r === 'no_probes')
+      const hasOnlyNoData =
+        issueReasons.length > 0 && issueReasons.every((r) => r === 'no_data' || r === 'no_probes')
       const matchesIssue = hasOnlyNoData
         ? true
         : hasIssues
-          ? issueReasons.some(reason => issueTypesSelected.includes(reason))
+          ? issueReasons.some((reason) => issueTypesSelected.includes(reason))
           : noIssuesSelected
 
       const matchesHealth = deviceMatchesHealthFilters(derived)
@@ -514,18 +624,30 @@ export function DeviceStatusTimelines({
     // 3) most recent issue timestamp, 4) total issue count, 5) alphabetical.
     const statusSeverity = (health: string): number => {
       switch (health) {
-        case 'unhealthy': return 4
-        case 'degraded': return 3
-        case 'disabled': return 2
-        case 'no_data': return 1
-        default: return 0
+        case 'unhealthy':
+          return 4
+        case 'degraded':
+          return 3
+        case 'disabled':
+          return 2
+        case 'no_data':
+          return 1
+        default:
+          return 0
       }
     }
 
     const RECENT_BUCKETS = 6
 
     return filtered.sort((a, b) => {
-      const getSortKey = (item: { metrics: DeviceMetricsResponse }): { recent: number; worst: number; latestTs: string; count: number } => {
+      const getSortKey = (item: {
+        metrics: DeviceMetricsResponse
+      }): {
+        recent: number
+        worst: number
+        latestTs: string
+        count: number
+      } => {
         const buckets = item.metrics.buckets
         if (!buckets || buckets.length === 0) return { recent: 0, worst: 0, latestTs: '', count: 0 }
         let worst = 0
@@ -556,8 +678,16 @@ export function DeviceStatusTimelines({
       if (aInfo.count !== bInfo.count) return bInfo.count - aInfo.count
       return a.derived.code.localeCompare(b.derived.code)
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devicesArray, issueFilters, healthFilters, noIssuesSelected, issueTypesSelected, devicesWithIssues, devicesWithHealth])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    devicesArray,
+    issueFilters,
+    healthFilters,
+    noIssuesSelected,
+    issueTypesSelected,
+    devicesWithIssues,
+    devicesWithHealth,
+  ])
 
   const showSkeleton = useDelayedLoading(isLoading && !data)
 
@@ -588,39 +718,42 @@ export function DeviceStatusTimelines({
   }
 
   return (
-    <div id="device-status-history" className={`border border-border rounded-lg transition-opacity${isPlaceholderData ? ' opacity-60' : ''}`}>
-      <div className="px-4 py-2.5 bg-muted/50 border-b border-border flex items-center gap-2 rounded-t-lg">
-        {isPlaceholderData
-          ? <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
-          : <History className="h-4 w-4 text-muted-foreground" />
-        }
-        <h3 className="font-medium">
-          Device Status History
-          <span className="text-sm text-muted-foreground font-normal ml-1">
-            ({filteredDevices.length} device{filteredDevices.length !== 1 ? 's' : ''})
-          </span>
-        </h3>
-        {onTimeRangeChange && (
-          <div className="inline-flex rounded-lg border border-border bg-background/50 p-0.5 ml-auto">
-            {timeRangeOptions.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => onTimeRangeChange(opt.value)}
-                className={`px-2.5 py-0.5 text-xs rounded-md transition-colors ${
-                  timeRange === opt.value
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+    <div
+      id="device-status-history"
+      className={`border border-border rounded-lg transition-opacity${isPlaceholderData ? ' opacity-60' : ''}`}
+    >
+      <div className="px-4 py-2.5 bg-muted/50 border-b border-border rounded-t-lg flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            {isPlaceholderData ? (
+              <Loader2 className="h-4 w-4 text-muted-foreground animate-spin shrink-0" />
+            ) : (
+              <History className="h-4 w-4 text-muted-foreground shrink-0" />
+            )}
+            <h3 className="font-medium">
+              Device Status History
+              <span className="hidden xss:inline text-sm text-muted-foreground font-normal ml-1">
+                ({filteredDevices.length} device
+                {filteredDevices.length !== 1 ? 's' : ''})
+              </span>
+            </h3>
           </div>
+          <div className="xss:hidden text-sm text-muted-foreground">
+            ({filteredDevices.length} device
+            {filteredDevices.length !== 1 ? 's' : ''})
+          </div>
+        </div>
+        {onTimeRangeChange && (
+          <SmallDropdown
+            value={timeRange}
+            options={timeRangeOptions}
+            onChange={(v) => onTimeRangeChange(v as TimeRange)}
+          />
         )}
       </div>
 
       {/* Legend */}
-      <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-4 text-xs text-muted-foreground">
+      <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-4 flex-wrap text-xs text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-sm bg-green-500" />
           <span>Healthy</span>

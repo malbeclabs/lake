@@ -1,7 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 import { BookOpen } from 'lucide-react'
 import { PageHeader } from './page-header'
-import { fetchDZLedger, fetchSolanaLedger, fetchStakeOverview, fetchValidatorPerformance, type LedgerResponse, type StakeOverview, type ValidatorPerfResponse } from '@/lib/api'
+import {
+  fetchDZLedger,
+  fetchSolanaLedger,
+  fetchStakeOverview,
+  fetchValidatorPerformance,
+  type LedgerResponse,
+  type StakeOverview,
+  type ValidatorPerfResponse,
+} from '@/lib/api'
 
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600)
@@ -35,16 +43,28 @@ function Skeleton() {
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-lg border bg-card p-4 sm:p-5">
-      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">{title}</div>
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
+        {title}
+      </div>
       {children}
     </div>
   )
 }
 
-function Metric({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
+function Metric({
+  label,
+  value,
+  sub,
+}: {
+  label: string
+  value: React.ReactNode
+  sub?: React.ReactNode
+}) {
   return (
     <div className="min-w-0">
-      <div className="text-lg sm:text-2xl font-medium tabular-nums tracking-tight truncate">{value}</div>
+      <div className="text-lg sm:text-2xl font-medium tabular-nums tracking-tight truncate">
+        {value}
+      </div>
       <div className="text-xs sm:text-sm text-muted-foreground">{label}</div>
       {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
     </div>
@@ -71,7 +91,9 @@ function EpochProgress({ data }: { data: LedgerResponse | undefined }) {
     <Card title="Epoch">
       <div className="space-y-3">
         <div className="flex items-baseline justify-between">
-          <span className="text-2xl sm:text-3xl font-medium tabular-nums">{formatNumber(data.epoch)}</span>
+          <span className="text-2xl sm:text-3xl font-medium tabular-nums">
+            {formatNumber(data.epoch)}
+          </span>
           <span className="text-sm text-muted-foreground tabular-nums">{pct.toFixed(1)}%</span>
         </div>
         <div className="h-3 rounded-full bg-muted overflow-hidden">
@@ -80,9 +102,11 @@ function EpochProgress({ data }: { data: LedgerResponse | undefined }) {
             style={{ width: `${pct}%` }}
           />
         </div>
-        <div className="flex flex-col sm:flex-row sm:justify-between gap-0.5 sm:gap-0 text-xs text-muted-foreground tabular-nums">
+        <div className="flex flex-col sm:flex-row sm:justify-between gap-2 sm:gap-0 text-xs text-muted-foreground tabular-nums">
           <span>started {started} ago</span>
-          <span>{formatCompact(data.slot_index)} / {formatCompact(data.slots_in_epoch)} slots</span>
+          <span>
+            {formatCompact(data.slot_index)} / {formatCompact(data.slots_in_epoch)} slots
+          </span>
           <span>{remaining} remaining</span>
         </div>
       </div>
@@ -94,10 +118,7 @@ function ChainState({ data }: { data: LedgerResponse | undefined }) {
   return (
     <Card title="Chain State">
       <div className="grid grid-cols-2 gap-4 sm:gap-6 md:grid-cols-4">
-        <Metric
-          label="Slot"
-          value={data ? formatCompact(data.absolute_slot) : <Skeleton />}
-        />
+        <Metric label="Slot" value={data ? formatCompact(data.absolute_slot) : <Skeleton />} />
         <Metric
           label="Block Height"
           value={data ? formatCompact(data.block_height) : <Skeleton />}
@@ -106,10 +127,7 @@ function ChainState({ data }: { data: LedgerResponse | undefined }) {
           label="Transactions"
           value={data ? formatCompact(data.transaction_count) : <Skeleton />}
         />
-        <Metric
-          label="Skip Rate"
-          value={data ? `${data.skip_rate.toFixed(2)}%` : <Skeleton />}
-        />
+        <Metric label="Skip Rate" value={data ? `${data.skip_rate.toFixed(2)}%` : <Skeleton />} />
       </div>
     </Card>
   )
@@ -136,16 +154,24 @@ function DZOnSolana({ stake }: { stake: StakeOverview | undefined }) {
         <Metric
           label="Stake Share"
           value={stake ? `${stake.stake_share_pct.toFixed(2)}%` : <Skeleton />}
-          sub={stake ? (
-            <span className="flex gap-2">
-              <span className={deltaColor()}>24h {formatDelta(stake.share_change_24h)}</span>
-              <span className={deltaColor()}>7d {formatDelta(stake.share_change_7d)}</span>
-            </span>
-          ) : undefined}
+          sub={
+            stake ? (
+              <span className="flex gap-2">
+                <span className={deltaColor()}>24h {formatDelta(stake.share_change_24h)}</span>
+                <span className={deltaColor()}>7d {formatDelta(stake.share_change_7d)}</span>
+              </span>
+            ) : undefined
+          }
         />
         <Metric
           label="DZ Stake Change (24h)"
-          value={stake ? `${stake.dz_stake_change_24h >= 0 ? '+' : ''}${formatSOL(Math.abs(stake.dz_stake_change_24h))} SOL` : <Skeleton />}
+          value={
+            stake ? (
+              `${stake.dz_stake_change_24h >= 0 ? '+' : ''}${formatSOL(Math.abs(stake.dz_stake_change_24h))} SOL`
+            ) : (
+              <Skeleton />
+            )
+          }
         />
       </div>
     </Card>
@@ -170,28 +196,48 @@ function ValidatorPerformance({ perf }: { perf: ValidatorPerfResponse | undefine
           <tbody className="tabular-nums">
             <tr className="border-t border-border/50">
               <td className="py-2.5 text-muted-foreground">Validators</td>
-              <td className="py-2.5 text-right font-medium">{dz ? formatNumber(dz.validator_count) : <Skeleton />}</td>
-              <td className="py-2.5 text-right font-medium">{nonDz ? formatNumber(nonDz.validator_count) : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">
+                {dz ? formatNumber(dz.validator_count) : <Skeleton />}
+              </td>
+              <td className="py-2.5 text-right font-medium">
+                {nonDz ? formatNumber(nonDz.validator_count) : <Skeleton />}
+              </td>
             </tr>
             <tr className="border-t border-border/50">
               <td className="py-2.5 text-muted-foreground">Avg Skip Rate</td>
-              <td className="py-2.5 text-right font-medium">{dz ? `${dz.avg_skip_rate.toFixed(2)}%` : <Skeleton />}</td>
-              <td className="py-2.5 text-right font-medium">{nonDz ? `${nonDz.avg_skip_rate.toFixed(2)}%` : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">
+                {dz ? `${dz.avg_skip_rate.toFixed(2)}%` : <Skeleton />}
+              </td>
+              <td className="py-2.5 text-right font-medium">
+                {nonDz ? `${nonDz.avg_skip_rate.toFixed(2)}%` : <Skeleton />}
+              </td>
             </tr>
             <tr className="border-t border-border/50">
               <td className="py-2.5 text-muted-foreground">Avg Vote Lag</td>
-              <td className="py-2.5 text-right font-medium">{dz ? `${dz.avg_vote_lag.toFixed(2)} slots` : <Skeleton />}</td>
-              <td className="py-2.5 text-right font-medium">{nonDz ? `${nonDz.avg_vote_lag.toFixed(2)} slots` : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">
+                {dz ? `${dz.avg_vote_lag.toFixed(2)} slots` : <Skeleton />}
+              </td>
+              <td className="py-2.5 text-right font-medium">
+                {nonDz ? `${nonDz.avg_vote_lag.toFixed(2)} slots` : <Skeleton />}
+              </td>
             </tr>
             <tr className="border-t border-border/50">
               <td className="py-2.5 text-muted-foreground">Delinquent</td>
-              <td className="py-2.5 text-right font-medium">{dz ? formatNumber(dz.delinquent_count) : <Skeleton />}</td>
-              <td className="py-2.5 text-right font-medium">{nonDz ? formatNumber(nonDz.delinquent_count) : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">
+                {dz ? formatNumber(dz.delinquent_count) : <Skeleton />}
+              </td>
+              <td className="py-2.5 text-right font-medium">
+                {nonDz ? formatNumber(nonDz.delinquent_count) : <Skeleton />}
+              </td>
             </tr>
             <tr className="border-t border-border/50">
               <td className="py-2.5 text-muted-foreground">Total Stake</td>
-              <td className="py-2.5 text-right font-medium">{dz ? `${formatSOL(dz.total_stake_sol)} SOL` : <Skeleton />}</td>
-              <td className="py-2.5 text-right font-medium">{nonDz ? `${formatSOL(nonDz.total_stake_sol)} SOL` : <Skeleton />}</td>
+              <td className="py-2.5 text-right font-medium">
+                {dz ? `${formatSOL(dz.total_stake_sol)} SOL` : <Skeleton />}
+              </td>
+              <td className="py-2.5 text-right font-medium">
+                {nonDz ? `${formatSOL(nonDz.total_stake_sol)} SOL` : <Skeleton />}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -200,7 +246,13 @@ function ValidatorPerformance({ perf }: { perf: ValidatorPerfResponse | undefine
   )
 }
 
-function LedgerDashboard({ data, full = false }: { data: LedgerResponse | undefined; full?: boolean }) {
+function LedgerDashboard({
+  data,
+  full = false,
+}: {
+  data: LedgerResponse | undefined
+  full?: boolean
+}) {
   return (
     <div className="space-y-4 sm:space-y-6">
       <EpochProgress data={data} />
@@ -216,10 +268,7 @@ function LedgerDashboard({ data, full = false }: { data: LedgerResponse | undefi
                   value={data ? formatNumber(data.tps, 0) : <Skeleton />}
                   sub={data ? 'recent 10 samples' : undefined}
                 />
-                <Metric
-                  label="Node Version"
-                  value={data ? data.node_version : <Skeleton />}
-                />
+                <Metric label="Node Version" value={data ? data.node_version : <Skeleton />} />
               </div>
             </Card>
 

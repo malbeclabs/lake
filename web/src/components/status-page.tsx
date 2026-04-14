@@ -3,17 +3,67 @@ import { useState, useEffect, useMemo } from 'react'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { CheckCircle2, AlertTriangle, XCircle, ArrowUpDown, Cpu, ChevronDown, ChevronUp, Info, WifiOff } from 'lucide-react'
-import { fetchStatus, fetchLinkHistory, fetchDeviceHistory, fetchInterfaceIssues, fetchCriticalLinks, fetchMetros, type StatusResponse, type InterfaceIssue, type NonActivatedLink, type NonActivatedDevice, type ISISDeviceIssue, type LinkHistory, type DeviceHistory, type LinkMetric, type DeviceUtilization, type CriticalLinksResponse, type LinkIssue } from '@/lib/api'
+import {
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  ArrowUpDown,
+  Cpu,
+  ChevronDown,
+  ChevronUp,
+  Info,
+  WifiOff,
+} from 'lucide-react'
+import {
+  fetchStatus,
+  fetchLinkHistory,
+  fetchDeviceHistory,
+  fetchInterfaceIssues,
+  fetchCriticalLinks,
+  fetchMetros,
+  type StatusResponse,
+  type InterfaceIssue,
+  type NonActivatedLink,
+  type NonActivatedDevice,
+  type ISISDeviceIssue,
+  type LinkHistory,
+  type DeviceHistory,
+  type LinkMetric,
+  type DeviceUtilization,
+  type CriticalLinksResponse,
+  type LinkIssue,
+} from '@/lib/api'
 import { StatusFilters, useStatusFilters, type StatusFilter } from '@/components/status-search-bar'
 import { StatCard } from '@/components/stat-card'
 import { LinkStatusTimelines } from '@/components/link-status-timelines'
 import { DeviceStatusTimelines } from '@/components/device-status-timelines'
-import { MetroStatusTimelines, type MetroHealthFilter, type MetroIssueFilter } from '@/components/metro-status-timelines'
+import {
+  MetroStatusTimelines,
+  type MetroHealthFilter,
+  type MetroIssueFilter,
+} from '@/components/metro-status-timelines'
 
 type TimeRange = '3h' | '6h' | '12h' | '24h' | '3d' | '7d'
-type IssueFilter = 'packet_loss' | 'high_latency' | 'no_data' | 'missing_adjacency' | 'interface_errors' | 'fcs_errors' | 'discards' | 'carrier_transitions' | 'high_utilization' | 'no_issues'
-type DeviceIssueFilter = 'interface_errors' | 'fcs_errors' | 'discards' | 'carrier_transitions' | 'drained' | 'isis_overload' | 'isis_unreachable' | 'no_issues'
+type IssueFilter =
+  | 'packet_loss'
+  | 'high_latency'
+  | 'no_data'
+  | 'missing_adjacency'
+  | 'interface_errors'
+  | 'fcs_errors'
+  | 'discards'
+  | 'carrier_transitions'
+  | 'high_utilization'
+  | 'no_issues'
+type DeviceIssueFilter =
+  | 'interface_errors'
+  | 'fcs_errors'
+  | 'discards'
+  | 'carrier_transitions'
+  | 'drained'
+  | 'isis_overload'
+  | 'isis_unreachable'
+  | 'no_issues'
 type HealthFilter = 'healthy' | 'degraded' | 'unhealthy' | 'disabled'
 
 const timeRangeLabels: Record<TimeRange, string> = {
@@ -41,7 +91,7 @@ function StatusPageSkeleton() {
             <Skeleton key={i} className="h-12 w-24" />
           ))}
         </div>
-        <div className="mb-6">
+        <div className="mb-4">
           <Skeleton className="h-10 w-48" />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
@@ -90,7 +140,11 @@ function filterSignificantDeviceIssues(issues: InterfaceIssue[]): InterfaceIssue
   // Group by device and compute totals
   const deviceTotals = new Map<string, { errors: number; discards: number; carrier: number }>()
   for (const i of issues) {
-    const prev = deviceTotals.get(i.device_pk) ?? { errors: 0, discards: 0, carrier: 0 }
+    const prev = deviceTotals.get(i.device_pk) ?? {
+      errors: 0,
+      discards: 0,
+      carrier: 0,
+    }
     prev.errors += i.in_errors + i.out_errors + i.in_fcs_errors
     prev.discards += i.in_discards + i.out_discards
     prev.carrier += i.carrier_transitions
@@ -100,14 +154,16 @@ function filterSignificantDeviceIssues(issues: InterfaceIssue[]): InterfaceIssue
   // Keep only devices that exceed at least one threshold
   const significantDevices = new Set<string>()
   for (const [pk, totals] of deviceTotals) {
-    if (totals.errors >= DEVICE_ISSUE_MIN_ERRORS ||
-        totals.discards >= DEVICE_ISSUE_MIN_DISCARDS ||
-        totals.carrier >= DEVICE_ISSUE_MIN_CARRIER) {
+    if (
+      totals.errors >= DEVICE_ISSUE_MIN_ERRORS ||
+      totals.discards >= DEVICE_ISSUE_MIN_DISCARDS ||
+      totals.carrier >= DEVICE_ISSUE_MIN_CARRIER
+    ) {
       significantDevices.add(pk)
     }
   }
 
-  return issues.filter(i => significantDevices.has(i.device_pk))
+  return issues.filter((i) => significantDevices.has(i.device_pk))
 }
 
 function getStatusReasons(status: StatusResponse): string[] {
@@ -117,20 +173,26 @@ function getStatusReasons(status: StatusResponse): string[] {
     reasons.push(`${status.links.down} link${status.links.down > 1 ? 's' : ''} down`)
   }
   if (status.links.unhealthy > 0) {
-    reasons.push(`${status.links.unhealthy} link${status.links.unhealthy > 1 ? 's' : ''} with critical issues`)
+    reasons.push(
+      `${status.links.unhealthy} link${status.links.unhealthy > 1 ? 's' : ''} with critical issues`,
+    )
   }
   if (status.links.degraded > 0) {
-    reasons.push(`${status.links.degraded} link${status.links.degraded > 1 ? 's' : ''} with degraded performance`)
+    reasons.push(
+      `${status.links.degraded} link${status.links.degraded > 1 ? 's' : ''} with degraded performance`,
+    )
   }
 
   // Count telemetry stopped issues
-  const noDataCount = (status.links.issues || []).filter(i => i.issue === 'no_data').length
+  const noDataCount = (status.links.issues || []).filter((i) => i.issue === 'no_data').length
   if (noDataCount > 0) {
     reasons.push(`${noDataCount} link${noDataCount > 1 ? 's' : ''} with telemetry stopped`)
   }
 
   // Count missing ISIS adjacency issues
-  const missingAdjCount = (status.links.issues || []).filter(i => i.issue === 'missing_adjacency').length
+  const missingAdjCount = (status.links.issues || []).filter(
+    (i) => i.issue === 'missing_adjacency',
+  ).length
   if (missingAdjCount > 0) {
     reasons.push(`${missingAdjCount} link${missingAdjCount > 1 ? 's' : ''} with ISIS down`)
   }
@@ -138,21 +200,26 @@ function getStatusReasons(status: StatusResponse): string[] {
   // Count ISIS device issues
   const isisDeviceCount = (status.alerts?.isis_devices || []).length
   if (isisDeviceCount > 0) {
-    const overloadCount = status.alerts.isis_devices.filter(d => d.issue === 'overload').length
-    const unreachableCount = status.alerts.isis_devices.filter(d => d.issue === 'unreachable').length
+    const overloadCount = status.alerts.isis_devices.filter((d) => d.issue === 'overload').length
+    const unreachableCount = status.alerts.isis_devices.filter(
+      (d) => d.issue === 'unreachable',
+    ).length
     const parts: string[] = []
     if (unreachableCount > 0) parts.push(`${unreachableCount} unreachable`)
     if (overloadCount > 0) parts.push(`${overloadCount} overloaded`)
-    reasons.push(`${isisDeviceCount} device${isisDeviceCount > 1 ? 's' : ''} with ISIS issues (${parts.join(', ')})`)
+    reasons.push(
+      `${isisDeviceCount} device${isisDeviceCount > 1 ? 's' : ''} with ISIS issues (${parts.join(', ')})`,
+    )
   }
 
   // Count devices with significant interface issues (exclude minor/transient)
   const significantDeviceIssues = filterSignificantDeviceIssues(status.interfaces?.issues || [])
-  const devicesWithIssues = new Set(significantDeviceIssues.map(i => i.device_pk)).size
+  const devicesWithIssues = new Set(significantDeviceIssues.map((i) => i.device_pk)).size
   if (devicesWithIssues > 0) {
-    reasons.push(`${devicesWithIssues} device${devicesWithIssues > 1 ? 's' : ''} with interface issues`)
+    reasons.push(
+      `${devicesWithIssues} device${devicesWithIssues > 1 ? 's' : ''} with interface issues`,
+    )
   }
-
 
   const nonActivatedDevices = Object.entries(status.network.devices_by_status)
     .filter(([s]) => s !== 'activated')
@@ -275,14 +342,49 @@ function IssueDetails({
       acc[severity].push(issue)
       return acc
     },
-    { down: [] as LinkIssue[], critical: [] as LinkIssue[], degraded: [] as LinkIssue[], no_data: [] as LinkIssue[] }
+    {
+      down: [] as LinkIssue[],
+      critical: [] as LinkIssue[],
+      degraded: [] as LinkIssue[],
+      no_data: [] as LinkIssue[],
+    },
   )
 
-  const sections: { key: IssueSeverity; label: string; icon: typeof XCircle; iconColor: string; valueColor: string }[] = [
-    { key: 'down', label: 'Links Down', icon: XCircle, iconColor: 'text-red-500', valueColor: 'text-red-600 dark:text-red-400' },
-    { key: 'critical', label: 'Critical Issues', icon: XCircle, iconColor: 'text-red-500', valueColor: 'text-red-500' },
-    { key: 'degraded', label: 'Degraded Performance', icon: AlertTriangle, iconColor: 'text-orange-500', valueColor: 'text-orange-500' },
-    { key: 'no_data', label: 'Telemetry Stopped', icon: WifiOff, iconColor: 'text-amber-500', valueColor: 'text-amber-500' },
+  const sections: {
+    key: IssueSeverity
+    label: string
+    icon: typeof XCircle
+    iconColor: string
+    valueColor: string
+  }[] = [
+    {
+      key: 'down',
+      label: 'Links Down',
+      icon: XCircle,
+      iconColor: 'text-red-500',
+      valueColor: 'text-red-600 dark:text-red-400',
+    },
+    {
+      key: 'critical',
+      label: 'Critical Issues',
+      icon: XCircle,
+      iconColor: 'text-red-500',
+      valueColor: 'text-red-500',
+    },
+    {
+      key: 'degraded',
+      label: 'Degraded Performance',
+      icon: AlertTriangle,
+      iconColor: 'text-orange-500',
+      valueColor: 'text-orange-500',
+    },
+    {
+      key: 'no_data',
+      label: 'Telemetry Stopped',
+      icon: WifiOff,
+      iconColor: 'text-amber-500',
+      valueColor: 'text-amber-500',
+    },
   ]
 
   // Group device issues by device
@@ -300,14 +402,21 @@ function IssueDetails({
       acc[issue.device_pk].issues.push(issue)
       return acc
     },
-    {} as Record<string, { device_code: string; device_type: string; contributor: string; metro: string; issues: InterfaceIssue[] }>
+    {} as Record<
+      string,
+      {
+        device_code: string
+        device_type: string
+        contributor: string
+        metro: string
+        issues: InterfaceIssue[]
+      }
+    >,
   )
 
   return (
-    <div className="border-t border-border px-6 py-4 space-y-4">
-      <div className="text-xs text-muted-foreground">
-        Showing issues from the last hour
-      </div>
+    <div className="border-t border-border px-3 lg:px-6 py-4 space-y-4">
+      <div className="text-xs text-muted-foreground">Showing issues from the last hour</div>
       {sections.map(({ key, label, icon: Icon, iconColor, valueColor }) => {
         const sectionIssues = grouped[key]
         if (sectionIssues.length === 0) return null
@@ -336,35 +445,56 @@ function IssueDetails({
                   <button
                     key={code}
                     onClick={() => onIssueClick(code)}
-                    className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
+                    className="flex w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left items-start md:items-center justify-between"
                   >
-                    <div className="flex items-center gap-3">
+                    {/* Mobile: compact two-line */}
+                    <div className="md:hidden flex flex-col items-start gap-1">
+                      <div className="flex items-center gap-1.5 font-medium text-sm">
+                        <Icon className={`h-3.5 w-3.5 ${iconColor} shrink-0`} />
+                        {code}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {first.side_a_metro} → {first.side_z_metro} · {first.link_type}
+                        {first.contributor && ` · ${first.contributor}`}
+                        {mostRecentSince && (
+                          <span
+                            className="text-muted-foreground font-normal"
+                            title={new Date(mostRecentSince).toLocaleString()}
+                          >
+                            {' '}
+                            · for {formatDuration(mostRecentSince)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {/* Desktop: original layout */}
+                    <div className="hidden md:flex items-center gap-3">
                       <Icon className={`h-4 w-4 ${iconColor}`} />
                       <div>
                         <div className="font-medium text-sm">{code}</div>
                         <div className="text-xs text-muted-foreground">
-                          {first.side_a_metro} → {first.side_z_metro} · {first.link_type}{first.contributor && ` · ${first.contributor}`}
+                          {first.side_a_metro} → {first.side_z_metro} · {first.link_type}
+                          {first.contributor && ` · ${first.contributor}`}
                         </div>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="hidden md:block text-right">
                       {(() => {
-                        const hasISISDown = linkIssues.some(i => i.issue === 'missing_adjacency')
+                        const hasISISDown = linkIssues.some((i) => i.issue === 'missing_adjacency')
                         return linkIssues.map((issue, idx) => (
                           <div key={idx}>
                             {issue.issue === 'missing_adjacency' && (
-                              <div className={`text-sm font-medium ${valueColor}`}>
-                                ISIS down
-                              </div>
+                              <div className={`text-sm font-medium ${valueColor}`}>ISIS down</div>
                             )}
-                            {issue.issue !== 'no_data' && issue.issue !== 'missing_adjacency' &&
+                            {issue.issue !== 'no_data' &&
+                              issue.issue !== 'missing_adjacency' &&
                               !(hasISISDown && issue.issue === 'packet_loss') && (
-                              <div className={`text-sm font-medium ${valueColor}`}>
-                                {issue.issue === 'packet_loss'
-                                  ? `${issue.value.toFixed(1)}% loss`
-                                  : `${issue.value.toFixed(0)}% over SLO`}
-                              </div>
-                            )}
+                                <div className={`text-sm font-medium ${valueColor}`}>
+                                  {issue.issue === 'packet_loss'
+                                    ? `${issue.value.toFixed(1)}% loss`
+                                    : `${issue.value.toFixed(0)}% over SLO`}
+                                </div>
+                              )}
                           </div>
                         ))
                       })()}
@@ -386,7 +516,9 @@ function IssueDetails({
       })}
       {Object.keys(deviceIssuesByDevice).length > 0 && (
         <div>
-          <div className="text-sm font-medium text-muted-foreground mb-2">Device Interface Issues</div>
+          <div className="text-sm font-medium text-muted-foreground mb-2">
+            Device Interface Issues
+          </div>
           <div className="space-y-2">
             {Object.entries(deviceIssuesByDevice).map(([devicePk, device]) => {
               // Aggregate totals across all interfaces for this device
@@ -396,7 +528,7 @@ function IssueDetails({
                   discards: acc.discards + i.in_discards + i.out_discards,
                   carrierTransitions: acc.carrierTransitions + i.carrier_transitions,
                 }),
-                { errors: 0, discards: 0, carrierTransitions: 0 }
+                { errors: 0, discards: 0, carrierTransitions: 0 },
               )
               // Find the most recent last_seen among all interfaces
               const lastSeen = device.issues.reduce((latest, i) => {
@@ -406,8 +538,10 @@ function IssueDetails({
               }, '' as string)
               const detailParts: string[] = []
               if (totals.errors > 0) detailParts.push(`${totals.errors.toLocaleString()} errors`)
-              if (totals.discards > 0) detailParts.push(`${totals.discards.toLocaleString()} discards`)
-              if (totals.carrierTransitions > 0) detailParts.push(`${totals.carrierTransitions} carrier transitions`)
+              if (totals.discards > 0)
+                detailParts.push(`${totals.discards.toLocaleString()} discards`)
+              if (totals.carrierTransitions > 0)
+                detailParts.push(`${totals.carrierTransitions} carrier transitions`)
 
               return (
                 <button
@@ -420,7 +554,8 @@ function IssueDetails({
                     <div>
                       <div className="font-medium text-sm">{device.device_code}</div>
                       <div className="text-xs text-muted-foreground">
-                        {device.metro} · {device.device_type}{device.contributor && ` · ${device.contributor}`}
+                        {device.metro} · {device.device_type}
+                        {device.contributor && ` · ${device.contributor}`}
                       </div>
                     </div>
                   </div>
@@ -429,7 +564,8 @@ function IssueDetails({
                       {detailParts.join(', ')}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {device.issues.length} interface{device.issues.length > 1 ? 's' : ''}
+                      {device.issues.length} interface
+                      {device.issues.length > 1 ? 's' : ''}
                       {lastSeen && (
                         <span title={new Date(lastSeen).toLocaleString()}>
                           {' · '}last seen {formatDuration(lastSeen)} ago
@@ -458,7 +594,8 @@ function IssueDetails({
                   <div>
                     <div className="font-medium text-sm">{device.code}</div>
                     <div className="text-xs text-muted-foreground">
-                      {device.metro && `${device.metro} · `}{device.device_type || 'ISIS device'}
+                      {device.metro && `${device.metro} · `}
+                      {device.device_type || 'ISIS device'}
                     </div>
                   </div>
                 </div>
@@ -488,11 +625,35 @@ function IssueDetails({
               <button
                 key={`${link.code}-${idx}`}
                 onClick={() => onNonActivatedClick(link.code)}
-                className="flex items-center justify-between w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left"
+                className="flex w-full py-2 px-3 rounded-md bg-muted/50 hover:bg-muted transition-colors text-left items-start md:items-center justify-between"
               >
-                <div className="flex items-center gap-3">
+                {/* Mobile: compact two-line */}
+                <div className="md:hidden flex flex-col items-start gap-1">
+                  <div className="flex items-center gap-1.5 font-medium text-sm">
+                    <Info className="hidden xs:block h-3.5 w-3.5 text-slate-500 shrink-0" />
+
+                    {link.code}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {link.side_a_metro} → {link.side_z_metro} · {link.link_type}
+                    <span className="hidden xs:inline"> · </span>
+                    <span className="block xs:inline">
+                      <span className="capitalize text-slate-600 dark:text-slate-400 font-bold">
+                        {link.status.replace(/-/g, ' ')}
+                      </span>
+                      {link.since && (
+                        <span className="text-muted-foreground font-normal">
+                          {' '}
+                          · for {formatDuration(link.since)}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+                {/* Desktop: original layout */}
+                <div className="hidden md:flex items-center gap-3">
                   <Info className="h-4 w-4 text-slate-500" />
-                  <div>
+                  <div className="flex flex-col items-start">
                     <div className="font-medium text-sm">{link.code}</div>
                     <div className="text-xs text-muted-foreground">
                       {link.side_a_metro} → {link.side_z_metro} · {link.link_type}
@@ -517,7 +678,7 @@ function IssueDetails({
                     )}
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="hidden md:block text-right">
                   <div className="text-sm font-medium text-slate-600 dark:text-slate-400 capitalize">
                     {link.status.replace(/-/g, ' ')}
                   </div>
@@ -585,7 +746,7 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
   const location = useLocation()
 
   useEffect(() => {
-    const interval = setInterval(() => forceUpdate(n => n + 1), 10000)
+    const interval = setInterval(() => forceUpdate((n) => n + 1), 10000)
     return () => clearInterval(interval)
   }, [])
 
@@ -660,7 +821,10 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
       navigate('/status/devices', { state: { expandDevice: devicePk } })
       setTimeout(scrollToDevice, 200)
     } else {
-      navigate(location.pathname + location.search, { state: { expandDevice: devicePk }, replace: true })
+      navigate(location.pathname + location.search, {
+        state: { expandDevice: devicePk },
+        replace: true,
+      })
       setTimeout(scrollToDevice, 50)
     }
   }
@@ -690,25 +854,38 @@ function StatusIndicator({ statusData }: { statusData: StatusResponse }) {
 
   // Check if there are issues to show (filter out minor/transient device interface issues)
   const linkIssues = statusData.links.issues || []
-  const nonActivatedLinks = (statusData.alerts?.links || []).filter(l => l.status !== 'provisioning')
+  const nonActivatedLinks = (statusData.alerts?.links || []).filter(
+    (l) => l.status !== 'provisioning',
+  )
   const deviceIssues = filterSignificantDeviceIssues(statusData.interfaces?.issues || [])
   const nonActivatedDevices = statusData.alerts?.devices || []
-  const hasExpandableContent = linkIssues.length > 0 || nonActivatedLinks.length > 0 || deviceIssues.length > 0 || nonActivatedDevices.length > 0
+  const hasExpandableContent =
+    linkIssues.length > 0 ||
+    nonActivatedLinks.length > 0 ||
+    deviceIssues.length > 0 ||
+    nonActivatedDevices.length > 0
 
   return (
     <div className={`rounded-lg bg-card border border-border border-l-4 ${borderClassName}`}>
       <div
-        className={`flex items-center gap-3 px-6 py-4 ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30 transition-colors' : ''}`}
+        className={`flex flex-col md:flex-row md:items-center gap-2 md:gap-3 px-3 lg:px-6 py-4 ${hasExpandableContent ? 'cursor-pointer hover:bg-muted/30 transition-colors' : ''}`}
         onClick={hasExpandableContent ? () => setExpanded(!expanded) : undefined}
       >
-        <Icon className={`h-8 w-8 ${className}`} />
-        <div className="flex-1">
-          <div className={`text-lg font-medium ${className}`}>{label}</div>
+        {/* Desktop: icon standalone */}
+        <Icon className={`hidden md:block size-8 shrink-0 ${className}`} />
+        <div className="flex-1 flex flex-col gap-1 md:gap-0">
+          {/* Mobile: icon left of title */}
+          <div className="flex items-center gap-1 md:block">
+            <Icon className={`hidden xs:block md:hidden size-5.5 shrink-0 ${className}`} />
+            <div className={`text-base xs:text-lg font-medium ${className}`}>{label}</div>
+          </div>
           {reasons.length > 0 && (
-            <div className="text-sm text-muted-foreground">{reasons.slice(0, 2).join(' · ')}</div>
+            <div className="text-sm text-muted-foreground md:mt-0 mt-0">
+              {reasons.slice(0, 2).join(' · ')}
+            </div>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 justify-between md:justify-start">
           <div className="text-xs text-muted-foreground/60">
             Updated {formatRelativeTime(statusData.timestamp)}
           </div>
@@ -746,40 +923,43 @@ function TabNavigation({ activeTab }: { activeTab: 'links' | 'devices' | 'metros
   }
 
   return (
-    <div className="flex items-center justify-between border-b border-border mb-6">
-      <div className="flex gap-1">
-        <button
-          onClick={() => navigateWithParams('/status/links')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-            activeTab === 'links'
-              ? 'border-primary text-foreground'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Links
-        </button>
-        <button
-          onClick={() => navigateWithParams('/status/devices')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-            activeTab === 'devices'
-              ? 'border-primary text-foreground'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Devices
-        </button>
-        <button
-          onClick={() => navigateWithParams('/status/metros')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-            activeTab === 'metros'
-              ? 'border-primary text-foreground'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Metros
-        </button>
+    <div className="mb-4">
+      <div className="flex items-center justify-between border-b border-border">
+        <div className="flex gap-1">
+          <button
+            onClick={() => navigateWithParams('/status/links')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'links'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Links
+          </button>
+          <button
+            onClick={() => navigateWithParams('/status/devices')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'devices'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Devices
+          </button>
+          <button
+            onClick={() => navigateWithParams('/status/metros')}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === 'metros'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Metros
+          </button>
+        </div>
+        <StatusFilters className="pb-2 hidden sm:block" />
       </div>
-      <StatusFilters className="pb-2" />
+      <StatusFilters className="pt-4 sm:hidden" />
     </div>
   )
 }
@@ -835,11 +1015,23 @@ function HealthFilterItem({
 }) {
   const [showTooltip, setShowTooltip] = useState(false)
 
-  const issueLabels: { key: keyof HealthIssueBreakdown; label: string; color: string }[] = [
+  const issueLabels: {
+    key: keyof HealthIssueBreakdown
+    label: string
+    color: string
+  }[] = [
     { key: 'packet_loss', label: 'Packet Loss', color: 'bg-purple-500' },
     { key: 'high_latency', label: 'High Latency', color: 'bg-blue-500' },
-    { key: 'high_utilization', label: 'High Utilization', color: 'bg-indigo-500' },
-    { key: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-yellow-500' },
+    {
+      key: 'high_utilization',
+      label: 'High Utilization',
+      color: 'bg-indigo-500',
+    },
+    {
+      key: 'carrier_transitions',
+      label: 'Carrier Transitions',
+      color: 'bg-yellow-500',
+    },
     { key: 'discards', label: 'Discards', color: 'bg-teal-500' },
     { key: 'interface_errors', label: 'Errors', color: 'bg-red-500' },
     { key: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-500' },
@@ -847,22 +1039,39 @@ function HealthFilterItem({
     { key: 'missing_adjacency', label: 'ISIS Down', color: 'bg-rose-600' },
   ]
 
-  const deviceIssueLabels: { key: keyof DeviceIssueBreakdown; label: string; color: string }[] = [
-    { key: 'interface_errors', label: 'Interface Errors', color: 'bg-fuchsia-500' },
+  const deviceIssueLabels: {
+    key: keyof DeviceIssueBreakdown
+    label: string
+    color: string
+  }[] = [
+    {
+      key: 'interface_errors',
+      label: 'Interface Errors',
+      color: 'bg-fuchsia-500',
+    },
     { key: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-600' },
     { key: 'discards', label: 'Discards', color: 'bg-rose-500' },
-    { key: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-orange-500' },
+    {
+      key: 'carrier_transitions',
+      label: 'Carrier Transitions',
+      color: 'bg-orange-500',
+    },
   ]
 
-  const healthLabels: { key: keyof IssueHealthBreakdown; label: string; color: string }[] = [
+  const healthLabels: {
+    key: keyof IssueHealthBreakdown
+    label: string
+    color: string
+  }[] = [
     { key: 'healthy', label: 'Healthy', color: 'bg-green-500' },
     { key: 'degraded', label: 'Degraded', color: 'bg-amber-500' },
     { key: 'unhealthy', label: 'Unhealthy', color: 'bg-red-500' },
   ]
 
-  const hasIssues = issueBreakdown && Object.values(issueBreakdown).some(v => v > 0)
-  const hasDeviceIssues = deviceIssueBreakdown && Object.values(deviceIssueBreakdown).some(v => v > 0)
-  const hasHealth = healthBreakdown && Object.values(healthBreakdown).some(v => v > 0)
+  const hasIssues = issueBreakdown && Object.values(issueBreakdown).some((v) => v > 0)
+  const hasDeviceIssues =
+    deviceIssueBreakdown && Object.values(deviceIssueBreakdown).some((v) => v > 0)
+  const hasHealth = healthBreakdown && Object.values(healthBreakdown).some((v) => v > 0)
 
   return (
     <button
@@ -874,8 +1083,14 @@ function HealthFilterItem({
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
       >
-        <div className={`h-2.5 w-2.5 rounded-full ${color} transition-opacity ${!selected ? 'opacity-25' : ''}`} />
-        <span className={`transition-colors ${selected ? 'text-foreground' : 'text-muted-foreground/50'}`}>{label}</span>
+        <div
+          className={`h-2.5 w-2.5 rounded-full ${color} transition-opacity ${!selected ? 'opacity-25' : ''}`}
+        />
+        <span
+          className={`transition-colors ${selected ? 'text-foreground' : 'text-muted-foreground/50'}`}
+        >
+          {label}
+        </span>
         {showTooltip && (
           <div className="absolute left-0 bottom-full mb-1 z-50 bg-popover border border-border rounded-lg shadow-lg p-2 text-xs w-52">
             <div className="mb-1">{description}</div>
@@ -933,7 +1148,11 @@ function HealthFilterItem({
           </div>
         )}
       </div>
-      <span className={`font-medium tabular-nums transition-colors ${!selected ? 'text-muted-foreground/50' : ''}`}>{count}</span>
+      <span
+        className={`font-medium tabular-nums transition-colors ${!selected ? 'text-muted-foreground/50' : ''}`}
+      >
+        {count}
+      </span>
     </button>
   )
 }
@@ -964,7 +1183,12 @@ function LinkHealthFilterCard({
   issuesByHealth,
   timeRange,
 }: {
-  links: { healthy: number; degraded: number; unhealthy: number; total: number }
+  links: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    total: number
+  }
   selected: HealthFilter[]
   onChange: (filters: HealthFilter[]) => void
   issuesByHealth?: IssuesByHealth
@@ -973,7 +1197,7 @@ function LinkHealthFilterCard({
   const toggleFilter = (filter: HealthFilter) => {
     if (selected.includes(filter)) {
       if (selected.length > 1) {
-        onChange(selected.filter(f => f !== filter))
+        onChange(selected.filter((f) => f !== filter))
       }
     } else {
       onChange([...selected, filter])
@@ -988,39 +1212,52 @@ function LinkHealthFilterCard({
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Link Health</h3>
-        <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
+      <div className="flex flex-col xs:flex-row gap-0.5 xs:gap-2 xs:items-center mb-1">
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Link Health</h3>
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            ({timeRangeLabels[timeRange]})
+          </span>
+          <button
+            onClick={() => onChange(['healthy', 'degraded', 'unhealthy'])}
+            className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors hidden sm:inline-block ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
+          >
+            {allSelected ? 'All selected' : 'Select all'}
+          </button>
+        </div>
+        <span className="sm:hidden text-xs text-muted-foreground">
+          ({timeRangeLabels[timeRange]})
+        </span>
+      </div>
+
+      <div className="flex flex-col items-end gap-2 mb-3">
         <button
           onClick={() => onChange(['healthy', 'degraded', 'unhealthy'])}
-          className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
-            allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
-          }`}
+          className={`sm:hidden text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
         >
           {allSelected ? 'All selected' : 'Select all'}
         </button>
-      </div>
-
-      <div className="h-2 rounded-full overflow-hidden flex mb-3 bg-muted">
-        {healthyPct > 0 && (
-          <div
-            className={`bg-green-500 h-full transition-all ${!selected.includes('healthy') ? 'opacity-30' : ''}`}
-            style={{ width: `${healthyPct}%` }}
-          />
-        )}
-        {degradedPct > 0 && (
-          <div
-            className={`bg-amber-500 h-full transition-all ${!selected.includes('degraded') ? 'opacity-30' : ''}`}
-            style={{ width: `${degradedPct}%` }}
-          />
-        )}
-        {unhealthyPct > 0 && (
-          <div
-            className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
-            style={{ width: `${unhealthyPct}%` }}
-          />
-        )}
+        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted">
+          {healthyPct > 0 && (
+            <div
+              className={`bg-green-500 h-full transition-all ${!selected.includes('healthy') ? 'opacity-30' : ''}`}
+              style={{ width: `${healthyPct}%` }}
+            />
+          )}
+          {degradedPct > 0 && (
+            <div
+              className={`bg-amber-500 h-full transition-all ${!selected.includes('degraded') ? 'opacity-30' : ''}`}
+              style={{ width: `${degradedPct}%` }}
+            />
+          )}
+          {unhealthyPct > 0 && (
+            <div
+              className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
+              style={{ width: `${unhealthyPct}%` }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-0.5 text-sm">
@@ -1069,12 +1306,23 @@ function LinkIssuesFilterCard({
   healthByIssue?: HealthByIssue
   timeRange: TimeRange
 }) {
-  const allFilters: IssueFilter[] = ['packet_loss', 'high_latency', 'high_utilization', 'no_data', 'missing_adjacency', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'no_issues']
+  const allFilters: IssueFilter[] = [
+    'packet_loss',
+    'high_latency',
+    'high_utilization',
+    'no_data',
+    'missing_adjacency',
+    'interface_errors',
+    'fcs_errors',
+    'discards',
+    'carrier_transitions',
+    'no_issues',
+  ]
 
   const toggleFilter = (filter: IssueFilter) => {
     if (selected.includes(filter)) {
       if (selected.length > 1) {
-        onChange(selected.filter(f => f !== filter))
+        onChange(selected.filter((f) => f !== filter))
       }
     } else {
       onChange([...selected, filter])
@@ -1083,17 +1331,72 @@ function LinkIssuesFilterCard({
 
   const allSelected = selected.length === allFilters.length
 
-  const itemDefs: { filter: IssueFilter; label: string; color: string; description: string }[] = [
-    { filter: 'packet_loss', label: 'Packet Loss', color: 'bg-purple-500', description: 'Link experiencing measurable packet loss (>= 1%).' },
-    { filter: 'high_latency', label: 'High Latency', color: 'bg-blue-500', description: 'Link latency exceeds committed RTT.' },
-    { filter: 'high_utilization', label: 'High Utilization', color: 'bg-indigo-500', description: 'Link utilization exceeds 80%.' },
-    { filter: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-yellow-500', description: 'Carrier transitions (interface up/down) on link endpoints.' },
-    { filter: 'discards', label: 'Discards', color: 'bg-teal-500', description: 'Interface discards detected on link endpoints.' },
-    { filter: 'interface_errors', label: 'Errors', color: 'bg-red-500', description: 'Interface errors detected on link endpoints.' },
-    { filter: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-500', description: 'FCS (Frame Check Sequence) errors detected on link endpoints.' },
-    { filter: 'no_data', label: 'No Data', color: 'bg-pink-500', description: 'No telemetry received for this link.' },
-    { filter: 'missing_adjacency', label: 'ISIS Down', color: 'bg-rose-600', description: 'Activated link with no ISIS adjacency detected.' },
-    { filter: 'no_issues', label: 'No Issues', color: 'bg-cyan-500', description: 'Link with no detected issues in the time range.' },
+  const itemDefs: {
+    filter: IssueFilter
+    label: string
+    color: string
+    description: string
+  }[] = [
+    {
+      filter: 'packet_loss',
+      label: 'Packet Loss',
+      color: 'bg-purple-500',
+      description: 'Link experiencing measurable packet loss (>= 1%).',
+    },
+    {
+      filter: 'high_latency',
+      label: 'High Latency',
+      color: 'bg-blue-500',
+      description: 'Link latency exceeds committed RTT.',
+    },
+    {
+      filter: 'high_utilization',
+      label: 'High Utilization',
+      color: 'bg-indigo-500',
+      description: 'Link utilization exceeds 80%.',
+    },
+    {
+      filter: 'carrier_transitions',
+      label: 'Carrier Transitions',
+      color: 'bg-yellow-500',
+      description: 'Carrier transitions (interface up/down) on link endpoints.',
+    },
+    {
+      filter: 'discards',
+      label: 'Discards',
+      color: 'bg-teal-500',
+      description: 'Interface discards detected on link endpoints.',
+    },
+    {
+      filter: 'interface_errors',
+      label: 'Errors',
+      color: 'bg-red-500',
+      description: 'Interface errors detected on link endpoints.',
+    },
+    {
+      filter: 'fcs_errors',
+      label: 'FCS Errors',
+      color: 'bg-orange-500',
+      description: 'FCS (Frame Check Sequence) errors detected on link endpoints.',
+    },
+    {
+      filter: 'no_data',
+      label: 'No Data',
+      color: 'bg-pink-500',
+      description: 'No telemetry received for this link.',
+    },
+    {
+      filter: 'missing_adjacency',
+      label: 'ISIS Down',
+      color: 'bg-rose-600',
+      description: 'Activated link with no ISIS adjacency detected.',
+    },
+    {
+      filter: 'no_issues',
+      label: 'No Issues',
+      color: 'bg-cyan-500',
+      description: 'Link with no detected issues in the time range.',
+    },
   ]
 
   const [expanded, setExpanded] = useState(false)
@@ -1111,7 +1414,7 @@ function LinkIssuesFilterCard({
   const shouldCollapse = items.length > 4
   const visibleItems = shouldCollapse && !expanded ? items.slice(0, 4) : items
 
-  const grandTotal = (counts.total + counts.no_issues) || 1
+  const grandTotal = counts.total + counts.no_issues || 1
   const packetLossPct = (counts.packet_loss / grandTotal) * 100
   const highLatencyPct = (counts.high_latency / grandTotal) * 100
   const noDataPct = (counts.no_data / grandTotal) * 100
@@ -1120,51 +1423,64 @@ function LinkIssuesFilterCard({
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Link Issues</h3>
-        <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
+      <div className="flex flex-col xs:flex-row gap-0.5 xs:gap-2 xs:items-center mb-1">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Link Issues</h3>
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            ({timeRangeLabels[timeRange]})
+          </span>
+          <button
+            onClick={() => onChange(allFilters)}
+            className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors hidden sm:inline-block ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
+          >
+            {allSelected ? 'All selected' : 'Select all'}
+          </button>
+        </div>
+        <span className="sm:hidden text-xs text-muted-foreground">
+          ({timeRangeLabels[timeRange]})
+        </span>
+      </div>
+
+      <div className="flex flex-col items-end gap-2 mb-3">
         <button
           onClick={() => onChange(allFilters)}
-          className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
-            allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
-          }`}
+          className={`sm:hidden text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
         >
           {allSelected ? 'All selected' : 'Select all'}
         </button>
-      </div>
-
-      <div className="h-2 rounded-full overflow-hidden flex mb-3 bg-muted">
-        {noIssuesPct > 0 && (
-          <div
-            className={`bg-cyan-500 h-full transition-all ${!selected.includes('no_issues') ? 'opacity-30' : ''}`}
-            style={{ width: `${noIssuesPct}%` }}
-          />
-        )}
-        {packetLossPct > 0 && (
-          <div
-            className={`bg-purple-500 h-full transition-all ${!selected.includes('packet_loss') ? 'opacity-30' : ''}`}
-            style={{ width: `${packetLossPct}%` }}
-          />
-        )}
-        {highLatencyPct > 0 && (
-          <div
-            className={`bg-blue-500 h-full transition-all ${!selected.includes('high_latency') ? 'opacity-30' : ''}`}
-            style={{ width: `${highLatencyPct}%` }}
-          />
-        )}
-        {noDataPct > 0 && (
-          <div
-            className={`bg-pink-500 h-full transition-all ${!selected.includes('no_data') ? 'opacity-30' : ''}`}
-            style={{ width: `${noDataPct}%` }}
-          />
-        )}
-        {missingAdjPct > 0 && (
-          <div
-            className={`bg-rose-600 h-full transition-all ${!selected.includes('missing_adjacency') ? 'opacity-30' : ''}`}
-            style={{ width: `${missingAdjPct}%` }}
-          />
-        )}
+        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted">
+          {noIssuesPct > 0 && (
+            <div
+              className={`bg-cyan-500 h-full transition-all ${!selected.includes('no_issues') ? 'opacity-30' : ''}`}
+              style={{ width: `${noIssuesPct}%` }}
+            />
+          )}
+          {packetLossPct > 0 && (
+            <div
+              className={`bg-purple-500 h-full transition-all ${!selected.includes('packet_loss') ? 'opacity-30' : ''}`}
+              style={{ width: `${packetLossPct}%` }}
+            />
+          )}
+          {highLatencyPct > 0 && (
+            <div
+              className={`bg-blue-500 h-full transition-all ${!selected.includes('high_latency') ? 'opacity-30' : ''}`}
+              style={{ width: `${highLatencyPct}%` }}
+            />
+          )}
+          {noDataPct > 0 && (
+            <div
+              className={`bg-pink-500 h-full transition-all ${!selected.includes('no_data') ? 'opacity-30' : ''}`}
+              style={{ width: `${noDataPct}%` }}
+            />
+          )}
+          {missingAdjPct > 0 && (
+            <div
+              className={`bg-rose-600 h-full transition-all ${!selected.includes('missing_adjacency') ? 'opacity-30' : ''}`}
+              style={{ width: `${missingAdjPct}%` }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-0.5 text-sm">
@@ -1220,25 +1536,63 @@ function TopLinkUtilization({ links }: { links: StatusResponse['links']['top_uti
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Max Link Utilization</h3>
-        <span className="text-xs text-muted-foreground ml-auto">p95 - Last 24h</span>
+      <div className="flex flex-col gap-0.5 mb-3">
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Max Link Utilization</h3>
+          <span className="text-xs text-muted-foreground ml-auto hidden sm:block">
+            p95 - Last 24h
+          </span>
+        </div>
+        <span className="text-xs text-muted-foreground sm:hidden">p95 - Last 24h</span>
       </div>
       <div className="space-y-2">
         {links.slice(0, 5).map((link) => {
           const maxUtil = Math.max(link.utilization_in, link.utilization_out)
           const peakBps = Math.max(link.in_bps, link.out_bps)
           return (
-            <div key={link.pk} className="flex items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <Link to={`/dz/links/${link.pk}`} state={{ backLabel: 'status' }} className="font-mono text-xs truncate hover:underline" title={link.code}>{link.code}</Link>
-                <div className="text-[10px] text-muted-foreground">{link.side_a_metro} - {link.side_z_metro}</div>
+            <div key={link.pk} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+              {/* Mobile layout */}
+              <div className="sm:hidden flex flex-col gap-1">
+                <div className="flex items-center justify-between gap-2">
+                  <Link
+                    to={`/dz/links/${link.pk}`}
+                    state={{ backLabel: 'status' }}
+                    className="font-mono text-xs truncate hover:underline"
+                    title={link.code}
+                  >
+                    {link.code}
+                  </Link>
+                  <span className="text-xs tabular-nums shrink-0">{maxUtil.toFixed(0)}%</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {link.side_a_metro} - {link.side_z_metro} · {formatBandwidth(peakBps)}
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${maxUtil >= 90 ? 'bg-red-500' : maxUtil >= 70 ? 'bg-amber-500' : 'bg-green-500'}`}
+                    style={{ width: `${Math.min(maxUtil, 100)}%` }}
+                  />
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground tabular-nums w-16 text-right">
+              {/* Desktop layout */}
+              <div className="hidden sm:flex flex-1 min-w-0 flex-col">
+                <Link
+                  to={`/dz/links/${link.pk}`}
+                  state={{ backLabel: 'status' }}
+                  className="font-mono text-xs truncate hover:underline"
+                  title={link.code}
+                >
+                  {link.code}
+                </Link>
+                <div className="text-[10px] text-muted-foreground">
+                  {link.side_a_metro} - {link.side_z_metro}
+                </div>
+              </div>
+              <div className="hidden sm:block text-xs text-muted-foreground tabular-nums w-16 text-right">
                 {formatBandwidth(peakBps)}
               </div>
-              <div className="w-20 flex items-center gap-2">
+              <div className="hidden sm:flex w-20 items-center gap-2">
                 <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full ${maxUtil >= 90 ? 'bg-red-500' : maxUtil >= 70 ? 'bg-amber-500' : 'bg-green-500'}`}
@@ -1271,26 +1625,66 @@ function TopDeviceUtilization({ devices }: { devices: StatusResponse['top_device
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Cpu className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Top Device Utilization</h3>
-        <span className="text-xs text-muted-foreground ml-auto">Current</span>
+      <div className="flex flex-col gap-0.5 mb-3">
+        <div className="flex items-center gap-2">
+          <Cpu className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Top Device Utilization</h3>
+          <span className="text-xs text-muted-foreground ml-auto hidden sm:block">Current</span>
+        </div>
+        <span className="text-xs text-muted-foreground sm:hidden">Current</span>
       </div>
       <div className="space-y-2">
         {devices.slice(0, 5).map((device) => (
-          <div key={device.pk} className="flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <Link to={`/dz/devices/${device.pk}`} className="font-mono text-xs truncate hover:underline" title={device.code}>{device.code}</Link>
-              <div className="text-[10px] text-muted-foreground">{device.current_users}/{device.max_users} users • {device.metro} • {device.contributor}</div>
+          <div key={device.pk} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+            {/* Mobile layout */}
+            <div className="sm:hidden flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <Link
+                  to={`/dz/devices/${device.pk}`}
+                  className="font-mono text-xs truncate hover:underline"
+                  title={device.code}
+                >
+                  {device.code}
+                </Link>
+                <span className="text-xs tabular-nums shrink-0">
+                  {device.utilization.toFixed(0)}%
+                </span>
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                {device.current_users}/{device.max_users} users • {device.metro} •{' '}
+                {device.contributor}
+              </div>
+              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${device.utilization >= 80 ? 'bg-amber-500' : 'bg-green-500'}`}
+                  style={{ width: `${Math.min(device.utilization, 100)}%` }}
+                />
+              </div>
             </div>
-            <div className="w-24 flex items-center gap-2">
+            {/* Desktop layout */}
+            <div className="hidden sm:flex flex-1 min-w-0 flex-col">
+              <Link
+                to={`/dz/devices/${device.pk}`}
+                className="font-mono text-xs truncate hover:underline"
+                title={device.code}
+              >
+                {device.code}
+              </Link>
+              <div className="text-[10px] text-muted-foreground">
+                {device.current_users}/{device.max_users} users • {device.metro} •{' '}
+                {device.contributor}
+              </div>
+            </div>
+            <div className="hidden sm:flex w-24 items-center gap-2">
               <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full ${device.utilization >= 80 ? 'bg-amber-500' : 'bg-green-500'}`}
                   style={{ width: `${Math.min(device.utilization, 100)}%` }}
                 />
               </div>
-              <span className="text-xs tabular-nums w-10 text-right">{device.utilization.toFixed(0)}%</span>
+              <span className="text-xs tabular-nums w-10 text-right">
+                {device.utilization.toFixed(0)}%
+              </span>
             </div>
           </div>
         ))}
@@ -1310,7 +1704,7 @@ interface DisabledLinkRow {
 
 function DisabledLinksTable({
   drainedLinks,
-  packetLossLinks
+  packetLossLinks,
 }: {
   drainedLinks: NonActivatedLink[] | null
   packetLossLinks: DisabledLinkRow[]
@@ -1319,7 +1713,12 @@ function DisabledLinksTable({
     const linkMap = new Map<string, DisabledLinkRow>()
 
     for (const link of drainedLinks || []) {
-      const reason = link.status === 'provisioning' ? 'provisioning' : link.status === 'hard-drained' ? 'hard drained' : 'soft drained'
+      const reason =
+        link.status === 'provisioning'
+          ? 'provisioning'
+          : link.status === 'hard-drained'
+            ? 'hard drained'
+            : 'soft drained'
       linkMap.set(link.code, {
         pk: link.pk,
         code: link.code,
@@ -1342,7 +1741,7 @@ function DisabledLinksTable({
   if (allLinks.length === 0) return null
 
   const reasonColors: Record<string, string> = {
-    'provisioning': 'text-blue-600 dark:text-blue-400',
+    provisioning: 'text-blue-600 dark:text-blue-400',
     'soft drained': 'text-amber-600 dark:text-amber-400',
     'hard drained': 'text-orange-600 dark:text-orange-400',
     'isis delay override': 'text-amber-600 dark:text-amber-400',
@@ -1367,13 +1766,27 @@ function DisabledLinksTable({
           </thead>
           <tbody>
             {allLinks.map((link, idx) => (
-              <tr key={`${link.code}-${idx}`} id={`disabled-link-${link.code}`} className="border-b border-border last:border-b-0">
-                <td className="px-4 py-2.5">
-                  <Link to={`/dz/links/${link.pk}`} state={{ backLabel: 'status' }} className="font-mono text-sm hover:underline">{link.code}</Link>
+              <tr
+                key={`${link.code}-${idx}`}
+                id={`disabled-link-${link.code}`}
+                className="border-b border-border last:border-b-0"
+              >
+                <td className="px-4 py-2.5 whitespace-nowrap">
+                  <Link
+                    to={`/dz/links/${link.pk}`}
+                    state={{ backLabel: 'status' }}
+                    className="font-mono text-sm hover:underline"
+                  >
+                    {link.code}
+                  </Link>
                   <span className="text-xs text-muted-foreground ml-2">{link.link_type}</span>
                 </td>
-                <td className="px-4 py-2.5 text-sm text-muted-foreground">{link.side_a_metro} - {link.side_z_metro}</td>
-                <td className={`px-4 py-2.5 text-sm capitalize ${reasonColors[link.reason] || ''}`}>
+                <td className="px-4 py-2.5 text-sm text-muted-foreground whitespace-nowrap">
+                  {link.side_a_metro} - {link.side_z_metro}
+                </td>
+                <td
+                  className={`px-4 py-2.5 text-sm capitalize whitespace-nowrap ${reasonColors[link.reason] || ''}`}
+                >
                   {link.reason}
                 </td>
               </tr>
@@ -1385,7 +1798,11 @@ function DisabledLinksTable({
   )
 }
 
-function DisabledDevicesTable({ devices }: { devices: StatusResponse['alerts']['devices'] | null }) {
+function DisabledDevicesTable({
+  devices,
+}: {
+  devices: StatusResponse['alerts']['devices'] | null
+}) {
   if (!devices || devices.length === 0) return null
 
   const statusColors: Record<string, string> = {
@@ -1416,13 +1833,24 @@ function DisabledDevicesTable({ devices }: { devices: StatusResponse['alerts']['
           </thead>
           <tbody>
             {devices.map((device, idx) => (
-              <tr key={`${device.code}-${idx}`} id={`disabled-device-${device.code}`} className="border-b border-border last:border-b-0">
+              <tr
+                key={`${device.code}-${idx}`}
+                id={`disabled-device-${device.code}`}
+                className="border-b border-border last:border-b-0"
+              >
                 <td className="px-4 py-2.5">
-                  <Link to={`/dz/devices/${device.pk}`} className="font-mono text-sm hover:underline">{device.code}</Link>
+                  <Link
+                    to={`/dz/devices/${device.pk}`}
+                    className="font-mono text-sm hover:underline"
+                  >
+                    {device.code}
+                  </Link>
                   <span className="text-xs text-muted-foreground ml-2">{device.device_type}</span>
                 </td>
                 <td className="px-4 py-2.5 text-sm text-muted-foreground">{device.metro}</td>
-                <td className={`px-4 py-2.5 text-sm capitalize ${statusColors[device.status] || ''}`}>
+                <td
+                  className={`px-4 py-2.5 text-sm capitalize ${statusColors[device.status] || ''}`}
+                >
                   {device.status.replace('-', ' ')}
                 </td>
                 <td className="px-4 py-2.5 text-sm tabular-nums text-right text-muted-foreground">
@@ -1541,17 +1969,33 @@ function InterfaceIssuesTable({
               const totalErrors = issue.in_errors + issue.out_errors
               const totalDiscards = issue.in_discards + issue.out_discards
               return (
-                <tr key={`${issue.device_code}-${issue.interface_name}-${idx}`} className="border-b border-border last:border-b-0">
+                <tr
+                  key={`${issue.device_code}-${issue.interface_name}-${idx}`}
+                  className="border-b border-border last:border-b-0"
+                >
                   <td className="px-4 py-2.5">
-                    <Link to={`/dz/devices/${issue.device_pk}`} className="font-mono text-sm hover:underline">{issue.device_code}</Link>
-                    <div className="text-xs text-muted-foreground">{issue.contributor || issue.device_type}</div>
+                    <Link
+                      to={`/dz/devices/${issue.device_pk}`}
+                      className="font-mono text-sm hover:underline"
+                    >
+                      {issue.device_code}
+                    </Link>
+                    <div className="text-xs text-muted-foreground">
+                      {issue.contributor || issue.device_type}
+                    </div>
                   </td>
                   <td className="px-4 py-2.5 text-sm">
                     <span className="font-mono">{issue.interface_name}</span>
                     {issue.interface_type && (
-                      <span className={`ml-1.5 px-1 py-0.5 rounded text-[10px] leading-none ${
-                        issue.interface_type === 'loopback' ? 'bg-purple-500/15 text-purple-400' : 'bg-muted text-muted-foreground'
-                      }`}>{issue.interface_type}</span>
+                      <span
+                        className={`ml-1.5 px-1 py-0.5 rounded text-[10px] leading-none ${
+                          issue.interface_type === 'loopback'
+                            ? 'bg-purple-500/15 text-purple-400'
+                            : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {issue.interface_type}
+                      </span>
                     )}
                     {issue.cyoa_type && issue.cyoa_type !== 'none' && (
                       <span className="ml-1 px-1 py-0.5 rounded text-[10px] leading-none bg-amber-500/15 text-amber-400">
@@ -1562,7 +2006,13 @@ function InterfaceIssuesTable({
                   <td className="px-4 py-2.5 text-sm">
                     {issue.link_code && issue.link_pk ? (
                       <div>
-                        <Link to={`/dz/links/${issue.link_pk}`} state={{ backLabel: 'status' }} className="font-mono hover:underline">{issue.link_code}</Link>
+                        <Link
+                          to={`/dz/links/${issue.link_pk}`}
+                          state={{ backLabel: 'status' }}
+                          className="font-mono hover:underline"
+                        >
+                          {issue.link_code}
+                        </Link>
                         <span className="text-xs text-muted-foreground ml-1">
                           ({issue.link_type} side {issue.link_side})
                         </span>
@@ -1571,17 +2021,27 @@ function InterfaceIssuesTable({
                       <span className="text-muted-foreground">-</span>
                     )}
                   </td>
-                  <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${totalErrors > 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                  <td
+                    className={`px-4 py-2.5 text-sm tabular-nums text-right ${totalErrors > 0 ? 'text-red-600 dark:text-red-400' : ''}`}
+                  >
                     {totalErrors > 0 ? totalErrors.toLocaleString() : '-'}
                   </td>
-                  <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${issue.in_fcs_errors > 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                  <td
+                    className={`px-4 py-2.5 text-sm tabular-nums text-right ${issue.in_fcs_errors > 0 ? 'text-red-600 dark:text-red-400' : ''}`}
+                  >
                     {issue.in_fcs_errors > 0 ? issue.in_fcs_errors.toLocaleString() : '-'}
                   </td>
-                  <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${totalDiscards > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>
+                  <td
+                    className={`px-4 py-2.5 text-sm tabular-nums text-right ${totalDiscards > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}
+                  >
                     {totalDiscards > 0 ? totalDiscards.toLocaleString() : '-'}
                   </td>
-                  <td className={`px-4 py-2.5 text-sm tabular-nums text-right ${issue.carrier_transitions > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>
-                    {issue.carrier_transitions > 0 ? issue.carrier_transitions.toLocaleString() : '-'}
+                  <td
+                    className={`px-4 py-2.5 text-sm tabular-nums text-right ${issue.carrier_transitions > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}
+                  >
+                    {issue.carrier_transitions > 0
+                      ? issue.carrier_transitions.toLocaleString()
+                      : '-'}
                   </td>
                   <td className="px-4 py-2.5 text-sm tabular-nums text-right text-muted-foreground">
                     {issue.first_seen ? formatTimeAgo(issue.first_seen) : '-'}
@@ -1624,10 +2084,31 @@ function useBucketCount() {
 
 // Links tab content
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusResponse; linkHistory: any; criticalLinks: CriticalLinksResponse | undefined }) {
+function LinksContent({
+  status,
+  linkHistory,
+  criticalLinks,
+}: {
+  status: StatusResponse
+  linkHistory: any
+  criticalLinks: CriticalLinksResponse | undefined
+}) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>(['packet_loss', 'high_latency', 'high_utilization', 'missing_adjacency', 'interface_errors', 'fcs_errors', 'discards', 'carrier_transitions'])
-  const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy'])
+  const [issueFilters, setIssueFilters] = useState<IssueFilter[]>([
+    'packet_loss',
+    'high_latency',
+    'high_utilization',
+    'missing_adjacency',
+    'interface_errors',
+    'fcs_errors',
+    'discards',
+    'carrier_transitions',
+  ])
+  const [healthFilters, setHealthFilters] = useState<HealthFilter[]>([
+    'healthy',
+    'degraded',
+    'unhealthy',
+  ])
   const [showDrained, setShowDrained] = useState(false)
   const [showProvisioning, setShowProvisioning] = useState(false)
 
@@ -1637,13 +2118,20 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Bucket count based on time range
   const buckets = (() => {
     switch (timeRange) {
-      case '3h': return 36
-      case '6h': return 36
-      case '12h': return 48
-      case '24h': return 72
-      case '3d': return 72
-      case '7d': return 84
-      default: return 72
+      case '3h':
+        return 36
+      case '6h':
+        return 36
+      case '12h':
+        return 48
+      case '24h':
+        return 72
+      case '3d':
+        return 72
+      case '7d':
+        return 84
+      default:
+        return 72
     }
   })()
 
@@ -1663,7 +2151,9 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     }
     return {
       ...linkHistoryData,
-      links: linkHistoryData.links.filter((link: LinkHistory) => linkMatchesSearchFilters(link, searchFilters))
+      links: linkHistoryData.links.filter((link: LinkHistory) =>
+        linkMatchesSearchFilters(link, searchFilters),
+      ),
     }
   }, [linkHistoryData, searchFilters])
 
@@ -1678,10 +2168,10 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 
     // Priority from worst to best (lower index = worse)
     const statusPriority: Record<string, number> = {
-      'unhealthy': 0,
-      'no_data': 1,
-      'degraded': 2,
-      'healthy': 3,
+      unhealthy: 0,
+      no_data: 1,
+      degraded: 2,
+      healthy: 3,
     }
 
     let worstStatus = 'healthy'
@@ -1727,7 +2217,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
       const status = getEffectiveHealth(link)
       if (status === 'healthy') counts.healthy++
       else if (status === 'degraded') counts.degraded++
-      else if (status === 'down' || status === 'unhealthy' || status === 'no_data') counts.unhealthy++ // down, no_data map to unhealthy
+      else if (status === 'down' || status === 'unhealthy' || status === 'no_data')
+        counts.unhealthy++ // down, no_data map to unhealthy
     }
 
     return counts
@@ -1758,7 +2249,7 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     for (const link of visibleLinks) {
       const rawHealth = getEffectiveHealth(link)
       // Map no_data and down to unhealthy for categorization
-      const health = (rawHealth === 'no_data' || rawHealth === 'down') ? 'unhealthy' : rawHealth
+      const health = rawHealth === 'no_data' || rawHealth === 'down' ? 'unhealthy' : rawHealth
       if (!(health in result)) continue
 
       const breakdown = result[health as keyof IssuesByHealth]
@@ -1803,7 +2294,9 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     for (const link of visibleLinks) {
       const rawHealth = getEffectiveHealth(link)
       // Map no_data and down to unhealthy for categorization
-      const health = ((rawHealth === 'no_data' || rawHealth === 'down') ? 'unhealthy' : rawHealth) as keyof IssueHealthBreakdown
+      const health = (
+        rawHealth === 'no_data' || rawHealth === 'down' ? 'unhealthy' : rawHealth
+      ) as keyof IssueHealthBreakdown
       const issues = link.issue_reasons ?? []
 
       if (issues.length === 0) {
@@ -1827,10 +2320,34 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
   // Issue counts from filter time range
   const issueCounts = useMemo((): IssueCounts => {
     if (visibleLinks.length === 0) {
-      return { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, missing_adjacency: 0, interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
+      return {
+        packet_loss: 0,
+        high_latency: 0,
+        high_utilization: 0,
+        no_data: 0,
+        missing_adjacency: 0,
+        interface_errors: 0,
+        fcs_errors: 0,
+        discards: 0,
+        carrier_transitions: 0,
+        no_issues: 0,
+        total: 0,
+      }
     }
 
-    const counts = { packet_loss: 0, high_latency: 0, high_utilization: 0, no_data: 0, missing_adjacency: 0, interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, no_issues: 0, total: 0 }
+    const counts = {
+      packet_loss: 0,
+      high_latency: 0,
+      high_utilization: 0,
+      no_data: 0,
+      missing_adjacency: 0,
+      interface_errors: 0,
+      fcs_errors: 0,
+      discards: 0,
+      carrier_transitions: 0,
+      no_issues: 0,
+      total: 0,
+    }
     const seenLinks = new Set<string>()
 
     for (const link of visibleLinks) {
@@ -1912,8 +2429,8 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 
     const drainedCodes = new Set(
       (status.alerts?.links || [])
-        .filter(l => l.status === 'soft-drained' || l.status === 'hard-drained')
-        .map(l => l.code)
+        .filter((l) => l.status === 'soft-drained' || l.status === 'hard-drained')
+        .map((l) => l.code),
     )
 
     const bucketsFor2Hours = Math.ceil(120 / (linkHistory.bucket_minutes || 20))
@@ -1921,11 +2438,14 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
     const isCurrentlyDisabledByPacketLoss = (hours: { status: string }[]): boolean => {
       if (!hours || hours.length < bucketsFor2Hours) return false
       const recentBuckets = hours.slice(-bucketsFor2Hours)
-      return recentBuckets.every(h => h.status === 'disabled')
+      return recentBuckets.every((h) => h.status === 'disabled')
     }
 
     return linkHistory.links
-      .filter((link: LinkHistory) => !drainedCodes.has(link.code) && isCurrentlyDisabledByPacketLoss(link.hours))
+      .filter(
+        (link: LinkHistory) =>
+          !drainedCodes.has(link.code) && isCurrentlyDisabledByPacketLoss(link.hours),
+      )
       .map((link: LinkHistory) => ({
         pk: link.pk,
         code: link.code,
@@ -1958,7 +2478,19 @@ function LinksContent({ status, linkHistory, criticalLinks }: { status: StatusRe
 
       {/* Link Status History */}
       <div id="link-status-history" className="mb-8 scroll-mt-8">
-        <LinkStatusTimelines timeRange={timeRange} onTimeRangeChange={setTimeRange} issueFilters={issueFilters} healthFilters={healthFilters} showDrained={showDrained} onShowDrainedChange={setShowDrained} showProvisioning={showProvisioning} onShowProvisioningChange={setShowProvisioning} linksWithIssues={linksWithIssues} linksWithHealth={linksWithHealth} criticalityMap={criticalityMap} />
+        <LinkStatusTimelines
+          timeRange={timeRange}
+          onTimeRangeChange={setTimeRange}
+          issueFilters={issueFilters}
+          healthFilters={healthFilters}
+          showDrained={showDrained}
+          onShowDrainedChange={setShowDrained}
+          showProvisioning={showProvisioning}
+          onShowProvisioningChange={setShowProvisioning}
+          linksWithIssues={linksWithIssues}
+          linksWithHealth={linksWithHealth}
+          criticalityMap={criticalityMap}
+        />
       </div>
 
       {/* Disabled Links */}
@@ -1994,22 +2526,94 @@ interface DeviceIssueCounts {
 
 // Device issues breakdown per health category
 interface DeviceIssuesByHealth {
-  healthy: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number; isis_overload: number; isis_unreachable: number }
-  degraded: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number; isis_overload: number; isis_unreachable: number }
-  unhealthy: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number; isis_overload: number; isis_unreachable: number }
-  disabled: { interface_errors: number; fcs_errors: number; discards: number; carrier_transitions: number; drained: number; isis_overload: number; isis_unreachable: number }
+  healthy: {
+    interface_errors: number
+    fcs_errors: number
+    discards: number
+    carrier_transitions: number
+    drained: number
+    isis_overload: number
+    isis_unreachable: number
+  }
+  degraded: {
+    interface_errors: number
+    fcs_errors: number
+    discards: number
+    carrier_transitions: number
+    drained: number
+    isis_overload: number
+    isis_unreachable: number
+  }
+  unhealthy: {
+    interface_errors: number
+    fcs_errors: number
+    discards: number
+    carrier_transitions: number
+    drained: number
+    isis_overload: number
+    isis_unreachable: number
+  }
+  disabled: {
+    interface_errors: number
+    fcs_errors: number
+    discards: number
+    carrier_transitions: number
+    drained: number
+    isis_overload: number
+    isis_unreachable: number
+  }
 }
 
 // Device health breakdown per issue type
 interface DeviceHealthByIssue {
-  interface_errors: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  fcs_errors: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  discards: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  carrier_transitions: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  drained: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  isis_overload: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  isis_unreachable: { healthy: number; degraded: number; unhealthy: number; disabled: number }
-  no_issues: { healthy: number; degraded: number; unhealthy: number; disabled: number }
+  interface_errors: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  fcs_errors: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  discards: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  carrier_transitions: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  drained: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  isis_overload: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  isis_unreachable: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
+  no_issues: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+  }
 }
 
 function DeviceHealthFilterCard({
@@ -2019,7 +2623,13 @@ function DeviceHealthFilterCard({
   issuesByHealth,
   timeRange,
 }: {
-  devices: { healthy: number; degraded: number; unhealthy: number; disabled: number; total: number }
+  devices: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    disabled: number
+    total: number
+  }
   selected: HealthFilter[]
   onChange: (filters: HealthFilter[]) => void
   issuesByHealth?: DeviceIssuesByHealth
@@ -2028,7 +2638,7 @@ function DeviceHealthFilterCard({
   const toggleFilter = (filter: HealthFilter) => {
     if (selected.includes(filter)) {
       if (selected.length > 1) {
-        onChange(selected.filter(f => f !== filter))
+        onChange(selected.filter((f) => f !== filter))
       }
     } else {
       onChange([...selected, filter])
@@ -2044,45 +2654,58 @@ function DeviceHealthFilterCard({
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Cpu className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Device Health</h3>
-        <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
+      <div className="flex flex-col xs:flex-row gap-0.5 xs:gap-2 xs:items-center mb-1">
+        <div className="flex items-center gap-2">
+          <Cpu className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Device Health</h3>
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            ({timeRangeLabels[timeRange]})
+          </span>
+          <button
+            onClick={() => onChange(['healthy', 'degraded', 'unhealthy', 'disabled'])}
+            className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors hidden sm:inline-block ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
+          >
+            {allSelected ? 'All selected' : 'Select all'}
+          </button>
+        </div>
+        <span className="sm:hidden text-xs text-muted-foreground">
+          ({timeRangeLabels[timeRange]})
+        </span>
+      </div>
+
+      <div className="flex flex-col items-end gap-2 mb-3">
         <button
           onClick={() => onChange(['healthy', 'degraded', 'unhealthy', 'disabled'])}
-          className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
-            allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
-          }`}
+          className={`sm:hidden text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
         >
           {allSelected ? 'All selected' : 'Select all'}
         </button>
-      </div>
-
-      <div className="h-2 rounded-full overflow-hidden flex mb-3 bg-muted">
-        {healthyPct > 0 && (
-          <div
-            className={`bg-green-500 h-full transition-all ${!selected.includes('healthy') ? 'opacity-30' : ''}`}
-            style={{ width: `${healthyPct}%` }}
-          />
-        )}
-        {degradedPct > 0 && (
-          <div
-            className={`bg-amber-500 h-full transition-all ${!selected.includes('degraded') ? 'opacity-30' : ''}`}
-            style={{ width: `${degradedPct}%` }}
-          />
-        )}
-        {unhealthyPct > 0 && (
-          <div
-            className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
-            style={{ width: `${unhealthyPct}%` }}
-          />
-        )}
-        {disabledPct > 0 && (
-          <div
-            className={`bg-gray-500 dark:bg-gray-700 h-full transition-all ${!selected.includes('disabled') ? 'opacity-30' : ''}`}
-            style={{ width: `${disabledPct}%` }}
-          />
-        )}
+        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted">
+          {healthyPct > 0 && (
+            <div
+              className={`bg-green-500 h-full transition-all ${!selected.includes('healthy') ? 'opacity-30' : ''}`}
+              style={{ width: `${healthyPct}%` }}
+            />
+          )}
+          {degradedPct > 0 && (
+            <div
+              className={`bg-amber-500 h-full transition-all ${!selected.includes('degraded') ? 'opacity-30' : ''}`}
+              style={{ width: `${degradedPct}%` }}
+            />
+          )}
+          {unhealthyPct > 0 && (
+            <div
+              className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
+              style={{ width: `${unhealthyPct}%` }}
+            />
+          )}
+          {disabledPct > 0 && (
+            <div
+              className={`bg-gray-500 dark:bg-gray-700 h-full transition-all ${!selected.includes('disabled') ? 'opacity-30' : ''}`}
+              style={{ width: `${disabledPct}%` }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-0.5 text-sm">
@@ -2140,12 +2763,21 @@ function DeviceIssuesFilterCard({
   healthByIssue?: DeviceHealthByIssue
   timeRange: TimeRange
 }) {
-  const allFilters: DeviceIssueFilter[] = ['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained', 'isis_overload', 'isis_unreachable', 'no_issues']
+  const allFilters: DeviceIssueFilter[] = [
+    'interface_errors',
+    'fcs_errors',
+    'discards',
+    'carrier_transitions',
+    'drained',
+    'isis_overload',
+    'isis_unreachable',
+    'no_issues',
+  ]
 
   const toggleFilter = (filter: DeviceIssueFilter) => {
     if (selected.includes(filter)) {
       if (selected.length > 1) {
-        onChange(selected.filter(f => f !== filter))
+        onChange(selected.filter((f) => f !== filter))
       }
     } else {
       onChange([...selected, filter])
@@ -2154,7 +2786,7 @@ function DeviceIssuesFilterCard({
 
   const allSelected = selected.length === allFilters.length
 
-  const grandTotal = (counts.total + counts.no_issues) || 1
+  const grandTotal = counts.total + counts.no_issues || 1
   const interfaceErrorsPct = (counts.interface_errors / grandTotal) * 100
   const fcsErrorsPct = (counts.fcs_errors / grandTotal) * 100
   const discardsPct = (counts.discards / grandTotal) * 100
@@ -2164,82 +2796,140 @@ function DeviceIssuesFilterCard({
   const isisUnreachablePct = (counts.isis_unreachable / grandTotal) * 100
   const noIssuesPct = (counts.no_issues / grandTotal) * 100
 
-  const items: { filter: DeviceIssueFilter; label: string; color: string; description: string }[] = [
-    { filter: 'interface_errors', label: 'Interface Errors', color: 'bg-fuchsia-500', description: 'Device experiencing interface errors.' },
-    { filter: 'fcs_errors', label: 'FCS Errors', color: 'bg-orange-600', description: 'Device experiencing FCS (Frame Check Sequence) errors.' },
-    { filter: 'discards', label: 'Discards', color: 'bg-rose-500', description: 'Device experiencing interface discards.' },
-    { filter: 'carrier_transitions', label: 'Carrier Transitions', color: 'bg-orange-500', description: 'Device experiencing carrier state changes (link up/down).' },
-    { filter: 'drained', label: 'Drained', color: 'bg-slate-500 dark:bg-slate-600', description: 'Device is soft-drained, hard-drained, or suspended.' },
-    { filter: 'isis_overload', label: 'ISIS Overload', color: 'bg-red-600', description: 'Device is in ISIS overload state.' },
-    { filter: 'isis_unreachable', label: 'ISIS Unreachable', color: 'bg-red-800', description: 'Device is unreachable in the ISIS topology.' },
-    { filter: 'no_issues', label: 'No Issues', color: 'bg-cyan-500', description: 'Device with no detected issues in the time range.' },
+  const items: {
+    filter: DeviceIssueFilter
+    label: string
+    color: string
+    description: string
+  }[] = [
+    {
+      filter: 'interface_errors',
+      label: 'Interface Errors',
+      color: 'bg-fuchsia-500',
+      description: 'Device experiencing interface errors.',
+    },
+    {
+      filter: 'fcs_errors',
+      label: 'FCS Errors',
+      color: 'bg-orange-600',
+      description: 'Device experiencing FCS (Frame Check Sequence) errors.',
+    },
+    {
+      filter: 'discards',
+      label: 'Discards',
+      color: 'bg-rose-500',
+      description: 'Device experiencing interface discards.',
+    },
+    {
+      filter: 'carrier_transitions',
+      label: 'Carrier Transitions',
+      color: 'bg-orange-500',
+      description: 'Device experiencing carrier state changes (link up/down).',
+    },
+    {
+      filter: 'drained',
+      label: 'Drained',
+      color: 'bg-slate-500 dark:bg-slate-600',
+      description: 'Device is soft-drained, hard-drained, or suspended.',
+    },
+    {
+      filter: 'isis_overload',
+      label: 'ISIS Overload',
+      color: 'bg-red-600',
+      description: 'Device is in ISIS overload state.',
+    },
+    {
+      filter: 'isis_unreachable',
+      label: 'ISIS Unreachable',
+      color: 'bg-red-800',
+      description: 'Device is unreachable in the ISIS topology.',
+    },
+    {
+      filter: 'no_issues',
+      label: 'No Issues',
+      color: 'bg-cyan-500',
+      description: 'Device with no detected issues in the time range.',
+    },
   ]
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Device Issues</h3>
-        <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
+      <div className="flex flex-col xs:flex-row gap-0.5 xs:gap-2 xs:items-center mb-1">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Device Issues</h3>
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            ({timeRangeLabels[timeRange]})
+          </span>
+          <button
+            onClick={() => onChange(allFilters)}
+            className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors hidden sm:inline-block ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
+          >
+            {allSelected ? 'All selected' : 'Select all'}
+          </button>
+        </div>
+        <span className="sm:hidden text-xs text-muted-foreground">
+          ({timeRangeLabels[timeRange]})
+        </span>
+      </div>
+
+      <div className="flex flex-col items-end gap-2 mb-3">
         <button
           onClick={() => onChange(allFilters)}
-          className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
-            allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
-          }`}
+          className={`sm:hidden text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
         >
           {allSelected ? 'All selected' : 'Select all'}
         </button>
-      </div>
-
-      <div className="h-2 rounded-full overflow-hidden flex mb-3 bg-muted">
-        {noIssuesPct > 0 && (
-          <div
-            className={`bg-cyan-500 h-full transition-all ${!selected.includes('no_issues') ? 'opacity-30' : ''}`}
-            style={{ width: `${noIssuesPct}%` }}
-          />
-        )}
-        {interfaceErrorsPct > 0 && (
-          <div
-            className={`bg-fuchsia-500 h-full transition-all ${!selected.includes('interface_errors') ? 'opacity-30' : ''}`}
-            style={{ width: `${interfaceErrorsPct}%` }}
-          />
-        )}
-        {fcsErrorsPct > 0 && (
-          <div
-            className={`bg-orange-600 h-full transition-all ${!selected.includes('fcs_errors') ? 'opacity-30' : ''}`}
-            style={{ width: `${fcsErrorsPct}%` }}
-          />
-        )}
-        {discardsPct > 0 && (
-          <div
-            className={`bg-rose-500 h-full transition-all ${!selected.includes('discards') ? 'opacity-30' : ''}`}
-            style={{ width: `${discardsPct}%` }}
-          />
-        )}
-        {carrierTransitionsPct > 0 && (
-          <div
-            className={`bg-orange-500 h-full transition-all ${!selected.includes('carrier_transitions') ? 'opacity-30' : ''}`}
-            style={{ width: `${carrierTransitionsPct}%` }}
-          />
-        )}
-        {drainedPct > 0 && (
-          <div
-            className={`bg-slate-500 dark:bg-slate-600 h-full transition-all ${!selected.includes('drained') ? 'opacity-30' : ''}`}
-            style={{ width: `${drainedPct}%` }}
-          />
-        )}
-        {isisOverloadPct > 0 && (
-          <div
-            className={`bg-red-600 h-full transition-all ${!selected.includes('isis_overload') ? 'opacity-30' : ''}`}
-            style={{ width: `${isisOverloadPct}%` }}
-          />
-        )}
-        {isisUnreachablePct > 0 && (
-          <div
-            className={`bg-red-800 h-full transition-all ${!selected.includes('isis_unreachable') ? 'opacity-30' : ''}`}
-            style={{ width: `${isisUnreachablePct}%` }}
-          />
-        )}
+        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted">
+          {noIssuesPct > 0 && (
+            <div
+              className={`bg-cyan-500 h-full transition-all ${!selected.includes('no_issues') ? 'opacity-30' : ''}`}
+              style={{ width: `${noIssuesPct}%` }}
+            />
+          )}
+          {interfaceErrorsPct > 0 && (
+            <div
+              className={`bg-fuchsia-500 h-full transition-all ${!selected.includes('interface_errors') ? 'opacity-30' : ''}`}
+              style={{ width: `${interfaceErrorsPct}%` }}
+            />
+          )}
+          {fcsErrorsPct > 0 && (
+            <div
+              className={`bg-orange-600 h-full transition-all ${!selected.includes('fcs_errors') ? 'opacity-30' : ''}`}
+              style={{ width: `${fcsErrorsPct}%` }}
+            />
+          )}
+          {discardsPct > 0 && (
+            <div
+              className={`bg-rose-500 h-full transition-all ${!selected.includes('discards') ? 'opacity-30' : ''}`}
+              style={{ width: `${discardsPct}%` }}
+            />
+          )}
+          {carrierTransitionsPct > 0 && (
+            <div
+              className={`bg-orange-500 h-full transition-all ${!selected.includes('carrier_transitions') ? 'opacity-30' : ''}`}
+              style={{ width: `${carrierTransitionsPct}%` }}
+            />
+          )}
+          {drainedPct > 0 && (
+            <div
+              className={`bg-slate-500 dark:bg-slate-600 h-full transition-all ${!selected.includes('drained') ? 'opacity-30' : ''}`}
+              style={{ width: `${drainedPct}%` }}
+            />
+          )}
+          {isisOverloadPct > 0 && (
+            <div
+              className={`bg-red-600 h-full transition-all ${!selected.includes('isis_overload') ? 'opacity-30' : ''}`}
+              style={{ width: `${isisOverloadPct}%` }}
+            />
+          )}
+          {isisUnreachablePct > 0 && (
+            <div
+              className={`bg-red-800 h-full transition-all ${!selected.includes('isis_unreachable') ? 'opacity-30' : ''}`}
+              style={{ width: `${isisUnreachablePct}%` }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-0.5 text-sm">
@@ -2278,14 +2968,12 @@ function matchesGroupedFilters(
 ): boolean {
   if (filters.length === 0) return true
   const grouped = groupFiltersByType(filters)
-  return Array.from(grouped.values()).every(group =>
-    group.some(matchSingle)
-  )
+  return Array.from(grouped.values()).every((group) => group.some(matchSingle))
 }
 
 // Helper to check if a device matches search filters
 function deviceMatchesSearchFilters(device: DeviceHistory, filters: StatusFilter[]): boolean {
-  return matchesGroupedFilters(filters, filter => {
+  return matchesGroupedFilters(filters, (filter) => {
     switch (filter.type) {
       case 'device':
         return device.code.toLowerCase().includes(filter.value.toLowerCase())
@@ -2300,8 +2988,11 @@ function deviceMatchesSearchFilters(device: DeviceHistory, filters: StatusFilter
 }
 
 // Helper to check if an interface issue matches search filters
-function interfaceIssueMatchesSearchFilters(issue: InterfaceIssue, filters: StatusFilter[]): boolean {
-  return matchesGroupedFilters(filters, filter => {
+function interfaceIssueMatchesSearchFilters(
+  issue: InterfaceIssue,
+  filters: StatusFilter[],
+): boolean {
+  return matchesGroupedFilters(filters, (filter) => {
     switch (filter.type) {
       case 'device':
         return issue.device_code.toLowerCase().includes(filter.value.toLowerCase())
@@ -2319,16 +3010,21 @@ function interfaceIssueMatchesSearchFilters(issue: InterfaceIssue, filters: Stat
 
 // Helper to check if a link matches search filters
 function linkMatchesSearchFilters(link: LinkHistory, filters: StatusFilter[]): boolean {
-  return matchesGroupedFilters(filters, filter => {
+  return matchesGroupedFilters(filters, (filter) => {
     switch (filter.type) {
       case 'link':
         return link.code.toLowerCase().includes(filter.value.toLowerCase())
       case 'device':
-        return link.side_a_device?.toLowerCase().includes(filter.value.toLowerCase()) ||
-               link.side_z_device?.toLowerCase().includes(filter.value.toLowerCase()) || false
+        return (
+          link.side_a_device?.toLowerCase().includes(filter.value.toLowerCase()) ||
+          link.side_z_device?.toLowerCase().includes(filter.value.toLowerCase()) ||
+          false
+        )
       case 'metro':
-        return link.side_a_metro?.toLowerCase() === filter.value.toLowerCase() ||
-               link.side_z_metro?.toLowerCase() === filter.value.toLowerCase()
+        return (
+          link.side_a_metro?.toLowerCase() === filter.value.toLowerCase() ||
+          link.side_z_metro?.toLowerCase() === filter.value.toLowerCase()
+        )
       case 'contributor':
         return link.contributor?.toLowerCase().includes(filter.value.toLowerCase()) ?? false
       default:
@@ -2339,13 +3035,15 @@ function linkMatchesSearchFilters(link: LinkHistory, filters: StatusFilter[]): b
 
 // Helper to check if a link metric (for utilization) matches search filters
 function linkMetricMatchesSearchFilters(link: LinkMetric, filters: StatusFilter[]): boolean {
-  return matchesGroupedFilters(filters, filter => {
+  return matchesGroupedFilters(filters, (filter) => {
     switch (filter.type) {
       case 'link':
         return link.code.toLowerCase().includes(filter.value.toLowerCase())
       case 'metro':
-        return link.side_a_metro?.toLowerCase() === filter.value.toLowerCase() ||
-               link.side_z_metro?.toLowerCase() === filter.value.toLowerCase()
+        return (
+          link.side_a_metro?.toLowerCase() === filter.value.toLowerCase() ||
+          link.side_z_metro?.toLowerCase() === filter.value.toLowerCase()
+        )
       case 'contributor':
         return link.contributor?.toLowerCase().includes(filter.value.toLowerCase()) ?? false
       default:
@@ -2355,8 +3053,11 @@ function linkMetricMatchesSearchFilters(link: LinkMetric, filters: StatusFilter[
 }
 
 // Helper to check if a device utilization matches search filters
-function deviceUtilMatchesSearchFilters(device: DeviceUtilization, filters: StatusFilter[]): boolean {
-  return matchesGroupedFilters(filters, filter => {
+function deviceUtilMatchesSearchFilters(
+  device: DeviceUtilization,
+  filters: StatusFilter[],
+): boolean {
+  return matchesGroupedFilters(filters, (filter) => {
     switch (filter.type) {
       case 'device':
         return device.code.toLowerCase().includes(filter.value.toLowerCase())
@@ -2373,8 +3074,21 @@ function deviceUtilMatchesSearchFilters(device: DeviceUtilization, filters: Stat
 // Devices tab content
 function DevicesContent({ status }: { status: StatusResponse }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [issueFilters, setIssueFilters] = useState<DeviceIssueFilter[]>(['interface_errors', 'fcs_errors', 'discards', 'carrier_transitions', 'drained', 'isis_overload', 'isis_unreachable'])
-  const [healthFilters, setHealthFilters] = useState<HealthFilter[]>(['healthy', 'degraded', 'unhealthy', 'disabled'])
+  const [issueFilters, setIssueFilters] = useState<DeviceIssueFilter[]>([
+    'interface_errors',
+    'fcs_errors',
+    'discards',
+    'carrier_transitions',
+    'drained',
+    'isis_overload',
+    'isis_unreachable',
+  ])
+  const [healthFilters, setHealthFilters] = useState<HealthFilter[]>([
+    'healthy',
+    'degraded',
+    'unhealthy',
+    'disabled',
+  ])
   const location = useLocation()
 
   // Get expanded device from navigation state
@@ -2386,13 +3100,20 @@ function DevicesContent({ status }: { status: StatusResponse }) {
   // Bucket count based on time range
   const buckets = (() => {
     switch (timeRange) {
-      case '3h': return 36
-      case '6h': return 36
-      case '12h': return 48
-      case '24h': return 72
-      case '3d': return 72
-      case '7d': return 84
-      default: return 72
+      case '3h':
+        return 36
+      case '6h':
+        return 36
+      case '12h':
+        return 48
+      case '24h':
+        return 72
+      case '3d':
+        return 72
+      case '7d':
+        return 84
+      default:
+        return 72
     }
   })()
 
@@ -2420,7 +3141,9 @@ function DevicesContent({ status }: { status: StatusResponse }) {
     }
     return {
       ...deviceHistoryData,
-      devices: deviceHistoryData.devices.filter(d => deviceMatchesSearchFilters(d, searchFilters))
+      devices: deviceHistoryData.devices.filter((d) =>
+        deviceMatchesSearchFilters(d, searchFilters),
+      ),
     }
   }, [deviceHistoryData, searchFilters])
 
@@ -2429,7 +3152,9 @@ function DevicesContent({ status }: { status: StatusResponse }) {
     if (!interfaceIssuesData?.issues || searchFilters.length === 0) {
       return interfaceIssuesData?.issues ?? null
     }
-    return interfaceIssuesData.issues.filter(i => interfaceIssueMatchesSearchFilters(i, searchFilters))
+    return interfaceIssuesData.issues.filter((i) =>
+      interfaceIssueMatchesSearchFilters(i, searchFilters),
+    )
   }, [interfaceIssuesData, searchFilters])
 
   // Helper to get the effective health status from a device's hours
@@ -2437,11 +3162,11 @@ function DevicesContent({ status }: { status: StatusResponse }) {
     if (!device.hours || device.hours.length === 0) return 'healthy'
 
     const statusPriority: Record<string, number> = {
-      'unhealthy': 0,
-      'no_data': 1,
-      'disabled': 2,
-      'degraded': 3,
-      'healthy': 4,
+      unhealthy: 0,
+      no_data: 1,
+      disabled: 2,
+      degraded: 3,
+      healthy: 4,
     }
 
     let worstStatus = 'healthy'
@@ -2470,7 +3195,13 @@ function DevicesContent({ status }: { status: StatusResponse }) {
       return { healthy: 0, degraded: 0, unhealthy: 0, disabled: 0, total: 0 }
     }
 
-    const counts = { healthy: 0, degraded: 0, unhealthy: 0, disabled: 0, total: 0 }
+    const counts = {
+      healthy: 0,
+      degraded: 0,
+      unhealthy: 0,
+      disabled: 0,
+      total: 0,
+    }
 
     for (const device of filteredDeviceHistory.devices) {
       counts.total++
@@ -2486,7 +3217,15 @@ function DevicesContent({ status }: { status: StatusResponse }) {
 
   // Calculate issue breakdown per health category
   const issuesByHealth = useMemo((): DeviceIssuesByHealth => {
-    const emptyBreakdown = () => ({ interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, isis_overload: 0, isis_unreachable: 0 })
+    const emptyBreakdown = () => ({
+      interface_errors: 0,
+      fcs_errors: 0,
+      discards: 0,
+      carrier_transitions: 0,
+      drained: 0,
+      isis_overload: 0,
+      isis_unreachable: 0,
+    })
 
     const result: DeviceIssuesByHealth = {
       healthy: emptyBreakdown(),
@@ -2519,7 +3258,12 @@ function DevicesContent({ status }: { status: StatusResponse }) {
 
   // Calculate health breakdown per issue type
   const healthByIssue = useMemo((): DeviceHealthByIssue => {
-    const emptyBreakdown = () => ({ healthy: 0, degraded: 0, unhealthy: 0, disabled: 0 })
+    const emptyBreakdown = () => ({
+      healthy: 0,
+      degraded: 0,
+      unhealthy: 0,
+      disabled: 0,
+    })
 
     const result: DeviceHealthByIssue = {
       interface_errors: emptyBreakdown(),
@@ -2536,7 +3280,9 @@ function DevicesContent({ status }: { status: StatusResponse }) {
 
     for (const device of filteredDeviceHistory.devices) {
       const rawHealth = getEffectiveHealth(device)
-      const health = (rawHealth === 'no_data' ? 'unhealthy' : rawHealth) as keyof IssueHealthBreakdown
+      const health = (
+        rawHealth === 'no_data' ? 'unhealthy' : rawHealth
+      ) as keyof IssueHealthBreakdown
       const issues = device.issue_reasons ?? []
 
       if (issues.length === 0) {
@@ -2558,10 +3304,30 @@ function DevicesContent({ status }: { status: StatusResponse }) {
   // Issue counts from filter time range
   const issueCounts = useMemo((): DeviceIssueCounts => {
     if (!filteredDeviceHistory?.devices) {
-      return { interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, isis_overload: 0, isis_unreachable: 0, no_issues: 0, total: 0 }
+      return {
+        interface_errors: 0,
+        fcs_errors: 0,
+        discards: 0,
+        carrier_transitions: 0,
+        drained: 0,
+        isis_overload: 0,
+        isis_unreachable: 0,
+        no_issues: 0,
+        total: 0,
+      }
     }
 
-    const counts = { interface_errors: 0, fcs_errors: 0, discards: 0, carrier_transitions: 0, drained: 0, isis_overload: 0, isis_unreachable: 0, no_issues: 0, total: 0 }
+    const counts = {
+      interface_errors: 0,
+      fcs_errors: 0,
+      discards: 0,
+      carrier_transitions: 0,
+      drained: 0,
+      isis_overload: 0,
+      isis_unreachable: 0,
+      no_issues: 0,
+      total: 0,
+    }
     const seenDevices = new Set<string>()
 
     for (const device of filteredDeviceHistory.devices) {
@@ -2671,7 +3437,12 @@ function MetroHealthFilterCard({
   onChange,
   timeRange,
 }: {
-  metros: { healthy: number; degraded: number; unhealthy: number; total: number }
+  metros: {
+    healthy: number
+    degraded: number
+    unhealthy: number
+    total: number
+  }
   selected: MetroHealthFilter[]
   onChange: (filters: MetroHealthFilter[]) => void
   timeRange: TimeRange
@@ -2679,7 +3450,7 @@ function MetroHealthFilterCard({
   const toggleFilter = (filter: MetroHealthFilter) => {
     if (selected.includes(filter)) {
       if (selected.length > 1) {
-        onChange(selected.filter(f => f !== filter))
+        onChange(selected.filter((f) => f !== filter))
       }
     } else {
       onChange([...selected, filter])
@@ -2694,39 +3465,52 @@ function MetroHealthFilterCard({
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Metro Health</h3>
-        <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
+      <div className="flex flex-col xs:flex-row gap-0.5 xs:gap-2 xs:items-center mb-1">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Metro Health</h3>
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            ({timeRangeLabels[timeRange]})
+          </span>
+          <button
+            onClick={() => onChange(['healthy', 'degraded', 'unhealthy'])}
+            className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors hidden sm:inline-block ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
+          >
+            {allSelected ? 'All selected' : 'Select all'}
+          </button>
+        </div>
+        <span className="sm:hidden text-xs text-muted-foreground">
+          ({timeRangeLabels[timeRange]})
+        </span>
+      </div>
+
+      <div className="flex flex-col items-end gap-2 mb-3">
         <button
           onClick={() => onChange(['healthy', 'degraded', 'unhealthy'])}
-          className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
-            allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
-          }`}
+          className={`sm:hidden text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
         >
           {allSelected ? 'All selected' : 'Select all'}
         </button>
-      </div>
-
-      <div className="h-2 rounded-full overflow-hidden flex mb-3 bg-muted">
-        {healthyPct > 0 && (
-          <div
-            className={`bg-green-500 h-full transition-all ${!selected.includes('healthy') ? 'opacity-30' : ''}`}
-            style={{ width: `${healthyPct}%` }}
-          />
-        )}
-        {degradedPct > 0 && (
-          <div
-            className={`bg-amber-500 h-full transition-all ${!selected.includes('degraded') ? 'opacity-30' : ''}`}
-            style={{ width: `${degradedPct}%` }}
-          />
-        )}
-        {unhealthyPct > 0 && (
-          <div
-            className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
-            style={{ width: `${unhealthyPct}%` }}
-          />
-        )}
+        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted">
+          {healthyPct > 0 && (
+            <div
+              className={`bg-green-500 h-full transition-all ${!selected.includes('healthy') ? 'opacity-30' : ''}`}
+              style={{ width: `${healthyPct}%` }}
+            />
+          )}
+          {degradedPct > 0 && (
+            <div
+              className={`bg-amber-500 h-full transition-all ${!selected.includes('degraded') ? 'opacity-30' : ''}`}
+              style={{ width: `${degradedPct}%` }}
+            />
+          )}
+          {unhealthyPct > 0 && (
+            <div
+              className={`bg-red-500 h-full transition-all ${!selected.includes('unhealthy') ? 'opacity-30' : ''}`}
+              style={{ width: `${unhealthyPct}%` }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-0.5 text-sm">
@@ -2766,7 +3550,12 @@ function MetroIssuesFilterCard({
   onChange,
   timeRange,
 }: {
-  counts: { has_issues: number; has_spof: number; no_issues: number; total: number }
+  counts: {
+    has_issues: number
+    has_spof: number
+    no_issues: number
+    total: number
+  }
   selected: MetroIssueFilter[]
   onChange: (filters: MetroIssueFilter[]) => void
   timeRange: TimeRange
@@ -2776,7 +3565,7 @@ function MetroIssuesFilterCard({
   const toggleFilter = (filter: MetroIssueFilter) => {
     if (selected.includes(filter)) {
       if (selected.length > 1) {
-        onChange(selected.filter(f => f !== filter))
+        onChange(selected.filter((f) => f !== filter))
       }
     } else {
       onChange([...selected, filter])
@@ -2792,39 +3581,52 @@ function MetroIssuesFilterCard({
 
   return (
     <div className="border border-border rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-        <h3 className="font-medium">Metro Issues</h3>
-        <span className="text-xs text-muted-foreground">({timeRangeLabels[timeRange]})</span>
+      <div className="flex flex-col xs:flex-row gap-0.5 xs:gap-2 xs:items-center mb-1">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
+          <h3 className="font-medium">Metro Issues</h3>
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            ({timeRangeLabels[timeRange]})
+          </span>
+          <button
+            onClick={() => onChange(allFilters)}
+            className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors hidden sm:inline-block ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
+          >
+            {allSelected ? 'All selected' : 'Select all'}
+          </button>
+        </div>
+        <span className="sm:hidden text-xs text-muted-foreground">
+          ({timeRangeLabels[timeRange]})
+        </span>
+      </div>
+
+      <div className="flex flex-col items-end gap-2 mb-3">
         <button
           onClick={() => onChange(allFilters)}
-          className={`text-xs ml-auto px-1.5 py-0.5 rounded transition-colors ${
-            allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'
-          }`}
+          className={`sm:hidden text-xs px-1.5 py-0.5 rounded transition-colors shrink-0 ${allSelected ? 'text-muted-foreground' : 'text-primary hover:underline'}`}
         >
           {allSelected ? 'All selected' : 'Select all'}
         </button>
-      </div>
-
-      <div className="h-2 rounded-full overflow-hidden flex mb-3 bg-muted">
-        {noIssuesPct > 0 && (
-          <div
-            className={`bg-cyan-500 h-full transition-all ${!selected.includes('no_issues') ? 'opacity-30' : ''}`}
-            style={{ width: `${noIssuesPct}%` }}
-          />
-        )}
-        {hasIssuesPct > 0 && (
-          <div
-            className={`bg-purple-500 h-full transition-all ${!selected.includes('has_issues') ? 'opacity-30' : ''}`}
-            style={{ width: `${hasIssuesPct}%` }}
-          />
-        )}
-        {hasSpofPct > 0 && (
-          <div
-            className={`bg-red-500 h-full transition-all ${!selected.includes('has_spof') ? 'opacity-30' : ''}`}
-            style={{ width: `${hasSpofPct}%` }}
-          />
-        )}
+        <div className="w-full h-2 rounded-full overflow-hidden flex bg-muted">
+          {noIssuesPct > 0 && (
+            <div
+              className={`bg-cyan-500 h-full transition-all ${!selected.includes('no_issues') ? 'opacity-30' : ''}`}
+              style={{ width: `${noIssuesPct}%` }}
+            />
+          )}
+          {hasIssuesPct > 0 && (
+            <div
+              className={`bg-purple-500 h-full transition-all ${!selected.includes('has_issues') ? 'opacity-30' : ''}`}
+              style={{ width: `${hasIssuesPct}%` }}
+            />
+          )}
+          {hasSpofPct > 0 && (
+            <div
+              className={`bg-red-500 h-full transition-all ${!selected.includes('has_spof') ? 'opacity-30' : ''}`}
+              style={{ width: `${hasSpofPct}%` }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-0.5 text-sm">
@@ -2868,19 +3670,34 @@ function MetrosContent({
   metroNames: Map<string, string>
 }) {
   const [timeRange, setTimeRange] = useState<TimeRange>('24h')
-  const [healthFilters, setHealthFilters] = useState<MetroHealthFilter[]>(['healthy', 'degraded', 'unhealthy'])
-  const [issueFilters, setIssueFilters] = useState<MetroIssueFilter[]>(['has_issues', 'has_spof', 'no_issues'])
+  const [healthFilters, setHealthFilters] = useState<MetroHealthFilter[]>([
+    'healthy',
+    'degraded',
+    'unhealthy',
+  ])
+  const [issueFilters, setIssueFilters] = useState<MetroIssueFilter[]>([
+    'has_issues',
+    'has_spof',
+    'no_issues',
+  ])
 
   // Bucket count based on time range
   const buckets = (() => {
     switch (timeRange) {
-      case '3h': return 36
-      case '6h': return 36
-      case '12h': return 48
-      case '24h': return 72
-      case '3d': return 72
-      case '7d': return 84
-      default: return 72
+      case '3h':
+        return 36
+      case '6h':
+        return 36
+      case '12h':
+        return 48
+      case '24h':
+        return 72
+      case '3d':
+        return 72
+      case '7d':
+        return 84
+      default:
+        return 72
     }
   })()
 
@@ -2919,13 +3736,16 @@ function MetrosContent({
     }
 
     // Track link counts per metro for current status (last bucket)
-    const metroMap = new Map<string, {
-      workingLinks: number  // healthy or degraded
-      downLinks: number     // unhealthy, disabled, no_data
-      totalLinks: number
-      hasIssues: boolean    // had any non-healthy status in time range
-      hasSpof: boolean
-    }>()
+    const metroMap = new Map<
+      string,
+      {
+        workingLinks: number // healthy or degraded
+        downLinks: number // unhealthy, disabled, no_data
+        totalLinks: number
+        hasIssues: boolean // had any non-healthy status in time range
+        hasSpof: boolean
+      }
+    >()
 
     for (const link of linkHistory.links) {
       if (!link.hours || link.hours.length === 0) continue
@@ -2937,20 +3757,31 @@ function MetrosContent({
       // If last bucket is no_data (still collecting), use the previous bucket
       const lastBucket = link.hours[link.hours.length - 1]
       const prevBucket = link.hours.length > 1 ? link.hours[link.hours.length - 2] : null
-      const currentStatus = (lastBucket?.status === 'no_data' && prevBucket)
-        ? (prevBucket.status || 'healthy')
-        : (lastBucket?.status || 'healthy')
+      const currentStatus =
+        lastBucket?.status === 'no_data' && prevBucket
+          ? prevBucket.status || 'healthy'
+          : lastBucket?.status || 'healthy'
       const isWorking = currentStatus === 'healthy' || currentStatus === 'degraded'
 
       // Check if link had any issues in time range (no_data is also an issue)
-      const hadIssues = link.hours.some((h: { status: string }) =>
-        h.status === 'unhealthy' || h.status === 'degraded' || h.status === 'disabled' || h.status === 'no_data'
+      const hadIssues = link.hours.some(
+        (h: { status: string }) =>
+          h.status === 'unhealthy' ||
+          h.status === 'degraded' ||
+          h.status === 'disabled' ||
+          h.status === 'no_data',
       )
 
       for (const metroCode of [link.side_a_metro, link.side_z_metro]) {
         if (!metroCode) continue
         if (!metroMap.has(metroCode)) {
-          metroMap.set(metroCode, { workingLinks: 0, downLinks: 0, totalLinks: 0, hasIssues: false, hasSpof: false })
+          metroMap.set(metroCode, {
+            workingLinks: 0,
+            downLinks: 0,
+            totalLinks: 0,
+            hasIssues: false,
+            hasSpof: false,
+          })
         }
         const metro = metroMap.get(metroCode)!
         metro.totalLinks++
@@ -3031,8 +3862,11 @@ export function StatusPage() {
   const buckets = useBucketCount()
 
   // Determine active tab from URL
-  const activeTab = location.pathname.includes('/devices') ? 'devices' :
-                    location.pathname.includes('/metros') ? 'metros' : 'links'
+  const activeTab = location.pathname.includes('/devices')
+    ? 'devices'
+    : location.pathname.includes('/metros')
+      ? 'metros'
+      : 'links'
 
   // Redirect /status to /status/links (preserving query params)
   useEffect(() => {
@@ -3041,7 +3875,11 @@ export function StatusPage() {
     }
   }, [location.pathname, location.search, navigate])
 
-  const { data: status, isLoading, error } = useQuery({
+  const {
+    data: status,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['status'],
     queryFn: fetchStatus,
     refetchInterval: 30_000,
@@ -3088,7 +3926,9 @@ export function StatusPage() {
     if (!status?.links?.top_util_links || searchFilters.length === 0) {
       return status?.links?.top_util_links ?? []
     }
-    return status.links.top_util_links.filter(link => linkMetricMatchesSearchFilters(link, searchFilters))
+    return status.links.top_util_links.filter((link) =>
+      linkMetricMatchesSearchFilters(link, searchFilters),
+    )
   }, [status?.links?.top_util_links, searchFilters])
 
   // Filter top device utilization by search filters
@@ -3096,7 +3936,9 @@ export function StatusPage() {
     if (!status?.top_device_util || searchFilters.length === 0) {
       return status?.top_device_util ?? []
     }
-    return status.top_device_util.filter(device => deviceUtilMatchesSearchFilters(device, searchFilters))
+    return status.top_device_util.filter((device) =>
+      deviceUtilMatchesSearchFilters(device, searchFilters),
+    )
   }, [status?.top_device_util, searchFilters])
 
   if (isLoading && showSkeleton) {
@@ -3128,17 +3970,42 @@ export function StatusPage() {
         </div>
 
         {/* Network Stats Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-8 gap-y-6 mb-8">
-          <StatCard label="Contributors" value={status.network.contributors} format="number" href="/dz/contributors" />
-          <StatCard label="Metros" value={status.network.metros} format="number" href="/dz/metros" />
-          <StatCard label="Devices" value={status.network.devices} format="number" href="/dz/devices" />
+        <div className="grid grid-cols-1 xss:grid-cols-2 md:grid-cols-5 gap-4 md:gap-6 mb-8">
+          <StatCard
+            label="Contributors"
+            value={status.network.contributors}
+            format="number"
+            href="/dz/contributors"
+          />
+          <StatCard
+            label="Metros"
+            value={status.network.metros}
+            format="number"
+            href="/dz/metros"
+          />
+          <StatCard
+            label="Devices"
+            value={status.network.devices}
+            format="number"
+            href="/dz/devices"
+          />
           <StatCard label="Links" value={status.network.links} format="number" href="/dz/links" />
           <StatCard label="Users" value={status.network.users} format="number" href="/dz/users" />
-          <StatCard label="Validators on DZ" value={status.network.validators_on_dz} format="number" href="/solana/validators" />
+          <StatCard
+            label="Validators on DZ"
+            value={status.network.validators_on_dz}
+            format="number"
+            href="/solana/validators"
+          />
           <StatCard label="SOL Connected" value={status.network.total_stake_sol} format="stake" />
           <StatCard label="Stake Share" value={status.network.stake_share_pct} format="percent" />
           <StatCard label="Capacity" value={status.network.bandwidth_bps} format="bandwidth" />
-          <StatCard label="User Inbound" value={status.network.user_inbound_bps} format="bandwidth" decimals={0} />
+          <StatCard
+            label="User Inbound"
+            value={status.network.user_inbound_bps}
+            format="bandwidth"
+            decimals={0}
+          />
         </div>
 
         {/* Utilization Charts */}
@@ -3156,7 +4023,11 @@ export function StatusPage() {
         ) : activeTab === 'devices' ? (
           <DevicesContent status={status} />
         ) : (
-          <MetrosContent criticalLinks={criticalLinks} criticalLinksLoading={criticalLinksLoading} metroNames={metroNames} />
+          <MetrosContent
+            criticalLinks={criticalLinks}
+            criticalLinksLoading={criticalLinksLoading}
+            metroNames={metroNames}
+          />
         )}
       </div>
     </div>

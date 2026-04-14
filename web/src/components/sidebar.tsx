@@ -55,7 +55,8 @@ export function Sidebar() {
   const isIncidentsRoute = location.pathname.startsWith('/incidents')
   const isChatRoute = location.pathname.startsWith('/chat')
   const isChatSessions = location.pathname === '/chat/sessions'
-  const isTopologyRoute = location.pathname === '/topology' || location.pathname.startsWith('/topology/')
+  const isTopologyRoute =
+    location.pathname === '/topology' || location.pathname.startsWith('/topology/')
   const isPerformanceRoute = location.pathname.startsWith('/performance')
   const isTrafficRoute = location.pathname.startsWith('/traffic')
   const isDZRoute = location.pathname.startsWith('/dz/')
@@ -69,7 +70,11 @@ export function Sidebar() {
   const isTopologyRedundancy = location.pathname === '/topology/redundancy'
   const isTopologyMetroConnectivity = location.pathname === '/topology/metro-connectivity'
   const isTopologyMaintenance = location.pathname === '/topology/maintenance'
-  const isTopologyTool = isTopologyPathCalculator || isTopologyRedundancy || isTopologyMetroConnectivity || isTopologyMaintenance
+  const isTopologyTool =
+    isTopologyPathCalculator ||
+    isTopologyRedundancy ||
+    isTopologyMetroConnectivity ||
+    isTopologyMaintenance
 
   // Performance sub-routes
   const isPerformanceDzVsInternet = location.pathname === '/performance/dz-vs-internet'
@@ -98,6 +103,10 @@ export function Sidebar() {
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
 
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 1024,
+  )
+
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const userPref = localStorage.getItem('sidebar-user-collapsed')
     if (userPref !== null) return userPref === 'true'
@@ -107,6 +116,12 @@ export function Sidebar() {
     const saved = localStorage.getItem('sidebar-user-collapsed')
     return saved !== null ? saved === 'true' : null
   })
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 1024)
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   // Auto-collapse/expand based on screen size and user preference
   useEffect(() => {
@@ -137,271 +152,123 @@ export function Sidebar() {
     localStorage.setItem('sidebar-collapsed', String(isCollapsed))
   }, [isCollapsed])
 
+  useEffect(() => {
+    if (isMobile) {
+      setIsCollapsed(true)
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSetCollapsed = (collapsed: boolean) => {
     setIsCollapsed(collapsed)
-    setUserCollapsed(collapsed)
-    localStorage.setItem('sidebar-user-collapsed', String(collapsed))
+    if (!isMobile) {
+      setUserCollapsed(collapsed)
+      localStorage.setItem('sidebar-user-collapsed', String(collapsed))
+    }
   }
 
   // Active state classes for nav items
-  const navItemClass = (isActive: boolean) => cn(
-    'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
-    isActive
-      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
-      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-  )
+  const navItemClass = (isActive: boolean) =>
+    cn(
+      'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
+      isActive
+        ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+        : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]',
+    )
 
   // Expanded parent nav item (e.g., "Topology" when on /topology/*) — subtle, no background
   const navItemExpandedClass = cn(
     'w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
-    'border-transparent text-foreground font-medium hover:bg-[var(--sidebar-active)]'
+    'border-transparent text-foreground font-medium hover:bg-[var(--sidebar-active)]',
   )
 
   // Sub-nav item class (indented, with optional deeper nesting)
-  const subNavItemClass = (isActive: boolean, nested?: boolean) => cn(
-    'w-full flex items-center gap-2 pr-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
-    nested ? 'pl-12' : 'pl-8',
-    isActive
-      ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
-      : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-  )
+  const subNavItemClass = (isActive: boolean, nested?: boolean) =>
+    cn(
+      'w-full flex items-center gap-2 pr-3 py-1.5 text-sm rounded-r transition-colors border-l-2',
+      nested ? 'pl-12' : 'pl-8',
+      isActive
+        ? 'border-accent bg-[var(--sidebar-active)] text-foreground font-medium'
+        : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]',
+    )
 
-  const collapsedIconClass = (isActive: boolean) => cn(
-    'p-2 rounded transition-colors',
-    isActive
-      ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
-      : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]'
-  )
+  const collapsedIconClass = (isActive: boolean) =>
+    cn(
+      'p-2 rounded transition-colors',
+      isActive
+        ? 'bg-[oklch(25%_.04_250)] text-white hover:bg-[oklch(30%_.05_250)]'
+        : 'text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]',
+    )
 
   // ─── Collapsed sidebar ───────────────────────────────────────────────
   if (isCollapsed) {
     return (
-      <div className="w-12 border-r bg-[var(--sidebar)] flex flex-col items-center relative z-10">
-        {/* Logo icon - matches expanded header height */}
-        <div className="w-full h-12 flex items-center justify-center border-b border-border/50 shrink-0">
-          <button
-            onClick={() => handleSetCollapsed(false)}
-            className="group relative"
-            title="Expand sidebar"
-          >
-            <img src={resolvedTheme === 'dark' ? '/logoDarkSm.svg' : '/logoLightSm.svg'} alt="Data" className="h-6 group-hover:opacity-0 transition-opacity" />
-            <PanelLeftOpen className="h-5 w-5 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground" />
-          </button>
-        </div>
-
-        <div className="flex-1 flex flex-col items-center gap-1 pt-4 overflow-y-auto min-h-0">
-          {/* Search */}
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
-            className="p-2 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]"
-            title="Search (⌘K)"
-          >
-            <Search className="h-4 w-4" />
-          </button>
-
-          {/* Main nav */}
-          <Link to="/status" className={collapsedIconClass(isStatusRoute)} title="Status">
-            <Activity className="h-4 w-4" />
-          </Link>
-          <Link to="/topology/map" className={collapsedIconClass(isTopologyRoute)} title="Topology">
-            <Globe className="h-4 w-4" />
-          </Link>
-          <Link to="/traffic/overview" className={collapsedIconClass(isTrafficRoute)} title="Traffic">
-            <Network className="h-4 w-4" />
-          </Link>
-          <Link to="/performance/dz-vs-internet" className={collapsedIconClass(isPerformanceRoute)} title="Performance">
-            <Gauge className="h-4 w-4" />
-          </Link>
-          <Link to="/incidents/links" className={collapsedIconClass(isIncidentsRoute)} title="Incidents">
-            <ShieldAlert className="h-4 w-4" />
-          </Link>
-          <button
-            onClick={(e) => {
-              if (e.metaKey || e.ctrlKey) {
-                window.open('/chat', '_blank')
-              } else if (location.pathname === '/chat') {
-                window.dispatchEvent(new CustomEvent('refresh-chat-suggestions'))
-              } else {
-                navigate('/chat')
-              }
-            }}
-            className={collapsedIconClass(isChatRoute)}
-            title="Chat"
-          >
-            <MessageSquare className="h-4 w-4" />
-          </button>
-          {/* Divider */}
-          <div className="w-6 border-t border-border/50 my-2" />
-
-          {/* Entity sections */}
-          <Link to="/dz/devices" className={collapsedIconClass(isDZRoute)} title="DoubleZero">
-            <Server className="h-4 w-4" />
-          </Link>
-          {hasSolana && (
-            <Link to="/solana/validators" className={collapsedIconClass(isSolanaRoute)} title="Solana">
-              <Landmark className="h-4 w-4" />
-            </Link>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex flex-col items-center gap-1 mb-3 shrink-0">
-          {updateAvailable && (
+      <>
+        {isMobile && <div className="w-12 shrink-0" />}
+        <div
+          className={
+            isMobile
+              ? 'fixed inset-y-0 left-0 z-50 w-12 border-r bg-(--sidebar) flex flex-col items-center'
+              : 'w-12 border-r bg-(--sidebar) flex flex-col items-center relative z-10'
+          }
+        >
+          {/* Logo icon - matches expanded header height */}
+          <div className="w-full h-12 flex items-center justify-center border-b border-border/50 shrink-0">
             <button
-              onClick={reload}
-              className="p-2 text-blue-500 hover:text-blue-400 transition-colors animate-pulse"
-              title="Click to reload and get the latest version"
+              onClick={() => handleSetCollapsed(false)}
+              className="group relative"
+              title="Expand sidebar"
             >
-              <ArrowUpCircle className="h-4 w-4" />
+              <img
+                src={resolvedTheme === 'dark' ? '/logoDarkSm.svg' : '/logoLightSm.svg'}
+                alt="Data"
+                className="h-6 group-hover:opacity-0 transition-opacity"
+              />
+              <PanelLeftOpen className="h-5 w-5 absolute inset-0 m-auto opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground" />
             </button>
-          )}
-          <button
-            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-            title={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}
-          >
-            {resolvedTheme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-          </button>
-          <UserPopover collapsed />
-          <button
-            onClick={() => handleSetCollapsed(false)}
-            className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-            title="Expand sidebar"
-          >
-            <PanelLeftOpen className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-    )
-  }
+          </div>
 
-  // ─── Expanded sidebar ────────────────────────────────────────────────
-  return (
-    <div className="w-64 border-r bg-[var(--sidebar)] flex flex-col relative z-10">
-      {/* Header with logo and collapse */}
-      <div className="px-3 h-12 flex items-center justify-between border-b border-border/50 shrink-0">
-        <Link
-          to="/"
-          className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
-        >
-          <img src={resolvedTheme === 'dark' ? '/logoDark.svg' : '/logoLight.svg'} alt="DoubleZero" className="h-6" />
-          <span className="wordmark text-lg">Data</span>
-        </Link>
-        <button
-          onClick={() => handleSetCollapsed(true)}
-          className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-          title="Collapse sidebar"
-        >
-          <PanelLeftClose className="h-4 w-4 translate-y-0.5" />
-        </button>
-      </div>
+          <div className="flex-1 flex flex-col items-center gap-1 pt-4 overflow-y-auto min-h-0">
+            {/* Search */}
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
+              className="p-2 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]"
+              title="Search (⌘K)"
+            >
+              <Search className="h-4 w-4" />
+            </button>
 
-      {/* Scrollable content area */}
-      <div className="flex-1 flex flex-col overflow-y-auto min-h-0">
-        {/* Main nav - no section label */}
-        <div className="px-3 pt-4">
-          <div className="space-y-1">
-            <Link to="/status" className={navItemClass(isStatusRoute)}>
+            {/* Main nav */}
+            <Link to="/status" className={collapsedIconClass(isStatusRoute)} title="Status">
               <Activity className="h-4 w-4" />
-              Status
             </Link>
-
-            {/* Topology with inline sub-items */}
-            <Link to="/topology/map" className={isTopologyRoute ? navItemExpandedClass : navItemClass(false)}>
+            <Link
+              to="/topology/map"
+              className={collapsedIconClass(isTopologyRoute)}
+              title="Topology"
+            >
               <Globe className="h-4 w-4" />
-              Topology
             </Link>
-            {isTopologyRoute && (
-              <>
-                <Link to="/topology/map" className={subNavItemClass(isTopologyMap)}>
-                  <Map className="h-4 w-4" />
-                  Map
-                </Link>
-                <Link to="/topology/globe" className={subNavItemClass(isTopologyGlobe)}>
-                  <Globe className="h-4 w-4" />
-                  Globe
-                </Link>
-                {hasNeo4j && (
-                  <>
-                    <Link to="/topology/graph" className={subNavItemClass(isTopologyGraph)}>
-                      <Network className="h-4 w-4" />
-                      Graph
-                    </Link>
-                    <Link to="/topology/path-calculator" className={subNavItemClass(isTopologyTool)}>
-                      <Wrench className="h-4 w-4" />
-                      Tools
-                    </Link>
-                    {isTopologyTool && (
-                      <>
-                        <Link to="/topology/path-calculator" className={subNavItemClass(isTopologyPathCalculator, true)}>
-                          <Route className="h-4 w-4" />
-                          Path Calculator
-                        </Link>
-                        <Link to="/topology/redundancy" className={subNavItemClass(isTopologyRedundancy, true)}>
-                          <Shield className="h-4 w-4" />
-                          Redundancy
-                        </Link>
-                        <Link to="/topology/metro-connectivity" className={subNavItemClass(isTopologyMetroConnectivity, true)}>
-                          <Network className="h-4 w-4" />
-                          Metro Connectivity
-                        </Link>
-                        <Link to="/topology/maintenance" className={subNavItemClass(isTopologyMaintenance, true)}>
-                          <Wrench className="h-4 w-4" />
-                          Maintenance
-                        </Link>
-                      </>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-
-            {/* Traffic with inline sub-items */}
-            <Link to="/traffic/overview" className={isTrafficRoute ? navItemExpandedClass : navItemClass(false)}>
+            <Link
+              to="/traffic/overview"
+              className={collapsedIconClass(isTrafficRoute)}
+              title="Traffic"
+            >
               <Network className="h-4 w-4" />
-              Traffic
             </Link>
-            {isTrafficRoute && (
-              <>
-                <Link to="/traffic/overview" className={subNavItemClass(isTrafficDashboard)}>
-                  <BarChart3 className="h-4 w-4" />
-                  Overview
-                </Link>
-                <Link to="/traffic/interfaces" className={subNavItemClass(isTrafficInterfaces)}>
-                  <Network className="h-4 w-4" />
-                  Interfaces
-                </Link>
-              </>
-            )}
-
-            {/* Performance with inline sub-items */}
-            <Link to="/performance/dz-vs-internet" className={isPerformanceRoute ? navItemExpandedClass : navItemClass(false)}>
+            <Link
+              to="/performance/dz-vs-internet"
+              className={collapsedIconClass(isPerformanceRoute)}
+              title="Performance"
+            >
               <Gauge className="h-4 w-4" />
-              Performance
             </Link>
-            {isPerformanceRoute && (
-              <>
-                <Link to="/performance/dz-vs-internet" className={subNavItemClass(isPerformanceDzVsInternet)}>
-                  <Zap className="h-4 w-4" />
-                  DZ vs Internet
-                </Link>
-                <Link to="/performance/link-latency" className={subNavItemClass(isPerformanceLinkLatency)}>
-                  <ArrowRightLeft className="h-4 w-4" />
-                  Link Latency
-                </Link>
-                {hasNeo4j && (
-                  <Link to="/performance/path-latency" className={subNavItemClass(isPerformancePathLatency)}>
-                    <Route className="h-4 w-4" />
-                    Path Latency
-                  </Link>
-                )}
-              </>
-            )}
-            <Link to="/incidents/links" className={navItemClass(isIncidentsRoute)}>
+            <Link
+              to="/incidents/links"
+              className={collapsedIconClass(isIncidentsRoute)}
+              title="Incidents"
+            >
               <ShieldAlert className="h-4 w-4" />
-              Incidents
             </Link>
-            {/* Chat with inline sub-items */}
             <button
               onClick={(e) => {
                 if (e.metaKey || e.ctrlKey) {
@@ -412,172 +279,433 @@ export function Sidebar() {
                   navigate('/chat')
                 }
               }}
-              className={isChatRoute ? navItemExpandedClass : navItemClass(false)}
+              className={collapsedIconClass(isChatRoute)}
+              title="Chat"
             >
               <MessageSquare className="h-4 w-4" />
-              Chat
             </button>
-            {isChatRoute && (
-              <>
-                <button
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey) {
-                      window.open('/chat', '_blank')
-                    } else {
-                      navigate('/chat')
-                    }
-                  }}
-                  className={subNavItemClass(!isChatSessions && (location.pathname === '/chat' || !!location.pathname.match(/^\/chat\/[^/]+$/)))}
-                >
-                  New chat
-                </button>
-                <Link to="/chat/sessions" className={subNavItemClass(isChatSessions)}>
-                  History
-                </Link>
-              </>
-            )}
+            {/* Divider */}
+            <div className="w-6 border-t border-border/50 my-2" />
 
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]"
-            >
-              <Search className="h-4 w-4" />
-              <span className="flex-1 text-left">Search</span>
-              <kbd className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">⌘K</kbd>
-            </button>
-          </div>
-        </div>
-
-        {/* DoubleZero section - always visible */}
-        <div className="px-3 pt-4">
-          <div className="px-3 mb-2">
-            <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">DoubleZero</span>
-          </div>
-          <div className="space-y-1">
-            <Link to="/dz/devices" className={navItemClass(isDevicesRoute)}>
+            {/* Entity sections */}
+            <Link to="/dz/devices" className={collapsedIconClass(isDZRoute)} title="DoubleZero">
               <Server className="h-4 w-4" />
-              Devices
             </Link>
-            <Link to="/dz/links" className={navItemClass(isLinksRoute)}>
-              <Link2 className="h-4 w-4" />
-              Links
-            </Link>
-            <Link to="/dz/metros" className={navItemClass(isMetrosRoute)}>
-              <MapPin className="h-4 w-4" />
-              Metros
-            </Link>
-            <Link to="/dz/contributors" className={navItemClass(isContributorsRoute)}>
-              <Building2 className="h-4 w-4" />
-              Contributors
-            </Link>
-            <Link to="/dz/tenants" className={navItemClass(isTenantsRoute)}>
-              <Layers className="h-4 w-4" />
-              Tenants
-            </Link>
-            <Link to="/dz/users" className={navItemClass(isUsersRoute)}>
-              <Users className="h-4 w-4" />
-              Users
-            </Link>
-            <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
-              <Radio className="h-4 w-4" />
-              Multicast
-            </Link>
-            <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
-              <ShieldCheck className="h-4 w-4" />
-              Publisher Check
-            </Link>
-            <Link to="/dz/shreds/subscribers" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
-              <Puzzle className="h-4 w-4" />
-              Shreds
-            </Link>
-            {isShredsRoute && (
-              <>
-                <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
-                  Subscribers
-                </Link>
-                <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
-                  Devices
-                </Link>
-                <Link to="/dz/shreds/activity" className={subNavItemClass(isShredsEscrowEventsRoute)}>
-                  Activity
-                </Link>
-                {isInternalUser && (
-                  <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
-                    Scoreboard
-                  </Link>
-                )}
-              </>
+            {hasSolana && (
+              <Link
+                to="/solana/validators"
+                className={collapsedIconClass(isSolanaRoute)}
+                title="Solana"
+              >
+                <Landmark className="h-4 w-4" />
+              </Link>
             )}
           </div>
+
+          {/* Footer */}
+          <div className="flex flex-col items-center gap-1 mb-3 shrink-0">
+            {updateAvailable && (
+              <button
+                onClick={reload}
+                className="p-2 text-blue-500 hover:text-blue-400 transition-colors animate-pulse"
+                title="Click to reload and get the latest version"
+              >
+                <ArrowUpCircle className="h-4 w-4" />
+              </button>
+            )}
+            <button
+              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+              className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+              title={`Switch to ${resolvedTheme === 'dark' ? 'light' : 'dark'} mode`}
+            >
+              {resolvedTheme === 'dark' ? (
+                <Moon className="h-4 w-4" />
+              ) : (
+                <Sun className="h-4 w-4" />
+              )}
+            </button>
+            <UserPopover collapsed />
+            <button
+              onClick={() => handleSetCollapsed(false)}
+              className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+              title="Expand sidebar"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // ─── Expanded sidebar ────────────────────────────────────────────────
+  return (
+    <>
+      {isMobile && <div className="w-12 shrink-0" />}
+      {isMobile && (
+        <div className="fixed inset-0 z-40 bg-black/50" onClick={() => handleSetCollapsed(true)} />
+      )}
+      <div
+        className={
+          isMobile
+            ? 'fixed inset-y-0 left-0 z-50 w-64 border-r bg-(--sidebar) flex flex-col'
+            : 'w-64 border-r bg-(--sidebar) flex flex-col relative z-10'
+        }
+      >
+        {/* Header with logo and collapse */}
+        <div className="px-3 h-12 flex items-center justify-between border-b border-border/50 shrink-0">
+          <Link
+            to="/"
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer"
+          >
+            <img
+              src={resolvedTheme === 'dark' ? '/logoDark.svg' : '/logoLight.svg'}
+              alt="DoubleZero"
+              className="h-6"
+            />
+            <span className="wordmark text-lg">Data</span>
+          </Link>
+          <button
+            onClick={() => handleSetCollapsed(true)}
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+            title="Collapse sidebar"
+          >
+            <PanelLeftClose className="h-4 w-4 translate-y-0.5" />
+          </button>
         </div>
 
-        {/* Solana section - always visible when feature-gated */}
-        {hasSolana && (
+        {/* Scrollable content area */}
+        <div className="flex-1 flex flex-col overflow-y-auto min-h-0">
+          {/* Main nav - no section label */}
+          <div className="px-3 pt-4">
+            <div className="space-y-1">
+              <Link to="/status" className={navItemClass(isStatusRoute)}>
+                <Activity className="h-4 w-4" />
+                Status
+              </Link>
+
+              {/* Topology with inline sub-items */}
+              <Link
+                to="/topology/map"
+                className={isTopologyRoute ? navItemExpandedClass : navItemClass(false)}
+              >
+                <Globe className="h-4 w-4" />
+                Topology
+              </Link>
+              {isTopologyRoute && (
+                <>
+                  <Link to="/topology/map" className={subNavItemClass(isTopologyMap)}>
+                    <Map className="h-4 w-4" />
+                    Map
+                  </Link>
+                  <Link to="/topology/globe" className={subNavItemClass(isTopologyGlobe)}>
+                    <Globe className="h-4 w-4" />
+                    Globe
+                  </Link>
+                  {hasNeo4j && (
+                    <>
+                      <Link to="/topology/graph" className={subNavItemClass(isTopologyGraph)}>
+                        <Network className="h-4 w-4" />
+                        Graph
+                      </Link>
+                      <Link
+                        to="/topology/path-calculator"
+                        className={subNavItemClass(isTopologyTool)}
+                      >
+                        <Wrench className="h-4 w-4" />
+                        Tools
+                      </Link>
+                      {isTopologyTool && (
+                        <>
+                          <Link
+                            to="/topology/path-calculator"
+                            className={subNavItemClass(isTopologyPathCalculator, true)}
+                          >
+                            <Route className="h-4 w-4" />
+                            Path Calculator
+                          </Link>
+                          <Link
+                            to="/topology/redundancy"
+                            className={subNavItemClass(isTopologyRedundancy, true)}
+                          >
+                            <Shield className="h-4 w-4" />
+                            Redundancy
+                          </Link>
+                          <Link
+                            to="/topology/metro-connectivity"
+                            className={subNavItemClass(isTopologyMetroConnectivity, true)}
+                          >
+                            <Network className="h-4 w-4" />
+                            Metro Connectivity
+                          </Link>
+                          <Link
+                            to="/topology/maintenance"
+                            className={subNavItemClass(isTopologyMaintenance, true)}
+                          >
+                            <Wrench className="h-4 w-4" />
+                            Maintenance
+                          </Link>
+                        </>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Traffic with inline sub-items */}
+              <Link
+                to="/traffic/overview"
+                className={isTrafficRoute ? navItemExpandedClass : navItemClass(false)}
+              >
+                <Network className="h-4 w-4" />
+                Traffic
+              </Link>
+              {isTrafficRoute && (
+                <>
+                  <Link to="/traffic/overview" className={subNavItemClass(isTrafficDashboard)}>
+                    <BarChart3 className="h-4 w-4" />
+                    Overview
+                  </Link>
+                  <Link to="/traffic/interfaces" className={subNavItemClass(isTrafficInterfaces)}>
+                    <Network className="h-4 w-4" />
+                    Interfaces
+                  </Link>
+                </>
+              )}
+
+              {/* Performance with inline sub-items */}
+              <Link
+                to="/performance/dz-vs-internet"
+                className={isPerformanceRoute ? navItemExpandedClass : navItemClass(false)}
+              >
+                <Gauge className="h-4 w-4" />
+                Performance
+              </Link>
+              {isPerformanceRoute && (
+                <>
+                  <Link
+                    to="/performance/dz-vs-internet"
+                    className={subNavItemClass(isPerformanceDzVsInternet)}
+                  >
+                    <Zap className="h-4 w-4" />
+                    DZ vs Internet
+                  </Link>
+                  <Link
+                    to="/performance/link-latency"
+                    className={subNavItemClass(isPerformanceLinkLatency)}
+                  >
+                    <ArrowRightLeft className="h-4 w-4" />
+                    Link Latency
+                  </Link>
+                  {hasNeo4j && (
+                    <Link
+                      to="/performance/path-latency"
+                      className={subNavItemClass(isPerformancePathLatency)}
+                    >
+                      <Route className="h-4 w-4" />
+                      Path Latency
+                    </Link>
+                  )}
+                </>
+              )}
+              <Link to="/incidents/links" className={navItemClass(isIncidentsRoute)}>
+                <ShieldAlert className="h-4 w-4" />
+                Incidents
+              </Link>
+              {/* Chat with inline sub-items */}
+              <button
+                onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey) {
+                    window.open('/chat', '_blank')
+                  } else if (location.pathname === '/chat') {
+                    window.dispatchEvent(new CustomEvent('refresh-chat-suggestions'))
+                  } else {
+                    navigate('/chat')
+                  }
+                }}
+                className={isChatRoute ? navItemExpandedClass : navItemClass(false)}
+              >
+                <MessageSquare className="h-4 w-4" />
+                Chat
+              </button>
+              {isChatRoute && (
+                <>
+                  <button
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey) {
+                        window.open('/chat', '_blank')
+                      } else {
+                        navigate('/chat')
+                      }
+                    }}
+                    className={subNavItemClass(
+                      !isChatSessions &&
+                        (location.pathname === '/chat' ||
+                          !!location.pathname.match(/^\/chat\/[^/]+$/)),
+                    )}
+                  >
+                    New chat
+                  </button>
+                  <Link to="/chat/sessions" className={subNavItemClass(isChatSessions)}>
+                    History
+                  </Link>
+                </>
+              )}
+
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('open-search'))}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-[var(--sidebar-active)]"
+              >
+                <Search className="h-4 w-4" />
+                <span className="flex-1 text-left">Search</span>
+                <kbd className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  ⌘K
+                </kbd>
+              </button>
+            </div>
+          </div>
+
+          {/* DoubleZero section - always visible */}
           <div className="px-3 pt-4">
             <div className="px-3 mb-2">
-              <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Solana</span>
+              <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">
+                DoubleZero
+              </span>
             </div>
             <div className="space-y-1">
-              <Link to="/solana/overview" className={navItemClass(isSolanaOverviewRoute)}>
-                <BookOpen className="h-4 w-4" />
-                Overview
+              <Link to="/dz/devices" className={navItemClass(isDevicesRoute)}>
+                <Server className="h-4 w-4" />
+                Devices
               </Link>
-              <Link to="/solana/validators" className={navItemClass(isValidatorsRoute)}>
-                <Landmark className="h-4 w-4" />
-                Validators
+              <Link to="/dz/links" className={navItemClass(isLinksRoute)}>
+                <Link2 className="h-4 w-4" />
+                Links
               </Link>
-              <Link to="/solana/gossip-nodes" className={navItemClass(isGossipNodesRoute)}>
+              <Link to="/dz/metros" className={navItemClass(isMetrosRoute)}>
+                <MapPin className="h-4 w-4" />
+                Metros
+              </Link>
+              <Link to="/dz/contributors" className={navItemClass(isContributorsRoute)}>
+                <Building2 className="h-4 w-4" />
+                Contributors
+              </Link>
+              <Link to="/dz/tenants" className={navItemClass(isTenantsRoute)}>
+                <Layers className="h-4 w-4" />
+                Tenants
+              </Link>
+              <Link to="/dz/users" className={navItemClass(isUsersRoute)}>
+                <Users className="h-4 w-4" />
+                Users
+              </Link>
+              <Link to="/dz/multicast-groups" className={navItemClass(isMulticastGroupsRoute)}>
                 <Radio className="h-4 w-4" />
-                Gossip Nodes
+                Multicast
               </Link>
+              <Link to="/dz/publisher-check" className={navItemClass(isPublisherCheckRoute)}>
+                <ShieldCheck className="h-4 w-4" />
+                Publisher Check
+              </Link>
+              <Link
+                to="/dz/shreds/subscribers"
+                className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}
+              >
+                <Puzzle className="h-4 w-4" />
+                Shreds
+              </Link>
+              {isShredsRoute && (
+                <>
+                  <Link to="/dz/shreds/subscribers" className={subNavItemClass(isShredsSeatsRoute)}>
+                    Subscribers
+                  </Link>
+                  <Link to="/dz/shreds/devices" className={subNavItemClass(isShredsDevicesRoute)}>
+                    Devices
+                  </Link>
+                  <Link
+                    to="/dz/shreds/activity"
+                    className={subNavItemClass(isShredsEscrowEventsRoute)}
+                  >
+                    Activity
+                  </Link>
+                  {isInternalUser && (
+                    <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
+                      Scoreboard
+                    </Link>
+                  )}
+                </>
+              )}
             </div>
           </div>
-        )}
 
-        {/* Spacer */}
-        <div className="flex-1" />
-      </div>
+          {/* Solana section - always visible when feature-gated */}
+          {hasSolana && (
+            <div className="px-3 pt-4">
+              <div className="px-3 mb-2">
+                <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">
+                  Solana
+                </span>
+              </div>
+              <div className="space-y-1">
+                <Link to="/solana/overview" className={navItemClass(isSolanaOverviewRoute)}>
+                  <BookOpen className="h-4 w-4" />
+                  Overview
+                </Link>
+                <Link to="/solana/validators" className={navItemClass(isValidatorsRoute)}>
+                  <Landmark className="h-4 w-4" />
+                  Validators
+                </Link>
+                <Link to="/solana/gossip-nodes" className={navItemClass(isGossipNodesRoute)}>
+                  <Radio className="h-4 w-4" />
+                  Gossip Nodes
+                </Link>
+              </div>
+            </div>
+          )}
 
-      {/* Footer */}
-      <div className="px-3 py-3 border-t border-border/50 space-y-2 shrink-0">
-        {updateAvailable && (
-          <button
-            onClick={reload}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-blue-500 hover:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded transition-colors"
-            title="Click to reload and get the latest version"
-          >
-            <ArrowUpCircle className="h-4 w-4" />
-            Update available
-          </button>
-        )}
-        <UserPopover />
-        <div className="flex rounded-lg border border-border overflow-hidden bg-card">
-          <button
-            onClick={() => setTheme('light')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs transition-colors',
-              resolvedTheme === 'light'
-                ? 'bg-muted text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            )}
-          >
-            <Sun className="h-3.5 w-3.5" />
-            Light
-          </button>
-          <button
-            onClick={() => setTheme('dark')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs border-l border-border transition-colors',
-              resolvedTheme === 'dark'
-                ? 'bg-muted text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            )}
-          >
-            <Moon className="h-3.5 w-3.5" />
-            Dark
-          </button>
+          {/* Spacer */}
+          <div className="flex-1" />
+        </div>
+
+        {/* Footer */}
+        <div className="px-3 py-3 border-t border-border/50 space-y-2 shrink-0">
+          {updateAvailable && (
+            <button
+              onClick={reload}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-blue-500 hover:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded transition-colors"
+              title="Click to reload and get the latest version"
+            >
+              <ArrowUpCircle className="h-4 w-4" />
+              Update available
+            </button>
+          )}
+          <UserPopover />
+          <div className="flex rounded-lg border border-border overflow-hidden bg-card">
+            <button
+              onClick={() => setTheme('light')}
+              className={cn(
+                'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs transition-colors',
+                resolvedTheme === 'light'
+                  ? 'bg-muted text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+              )}
+            >
+              <Sun className="h-3.5 w-3.5" />
+              Light
+            </button>
+            <button
+              onClick={() => setTheme('dark')}
+              className={cn(
+                'flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs border-l border-border transition-colors',
+                resolvedTheme === 'dark'
+                  ? 'bg-muted text-foreground font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
+              )}
+            >
+              <Moon className="h-3.5 w-3.5" />
+              Dark
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }
