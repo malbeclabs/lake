@@ -1153,10 +1153,16 @@ function RecentSlotsChart({
       return feedData
     }
 
-    // Seed cycle pool from available slot data.
+    // Seed cycle pool from available slot data and immediately show the most recent slot
+    // so the info bar is populated before the first 400ms tick fires.
     const { map, nums } = groupBySlot(slotsRef.current)
     bucketedTickerMaxRef.current = nums.at(-1) ?? 0
     bucketedTickerCycleRef.current = nums.map(s => map.get(s)!)
+    const seedRaces = nums.length ? map.get(nums.at(-1)!) : undefined
+    if (seedRaces) {
+      const slotNum = seedRaces[0]?.slot ?? 0
+      applyInfoBar({ slot: slotNum, feedData: computeFeedData(seedRaces), leader: slotLeadersRef.current?.[String(slotNum)] })
+    }
 
     // Poll for new slots every 5s.
     const poll = () => {
@@ -1732,22 +1738,6 @@ function RecentSlotsChart({
     if (!isHoveredRef.current) applyInfoBar(info)
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, bucketed, granular, applyInfoBar])
 
-  // In bucketed (trend) mode, seed the legend with overall window averages on first data
-  // load so it isn't blank before the ticker fires its first slot.
-  useEffect(() => {
-    if (!bucketed || !nodes.length || !feeds.length) return
-    const feedData: Record<string, number | null> = {}
-    for (const f of feeds) {
-      const sum = nodes.reduce((acc, n) => acc + (n.feeds[f]?.win_rate_pct ?? 0), 0)
-      feedData[f] = sum / nodes.length
-    }
-    const total = feeds.reduce((s, f) => s + (feedData[f] ?? 0), 0)
-    if (total > 0) {
-      const scale = 100 / total
-      for (const f of feeds) feedData[f] = Math.round((feedData[f] ?? 0) * scale * 10) / 10
-    }
-    applyInfoBar({ slot: 0, feedData })
-  }, [bucketed, nodes, feeds, applyInfoBar])
 
   if (!slots.length)
     return (
