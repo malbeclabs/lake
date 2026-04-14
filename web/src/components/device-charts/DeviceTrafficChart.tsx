@@ -65,6 +65,7 @@ interface CategoryChartProps {
   /** Interface type metadata for badges */
   interfaceTypes?: Map<string, { cyoa_type?: string; link_pk?: string }>
   aggMode: AggMode
+  bidirectional: boolean
   loading?: boolean
   className?: string
   bucketSeconds: number
@@ -72,7 +73,7 @@ interface CategoryChartProps {
   onCursorTime?: (time: number | null) => void
 }
 
-function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes, aggMode, loading, className, bucketSeconds, highlightTimeRange, onCursorTime }: CategoryChartProps) {
+function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes, aggMode, bidirectional, loading, className, bucketSeconds, highlightTimeRange, onCursorTime }: CategoryChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   const chartRef = useRef<HTMLDivElement>(null)
@@ -122,7 +123,7 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
           const inVal = (d as unknown as Record<string, number>)[inKey]
           const outVal = (d as unknown as Record<string, number>)[outKey]
           inVals.push(inVal || null)
-          outVals.push(outVal ? -outVal : null)
+          outVals.push(outVal ? (bidirectional ? -outVal : outVal) : null)
         } else {
           inVals.push(null)
           outVals.push(null)
@@ -137,7 +138,7 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
     }
 
     return { uPlotData: arrays as uPlot.AlignedData, uPlotSeries: series, seriesKeys: keys }
-  }, [bucketTimestamps, interfaces, dataMap, aggMode])
+  }, [bucketTimestamps, interfaces, dataMap, aggMode, bidirectional])
 
   uPlotDataRef.current = uPlotData
 
@@ -319,6 +320,7 @@ function CategoryChart({ title, interfaces, bucketTimestamps, dataMap, interface
 
 export function DeviceTrafficChart({ data, className, loading, highlightTimeRange, onCursorTime }: DeviceTrafficChartProps) {
   const [aggMode, setAggMode] = useState<AggMode>('avg')
+  const [bidirectional, setBidirectional] = useState(true)
 
   // Collect all interface data across buckets, classify, and build lookup
   const { categories, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes } = useMemo(() => {
@@ -392,6 +394,19 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
         <option value="p99">P99</option>
         <option value="max">Max</option>
       </select>
+      <button
+        onClick={() => setBidirectional(!bidirectional)}
+        className={`px-3 py-1.5 text-sm border rounded-md transition-colors inline-flex items-center gap-1.5 ${
+          bidirectional
+            ? 'border-foreground/30 text-foreground bg-muted'
+            : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+        }`}
+        title={bidirectional
+          ? 'Rx and Tx are shown separately (Rx up, Tx down). Click to combine into a single line per interface.'
+          : 'Rx and Tx are combined into a single line per interface. Click to split into separate Rx (up) and Tx (down).'}
+      >
+        {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
+      </button>
     </div>
   )
 
@@ -410,6 +425,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
           interfaceLabels={interfaceLabels}
           interfaceTypes={interfaceTypes}
           aggMode={aggMode}
+          bidirectional={bidirectional}
           loading={loading}
           className={className}
           bucketSeconds={data.bucket_seconds}
