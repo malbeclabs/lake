@@ -56,8 +56,8 @@ function WinRateGauge({ value }: { value: number }) {
   return (
     <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={3} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={3} stroke="#10b981" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="#10b981" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
       </svg>
       <div className="flex flex-col items-center z-10">
         <div className="text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</div>
@@ -2093,7 +2093,7 @@ export function EdgeScoreboardPage() {
                   <span className="text-sm text-muted-foreground">Stakeweight Publishing to DZ Edge</span>
                   <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(globalStats.avgCompleteness)}</span>
                 </div>
-                <div className="h-0.5 rounded-full bg-muted-foreground/25 overflow-hidden">
+                <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
                   <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, globalStats.avgCompleteness)}%` }} />
                 </div>
               </div>
