@@ -155,36 +155,51 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	return nil
 }
 
-func (a *Activities) refresh(ctx context.Context, name, key string, fn func(context.Context) (any, error)) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-
-	result, err := fn(ctx)
-	if err != nil {
-		if ctx.Err() != nil {
-			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
+func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error)) {
+	const maxAttempts = 2
+	for attempt := range maxAttempts {
+		if parentCtx.Err() != nil {
+			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name)
 			return
 		}
-		n := a.incFailures(key)
-		if n >= errorAfterFailures {
-			a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-		} else {
-			a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-		}
-		return
-	}
 
-	a.failures.Delete(key)
+		ctx, cancel := context.WithTimeout(parentCtx, 45*time.Second)
+		result, err := fn(ctx)
+		cancel()
 
-	if err := a.API.WritePageCache(ctx, key, result); err != nil {
-		if ctx.Err() != nil {
+		if err != nil {
+			if parentCtx.Err() != nil {
+				// Temporal is shutting down — not a query failure, don't count it.
+				a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
+				return
+			}
+			// Query error or timeout. Retry once before counting as a failure.
+			if attempt < maxAttempts-1 {
+				a.Log.Warn("cache refresh failed, retrying", "cache", name, "attempt", attempt+1, "error", err)
+				continue
+			}
+			n := a.incFailures(key)
+			if n >= errorAfterFailures {
+				a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+			} else {
+				a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+			}
 			return
 		}
-		a.Log.Error("cache write failed", "cache", name, "error", err)
+
+		a.failures.Delete(key)
+
+		if err := a.API.WritePageCache(parentCtx, key, result); err != nil {
+			if parentCtx.Err() != nil {
+				return
+			}
+			a.Log.Error("cache write failed", "cache", name, "error", err)
+			return
+		}
+
+		a.Log.Debug("cache refreshed", "cache", name)
 		return
 	}
-
-	a.Log.Debug("cache refreshed", "cache", name)
 }
 
 func (a *Activities) incFailures(key string) int {
