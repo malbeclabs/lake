@@ -111,6 +111,7 @@ type EdgeScoreboardResponse struct {
 	DZSlots            uint64                           `json:"dz_slots"`
 	TotalDZLeaderSlots uint64                           `json:"total_dz_leader_slots"`
 	CompletenessPct    float64                          `json:"completeness_pct"`
+	PublisherCount     uint64                           `json:"publisher_count"`
 	Nodes              []EdgeScoreboardNode             `json:"nodes"`
 	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
 	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
@@ -417,6 +418,29 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		rows1c.Close()
 		if err := rows1c.Err(); err != nil {
 			return nil, fmt.Errorf("query1c rows: %w", err)
+		}
+	}
+
+	// Query 1d: Count of distinct publishers (node_pubkey) in publisher_shred_stats.
+	var publisherCount uint64
+	{
+		query1d := fmt.Sprintf(`
+			SELECT uniqExact(node_pubkey)
+			FROM %s.publisher_shred_stats
+			WHERE 1=1 %s
+		SETTINGS final=1
+`, publisherDB, timeFilter)
+		start = time.Now()
+		rows1d, err := a.envDB(ctx).Query(ctx, query1d)
+		duration = time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+		if err != nil {
+			log.Printf("EdgeScoreboard query1d error: %v", err)
+		} else {
+			if rows1d.Next() {
+				_ = rows1d.Scan(&publisherCount)
+			}
+			rows1d.Close()
 		}
 	}
 
@@ -1296,6 +1320,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		DZSlots:            dzSlots,
 		TotalDZLeaderSlots: totalDZLeaderSlots,
 		CompletenessPct:    completenessPct,
+		PublisherCount:     publisherCount,
 		Nodes:              nodes,
 		RecentSlots:        recentSlots,
 		SlotBuckets:        slotBuckets,

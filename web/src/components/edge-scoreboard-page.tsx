@@ -1878,8 +1878,8 @@ export function EdgeScoreboardPage() {
               </p>
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">Observer Nodes</div>
-                  <div className="text-2xl font-semibold tabular-nums">{data.nodes.length}</div>
+                  <div className="text-xs text-muted-foreground mb-1">DZ Edge Publishers</div>
+                  <div className="text-2xl font-semibold tabular-nums">{data.publisher_count.toLocaleString()}</div>
                 </div>
                 <div className="border-l border-border pl-6">
                   <div className="text-xs text-muted-foreground mb-1">Stake Weight Observed</div>
