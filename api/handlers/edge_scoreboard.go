@@ -450,7 +450,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				countIf(v.vote_pubkey != '' AND g.pubkey != '') AS publisher_count,
 				countIf(v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != '') AS publishing_count,
 				COALESCE(sumIf(v.activated_stake_lamports, v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != ''), 0)
-					/ COALESCE((SELECT stake FROM total_network_stake), 1) * 100 AS publishing_stake_pct
+					/ greatest(COALESCE((SELECT stake FROM total_network_stake), 0), 1) * 100 AS publishing_stake_pct
 			FROM dz_users_current u
 			LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
 			LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'

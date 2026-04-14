@@ -15,7 +15,7 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
-import { Section } from './traffic-dashboard/section'
+
 
 const VALID_WINDOWS = ['1h', '24h', '3d', '7d'] as const
 type TimeWindow = (typeof VALID_WINDOWS)[number]
@@ -1815,7 +1815,7 @@ export function EdgeScoreboardPage() {
   const rawWindow = searchParams.get('window')
   const activeWindow: TimeWindow = isValidWindow(rawWindow) ? rawWindow : '24h'
 
-  const leadersOnly = searchParams.get('leaders_only') === 'true'
+  const leadersOnly = searchParams.get('leaders_only') !== 'false'
   const bucketed = searchParams.get('trend') === '1'
   const setBucketed = (v: boolean) => {
     setSearchParams((prev) => {
@@ -1836,12 +1836,12 @@ export function EdgeScoreboardPage() {
     })
   }
 
-  const rawSlotCount = parseInt(searchParams.get('slot_count') ?? '500')
-  const viewSlotCount = [50, 100, 200, 300, 500].includes(rawSlotCount) ? rawSlotCount : 500
+  const rawSlotCount = parseInt(searchParams.get('slot_count') ?? '200')
+  const viewSlotCount = [50, 100, 200, 300, 500].includes(rawSlotCount) ? rawSlotCount : 200
   const setViewSlotCount = (n: number) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (n === 500) p.delete('slot_count')
+      if (n === 200) p.delete('slot_count')
       else p.set('slot_count', String(n))
       return p
     })
@@ -1892,7 +1892,7 @@ export function EdgeScoreboardPage() {
   const setLeadersOnly = (v: boolean) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
-      if (v) p.set('leaders_only', 'true')
+      if (!v) p.set('leaders_only', 'false')
       else p.delete('leaders_only')
       return p
     })
@@ -2184,10 +2184,9 @@ export function EdgeScoreboardPage() {
         {/* Win Rate by Slot chart */}
         {data?.nodes && (
           <div className="mb-6">
-            <Section
-              title="Win Rate by Slot"
-              defaultOpen={true}
-              action={
+            <div className="border border-border rounded-lg bg-card overflow-hidden">
+              <div className="flex items-center px-4 py-3">
+                <h2 className="text-sm font-semibold flex-1">Win Rate by Slot</h2>
                 <div className="flex items-center gap-2">
                   {!bucketed && live && viewEndSlot !== null && (
                     <button
@@ -2237,29 +2236,30 @@ export function EdgeScoreboardPage() {
                     </button>
                   </div>
                 </div>
-              }
-            >
-              <RecentSlotsChart
-                slots={data.recent_slots ?? []}
-                nodes={data.nodes}
-                slotLeaders={stableRecent?.leaders}
-                leadersOnly={leadersOnly}
-                slotBuckets={data.slot_buckets}
-                slotBucketSize={data.slot_bucket_size}
-                window={activeWindow}
-                bucketed={bucketed}
-                setBucketed={setBucketed}
-                live={live}
-                setLive={setLive}
-                viewSlotCount={viewSlotCount}
-                setViewSlotCount={setViewSlotCount}
-                bare
-                granular={granular}
-                scrollToLiveRef={scrollToLiveRef}
-                toggleLiveRef={toggleLiveRef}
-                onViewEndSlotChange={setViewEndSlot}
-              />
-            </Section>
+              </div>
+              <div className="px-4 pb-4">
+                <RecentSlotsChart
+                  slots={data.recent_slots ?? []}
+                  nodes={data.nodes}
+                  slotLeaders={stableRecent?.leaders}
+                  leadersOnly={leadersOnly}
+                  slotBuckets={data.slot_buckets}
+                  slotBucketSize={data.slot_bucket_size}
+                  window={activeWindow}
+                  bucketed={bucketed}
+                  setBucketed={setBucketed}
+                  live={live}
+                  setLive={setLive}
+                  viewSlotCount={viewSlotCount}
+                  setViewSlotCount={setViewSlotCount}
+                  bare
+                  granular={granular}
+                  scrollToLiveRef={scrollToLiveRef}
+                  toggleLiveRef={toggleLiveRef}
+                  onViewEndSlotChange={setViewEndSlot}
+                />
+              </div>
+            </div>
           </div>
         )}
 
