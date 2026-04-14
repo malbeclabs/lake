@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } fr
 import { useDrag } from '@use-gesture/react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronsRight, Play, Square } from 'lucide-react'
+import { Trophy, Loader2, ChevronsRight, Play, Square, Layers } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -54,7 +54,7 @@ function formatStake(sol: number): string {
 
 
 
-function WinRateGauge({ value }: { value: number }) {
+function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, number>; labelPct: number }) {
   const size = 160
   const r = 65
   const cx = size / 2
@@ -62,15 +62,42 @@ function WinRateGauge({ value }: { value: number }) {
   const circ = 2 * Math.PI * r
   const arc = circ * 0.75
   const gap = circ - arc
-  const fill = arc * (Math.min(100, Math.max(0, value)) / 100)
+
+  // Build sorted segments, each offset after the previous
+  let cumOffset = 0
+  const segments = Object.keys(feedRates)
+    .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
+    .map(key => {
+      const rate = feedRates[key] ?? 0
+      const len = arc * (Math.min(100, Math.max(0, rate)) / 100)
+      const off = cumOffset
+      cumOffset += len
+      return { key, color: FEED_COLORS[key] ?? '#6b7280', len, off }
+    })
+    .filter(s => s.len > 0)
+
+  const multi = segments.length > 1
+
   return (
     <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
         <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="#0ea5e9" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        {segments.map(({ key, color, len, off }) => (
+          <circle
+            key={key}
+            cx={cx} cy={cy} r={r}
+            fill="none"
+            strokeWidth={4}
+            stroke={color}
+            strokeDasharray={`${len} ${circ - len}`}
+            strokeDashoffset={-off}
+            strokeLinecap={multi ? 'butt' : 'round'}
+            transform={`rotate(-225, ${cx}, ${cy})`}
+          />
+        ))}
       </svg>
       <div className="flex flex-col items-center z-10">
-        <div className="text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</div>
+        <div className="text-2xl font-semibold tabular-nums">{labelPct.toFixed(1)}%</div>
         <div className="text-xs text-muted-foreground mt-0.5 text-center">DZ Edge<br/>Win Rate</div>
       </div>
     </div>
@@ -1824,9 +1851,22 @@ export function EdgeScoreboardPage() {
       competitorSlots[c] = 0
     }
 
+    // Per-feed win rate average across nodes (for stacked bar).
+    // Aggregate per node first (so merged feeds like dz+dz_edge+dz_rebop→'dz_edge'
+    // are summed within a node before averaging across nodes), then average.
+    const nodeFeedRates: Record<string, number>[] = []
+
     for (const node of data.nodes) {
       dzShredsWon += node.feeds['dz_edge']?.win_rate_pct ?? 0
       dzTotalShreds++
+
+      const nodeRates: Record<string, number> = {}
+      for (const [feedName, stats] of Object.entries(node.feeds)) {
+        const key = feedKeyForMode(feedName, granular)
+        if (!key) continue
+        nodeRates[key] = (nodeRates[key] ?? 0) + stats.win_rate_pct
+      }
+      nodeFeedRates.push(nodeRates)
 
       const dz = node.feeds['dz']
       if (dz?.lead_times) {
@@ -1850,12 +1890,56 @@ export function EdgeScoreboardPage() {
       }
     }
 
+    const nodeCount = nodeFeedRates.length
+    const feedRateAccum: Record<string, number> = {}
+    for (const nodeRates of nodeFeedRates) {
+      for (const [key, rate] of Object.entries(nodeRates)) {
+        feedRateAccum[key] = (feedRateAccum[key] ?? 0) + rate
+      }
+    }
+    const feedRates: Record<string, number> = {}
+    for (const [key, sum] of Object.entries(feedRateAccum)) {
+      feedRates[key] = nodeCount > 0 ? sum / nodeCount : 0
+    }
+    // Normalize so segments sum to 100% (sub-feeds like dz_edge/dz/dz_rebop
+    // are not mutually exclusive win events, so raw sums can exceed 100%).
+    const feedTotal = Object.values(feedRates).reduce((s, v) => s + v, 0)
+    if (feedTotal > 0) {
+      const scale = 100 / feedTotal
+      for (const key of Object.keys(feedRates)) feedRates[key] *= scale
+    }
+
+    // Always-granular version for the hero bar (ignores the toggle)
+    const granularAccum: Record<string, number> = {}
+    for (const node of data.nodes) {
+      const nodeRates: Record<string, number> = {}
+      for (const [feedName, stats] of Object.entries(node.feeds)) {
+        const key = feedKeyForMode(feedName, true)
+        if (!key) continue
+        nodeRates[key] = (nodeRates[key] ?? 0) + stats.win_rate_pct
+      }
+      for (const [key, rate] of Object.entries(nodeRates)) {
+        granularAccum[key] = (granularAccum[key] ?? 0) + rate
+      }
+    }
+    const feedRatesGranular: Record<string, number> = {}
+    for (const [key, sum] of Object.entries(granularAccum)) {
+      feedRatesGranular[key] = nodeCount > 0 ? sum / nodeCount : 0
+    }
+    const granularTotal = Object.values(feedRatesGranular).reduce((s, v) => s + v, 0)
+    if (granularTotal > 0) {
+      const scale = 100 / granularTotal
+      for (const key of Object.keys(feedRatesGranular)) feedRatesGranular[key] *= scale
+    }
+
     return {
       winRate: dzTotalShreds > 0 ? dzShredsWon / dzTotalShreds : 0,
       leads,
       avgCompleteness: data.completeness_pct,
+      feedRates,
+      feedRatesGranular,
     }
-  }, [data?.nodes])
+  }, [data?.nodes, granular])
 
   // Sort nodes by stake weight descending
   const sortedNodes = useMemo(() => {
@@ -1949,6 +2033,22 @@ export function EdgeScoreboardPage() {
                   </div>
                 ))}
               </div>
+              <div className="w-px h-4 bg-border" />
+              <div className="relative group">
+                <button
+                  type="button"
+                  onClick={() => setGranular(!granular)}
+                  className={cn(
+                    'p-1.5 rounded-md border border-border transition-colors',
+                    granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  <Layers size={15} />
+                </button>
+                <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-48 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                  {granular ? 'Showing all feeds — click to collapse to DZ vs Other' : 'Click to break out all feeds individually'}
+                </span>
+              </div>
             </div>
           }
         />
@@ -1983,15 +2083,28 @@ export function EdgeScoreboardPage() {
 
             {/* Middle: metrics */}
             <div className="border-l border-border flex-1 p-6 flex flex-col justify-center gap-4 min-w-0">
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm text-muted-foreground">Publisher Stake Weight</span>
-                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(data.publishing_stake_pct)}</span>
-                </div>
-                <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
-                  <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${Math.min(100, data.publishing_stake_pct)}%` }} />
-                </div>
-              </div>
+              {(() => {
+                const feedKeys = Object.keys(globalStats.feedRatesGranular).sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
+                      <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(globalStats.winRate)}</span>
+                    </div>
+                    <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
+                      <div className="flex h-full">
+                        {feedKeys.map(key => (
+                          <div
+                            key={key}
+                            className="h-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, globalStats.feedRatesGranular[key] ?? 0)}%`, backgroundColor: FEED_COLORS[key] ?? '#6b7280' }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
                 <div key={competitor}>
                   <div className="flex items-center justify-between">
@@ -2005,7 +2118,7 @@ export function EdgeScoreboardPage() {
 
             {/* Right: gauge */}
             <div className="border-l border-border px-8 flex items-center justify-center shrink-0">
-              <WinRateGauge value={globalStats.winRate} />
+              <WinRateGauge feedRates={globalStats.feedRates} labelPct={globalStats.winRate} />
             </div>
           </div>
         )}
@@ -2018,21 +2131,6 @@ export function EdgeScoreboardPage() {
               defaultOpen={true}
               action={
                 <div className="flex items-center gap-2">
-                  <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
-                    <button
-                      onClick={() => setGranular(false)}
-                      className={cn('px-2.5 transition-colors', !granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
-                    >
-                      DZ vs Other
-                    </button>
-                    <button
-                      onClick={() => setGranular(true)}
-                      className={cn('px-2.5 transition-colors border-l border-border', granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
-                    >
-                      All Feeds
-                    </button>
-                  </div>
-                  <div className="w-px h-4 bg-border mx-1" />
                   {!bucketed && live && viewEndSlot !== null && (
                     <button
                       onClick={() => scrollToLiveRef.current?.()}
@@ -2128,7 +2226,7 @@ export function EdgeScoreboardPage() {
                   </tr>
                 ) : (
                   sortedNodes.map((node) => (
-                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} />
+                    <NodeRow key={node.host} node={node} label={nodeDisplayLabel(node, data?.nodes ?? [])} granular={granular} />
                   ))
                 )}
               </tbody>
@@ -2142,7 +2240,7 @@ export function EdgeScoreboardPage() {
   )
 }
 
-function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
+function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: string; granular: boolean }) {
   const [showTooltip, setShowTooltip] = useState(false)
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
@@ -2156,6 +2254,21 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
       dzLeadByFeed[lt.loser_feed] = { p50: lt.p50_ms, p95: lt.p95_ms }
     }
   }
+
+  // Per-feed-key win rates for the stacked bar (normalized to 100%)
+  const feedBarSegments = useMemo(() => {
+    const accumulated: Record<string, number> = {}
+    for (const [feedName, stats] of Object.entries(node.feeds)) {
+      const key = feedKeyForMode(feedName, granular)
+      if (!key) continue
+      accumulated[key] = (accumulated[key] ?? 0) + stats.win_rate_pct
+    }
+    const total = Object.values(accumulated).reduce((s, v) => s + v, 0)
+    const scale = total > 0 ? 100 / total : 1
+    return Object.entries(accumulated)
+      .sort(([a], [b]) => feedSortPriority(a) - feedSortPriority(b))
+      .map(([key, pct]) => ({ key, pct: pct * scale, color: FEED_COLORS[key] ?? '#6b7280' }))
+  }, [node.feeds, granular])
 
   const hasGossip = !!node.gossip_pubkey
 
@@ -2207,7 +2320,11 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
           <>
             {formatPct(edgeFirstArrival)}
             <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden mt-1.5">
-              <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${Math.min(100, edgeFirstArrival)}%` }} />
+              <div className="flex h-full">
+                {feedBarSegments.map(({ key, pct, color }) => (
+                  <div key={key} className="h-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
+                ))}
+              </div>
             </div>
           </>
         ) : '—'}
