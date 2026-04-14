@@ -2225,7 +2225,7 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
         {dz ? (
           <>
             {formatPct(edgeFirstArrival)}
-            <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-1.5">
+            <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden mt-1.5">
               <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, edgeFirstArrival)}%` }} />
             </div>
           </>
