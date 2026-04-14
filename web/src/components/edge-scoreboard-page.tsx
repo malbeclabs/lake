@@ -1792,7 +1792,7 @@ function RecentSlotsChart({
           {!bucketed && (
             <div className="border-b border-border px-5 py-3.5 flex flex-col gap-0.5">
               <span ref={infoSlotRef} className="text-xs font-semibold tabular-nums tracking-wide" />
-              <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
+              <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate mt-1.5" />
               <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
             </div>
           )}
