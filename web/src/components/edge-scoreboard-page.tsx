@@ -1899,8 +1899,10 @@ export function EdgeScoreboardPage() {
                       type="button"
                       onClick={() => setGranular(!granular)}
                       className={cn(
-                        'p-1.5 rounded-md border border-border transition-colors',
-                        granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        'p-1.5 rounded-md border transition-colors',
+                        granular
+                          ? 'border-emerald-500 bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
                       <Layers size={15} />
