@@ -84,7 +84,7 @@ const FEED_COLORS: Record<string, string> = {
   jito: '#374151',
   turbine: '#1f2937',
   pipe: '#e879f9',
-  other: '#6b7280',
+  other: '#374151',
 }
 
 const FEED_LABELS: Record<string, string> = {
