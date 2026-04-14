@@ -233,8 +233,11 @@ function feedSortPriority(f: string): number {
   if (f === 'dz_edge') return 0
   if (f === 'dz') return 1
   if (f === 'dz_rebop') return 2
+  if (f === 'jito') return 5
+  if (f === 'turbine') return 6
+  if (f === 'pipe') return 7
   if (f === 'other') return 10
-  return 5
+  return 8
 }
 
 
