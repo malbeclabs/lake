@@ -68,12 +68,12 @@ function WinRateGauge({ value }: { value: number }) {
 }
 
 const FEED_COLORS: Record<string, string> = {
-  dz_edge: '#22c55e',
-  dz: '#22c55e',
-  dz_rebop: '#14b8a6',
-  jito: '#3b82f6',
-  turbine: '#f59e0b',
-  pipe: '#a855f7',
+  dz_edge: '#059669',
+  dz: '#10b981',
+  dz_rebop: '#34d399',
+  jito: '#374151',
+  turbine: '#1f2937',
+  pipe: '#e879f9',
 }
 
 const FEED_LABELS: Record<string, string> = {
