@@ -1820,7 +1820,7 @@ function RecentSlotsChart({
       {!bucketed && (
         <div className="flex items-center justify-end gap-1 mt-1">
           <span className="text-[10px] text-muted-foreground mr-1">Slots</span>
-          {[50, 100, 200, 300].map(n => (
+          {[50, 100, 200, 300, 500].map(n => (
             <button
               key={n}
               onClick={() => setViewSlotCount(n)}
@@ -1868,7 +1868,7 @@ export function EdgeScoreboardPage() {
   }
 
   const rawSlotCount = parseInt(searchParams.get('slot_count') ?? '300')
-  const viewSlotCount = [50, 100, 200, 300].includes(rawSlotCount) ? rawSlotCount : 300
+  const viewSlotCount = [50, 100, 200, 300, 500].includes(rawSlotCount) ? rawSlotCount : 300
   const setViewSlotCount = (n: number) => {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
