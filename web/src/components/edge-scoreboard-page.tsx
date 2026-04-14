@@ -2023,7 +2023,7 @@ export function EdgeScoreboardPage() {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="w-full px-4 sm:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Trophy}
           title="Edge Scoreboard"
