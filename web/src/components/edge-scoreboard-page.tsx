@@ -1552,7 +1552,7 @@ function RecentSlotsChart({
           </div>
         )}
         {nodeCharts.map((nc) => (
-          <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center overflow-hidden">
+          <div key={nc.node.host} style={{ height: NODE_ROW_HEIGHT }} className="flex items-center">
             {/* Label stays fixed */}
             <NodeLabel node={nc.node} label={nodeDisplayLabel(nc.node, nodes)} />
             {/* Mask wrapper stays fixed — fade zones always at the visual edges */}
