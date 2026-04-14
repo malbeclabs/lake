@@ -225,11 +225,49 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 	publisherDB := fmt.Sprintf("`%s`", a.PublisherDB)
 
-	// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
-	// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
-	// all-slots mode. In leaders-only mode, query1b overrides this with DZ-leader slots only.
-	// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes).
-	query1 := fmt.Sprintf(`
+	// In cursor mode the client only consumes recent_slots and slot_leaders, so we
+	// skip the expensive aggregate queries (query1–query1d) that feed the full
+	// scoreboard view. These run every 5s per live-page poller in prod and can
+	// saturate ClickHouse, surfacing as "query1c rows: context deadline exceeded".
+	cursorMode := sinceSlot > 0 || beforeSlot > 0
+
+	const slotsPerEpoch = 432_000
+
+	type nodeSlotInfo struct {
+		totalSlots  uint64
+		dzSlots     uint64
+		maxEpoch    uint64
+		minSlot     uint64
+		maxSlot     uint64
+		lastUpdated time.Time
+	}
+	nodeSlots := make(map[string]*nodeSlotInfo)
+
+	var globalMaxEpoch, globalMaxSlot, globalMinSlot uint64
+	dzLeaderSlotsByNode := make(map[string]uint64)
+	var dzLeaderCTE string
+	var totalDZLeaderSlots, globalTotalSlots uint64
+	var publisherCount, publishingCount uint64
+	var publishingStakePct float64
+
+	if cursorMode {
+		// Derive a slot window from the cursor. slotWindowMin/slotWindowMax (below)
+		// are computed from globalMaxSlot; anchoring to the cursor keeps group D's
+		// bounds tight without querying the shredder table.
+		if sinceSlot > 0 {
+			globalMaxSlot = sinceSlot
+		} else {
+			globalMaxSlot = beforeSlot
+		}
+		globalMinSlot = globalMaxSlot
+		globalMaxEpoch = globalMaxSlot / slotsPerEpoch
+	} else {
+
+		// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
+		// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
+		// all-slots mode. In leaders-only mode, query1b overrides this with DZ-leader slots only.
+		// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes).
+		query1 := fmt.Sprintf(`
 		SELECT
 			host,
 			uniqExact(slot) AS total_slots,
@@ -245,106 +283,93 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	SETTINGS final=1
 `, shredderDB, timeFilter)
 
-	start := time.Now()
-	rows1, err := a.envDB(ctx).Query(ctx, query1)
-	duration := time.Since(start)
-	metrics.RecordClickHouseQuery(duration, err)
-	if err != nil {
-		return nil, fmt.Errorf("query1: %w", err)
-	}
-	defer rows1.Close()
-
-	type nodeSlotInfo struct {
-		totalSlots  uint64
-		dzSlots     uint64
-		maxEpoch    uint64
-		minSlot     uint64
-		maxSlot     uint64
-		lastUpdated time.Time
-	}
-	nodeSlots := make(map[string]*nodeSlotInfo)
-
-	for rows1.Next() {
-		var nodeID string
-		var info nodeSlotInfo
-		var feedCount uint64
-		if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.minSlot, &info.maxSlot, &info.lastUpdated, &feedCount); err != nil {
-			return nil, fmt.Errorf("query1 scan: %w", err)
+		start := time.Now()
+		rows1, err := a.envDB(ctx).Query(ctx, query1)
+		duration := time.Since(start)
+		metrics.RecordClickHouseQuery(duration, err)
+		if err != nil {
+			return nil, fmt.Errorf("query1: %w", err)
 		}
-		// Skip nodes that only record one feed in the time window — they can't produce
-		// meaningful race comparisons. Note: a node can appear single-feed if a second
-		// feed joined partway through the window.
-		if feedCount < 2 {
-			continue
-		}
-		nodeSlots[nodeID] = &info
-	}
-	if err := rows1.Err(); err != nil {
-		return nil, fmt.Errorf("query1 rows: %w", err)
-	}
+		defer rows1.Close()
 
-	// Compute trusted max slot/epoch using the median of per-node values as a reference
-	// to filter out corrupted outliers. A single bad row can cause max(slot) to be wildly
-	// inflated; using the median anchors us to the real current Solana slot range.
-	const slotsPerEpoch = 432_000
-	var globalMaxEpoch, globalMaxSlot, globalMinSlot uint64
-	if len(nodeSlots) > 0 {
-		maxSlots := make([]uint64, 0, len(nodeSlots))
-		for _, info := range nodeSlots {
-			maxSlots = append(maxSlots, info.maxSlot)
-		}
-		slices.Sort(maxSlots)
-		median := maxSlots[len(maxSlots)/2]
-		// Accept slots within 2 epochs of the median — generous enough for normal lag,
-		// tight enough to exclude corrupted values that are orders of magnitude larger.
-		upperBound := median + 2*slotsPerEpoch
-		globalMinSlot = ^uint64(0) // max uint64, will be replaced below
-		for _, info := range nodeSlots {
-			if info.maxSlot <= upperBound && info.maxSlot > globalMaxSlot {
-				globalMaxSlot = info.maxSlot
+		for rows1.Next() {
+			var nodeID string
+			var info nodeSlotInfo
+			var feedCount uint64
+			if err := rows1.Scan(&nodeID, &info.totalSlots, &info.dzSlots, &info.maxEpoch, &info.minSlot, &info.maxSlot, &info.lastUpdated, &feedCount); err != nil {
+				return nil, fmt.Errorf("query1 scan: %w", err)
 			}
-			if info.maxSlot <= upperBound && info.minSlot < globalMinSlot {
-				globalMinSlot = info.minSlot
+			// Skip nodes that only record one feed in the time window — they can't produce
+			// meaningful race comparisons. Note: a node can appear single-feed if a second
+			// feed joined partway through the window.
+			if feedCount < 2 {
+				continue
 			}
+			nodeSlots[nodeID] = &info
 		}
-		if globalMinSlot == ^uint64(0) {
-			globalMinSlot = globalMaxSlot
+		if err := rows1.Err(); err != nil {
+			return nil, fmt.Errorf("query1 rows: %w", err)
 		}
-		// Use the max epoch reported by nodes (from DB), not derived from slot number.
-		// Deriving from slot would be wrong when test data uses small slot numbers in high epochs.
-		for _, info := range nodeSlots {
-			if info.maxSlot <= upperBound && info.maxEpoch > globalMaxEpoch {
-				globalMaxEpoch = info.maxEpoch
+
+		// Compute trusted max slot/epoch using the median of per-node values as a reference
+		// to filter out corrupted outliers. A single bad row can cause max(slot) to be wildly
+		// inflated; using the median anchors us to the real current Solana slot range.
+		if len(nodeSlots) > 0 {
+			maxSlots := make([]uint64, 0, len(nodeSlots))
+			for _, info := range nodeSlots {
+				maxSlots = append(maxSlots, info.maxSlot)
+			}
+			slices.Sort(maxSlots)
+			median := maxSlots[len(maxSlots)/2]
+			// Accept slots within 2 epochs of the median — generous enough for normal lag,
+			// tight enough to exclude corrupted values that are orders of magnitude larger.
+			upperBound := median + 2*slotsPerEpoch
+			globalMinSlot = ^uint64(0) // max uint64, will be replaced below
+			for _, info := range nodeSlots {
+				if info.maxSlot <= upperBound && info.maxSlot > globalMaxSlot {
+					globalMaxSlot = info.maxSlot
+				}
+				if info.maxSlot <= upperBound && info.minSlot < globalMinSlot {
+					globalMinSlot = info.minSlot
+				}
+			}
+			if globalMinSlot == ^uint64(0) {
+				globalMinSlot = globalMaxSlot
+			}
+			// Use the max epoch reported by nodes (from DB), not derived from slot number.
+			// Deriving from slot would be wrong when test data uses small slot numbers in high epochs.
+			for _, info := range nodeSlots {
+				if info.maxSlot <= upperBound && info.maxEpoch > globalMaxEpoch {
+					globalMaxEpoch = info.maxEpoch
+				}
 			}
 		}
-	}
 
-	// If no data, return empty response
-	if len(nodeSlots) == 0 {
-		return &EdgeScoreboardResponse{
-			Window:      window,
-			GeneratedAt: time.Now().UTC(),
-			Nodes:       []EdgeScoreboardNode{},
-		}, nil
-	}
+		// If no data, return empty response
+		if len(nodeSlots) == 0 {
+			return &EdgeScoreboardResponse{
+				Window:      window,
+				GeneratedAt: time.Now().UTC(),
+				Nodes:       []EdgeScoreboardNode{},
+			}, nil
+		}
 
-	// DZ-leader slot filter: use publisher_shred_stats.is_scheduled_leader to identify
-	// slots where the leader was publishing shreds via DZ. This is the authoritative
-	// source — it comes from the shredder's own observation of DZ multicast traffic.
-	dzLeaderCTE := fmt.Sprintf(`dz_leader_slots AS (
+		// DZ-leader slot filter: use publisher_shred_stats.is_scheduled_leader to identify
+		// slots where the leader was publishing shreds via DZ. This is the authoritative
+		// source — it comes from the shredder's own observation of DZ multicast traffic.
+		dzLeaderCTE = fmt.Sprintf(`dz_leader_slots AS (
 		SELECT DISTINCT slot
 		FROM %s.publisher_shred_stats
 		WHERE is_scheduled_leader = true %s
 	)`, publisherDB, timeFilter)
 
-	// Query 1b: DZ-leader slot counts per node — always run regardless of leadersOnly.
-	// Counts slots where the dz feed was present (won shreds OR appeared as a pairwise loser),
-	// intersected with dz_leader_slots from publisher_shred_stats. Using OR loser_feed='dz'
-	// ensures nodes like tyo (where dz loses to dz_rebop every time) still count correctly.
-	// In leaders-only mode, also overrides info.dzSlots so SlotsObserved reflects leader slots.
-	dzLeaderSlotsByNode := make(map[string]uint64)
-	{
-		query1b := fmt.Sprintf(`
+		// Query 1b: DZ-leader slot counts per node — always run regardless of leadersOnly.
+		// Counts slots where the dz feed was present (won shreds OR appeared as a pairwise loser),
+		// intersected with dz_leader_slots from publisher_shred_stats. Using OR loser_feed='dz'
+		// ensures nodes like tyo (where dz loses to dz_rebop every time) still count correctly.
+		// In leaders-only mode, also overrides info.dzSlots so SlotsObserved reflects leader slots.
+		{
+			query1b := fmt.Sprintf(`
 			WITH %s
 			SELECT host, uniqExact(slot) AS dz_leader_slots
 			FROM %s.slot_feed_race_summary
@@ -355,48 +380,47 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		SETTINGS final=1
 `, dzLeaderCTE, shredderDB, timeFilter)
 
-		start = time.Now()
-		rows1b, err := a.envDB(ctx).Query(ctx, query1b)
-		duration = time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
-		if err != nil {
-			return nil, fmt.Errorf("query1b: %w", err)
-		}
-		defer rows1b.Close()
-
-		for rows1b.Next() {
-			var nodeID string
-			var count uint64
-			if err := rows1b.Scan(&nodeID, &count); err != nil {
-				return nil, fmt.Errorf("query1b scan: %w", err)
+			start = time.Now()
+			rows1b, err := a.envDB(ctx).Query(ctx, query1b)
+			duration = time.Since(start)
+			metrics.RecordClickHouseQuery(duration, err)
+			if err != nil {
+				return nil, fmt.Errorf("query1b: %w", err)
 			}
-			dzLeaderSlotsByNode[nodeID] = count
-		}
-		if err := rows1b.Err(); err != nil {
-			return nil, fmt.Errorf("query1b rows: %w", err)
-		}
+			defer rows1b.Close()
 
-		// In leaders-only mode, SlotsObserved = DZ-leader slots (override query1 value).
-		if leadersOnly {
-			for _, info := range nodeSlots {
-				info.dzSlots = 0
+			for rows1b.Next() {
+				var nodeID string
+				var count uint64
+				if err := rows1b.Scan(&nodeID, &count); err != nil {
+					return nil, fmt.Errorf("query1b scan: %w", err)
+				}
+				dzLeaderSlotsByNode[nodeID] = count
 			}
-			for nodeID, count := range dzLeaderSlotsByNode {
-				if info, ok := nodeSlots[nodeID]; ok {
-					info.dzSlots = count
+			if err := rows1b.Err(); err != nil {
+				return nil, fmt.Errorf("query1b rows: %w", err)
+			}
+
+			// In leaders-only mode, SlotsObserved = DZ-leader slots (override query1 value).
+			if leadersOnly {
+				for _, info := range nodeSlots {
+					info.dzSlots = 0
+				}
+				for nodeID, count := range dzLeaderSlotsByNode {
+					if info, ok := nodeSlots[nodeID]; ok {
+						info.dzSlots = count
+					}
 				}
 			}
 		}
-	}
 
-	// Query 1c: DZ-leader slot count and total slot count.
-	// dz_leader_slots comes directly from publisher_shred_stats (is_scheduled_leader=true) —
-	// the authoritative count of slots where the scheduled leader published via DZ.
-	// total_slots is the distinct slot count from slot_feed_race_summary aggregate rows.
-	// completeness_pct = dz_leader_slots / total_slots — fraction of slots with a DZ leader.
-	var totalDZLeaderSlots, globalTotalSlots uint64
-	{
-		query1c := fmt.Sprintf(`
+		// Query 1c: DZ-leader slot count and total slot count.
+		// dz_leader_slots comes directly from publisher_shred_stats (is_scheduled_leader=true) —
+		// the authoritative count of slots where the scheduled leader published via DZ.
+		// total_slots is the distinct slot count from slot_feed_race_summary aggregate rows.
+		// completeness_pct = dz_leader_slots / total_slots — fraction of slots with a DZ leader.
+		{
+			query1c := fmt.Sprintf(`
 			WITH %s
 			SELECT
 				(SELECT count() FROM dz_leader_slots) AS dz_leader_slots,
@@ -405,34 +429,32 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			WHERE feed_type = 'shred' AND loser_feed = '' %s
 		SETTINGS final=1
 `, dzLeaderCTE, shredderDB, timeFilter)
-		start = time.Now()
-		rows1c, err := a.envDB(ctx).Query(ctx, query1c)
-		duration = time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
-		if err != nil {
-			return nil, fmt.Errorf("query1c: %w", err)
-		}
-		if rows1c.Next() {
-			if err := rows1c.Scan(&totalDZLeaderSlots, &globalTotalSlots); err != nil {
-				rows1c.Close()
-				return nil, fmt.Errorf("query1c scan: %w", err)
+			start = time.Now()
+			rows1c, err := a.envDB(ctx).Query(ctx, query1c)
+			duration = time.Since(start)
+			metrics.RecordClickHouseQuery(duration, err)
+			if err != nil {
+				return nil, fmt.Errorf("query1c: %w", err)
+			}
+			if rows1c.Next() {
+				if err := rows1c.Scan(&totalDZLeaderSlots, &globalTotalSlots); err != nil {
+					rows1c.Close()
+					return nil, fmt.Errorf("query1c scan: %w", err)
+				}
+			}
+			rows1c.Close()
+			if err := rows1c.Err(); err != nil {
+				return nil, fmt.Errorf("query1c rows: %w", err)
 			}
 		}
-		rows1c.Close()
-		if err := rows1c.Err(); err != nil {
-			return nil, fmt.Errorf("query1c rows: %w", err)
-		}
-	}
 
-	// Query 1d: Publisher stats using the same method as the publisher check page.
-	// publisher_count = activated DZ users with publishers and matched gossip+stake (same as total_publishers).
-	// publishing_count / publishing_stake_pct = subset with leader_slots > 0 (same as "Publishing Shreds").
-	var publisherCount, publishingCount uint64
-	var publishingStakePct float64
-	{
-		shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
-		start = time.Now()
-		err = a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`
+		// Query 1d: Publisher stats using the same method as the publisher check page.
+		// publisher_count = activated DZ users with publishers and matched gossip+stake (same as total_publishers).
+		// publishing_count / publishing_stake_pct = subset with leader_slots > 0 (same as "Publishing Shreds").
+		{
+			shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
+			start = time.Now()
+			err = a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`
 			WITH current_epoch AS (
 				SELECT max(epoch) AS epoch FROM %s
 			),
@@ -459,13 +481,15 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			WHERE u.status = 'activated'
 			  AND JSONLength(u.publishers) > 0
 		`, shredStatsTable, shredStatsTable),
-		).Scan(&publisherCount, &publishingCount, &publishingStakePct)
-		duration = time.Since(start)
-		metrics.RecordClickHouseQuery(duration, err)
-		if err != nil {
-			log.Printf("EdgeScoreboard query1d error: %v", err)
+			).Scan(&publisherCount, &publishingCount, &publishingStakePct)
+			duration = time.Since(start)
+			metrics.RecordClickHouseQuery(duration, err)
+			if err != nil {
+				log.Printf("EdgeScoreboard query1d error: %v", err)
+			}
 		}
-	}
+
+	} // end !cursorMode aggregate queries
 
 	// Build node ID list and location codes for parallel queries below.
 	type feedKey struct {
@@ -529,8 +553,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		slotLeaders    = make(map[string]*EdgeScoreboardLeader)
 		nodeGeo        = make(map[string]*nodeGeoInfo)
 	)
-
-	cursorMode := sinceSlot > 0 || beforeSlot > 0
 
 	g, gctx := errgroup.WithContext(ctx)
 
