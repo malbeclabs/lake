@@ -137,6 +137,19 @@ var validWindows = map[string]string{
 	"all": "",
 }
 
+// slotsPerWindow bounds how many Solana slots fit in each window. Used to derive
+// a slot-range filter on slot_feed_race_summary, which is ORDER BY (host, slot, …)
+// — so a slot range lets the primary index prune, whereas event_ts alone forces
+// a full monthly-partition scan. A small over-estimate is fine (the event_ts
+// filter still enforces exact window semantics).
+var slotsPerWindow = map[string]uint64{
+	"1h":  10_000,
+	"24h": 230_000,
+	"3d":  700_000,
+	"7d":  1_600_000,
+	"30d": 6_800_000,
+}
+
 // edgeScoreboardCacheKey returns the page cache key for a request, or "" if the request
 // is not eligible for caching (non-default window or cursor mode).
 func edgeScoreboardCacheKey(r *http.Request) string {
@@ -225,6 +238,26 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 	publisherDB := fmt.Sprintf("`%s`", a.PublisherDB)
 
+	// rangeFilter combines the time filter with a slot lower bound. The table is
+	// ORDER BY (host, slot, …) with monthly partitions by event_ts, so an event_ts
+	// filter alone can't prune via the primary index — every query has to scan
+	// the entire current month. Deriving a min slot from max(slot) - slotsPerWindow
+	// lets the index seek directly to the ~24h range. max(slot) is O(1) against
+	// the primary key so the preamble is effectively free.
+	rangeFilter := timeFilter
+	if slotWindow, ok := slotsPerWindow[window]; ok {
+		var maxSlot uint64
+		start := time.Now()
+		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary`, shredderDB)).Scan(&maxSlot)
+		metrics.RecordClickHouseQuery(time.Since(start), err)
+		if err != nil {
+			return nil, fmt.Errorf("max slot: %w", err)
+		}
+		if maxSlot > slotWindow {
+			rangeFilter = fmt.Sprintf("%s AND slot >= %d", timeFilter, maxSlot-slotWindow)
+		}
+	}
+
 	// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
 	// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
 	// all-slots mode. In leaders-only mode, query1b overrides this with DZ-leader slots only.
@@ -243,7 +276,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		WHERE feed_type = 'shred' AND loser_feed = '' %s
 		GROUP BY host
 	SETTINGS final=1
-`, shredderDB, timeFilter)
+`, shredderDB, rangeFilter)
 
 	start := time.Now()
 	rows1, err := a.envDB(ctx).Query(ctx, query1)
@@ -353,7 +386,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				%s
 			GROUP BY host
 		SETTINGS final=1
-`, dzLeaderCTE, shredderDB, timeFilter)
+`, dzLeaderCTE, shredderDB, rangeFilter)
 
 		start = time.Now()
 		rows1b, err := a.envDB(ctx).Query(ctx, query1b)
@@ -404,7 +437,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			FROM %s.slot_feed_race_summary
 			WHERE feed_type = 'shred' AND loser_feed = '' %s
 		SETTINGS final=1
-`, dzLeaderCTE, shredderDB, timeFilter)
+`, dzLeaderCTE, shredderDB, rangeFilter)
 		start = time.Now()
 		rows1c, err := a.envDB(ctx).Query(ctx, query1c)
 		duration = time.Since(start)
@@ -565,7 +598,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					)
 				)
 			SETTINGS final=1
-`, dzLeaderCTE, shredderDB, scoreboardFeeds, timeFilter)
+`, dzLeaderCTE, shredderDB, scoreboardFeeds, rangeFilter)
 			} else {
 				q2 = fmt.Sprintf(`
 				SELECT
@@ -586,7 +619,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					)
 				)
 			SETTINGS final=1
-`, shredderDB, scoreboardFeeds, timeFilter)
+`, shredderDB, scoreboardFeeds, rangeFilter)
 			}
 
 			t := time.Now()
@@ -643,7 +676,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				GROUP BY host
 				SETTINGS final=1
-`, dzLeaderCTE, shredderDB, timeFilter)
+`, dzLeaderCTE, shredderDB, rangeFilter)
 			} else {
 				q2c = fmt.Sprintf(`
 				SELECT
@@ -667,7 +700,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				GROUP BY host
 				SETTINGS final=1
-`, shredderDB, timeFilter)
+`, shredderDB, rangeFilter)
 			}
 			t = time.Now()
 			rows2c, err := a.envDB(gctx).Query(gctx, q2c)
@@ -715,7 +748,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, timeFilter)
+`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, rangeFilter)
 			} else {
 				q2b = fmt.Sprintf(`
 				SELECT
@@ -729,7 +762,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, shredderDB, scoreboardLoserFeeds, timeFilter)
+`, shredderDB, scoreboardLoserFeeds, rangeFilter)
 			}
 
 			t = time.Now()
@@ -1169,7 +1202,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
 			SETTINGS final=1
-`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
+`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter)
 			} else {
 				query7 = fmt.Sprintf(`
 				WITH per_feed AS (
@@ -1195,7 +1228,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
 			SETTINGS final=1
-`, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
+`, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, rangeFilter)
 			}
 
 			t := time.Now()
