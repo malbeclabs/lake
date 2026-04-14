@@ -232,7 +232,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
 
   return (
     <div
-      className="relative w-14 shrink-0 text-xs text-muted-foreground text-right pr-2 cursor-pointer"
+      className="relative w-16 shrink-0 text-xs text-muted-foreground text-right pr-4 cursor-pointer"
       onMouseEnter={() => setShow(true)}
       onMouseLeave={() => setShow(false)}
     >
@@ -1726,7 +1726,7 @@ function RecentSlotsChart({
         <div ref={chartRowsRef} className="relative flex-1 min-w-0">
         {/* Left-edge indicator: fixed at the chart boundary, shows while overscrolling or fetching */}
         {!bucketed && (overscrollPx > 0 || isPrefetching) && (
-          <div className="absolute left-[130px] inset-y-0 flex items-center pointer-events-none z-10">
+          <div className="absolute left-[138px] inset-y-0 flex items-center pointer-events-none z-10">
             {isPrefetching
               ? <Loader2 size={14} className="animate-spin text-muted-foreground/60" />
               : <ChevronsRight size={14} className="text-muted-foreground/40 rotate-180" />
