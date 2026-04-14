@@ -67,7 +67,7 @@ function SummaryCard({ label, value, sub, tooltip, progress }: { label: string; 
       </div>
       <div className="text-2xl font-semibold tabular-nums">{value}</div>
       {progress !== undefined && (
-        <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-2">
+        <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-2">
           <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }} />
         </div>
       )}
@@ -2289,7 +2289,7 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
         {dz ? (
           <>
             {formatPct(edgeFirstArrival)}
-            <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-1.5">
+            <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-1.5">
               <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, edgeFirstArrival)}%` }} />
             </div>
           </>
