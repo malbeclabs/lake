@@ -1799,7 +1799,7 @@ export function EdgeScoreboardPage() {
           subtitle={
             <span className="text-xs text-muted-foreground/50 flex items-center gap-2">
               <span>{windowLabel(activeWindow)}</span>
-              {freshness && <span>· updated {freshness}</span>}
+              {freshness && !(live && viewEndSlot === null) && <span>· updated {freshness}</span>}
             </span>
           }
           actions={
