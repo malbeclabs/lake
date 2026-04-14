@@ -726,12 +726,10 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2c rows: %w", err)
 			}
 
-			// q2b: pairwise lead times for DZ leader path vs competitor feeds.
-			// Aggregated directly from raw rows (quantile over lead_time_p50_ms /
-			// lead_time_p95_ms) — the older per-slot argMin CTE form timed out on
-			// the 24h × all-slots variant. We use feed='dz' in both modes since the
-			// leader path is the cleanest "DZ won by X ms" signal; dz_rebop win
-			// rates are reflected in q2c's dz_edge aggregate.
+			// q2b: pairwise lead times for the synthetic dz_edge feed vs competitors.
+			// Leaders-only uses feed='dz' (leader path only). All-slots pools dz + dz_rebop
+			// rows so retransmit wins are represented — direct quantile over the combined
+			// rows (no per-slot argMin CTE, which was too expensive over the full table).
 			var q2b string
 			if leadersOnly {
 				q2b = fmt.Sprintf(`
@@ -757,7 +755,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary
-				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed IN (%s)
+				WHERE feed_type = 'shred' AND feed IN ('dz', 'dz_rebop') AND loser_feed IN (%s)
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, loser_feed
