@@ -875,7 +875,7 @@ function RecentSlotsChart({
       // burst of rapid drains on return (rAF is throttled in background tabs).
       const dt = lastTime === null ? 0 : Math.min(now - lastTime, 400)
       lastTime = now
-      const slotPx = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCountRef.current)
+      const slotPx = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
       const inTail = !isDraggingRef.current && viewEndSlotRef.current === null
       if (inTail) {
         // Only advance when there's something to drain — prevents scroll from oscillating
@@ -1196,7 +1196,7 @@ function RecentSlotsChart({
   useDrag(
     ({ movement: [mx], velocity: [vx], direction: [dirX], first, last, active }) => {
       const slotNums = () => [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
-      const px = () => Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCountRef.current)
+      const px = () => Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
 
       if (active) {
         // Cancel any running inertia — only when it's actually running to avoid no-op re-renders.
@@ -1244,7 +1244,7 @@ function RecentSlotsChart({
           // Sub-slot glide uses a CSS custom property set directly on the DOM — zero React
           // re-renders between slot boundaries, pointer events handled at native speed.
           setViewEndSlot(Math.floor(rawEnd))
-          const slotPxVal = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCount)
+          const slotPxVal = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCount)
           chartRowsRef.current?.style.setProperty('--drag-frac', `${-(rawEnd - Math.floor(rawEnd)) * slotPxVal}px`)
         }
       }
@@ -1290,7 +1290,7 @@ function RecentSlotsChart({
             const value = target + (from - target) * decay
             const clamped = Math.max(minEnd, Math.min(liveEdge, value))
 
-            const slotPxNow = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCountRef.current)
+            const slotPxNow = Math.max(1, ((chartRowsRef.current?.offsetWidth ?? 260) - 64) / viewSlotCountRef.current)
             const committed = Math.floor(clamped)
             const fracPx = -(clamped - committed) * slotPxNow
 
@@ -1787,9 +1787,11 @@ export function EdgeScoreboardPage() {
       }
       nodeFeedRates.push(nodeRates)
 
+      const dzEdge = node.feeds['dz_edge']
       const dz = node.feeds['dz']
-      if (dz?.lead_times) {
-        for (const lt of dz.lead_times) {
+      const leadSource = dzEdge?.lead_times?.length ? dzEdge.lead_times : dz?.lead_times
+      if (leadSource) {
+        for (const lt of leadSource) {
           if (lt.loser_feed in weightedP50) {
             weightedP50[lt.loser_feed] += lt.p50_ms * node.slots_observed
             weightedP95[lt.loser_feed] += lt.p95_ms * node.slots_observed
@@ -2131,12 +2133,16 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
   const [fixedPos, setFixedPos] = useState<{ top: number; left: number } | null>(null)
   const cellRef = useRef<HTMLDivElement>(null)
   const dz = node.feeds['dz']
-  const edgeFirstArrival = node.feeds['dz_edge']?.win_rate_pct ?? 0
+  const dzEdge = node.feeds['dz_edge']
+  const edgeFirstArrival = dzEdge?.win_rate_pct ?? 0
 
-  // Build lead time lookup: loser_feed -> { p50, p95 }
+  // Build lead time lookup: loser_feed -> { p50, p95 }.
+  // Prefer dz_edge (dz + dz_rebop combined, matches the win-rate framing);
+  // fall back to dz-only for older API responses.
   const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
-  if (dz?.lead_times) {
-    for (const lt of dz.lead_times) {
+  const leadSource = dzEdge?.lead_times?.length ? dzEdge.lead_times : dz?.lead_times
+  if (leadSource) {
+    for (const lt of leadSource) {
       dzLeadByFeed[lt.loser_feed] = { p50: lt.p50_ms, p95: lt.p95_ms }
     }
   }
