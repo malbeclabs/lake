@@ -32,9 +32,14 @@ export function Section({
           )}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold">{title}</h2>
-            {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold">{title}</h2>
+              {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+            </div>
+            {!open && progress !== undefined && (
+              <span className="text-sm tabular-nums text-muted-foreground">{progress.toFixed(1)}%</span>
+            )}
           </div>
           {description && (
             <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
