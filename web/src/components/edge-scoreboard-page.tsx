@@ -251,7 +251,7 @@ function nodeDisplayLabel(node: EdgeScoreboardNode, nodes: EdgeScoreboardNode[])
   return suffix ? `${node.location}-${suffix}` : node.host
 }
 
-function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
+function WinRateChart({ nodes, bare }: { nodes: EdgeScoreboardNode[]; bare?: boolean }) {
   const legendValueRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
   const legendDefaultsRef = useRef<Map<string, string>>(new Map())
   const legendItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -308,9 +308,9 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
   if (chartData.nodeRows.length === 0) return null
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
       <div className="mb-4">
-        <h3 className="text-sm font-medium">Win Rate by Node</h3>
+        {!bare && <h3 className="text-sm font-medium">Win Rate by Node</h3>}
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 mt-3">
           {chartData.feeds.map((f) => {
             const defaultVal = formatPct(chartData.feedAgg[f])
@@ -2179,13 +2179,6 @@ export function EdgeScoreboardPage() {
           </div>
         )}
 
-        {/* Charts row */}
-        {data?.nodes && (
-          <div className="mb-8">
-            <WinRateChart nodes={data.nodes} />
-          </div>
-        )}
-
         {/* Node detail table */}
         <div className="border border-border rounded-lg overflow-hidden bg-card mb-6">
           <div className="overflow-x-auto">
@@ -2216,11 +2209,14 @@ export function EdgeScoreboardPage() {
           </div>
         </div>
 
-        {/* Win Rate by Slot — collapsible */}
+        {/* Collapsible charts */}
         {data?.nodes && (
-          <div className="mb-6">
+          <div className="space-y-4">
             <Section title="Win Rate by Slot" defaultOpen={false}>
               <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} bare />
+            </Section>
+            <Section title="Win Rate by Node" defaultOpen={false}>
+              <WinRateChart nodes={data.nodes} bare />
             </Section>
           </div>
         )}
