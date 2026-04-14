@@ -1095,6 +1095,7 @@ function RecentSlotsChart({
   const infoLeaderNameRef = useRef<HTMLSpanElement>(null)
   const infoLeaderRef = useRef<HTMLSpanElement>(null)
   const infoFeedValueRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
+  const infoFeedBarFillRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const infoFeedLegendItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const defaultInfoRef = useRef<SlotHoverInfo | null>(null)
   const isHoveredRef = useRef(false)
@@ -1115,6 +1116,7 @@ function RecentSlotsChart({
       infoLeaderRef.current.textContent = parts.join(' · ')
     }
     for (const [f, span] of infoFeedValueRefs.current) { const v = info.feedData[f] ?? 0; span.textContent = v >= 100 ? '100%' : `${v.toFixed(1)}%` }
+    for (const [f, bar] of infoFeedBarFillRefs.current) { bar.style.width = `${Math.min(100, info.feedData[f] ?? 0)}%` }
     // Always emphasize the winning feed (highest value at this slot)
     const winnerFeed = Object.entries(info.feedData).reduce<string | null>(
       (best, [f, v]) => (v != null && (best == null || v > (info.feedData[best] ?? 0)) ? f : best), null
@@ -1788,25 +1790,28 @@ function RecentSlotsChart({
         ))}
         </div>{/* end chart rows */}
         {/* Right info panel */}
-        <div className="w-60 shrink-0 border-l border-border flex flex-col justify-between px-5 py-5">
-          {!bucketed && (
-            <span ref={infoSlotRef} className="text-xs text-muted-foreground tabular-nums" />
-          )}
-          <div className="flex flex-col gap-3">
-            {feeds.map((f) => (
-              <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-2.5 transition-opacity duration-150">
-                <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
-                <span className="text-sm text-muted-foreground flex-1 truncate">{FEED_LABELS[f] ?? f}</span>
-                <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="text-sm font-medium tabular-nums w-[5ch] text-right shrink-0">—</span>
-              </div>
-            ))}
-          </div>
+        <div className="w-60 shrink-0 border-l border-border flex flex-col px-5 py-5 gap-4">
           {!bucketed && (
             <div className="flex flex-col gap-0.5">
+              <span ref={infoSlotRef} className="text-xs text-muted-foreground tabular-nums" />
               <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
               <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug" />
             </div>
           )}
+          <div className="flex flex-col gap-3">
+            {feeds.map((f) => (
+              <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex flex-col gap-1 transition-opacity duration-150">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+                  <span className="text-xs text-muted-foreground flex-1 truncate">{FEED_LABELS[f] ?? f}</span>
+                  <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="text-xs font-medium tabular-nums w-[5ch] text-right shrink-0">—</span>
+                </div>
+                <div className="h-1 rounded-full bg-muted-foreground/20 overflow-hidden">
+                  <div ref={el => { if (el) infoFeedBarFillRefs.current.set(f, el) }} className="h-full rounded-full transition-all duration-150" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280', width: '0%' }} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>{/* end flex container */}
       {!bucketed && (
