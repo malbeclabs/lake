@@ -1653,7 +1653,7 @@ function RecentSlotsChart({
       }}
     >
       <div className="mb-4">
-        <div className="flex items-center justify-between">
+        <div className={cn("flex items-center", bare ? "justify-end" : "justify-between")}>
           {!bare && <h3 className="text-sm font-medium flex items-center gap-2">
             {bucketed ? 'Win Rate Trend' : 'Win Rate per Slot'}
             {live && (
