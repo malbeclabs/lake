@@ -2215,7 +2215,7 @@ export function EdgeScoreboardPage() {
             <Section title="Win Rate by Slot" defaultOpen={false}>
               <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} bare />
             </Section>
-            <Section title="Win Rate by Node" defaultOpen={false}>
+            <Section title="Win Rate by Node" defaultOpen={false} progress={globalStats?.winRate}>
               <WinRateChart nodes={data.nodes} bare />
             </Section>
           </div>

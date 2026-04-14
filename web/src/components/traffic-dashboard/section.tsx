@@ -7,12 +7,14 @@ export function Section({
   description,
   defaultOpen = true,
   loading = false,
+  progress,
   children,
 }: {
   title: string
   description?: string
   defaultOpen?: boolean
   loading?: boolean
+  progress?: number
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -36,6 +38,11 @@ export function Section({
           </div>
           {description && (
             <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+          )}
+          {!open && progress !== undefined && (
+            <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-2">
+              <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }} />
+            </div>
           )}
         </div>
       </button>
