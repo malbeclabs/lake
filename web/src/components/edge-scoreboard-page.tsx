@@ -1790,7 +1790,10 @@ function RecentSlotsChart({
         ))}
         </div>{/* end chart rows */}
         {/* Right info panel */}
-        <div className="w-60 shrink-0 border-l border-border flex flex-col px-5 py-5 gap-4">
+        <div className="w-60 shrink-0 border-l border-border flex flex-col px-5 py-5">
+          {!bucketed && (
+            <span ref={infoSlotRef} className="text-xs font-medium tabular-nums mb-4" />
+          )}
           <div className="flex flex-col gap-3">
             {feeds.map((f) => (
               <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex flex-col gap-1 transition-opacity duration-150">
@@ -1806,10 +1809,9 @@ function RecentSlotsChart({
             ))}
           </div>
           {!bucketed && (
-            <div className="flex flex-col gap-0.5">
-              <span ref={infoSlotRef} className="text-xs text-muted-foreground tabular-nums" />
+            <div className="mt-5 flex flex-col gap-0.5">
               <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
-              <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug" />
+              <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
             </div>
           )}
         </div>
