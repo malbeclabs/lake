@@ -1367,14 +1367,14 @@ function RecentSlotsChart({
             {live && (
               <span className="relative flex items-center">
                 {isPrefetching ? (
-                  <Loader2 size={12} className="animate-spin text-sky-500/50" />
+                  <Loader2 size={12} className="animate-spin text-emerald-500/50" />
                 ) : viewEndSlot === null ? (
                   <>
-                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-sky-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500" />
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
                   </>
                 ) : (
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500/30" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500/30" />
                 )}
               </span>
             )}
@@ -1409,7 +1409,7 @@ function RecentSlotsChart({
             {live && viewEndSlot !== null && (
               <button
                 onClick={scrollToLive}
-                className="text-sky-400 hover:text-sky-300 transition-colors"
+                className="text-emerald-400 hover:text-emerald-300 transition-colors"
               >
                 <ChevronRight size={16} />
               </button>
@@ -1428,7 +1428,7 @@ function RecentSlotsChart({
               className={cn(
                 'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                 live && viewEndSlot === null
-                  ? 'border-sky-500 bg-sky-500/10 text-sky-400 hover:bg-sky-500/20'
+                  ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
@@ -1803,7 +1803,7 @@ export function EdgeScoreboardPage() {
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     {v === true && leadersOnly !== true && (
-                      <span className="absolute inset-0 rounded-md ring-1 ring-sky-400/40 shadow-[0_0_8px_2px_rgba(56,189,248,0.2)] animate-pulse pointer-events-none" />
+                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
                     )}
                     <button
                       type="button"
@@ -1811,7 +1811,7 @@ export function EdgeScoreboardPage() {
                       className={cn(
                         'px-3 py-1.5 rounded-md border border-border transition-colors',
                         leadersOnly === v
-                          ? 'bg-primary text-primary-foreground border-primary'
+                          ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
                           : 'hover:bg-muted'
                       )}
                     >
