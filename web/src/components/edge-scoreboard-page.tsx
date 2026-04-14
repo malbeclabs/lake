@@ -2076,8 +2076,8 @@ export function EdgeScoreboardPage() {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 text-sm">
                 {([
-                  [false, 'All Slots', 'Win rates across all observed slots, showing how often each feed (DZ, Jito, Turbine) delivered shreds first.'] as const,
-                  [true, 'DZ Edge Leaders', 'Win rates scoped to slots where the scheduled validator leader was publishing via DZ Edge.'] as const,
+                  [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
+                  [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     {v === true && leadersOnly !== true && (
@@ -2114,7 +2114,7 @@ export function EdgeScoreboardPage() {
                   <Layers size={15} />
                 </button>
                 <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-48 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                  {granular ? 'Showing all feeds — click to collapse to DZ vs Other' : 'Click to break out all feeds individually'}
+                  {granular ? 'Showing DZ Edge, Jito, and Turbine separately — click to collapse to DZ vs Other' : 'Break out DZ Edge leaders and retransmits alongside Jito and Turbine'}
                 </span>
               </div>
             </div>
@@ -2135,7 +2135,7 @@ export function EdgeScoreboardPage() {
             {/* Left: description + publisher stats */}
             <div className="flex-1 p-6 flex flex-col justify-between min-w-0">
               <p className="text-sm text-muted-foreground leading-relaxed">
-                DZ Edge nodes race against Jito Shredstream and Turbine to deliver shreds to validators first, measuring real-world network propagation performance.
+                Measures shred arrival time at validators for shreds published into DZ Edge multicast versus those delivered via Jito Shredstream and Turbine, showing how often DZ Edge shreds arrive first.
               </p>
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
                 <div>
