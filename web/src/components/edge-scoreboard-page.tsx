@@ -2285,7 +2285,7 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
           )}
         </div>
       </td>
-      <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
+      <td className="px-4 py-3 text-right tabular-nums text-sm">
         {dz ? (
           <>
             {formatPct(edgeFirstArrival)}
