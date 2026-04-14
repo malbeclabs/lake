@@ -1878,11 +1878,11 @@ export function EdgeScoreboardPage() {
               </p>
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">DZ Edge Publishers</div>
+                  <div className="text-xs text-muted-foreground mb-1">Observer Nodes</div>
                   <div className="text-2xl font-semibold tabular-nums">{data.nodes.length}</div>
                 </div>
                 <div className="border-l border-border pl-6">
-                  <div className="text-xs text-muted-foreground mb-1">Publisher Stake Weight</div>
+                  <div className="text-xs text-muted-foreground mb-1">Stake Weight Observed</div>
                   <div className="text-2xl font-semibold tabular-nums">{formatPct(globalStats.avgCompleteness)}</div>
                 </div>
               </div>
@@ -1892,7 +1892,7 @@ export function EdgeScoreboardPage() {
             <div className="border-l border-border flex-1 p-6 flex flex-col justify-center gap-4 min-w-0">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm text-muted-foreground">Stakeweight Publishing to DZ Edge</span>
+                  <span className="text-sm text-muted-foreground">Stake Weight Observed by DZ Edge</span>
                   <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(globalStats.avgCompleteness)}</span>
                 </div>
                 <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
