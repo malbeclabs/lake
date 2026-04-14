@@ -2158,7 +2158,7 @@ export function EdgeScoreboardPage() {
         {/* Summary cards */}
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-            <SummaryCard label="DZ Edge Leaders Completeness" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
+            <SummaryCard label="Stakeweight Publishing to DZ Edge" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
             <SummaryCard label="DZ Edge Win Rate" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
