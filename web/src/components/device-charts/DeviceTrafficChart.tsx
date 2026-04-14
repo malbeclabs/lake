@@ -398,7 +398,7 @@ export function DeviceTrafficChart({ data, className, loading, highlightTimeRang
         onClick={() => setBidirectional(!bidirectional)}
         className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
       >
-        {bidirectional ? 'Rx/Tx ±' : 'All +'}
+        {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
       </button>
     </div>
   )
