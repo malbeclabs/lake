@@ -1850,7 +1850,7 @@ export function EdgeScoreboardPage() {
             {/* Left: description + publisher stats */}
             <div className="flex-1 p-6 flex flex-col justify-between min-w-0">
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Measures arrival time of shreds published from validators into DZ Edge multicast versus those delivered via Jito Shredstream and Turbine, showing how often DZ Edge shreds arrive first.
+                Scoreboard benchmarks shred delivery speed across DoubleZero Edge and other providers, using slot-level data to compare performance in real time.
               </p>
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
                 <div>
