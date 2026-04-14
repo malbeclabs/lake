@@ -1105,11 +1105,11 @@ function RecentSlotsChart({
     }
   }, [applyInfoBar])
 
-  // Bucketed ticker: when in trend view + live, animate the info bar by cycling through
+  // Bucketed ticker: when in trend view, animate the info bar by cycling through
   // individual slots at 400ms/slot — same cadence as the live chart ticker — so the sidebar
   // still shows per-slot leader/feed data rather than being frozen on aggregate averages.
   useEffect(() => {
-    if (!bucketed || !live) {
+    if (!bucketed) {
       bucketedTickerQueueRef.current = []
       bucketedTickerCycleRef.current = []
       bucketedTickerMaxRef.current = 0
@@ -1209,7 +1209,7 @@ function RecentSlotsChart({
       clearInterval(pollInterval)
       cancelAnimationFrame(drainRafId)
     }
-  }, [bucketed, live, window, leadersOnly, applyInfoBar])
+  }, [bucketed, window, leadersOnly, applyInfoBar])
 
   // Ref to the chart rows container — used to clear hover info when mouse leaves the area.
   const chartRowsRef = useRef<HTMLDivElement>(null)
@@ -1732,10 +1732,10 @@ function RecentSlotsChart({
     if (!isHoveredRef.current) applyInfoBar(info)
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, bucketed, granular, applyInfoBar])
 
-  // In bucketed (trend) mode without live streaming, populate the legend with overall
-  // window averages so it isn't blank. The live bucketed ticker handles the live case.
+  // In bucketed (trend) mode, seed the legend with overall window averages on first data
+  // load so it isn't blank before the ticker fires its first slot.
   useEffect(() => {
-    if (!bucketed || live || !nodes.length || !feeds.length) return
+    if (!bucketed || !nodes.length || !feeds.length) return
     const feedData: Record<string, number | null> = {}
     for (const f of feeds) {
       const sum = nodes.reduce((acc, n) => acc + (n.feeds[f]?.win_rate_pct ?? 0), 0)
@@ -1747,7 +1747,7 @@ function RecentSlotsChart({
       for (const f of feeds) feedData[f] = Math.round((feedData[f] ?? 0) * scale * 10) / 10
     }
     applyInfoBar({ slot: 0, feedData })
-  }, [bucketed, live, nodes, feeds, applyInfoBar])
+  }, [bucketed, nodes, feeds, applyInfoBar])
 
   if (!slots.length)
     return (
@@ -1917,9 +1917,7 @@ function RecentSlotsChart({
         </div>{/* end chart rows */}
         {/* Right info panel */}
         <div className="w-60 shrink-0 border-l border-border flex flex-col px-5 py-5">
-          {!bucketed && (
-            <span ref={infoSlotRef} className="text-xs font-medium tabular-nums mb-4" />
-          )}
+          <span ref={infoSlotRef} className="text-xs font-medium tabular-nums mb-4" />
           <div className="flex flex-col gap-3">
             {feeds.map((f) => (
               <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex flex-col gap-1 transition-opacity duration-150">
@@ -1934,13 +1932,11 @@ function RecentSlotsChart({
               </div>
             ))}
           </div>
-          {!bucketed && (
-            <div className="mt-5 flex flex-col gap-0.5">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
-              <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
-              <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
-            </div>
-          )}
+          <div className="mt-5 flex flex-col gap-0.5">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
+            <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
+            <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
+          </div>
         </div>
       </div>{/* end flex container */}
       {!bucketed && (
