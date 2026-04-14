@@ -238,7 +238,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		FROM %s.slot_feed_race_summary
 		WHERE feed_type = 'shred' AND loser_feed = '' %s
 		GROUP BY host
-	`, shredderDB, timeFilter)
+	SETTINGS final=1
+`, shredderDB, timeFilter)
 
 	start := time.Now()
 	rows1, err := a.envDB(ctx).Query(ctx, query1)
@@ -347,7 +348,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				AND slot IN (SELECT slot FROM dz_leader_slots)
 				%s
 			GROUP BY host
-		`, dzLeaderCTE, shredderDB, timeFilter)
+		SETTINGS final=1
+`, dzLeaderCTE, shredderDB, timeFilter)
 
 		start = time.Now()
 		rows1b, err := a.envDB(ctx).Query(ctx, query1b)
@@ -397,7 +399,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				uniqExact(slot) AS total_slots
 			FROM %s.slot_feed_race_summary
 			WHERE feed_type = 'shred' AND loser_feed = '' %s
-		`, dzLeaderCTE, shredderDB, timeFilter)
+		SETTINGS final=1
+`, dzLeaderCTE, shredderDB, timeFilter)
 		start = time.Now()
 		rows1c, err := a.envDB(ctx).Query(ctx, query1c)
 		duration = time.Since(start)
@@ -514,7 +517,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						GROUP BY host, feed
 					)
 				)
-			`, dzLeaderCTE, shredderDB, scoreboardFeeds, timeFilter)
+			SETTINGS final=1
+`, dzLeaderCTE, shredderDB, scoreboardFeeds, timeFilter)
 			} else {
 				q2 = fmt.Sprintf(`
 				SELECT
@@ -534,7 +538,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						GROUP BY host, feed
 					)
 				)
-			`, shredderDB, scoreboardFeeds, timeFilter)
+			SETTINGS final=1
+`, shredderDB, scoreboardFeeds, timeFilter)
 			}
 
 			t := time.Now()
@@ -561,6 +566,86 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2 rows: %w", err)
 			}
 
+			// q2c: dz_edge combined win rate with correct per-slot denominator.
+			// Groups by (host, slot) first so overlapping slot totals aren't double-counted
+			// when dz and dz_rebop cover different sets of slots.
+			var q2c string
+			if leadersOnly {
+				q2c = fmt.Sprintf(`
+				WITH %s
+				SELECT
+					host,
+					sum(dz_won + rebop_won) AS shreds_won,
+					sum(slot_total) AS total_shreds,
+					if(sum(slot_total) > 0, round(sum(dz_won + rebop_won) / sum(slot_total) * 100, 1), 0) AS win_rate_pct
+				FROM (
+					SELECT
+						host, slot,
+						sumIf(shreds_won, feed = 'dz') AS dz_won,
+						sumIf(shreds_won, feed = 'dz_rebop') AS rebop_won,
+						greatest(
+							maxIf(total_shreds, feed = 'dz'),
+							maxIf(total_shreds, feed = 'dz_rebop')
+						) AS slot_total
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN ('dz', 'dz_rebop')
+						AND slot IN (SELECT slot FROM dz_leader_slots)
+						%s
+					GROUP BY host, slot
+					HAVING slot_total > 0
+				)
+				GROUP BY host
+				SETTINGS final=1
+`, dzLeaderCTE, shredderDB, timeFilter)
+			} else {
+				q2c = fmt.Sprintf(`
+				SELECT
+					host,
+					sum(dz_won + rebop_won) AS shreds_won,
+					sum(slot_total) AS total_shreds,
+					if(sum(slot_total) > 0, round(sum(dz_won + rebop_won) / sum(slot_total) * 100, 1), 0) AS win_rate_pct
+				FROM (
+					SELECT
+						host, slot,
+						sumIf(shreds_won, feed = 'dz') AS dz_won,
+						sumIf(shreds_won, feed = 'dz_rebop') AS rebop_won,
+						greatest(
+							maxIf(total_shreds, feed = 'dz'),
+							maxIf(total_shreds, feed = 'dz_rebop')
+						) AS slot_total
+					FROM %s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN ('dz', 'dz_rebop') %s
+					GROUP BY host, slot
+					HAVING slot_total > 0
+				)
+				GROUP BY host
+				SETTINGS final=1
+`, shredderDB, timeFilter)
+			}
+			t = time.Now()
+			rows2c, err := a.envDB(gctx).Query(gctx, q2c)
+			metrics.RecordClickHouseQuery(time.Since(t), err)
+			if err != nil {
+				return fmt.Errorf("query2c: %w", err)
+			}
+			defer rows2c.Close()
+			for rows2c.Next() {
+				var nodeID string
+				var shredsWon, totalShreds uint64
+				var winRatePct float64
+				if err := rows2c.Scan(&nodeID, &shredsWon, &totalShreds, &winRatePct); err != nil {
+					return fmt.Errorf("query2c scan: %w", err)
+				}
+				localFeedStats[feedKey{nodeID, "dz_edge"}] = &EdgeScoreboardFeedStats{
+					ShredsWon:   shredsWon,
+					TotalShreds: totalShreds,
+					WinRatePct:  winRatePct,
+				}
+			}
+			if err := rows2c.Err(); err != nil {
+				return fmt.Errorf("query2c rows: %w", err)
+			}
+
 			// q2b: pairwise lead times.
 			// p50_ms = median of per-slot p50 lead times.
 			// p95_ms = 95th percentile of per-slot p95 lead times (conservative tail estimate).
@@ -579,7 +664,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, feed, loser_feed
-			`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, timeFilter)
+			SETTINGS final=1
+`, dzLeaderCTE, shredderDB, scoreboardLoserFeeds, timeFilter)
 			} else {
 				q2b = fmt.Sprintf(`
 				SELECT
@@ -592,7 +678,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, feed, loser_feed
-			`, shredderDB, scoreboardLoserFeeds, timeFilter)
+			SETTINGS final=1
+`, shredderDB, scoreboardLoserFeeds, timeFilter)
 			}
 
 			t = time.Now()
@@ -794,7 +881,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
+			SETTINGS final=1
+`, dzLeaderCTEForRecent, shredderDB, slotWindowMin, slotWindowMax, slotWindowMin, slotWindowMax, shredderDB, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		} else {
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
@@ -827,7 +915,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.host IN (SELECT host FROM active_hosts)
 				ORDER BY r.host, r.slot, r.feed
-			`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
+			SETTINGS final=1
+`, shredderDB, slotWindowMin, slotWindowMax, shredderDB, slotWindowMin, slotWindowMax, slotFilter, orderDir, slotLimit, shredderDB, scoreboardFeeds)
 		}
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
@@ -1027,7 +1116,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM per_feed f
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
-			`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
+			SETTINGS final=1
+`, dzLeaderCTE, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
 			} else {
 				query7 = fmt.Sprintf(`
 				WITH per_feed AS (
@@ -1052,7 +1142,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				FROM per_feed f
 				JOIN bucket_totals bt ON f.host = bt.host AND f.slot_bucket = bt.slot_bucket
 				ORDER BY f.host, f.slot_bucket, f.feed
-			`, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
+			SETTINGS final=1
+`, bucketSize, bucketSize, shredderDB, scoreboardFeeds, nodeList, slotWindowMax, timeFilter)
 			}
 
 			t := time.Now()

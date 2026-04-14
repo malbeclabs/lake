@@ -72,6 +72,7 @@ function SummaryCard({ label, value, sub, tooltip }: { label: string; value: str
 }
 
 const FEED_COLORS: Record<string, string> = {
+  dz_edge: '#22c55e',
   dz: '#22c55e',
   dz_rebop: '#14b8a6',
   jito: '#3b82f6',
@@ -80,6 +81,7 @@ const FEED_COLORS: Record<string, string> = {
 }
 
 const FEED_LABELS: Record<string, string> = {
+  dz_edge: 'DZ Edge',
   dz: 'DZ Edge Leaders',
   dz_rebop: 'DZ Edge Retransmits',
   jito: 'Jito Shredstream',
@@ -119,7 +121,7 @@ function WinRateBar({
               className="relative flex items-center justify-center overflow-hidden"
               onMouseEnter={() => onHover?.(data, f)}
             >
-              {(f === 'dz' || f === 'dz_rebop') && raw >= 2 && (
+              {f === 'dz_edge' && raw >= 2 && (
                 <span className="text-white text-xs font-semibold whitespace-nowrap select-none">
                   {raw.toFixed(1)}%
                 </span>
@@ -149,14 +151,32 @@ function WinRateBar({
               {feeds.map((f) => {
                 const raw = Number(data[`${f}_raw`] ?? 0)
                 const shreds = Number(data[`${f}_shreds`] ?? 0)
+                const leaderRaw = f === 'dz_edge' ? Number(data['dz_edge_leader_raw'] ?? 0) : 0
+                const rebopRaw = f === 'dz_edge' ? Number(data['dz_edge_rebop_raw'] ?? 0) : 0
                 return (
-                  <tr key={f}>
-                    <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[f] ?? '#6b7280' }}>
-                      {FEED_LABELS[f] ?? f}
-                    </td>
-                    <td className="pr-3 py-0.5 text-right font-mono text-[#e5e5e5]">{raw.toFixed(1)}%</td>
-                    <td className="py-0.5 text-right font-mono text-[#999]">{shreds.toLocaleString()}</td>
-                  </tr>
+                  <>
+                    <tr key={f}>
+                      <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[f] ?? '#6b7280' }}>
+                        {FEED_LABELS[f] ?? f}
+                      </td>
+                      <td className="pr-3 py-0.5 text-right font-mono text-[#e5e5e5]">{raw.toFixed(1)}%</td>
+                      <td className="py-0.5 text-right font-mono text-[#999]">{shreds.toLocaleString()}</td>
+                    </tr>
+                    {f === 'dz_edge' && leaderRaw > 0 && (
+                      <tr key="dz_edge_leader">
+                        <td className="pr-3 py-0.5 pl-3 text-[#999]">Leaders</td>
+                        <td className="pr-3 py-0.5 text-right font-mono text-[#999]">{leaderRaw.toFixed(1)}%</td>
+                        <td />
+                      </tr>
+                    )}
+                    {f === 'dz_edge' && rebopRaw > 0 && (
+                      <tr key="dz_edge_rebop">
+                        <td className="pr-3 py-0.5 pl-3 text-[#999]">Retransmits</td>
+                        <td className="pr-3 py-0.5 text-right font-mono text-[#999]">{rebopRaw.toFixed(1)}%</td>
+                        <td />
+                      </tr>
+                    )}
+                  </>
                 )
               })}
             </tbody>
@@ -235,29 +255,43 @@ function WinRateChart({ nodes }: { nodes: EdgeScoreboardNode[] }) {
     for (const n of nodes) {
       for (const f of Object.keys(n.feeds)) feedSet.add(f)
     }
-    const feeds = [...feedSet].sort((a, b) => {
-      if (a === 'dz') return -1
-      if (b === 'dz') return 1
-      return a.localeCompare(b)
-    })
+    const hasDZ = feedSet.has('dz') || feedSet.has('dz_rebop')
+    const otherFeeds = [...feedSet]
+      .filter(f => f !== 'dz' && f !== 'dz_rebop' && f !== 'dz_edge' && f in FEED_COLORS)
+      .sort((a, b) => a.localeCompare(b))
+    const feeds = hasDZ ? ['dz_edge', ...otherFeeds] : otherFeeds
 
     const nodeRows = [...nodes]
       .sort((a, b) => a.host.localeCompare(b.host))
       .map((n) => {
         const row: Record<string, string | number> = { location: n.location }
-        const rawSum = feeds.reduce((s, f) => s + (n.feeds[f]?.win_rate_pct ?? 0), 0)
+        // Store raw values first (used in tooltips and inline labels).
+        if (hasDZ) {
+          row['dz_edge_raw'] = n.feeds['dz_edge']?.win_rate_pct ?? 0
+          row['dz_edge_shreds'] = n.feeds['dz_edge']?.shreds_won ?? 0
+          row['dz_edge_leader_raw'] = n.feeds['dz']?.win_rate_pct ?? 0
+          row['dz_edge_rebop_raw'] = n.feeds['dz_rebop']?.win_rate_pct ?? 0
+        }
+        for (const f of otherFeeds) {
+          row[`${f}_raw`] = n.feeds[f]?.win_rate_pct ?? 0
+          row[`${f}_shreds`] = n.feeds[f]?.shreds_won ?? 0
+        }
+        // Normalize bar widths to fill 100% so relative proportions are clear.
+        const rawSum = feeds.reduce((s, f) => s + Number(row[`${f}_raw`] ?? 0), 0)
         const scale = rawSum > 0 ? 100 / rawSum : 0
         for (const f of feeds) {
-          row[f] = Math.round(((n.feeds[f]?.win_rate_pct ?? 0) * scale) * 10) / 10
-          row[`${f}_shreds`] = n.feeds[f]?.shreds_won ?? 0
-          row[`${f}_raw`] = n.feeds[f]?.win_rate_pct ?? 0
+          row[f] = Math.round(Number(row[`${f}_raw`] ?? 0) * scale * 10) / 10
         }
         return { node: n, data: row }
       })
 
     // Aggregate raw win_rate_pct per feed across all nodes (simple average).
     const feedAgg: Record<string, number> = {}
-    for (const f of feeds) {
+    if (hasDZ) {
+      const vals = nodes.map(n => n.feeds['dz_edge']?.win_rate_pct ?? 0).filter(v => v > 0)
+      feedAgg['dz_edge'] = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0
+    }
+    for (const f of otherFeeds) {
       const vals = nodes.map(n => n.feeds[f]?.win_rate_pct ?? 0).filter(v => v > 0)
       feedAgg[f] = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0
     }
@@ -1437,7 +1471,7 @@ function RecentSlotsChart({
     const filtered = activeSlots.filter((s) => validNodeIds.has(s.host))
 
     const feedSet = new Set<string>()
-    for (const s of filtered) feedSet.add(s.feed)
+    for (const s of filtered) if (s.feed in FEED_COLORS) feedSet.add(s.feed)
     const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
 
     const byNode = new Map<string, Map<number, Record<string, number>>>()
@@ -1490,7 +1524,7 @@ function RecentSlotsChart({
     const filtered = slotBuckets.filter((b) => validNodeIds.has(b.host))
 
     const feedSet = new Set<string>()
-    for (const b of filtered) feedSet.add(b.feed)
+    for (const b of filtered) if (b.feed in FEED_COLORS) feedSet.add(b.feed)
     const feeds = [...feedSet].sort((a, b) => (a === 'dz' ? -1 : b === 'dz' ? 1 : a.localeCompare(b)))
 
     // Use the actual API-returned buckets as the x-axis. No theoretical range computation —
@@ -1856,8 +1890,7 @@ function NodeMap({ nodes }: { nodes: EdgeScoreboardNode[] }) {
     map.fitBounds(bounds, { padding: 60, maxZoom: 8 })
 
     for (const node of nodesWithCoords) {
-      const dz = node.feeds['dz']
-      const winRate = (dz?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
+      const winRate = node.feeds['dz_edge']?.win_rate_pct ?? 0
       const color = winRate >= 50 ? '#22c55e' : '#f59e0b'
 
       const el = document.createElement('div')
@@ -1987,7 +2020,7 @@ export function EdgeScoreboardPage() {
     }
 
     for (const node of data.nodes) {
-      dzShredsWon += (node.feeds['dz']?.win_rate_pct ?? 0) + (node.feeds['dz_rebop']?.win_rate_pct ?? 0)
+      dzShredsWon += node.feeds['dz_edge']?.win_rate_pct ?? 0
       dzTotalShreds++
 
       const dz = node.feeds['dz']
@@ -2085,8 +2118,8 @@ export function EdgeScoreboardPage() {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2 text-sm">
                 {([
-                  [false, 'All Slots', 'A comparison of DZ Edge retransmits + DZ Edge leader shreds against other full feeds.'] as const,
-                  [true, 'DZ Edge Leaders', 'A comparison of DZ Edge leader shreds against other hosts, only for the same set of leader shreds that DZ Edge delivers.'] as const,
+                  [false, 'All Slots', 'Win rates across all observed slots, showing how often each feed (DZ, Jito, Turbine) delivered shreds first.'] as const,
+                  [true, 'DZ Edge Leaders', 'Win rates scoped to slots where the scheduled validator leader was publishing via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     {v === true && leadersOnly !== true && (
@@ -2192,8 +2225,7 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const cellRef = useRef<HTMLDivElement>(null)
   const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
-  const dzRebop = node.feeds['dz_rebop']
-  const edgeFirstArrival = (dz?.win_rate_pct ?? 0) + (dzRebop?.win_rate_pct ?? 0)
+  const edgeFirstArrival = node.feeds['dz_edge']?.win_rate_pct ?? 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }
   const dzLeadByFeed: Record<string, { p50: number; p95: number }> = {}
