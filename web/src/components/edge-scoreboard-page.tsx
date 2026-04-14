@@ -46,7 +46,7 @@ function formatStake(sol: number): string {
 
 function WinRateGauge({ value }: { value: number }) {
   const size = 160
-  const r = 58
+  const r = 62
   const cx = size / 2
   const cy = size / 2
   const circ = 2 * Math.PI * r
@@ -56,8 +56,8 @@ function WinRateGauge({ value }: { value: number }) {
   return (
     <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={10} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={10} stroke="#10b981" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={6} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={6} stroke="#10b981" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
       </svg>
       <div className="flex flex-col items-center z-10">
         <div className="text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</div>
