@@ -5134,6 +5134,9 @@ export interface EdgeScoreboardResponse {
   dz_slots: number
   total_dz_leader_slots: number
   completeness_pct: number
+  publisher_count: number
+  publishing_count: number
+  publishing_stake_pct: number
   nodes: EdgeScoreboardNode[]
   recent_slots: EdgeScoreboardSlotRace[]
   slot_buckets?: EdgeScoreboardSlotBucket[]

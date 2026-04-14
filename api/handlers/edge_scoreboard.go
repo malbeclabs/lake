@@ -110,8 +110,10 @@ type EdgeScoreboardResponse struct {
 	GlobalTotalSlots   uint64                           `json:"global_total_slots"`
 	DZSlots            uint64                           `json:"dz_slots"`
 	TotalDZLeaderSlots uint64                           `json:"total_dz_leader_slots"`
-	CompletenessPct    float64                          `json:"completeness_pct"`
-	PublisherCount     uint64                           `json:"publisher_count"`
+	CompletenessPct      float64                          `json:"completeness_pct"`
+	PublisherCount       uint64                           `json:"publisher_count"`
+	PublishingCount      uint64                           `json:"publishing_count"`
+	PublishingStakePct   float64                          `json:"publishing_stake_pct"`
 	Nodes              []EdgeScoreboardNode             `json:"nodes"`
 	RecentSlots        []EdgeScoreboardSlotRace         `json:"recent_slots"`
 	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
@@ -421,21 +423,42 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		}
 	}
 
-	// Query 1d: Count of active publishers using the same method as the publisher check page —
-	// activated DZ users with configured publishers and a matched gossip + stake account.
-	var publisherCount uint64
+	// Query 1d: Publisher stats using the same method as the publisher check page.
+	// publisher_count = activated DZ users with publishers and matched gossip+stake (same as total_publishers).
+	// publishing_count / publishing_stake_pct = subset with leader_slots > 0 (same as "Publishing Shreds").
+	var publisherCount, publishingCount uint64
+	var publishingStakePct float64
 	{
+		shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
 		start = time.Now()
-		err = a.envDB(ctx).QueryRow(ctx,
-			`SELECT count()
-			 FROM dz_users_current u
-			 LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
-			 LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
-			 WHERE u.status = 'activated'
-			   AND JSONLength(u.publishers) > 0
-			   AND v.vote_pubkey != ''
-			   AND g.pubkey != ''`,
-		).Scan(&publisherCount)
+		err = a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`
+			WITH current_epoch AS (
+				SELECT max(epoch) AS epoch FROM %s
+			),
+			leader_pubkeys AS (
+				SELECT DISTINCT dz_user_pubkey
+				FROM %s
+				WHERE epoch >= (SELECT epoch FROM current_epoch) - 1
+				  AND is_scheduled_leader = true
+			),
+			total_network_stake AS (
+				SELECT sum(activated_stake_lamports) AS stake
+				FROM solana_vote_accounts_current
+				WHERE epoch_vote_account = 'true' AND activated_stake_lamports > 0
+			)
+			SELECT
+				countIf(v.vote_pubkey != '' AND g.pubkey != '') AS publisher_count,
+				countIf(v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != '') AS publishing_count,
+				COALESCE(sumIf(v.activated_stake_lamports, v.vote_pubkey != '' AND g.pubkey != '' AND l.dz_user_pubkey != ''), 0)
+					/ COALESCE((SELECT stake FROM total_network_stake), 1) * 100 AS publishing_stake_pct
+			FROM dz_users_current u
+			LEFT JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip AND u.client_ip != ''
+			LEFT JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey AND v.epoch_vote_account = 'true'
+			LEFT JOIN leader_pubkeys l ON u.pk = l.dz_user_pubkey
+			WHERE u.status = 'activated'
+			  AND JSONLength(u.publishers) > 0
+		`, shredStatsTable, shredStatsTable),
+		).Scan(&publisherCount, &publishingCount, &publishingStakePct)
 		duration = time.Since(start)
 		metrics.RecordClickHouseQuery(duration, err)
 		if err != nil {
@@ -1321,6 +1344,8 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		TotalDZLeaderSlots: totalDZLeaderSlots,
 		CompletenessPct:    completenessPct,
 		PublisherCount:     publisherCount,
+		PublishingCount:    publishingCount,
+		PublishingStakePct: publishingStakePct,
 		Nodes:              nodes,
 		RecentSlots:        recentSlots,
 		SlotBuckets:        slotBuckets,

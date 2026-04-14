@@ -1878,12 +1878,12 @@ export function EdgeScoreboardPage() {
               </p>
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">DZ Edge Publishers</div>
-                  <div className="text-2xl font-semibold tabular-nums">{data.publisher_count.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground mb-1">Publishing Shreds</div>
+                  <div className="text-2xl font-semibold tabular-nums">{data.publishing_count.toLocaleString()}</div>
                 </div>
                 <div className="border-l border-border pl-6">
                   <div className="text-xs text-muted-foreground mb-1">Publisher Stake Weight</div>
-                  <div className="text-2xl font-semibold tabular-nums">{formatPct(globalStats.avgCompleteness)}</div>
+                  <div className="text-2xl font-semibold tabular-nums">{formatPct(data.publishing_stake_pct)}</div>
                 </div>
               </div>
             </div>
@@ -1893,10 +1893,10 @@ export function EdgeScoreboardPage() {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-sm text-muted-foreground">Publisher Stake Weight</span>
-                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(globalStats.avgCompleteness)}</span>
+                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(data.publishing_stake_pct)}</span>
                 </div>
                 <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
-                  <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, globalStats.avgCompleteness)}%` }} />
+                  <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, data.publishing_stake_pct)}%` }} />
                 </div>
               </div>
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
