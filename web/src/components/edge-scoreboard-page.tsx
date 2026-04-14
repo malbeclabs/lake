@@ -1617,6 +1617,23 @@ function RecentSlotsChart({
     if (!isHoveredRef.current) applyInfoBar(info)
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, bucketed, granular, applyInfoBar])
 
+  // In bucketed (trend) mode the per-slot effect above is skipped, so populate the
+  // legend with overall window averages derived from the node feed stats.
+  useEffect(() => {
+    if (!bucketed || !nodes.length || !feeds.length) return
+    const feedData: Record<string, number | null> = {}
+    for (const f of feeds) {
+      const sum = nodes.reduce((acc, n) => acc + (n.feeds[f]?.win_rate_pct ?? 0), 0)
+      feedData[f] = sum / nodes.length
+    }
+    const total = feeds.reduce((s, f) => s + (feedData[f] ?? 0), 0)
+    if (total > 0) {
+      const scale = 100 / total
+      for (const f of feeds) feedData[f] = Math.round((feedData[f] ?? 0) * scale * 10) / 10
+    }
+    applyInfoBar({ slot: 0, feedData })
+  }, [bucketed, nodes, feeds, applyInfoBar])
+
   if (!slots.length)
     return (
       <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
