@@ -226,15 +226,57 @@ function feedSortPriority(f: string): number {
 const NODE_ROW_HEIGHT = 36
 const NODE_CHART_HEIGHT = 24
 
+function NodePopover({ node }: { node: EdgeScoreboardNode }) {
+  const hasGossip = !!node.gossip_pubkey
+  return (
+    <div className="bg-popover border border-border rounded-lg shadow-xl text-xs whitespace-nowrap text-left text-foreground min-w-[160px] overflow-hidden">
+      {node.metro_name && (
+        <div className="px-3 py-2 font-medium text-foreground border-b border-border bg-muted/40">{node.metro_name}</div>
+      )}
+      <div className="px-3 py-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+        <span className="text-muted-foreground">Host</span>
+        <span className="font-mono">{node.host}</span>
+        {node.gossip_ip && <>
+          <span className="text-muted-foreground">IP</span>
+          <span className="font-mono">{node.gossip_ip}</span>
+        </>}
+        {node.asn_org && <>
+          <span className="text-muted-foreground">Org</span>
+          <span>{node.asn_org}</span>
+        </>}
+        {node.asn != null && node.asn > 0 && <>
+          <span className="text-muted-foreground">ASN</span>
+          <span>AS{node.asn}</span>
+        </>}
+        {node.city && <>
+          <span className="text-muted-foreground">Location</span>
+          <span>{node.city}{node.country ? `, ${node.country}` : ''}</span>
+        </>}
+        {hasGossip && <>
+          <span className="text-muted-foreground">Pubkey</span>
+          <span className="font-mono">{node.gossip_pubkey!.slice(0, 8)}…{node.gossip_pubkey!.slice(-4)}</span>
+        </>}
+      </div>
+    </div>
+  )
+}
+
 function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string }) {
-  const [show, setShow] = useState(false)
+  const [fixedPos, setFixedPos] = useState<{ top: number; left: number } | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
   const hasGossip = !!node.gossip_pubkey
 
   return (
     <div
+      ref={ref}
       className="relative w-16 shrink-0 text-xs text-muted-foreground text-right pr-4 cursor-pointer"
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
+      onMouseEnter={() => {
+        if (ref.current) {
+          const r = ref.current.getBoundingClientRect()
+          setFixedPos({ top: r.top + r.height / 2, left: r.right + 8 })
+        }
+      }}
+      onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
         <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#0ea5e9] transition-colors">
@@ -243,27 +285,9 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       ) : (
         label
       )}
-      {show && (
-        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap text-left text-foreground">
-          {node.metro_name && (
-            <div className="font-medium mb-1">{node.metro_name}</div>
-          )}
-          <div className="flex gap-2"><span className="text-muted-foreground">Host</span><span className="font-mono">{node.host}</span></div>
-          {node.gossip_ip && (
-            <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
-          )}
-          {node.asn_org && (
-            <div className="flex gap-2"><span className="text-muted-foreground">Org</span><span>{node.asn_org}</span></div>
-          )}
-          {node.asn != null && node.asn > 0 && (
-            <div className="flex gap-2"><span className="text-muted-foreground">ASN</span><span>AS{node.asn}</span></div>
-          )}
-          {node.city && (
-            <div className="flex gap-2"><span className="text-muted-foreground">Location</span><span>{node.city}{node.country ? `, ${node.country}` : ''}</span></div>
-          )}
-          {hasGossip && (
-            <div className="flex gap-2"><span className="text-muted-foreground">Pubkey</span><span className="font-mono">{node.gossip_pubkey!.slice(0, 8)}...{node.gossip_pubkey!.slice(-4)}</span></div>
-          )}
+      {fixedPos && (
+        <div style={{ position: 'fixed', top: fixedPos.top, left: fixedPos.left, transform: 'translateY(-50%)', zIndex: 50 }}>
+          <NodePopover node={node} />
         </div>
       )}
     </div>
@@ -2314,9 +2338,8 @@ export function EdgeScoreboardPage() {
 }
 
 function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: string; granular: boolean }) {
-  const [showTooltip, setShowTooltip] = useState(false)
+  const [fixedPos, setFixedPos] = useState<{ top: number; left: number } | null>(null)
   const cellRef = useRef<HTMLDivElement>(null)
-  const [tooltipAbove, setTooltipAbove] = useState(true)
   const dz = node.feeds['dz']
   const edgeFirstArrival = node.feeds['dz_edge']?.win_rate_pct ?? 0
 
@@ -2352,11 +2375,10 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
       <td className="px-4 py-3">
         <div ref={cellRef} className="relative" onMouseEnter={() => {
           if (cellRef.current) {
-            const rect = cellRef.current.getBoundingClientRect()
-            setTooltipAbove(rect.top > 150)
+            const r = cellRef.current.getBoundingClientRect()
+            setFixedPos({ top: r.top + r.height / 2, left: r.right + 8 })
           }
-          setShowTooltip(true)
-        }} onMouseLeave={() => setShowTooltip(false)}>
+        }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
             <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#0ea5e9] transition-colors">
               {label}
@@ -2366,26 +2388,9 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           )}
           <div className="text-xs text-muted-foreground">{node.metro_name}</div>
           {node.stake_sol > 0 && <div className="text-xs text-muted-foreground">{formatStake(node.stake_sol)} staked</div>}
-          {showTooltip && (node.name || node.gossip_ip || node.asn_org) && (
-            <div className={cn("absolute left-0 z-20 bg-popover border border-border rounded-lg shadow-lg p-3 text-xs whitespace-nowrap", tooltipAbove ? "bottom-full mb-1" : "top-full mt-1")}>
-              {node.name && (
-                <div className="font-medium mb-1">{node.name}</div>
-              )}
-              {node.gossip_ip && (
-                <div className="flex gap-2"><span className="text-muted-foreground">IP</span><span className="font-mono">{node.gossip_ip}</span></div>
-              )}
-              {node.asn_org && (
-                <div className="flex gap-2"><span className="text-muted-foreground">Host</span><span>{node.asn_org}</span></div>
-              )}
-              {node.asn != null && node.asn > 0 && (
-                <div className="flex gap-2"><span className="text-muted-foreground">ASN</span><span>AS{node.asn}</span></div>
-              )}
-              {node.city && (
-                <div className="flex gap-2"><span className="text-muted-foreground">Location</span><span>{node.city}{node.country ? `, ${node.country}` : ''}</span></div>
-              )}
-              {hasGossip && (
-                <div className="flex gap-2"><span className="text-muted-foreground">Pubkey</span><span className="font-mono">{node.gossip_pubkey!.slice(0, 8)}...{node.gossip_pubkey!.slice(-4)}</span></div>
-              )}
+          {fixedPos && (
+            <div style={{ position: 'fixed', top: fixedPos.top, left: fixedPos.left, transform: 'translateY(-50%)', zIndex: 50 }}>
+              <NodePopover node={node} />
             </div>
           )}
         </div>
