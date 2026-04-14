@@ -82,7 +82,7 @@ const FEED_COLORS: Record<string, string> = {
   dz: '#38bdf8',       // sky-400 — lighter
   dz_rebop: '#0284c7', // sky-600 — darker
   jito: '#f59e0b',     // amber-500
-  turbine: '#94a3b8',  // slate-400 — neutral
+  turbine: '#fb7185',  // rose-400
   pipe: '#e879f9',
   other: '#374151',
 }
