@@ -42,34 +42,27 @@ function formatStake(sol: number): string {
 }
 
 
-function InfoTooltip({ text, direction = 'up' }: { text: string; direction?: 'up' | 'down' }) {
-  const [show, setShow] = useState(false)
-  return (
-    <span className="relative inline-flex items-center ml-1" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
-      <span className="text-muted-foreground cursor-help select-none text-xs leading-none">ⓘ</span>
-      {show && (
-        <span className={cn("absolute left-1/2 -translate-x-1/2 z-30 w-64 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal pointer-events-none", direction === 'down' ? 'top-full mt-2' : 'bottom-full mb-2')}>
-          {text}
-        </span>
-      )}
-    </span>
-  )
-}
 
-function SummaryCard({ label, value, sub, tooltip, progress }: { label: string; value: string; sub?: string; tooltip?: string; progress?: number }) {
+
+function WinRateGauge({ value }: { value: number }) {
+  const size = 160
+  const r = 58
+  const cx = size / 2
+  const cy = size / 2
+  const circ = 2 * Math.PI * r
+  const arc = circ * 0.75
+  const gap = circ - arc
+  const fill = arc * (Math.min(100, Math.max(0, value)) / 100)
   return (
-    <div className="bg-card border border-border rounded-lg p-4">
-      <div className="text-sm text-muted-foreground mb-1 flex items-center">
-        {label}
-        {tooltip && <InfoTooltip text={tooltip} />}
+    <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={10} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={10} stroke="#10b981" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+      </svg>
+      <div className="flex flex-col items-center z-10">
+        <div className="text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</div>
+        <div className="text-xs text-muted-foreground mt-0.5 text-center">DZ Edge<br/>Win Rate</div>
       </div>
-      <div className="text-2xl font-semibold tabular-nums">{value}</div>
-      {progress !== undefined && (
-        <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden mt-2">
-          <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }} />
-        </div>
-      )}
-      {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
     </div>
   )
 }
@@ -2073,19 +2066,52 @@ export function EdgeScoreboardPage() {
         </div>
 
 
-        {/* Summary cards */}
-        {globalStats && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-            <SummaryCard label="Stakeweight Publishing to DZ Edge" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
-            <SummaryCard label="DZ Edge Win Rate" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." progress={globalStats.winRate} />
-            {Object.entries(globalStats.leads).map(([competitor, lead]) => (
-              <SummaryCard
-                key={competitor}
-                label={`vs ${FEED_LABELS[competitor] ?? competitor}`}
-                value={formatMs(lead.p50)}
-                sub={`p95: ${formatMs(lead.p95)}`}
-              />
-            ))}
+        {/* Hero stats */}
+        {data && globalStats && (
+          <div className="flex gap-0 mb-8 bg-card border border-border rounded-lg overflow-hidden">
+            {/* Left: description + publisher stats */}
+            <div className="flex-1 p-6 flex flex-col justify-between min-w-0">
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                DZ Edge nodes race against Jito Shredstream and Turbine to deliver shreds to validators first, measuring real-world network propagation performance.
+              </p>
+              <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">DZ Edge Publishers</div>
+                  <div className="text-2xl font-semibold tabular-nums">{data.nodes.length}</div>
+                </div>
+                <div className="border-l border-border pl-6">
+                  <div className="text-xs text-muted-foreground mb-1">Publisher Stake Weight</div>
+                  <div className="text-2xl font-semibold tabular-nums">{formatPct(globalStats.avgCompleteness)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Middle: metrics */}
+            <div className="border-l border-border flex-1 p-6 flex flex-col justify-center gap-4 min-w-0">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm text-muted-foreground">Stakeweight Publishing to DZ Edge</span>
+                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(globalStats.avgCompleteness)}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-muted-foreground/25 overflow-hidden">
+                  <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, globalStats.avgCompleteness)}%` }} />
+                </div>
+              </div>
+              {Object.entries(globalStats.leads).map(([competitor, lead]) => (
+                <div key={competitor}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Lead vs {FEED_LABELS[competitor] ?? competitor}</span>
+                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatMs(lead.p50)}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-0.5">p95: {formatMs(lead.p95)}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Right: gauge */}
+            <div className="border-l border-border px-8 flex items-center justify-center shrink-0">
+              <WinRateGauge value={globalStats.winRate} />
+            </div>
           </div>
         )}
 
