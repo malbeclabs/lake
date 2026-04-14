@@ -5,7 +5,7 @@ go 1.25.6
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.44.0
 	github.com/InfluxCommunity/influxdb3-go/v2 v2.13.0
-	github.com/anthropics/anthropic-sdk-go v1.27.1
+	github.com/anthropics/anthropic-sdk-go v1.35.1
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
