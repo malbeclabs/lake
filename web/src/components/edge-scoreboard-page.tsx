@@ -846,11 +846,15 @@ function RecentSlotsChart({
       }).catch(() => {})
     }
 
-    // Poll every 5s. The server cache refreshes every 30s (~75 new slots each time).
-    // At 400ms/slot drain rate, 75 slots take ~30s — matching the cache cycle. Polling
-    // at 5s means we catch a fresh cache within 5s of it arriving rather than up to 10s.
+    // Poll every 5s. Pass sinceSlot so the server bypasses its 30s page cache and
+    // runs a lightweight cursor query (recent_slots only, no expensive aggregations).
+    // Without sinceSlot every poll hits the cache and returns the same slots for ~30s,
+    // keeping newNums empty and stalling the animation queue until the cache refreshes.
     const poll = () => {
-      fetchEdgeScoreboard(window, leadersOnly).then(data => {
+      // Use liveMaxSlotRef at call time (not closure time) so concurrent polls don't
+      // redundantly re-queue the same range. Only pass sinceSlot once the buffer is seeded.
+      const sinceSlot = liveMaxSlotRef.current > 0 ? liveMaxSlotRef.current : undefined
+      fetchEdgeScoreboard(window, leadersOnly, { sinceSlot }).then(data => {
         if (cancelled) return
         loadSlots(data)
       }).catch(() => {})
@@ -1816,22 +1820,6 @@ export function EdgeScoreboardPage() {
                   </div>
                 ))}
               </div>
-              <div className="w-px h-4 bg-border" />
-              <div className="relative group">
-                <button
-                  type="button"
-                  onClick={() => setGranular(!granular)}
-                  className={cn(
-                    'p-1.5 rounded-md border border-border transition-colors',
-                    granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                  )}
-                >
-                  <Layers size={15} />
-                </button>
-                <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-48 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                  {granular ? 'Showing DZ Edge, Jito, and Turbine separately — click to collapse to DZ vs Other' : 'Break out DZ Edge leaders and retransmits alongside Jito and Turbine'}
-                </span>
-              </div>
             </div>
           }
         />
@@ -1911,6 +1899,21 @@ export function EdgeScoreboardPage() {
                       <ChevronRight size={16} />
                     </button>
                   )}
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      onClick={() => setGranular(!granular)}
+                      className={cn(
+                        'p-1.5 rounded-md border border-border transition-colors',
+                        granular ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      )}
+                    >
+                      <Layers size={15} />
+                    </button>
+                    <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-48 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                      {granular ? 'Showing DZ Edge, Jito, and Turbine separately — click to collapse to DZ vs Other' : 'Break out DZ Edge leaders and retransmits alongside Jito and Turbine'}
+                    </span>
+                  </div>
                   <button
                     onClick={() => toggleLiveRef.current?.()}
                     className={cn(
