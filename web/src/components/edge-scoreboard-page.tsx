@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers } from 'lucide-react'
+import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -1854,13 +1854,25 @@ export function EdgeScoreboardPage() {
                 Scoreboard benchmarks shred delivery speed across DoubleZero Edge and other providers, using slot-level data to compare performance in real time.
               </p>
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Publishing Shreds</div>
+                <div className="group relative">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                    Publishing Shreds
+                    <Info className="w-3 h-3 opacity-60" />
+                  </div>
                   <div className="text-2xl font-semibold tabular-nums">{Math.round(animPublishingCount ?? data.publishing_count).toLocaleString()}</div>
+                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                    Validators currently publishing shred data to the DoubleZero Edge network ({data.publishing_count.toLocaleString()} of {data.publisher_count.toLocaleString()} total registered publishers).
+                  </span>
                 </div>
-                <div className="border-l border-border pl-6">
-                  <div className="text-xs text-muted-foreground mb-1">Publisher Stake Weight</div>
+                <div className="group relative border-l border-border pl-6">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                    Publisher Stake Weight
+                    <Info className="w-3 h-3 opacity-60" />
+                  </div>
                   <div className="text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
+                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                    Percentage of total network stake held by validators actively publishing shreds — a measure of how much of the network's economic weight is represented in these race results.
+                  </span>
                 </div>
               </div>
             </div>
