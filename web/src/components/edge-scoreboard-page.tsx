@@ -15,6 +15,7 @@ import {
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PageHeader } from './page-header'
+import { useAnimatedNumber } from './stat-card'
 
 
 const VALID_WINDOWS = ['1h', '24h', '3d', '7d'] as const
@@ -54,6 +55,13 @@ function formatStake(sol: number): string {
 
 
 
+// AnimatedStat renders an animated numeric value using a format function.
+// Defined as a component (not inline) so it can be used inside loops.
+function AnimatedStat({ value, fmt }: { value: number; fmt: (v: number) => string }) {
+  const animated = useAnimatedNumber(value) ?? value
+  return <>{fmt(animated)}</>
+}
+
 function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, number>; labelPct: number }) {
   const size = 160
   const r = 65
@@ -89,8 +97,11 @@ function WinRateGauge({ feedRates, labelPct }: { feedRates: Record<string, numbe
             fill="none"
             strokeWidth={4}
             stroke={color}
-            strokeDasharray={`${len} ${circ - len}`}
-            strokeDashoffset={-off}
+            style={{
+              strokeDasharray: `${len} ${circ - len}`,
+              strokeDashoffset: -off,
+              transition: 'stroke-dasharray 0.5s ease-out, stroke-dashoffset 0.5s ease-out',
+            }}
             strokeLinecap={multi ? 'butt' : 'round'}
             transform={`rotate(-225, ${cx}, ${cy})`}
           />
@@ -2041,6 +2052,10 @@ export function EdgeScoreboardPage() {
     }
   }, [isFetching])
 
+  const animPublishingCount = useAnimatedNumber(data?.publishing_count)
+  const animPublishingStakePct = useAnimatedNumber(data?.publishing_stake_pct)
+  const animWinRate = useAnimatedNumber(globalStats?.winRate)
+
   if (isLoading && showLoader && !data) return (
     <div className="flex-1 flex items-center justify-center bg-background">
       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -2140,11 +2155,11 @@ export function EdgeScoreboardPage() {
               <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Publishing Shreds</div>
-                  <div className="text-2xl font-semibold tabular-nums">{data.publishing_count.toLocaleString()}</div>
+                  <div className="text-2xl font-semibold tabular-nums">{Math.round(animPublishingCount ?? data.publishing_count).toLocaleString()}</div>
                 </div>
                 <div className="border-l border-border pl-6">
                   <div className="text-xs text-muted-foreground mb-1">Publisher Stake Weight</div>
-                  <div className="text-2xl font-semibold tabular-nums">{formatPct(data.publishing_stake_pct)}</div>
+                  <div className="text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
                 </div>
               </div>
             </div>
@@ -2160,23 +2175,23 @@ export function EdgeScoreboardPage() {
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
-                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(globalStats.winRate)}</span>
+                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(animWinRate ?? globalStats.winRate)}</span>
                 </div>
               </StackedBar>
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
                 <div key={competitor}>
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">DZ Edge vs {FEED_LABELS[competitor] ?? competitor}</span>
-                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatMs(lead.p50)}</span>
+                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0"><AnimatedStat value={lead.p50} fmt={formatMs} /></span>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">p95: {formatMs(lead.p95)}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">p95: <AnimatedStat value={lead.p95} fmt={formatMs} /></div>
                 </div>
               ))}
             </div>
 
             {/* Right: gauge */}
             <div className="border-l border-border px-8 flex items-center justify-center shrink-0">
-              <WinRateGauge feedRates={globalStats.feedRates} labelPct={globalStats.winRate} />
+              <WinRateGauge feedRates={globalStats.feedRates} labelPct={animWinRate ?? globalStats.winRate} />
             </div>
           </div>
         )}
