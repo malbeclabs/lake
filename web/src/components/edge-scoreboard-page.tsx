@@ -1092,6 +1092,7 @@ function RecentSlotsChart({
   // Line 2 (slot): slot number (fixed) + single leader text span (variable content, no show/hide).
   // When null is passed (mouse left), fall back to defaultInfoRef (most-recent slot).
   const infoSlotRef = useRef<HTMLSpanElement>(null)
+  const infoLeaderNameRef = useRef<HTMLSpanElement>(null)
   const infoLeaderRef = useRef<HTMLSpanElement>(null)
   const infoFeedValueRefs = useRef<Map<string, HTMLSpanElement>>(new Map())
   const infoFeedLegendItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -1101,15 +1102,17 @@ function RecentSlotsChart({
   const applyInfoBar = useCallback((info: SlotHoverInfo | null) => {
     if (!info) return
     if (infoSlotRef.current) infoSlotRef.current.textContent = `Slot ${info.slot.toLocaleString()}`
+    if (infoLeaderNameRef.current) {
+      const l = info.leader
+      infoLeaderNameRef.current.textContent = l?.name ?? (l ? `${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}` : '')
+    }
     if (infoLeaderRef.current) {
       const l = info.leader
       const parts: string[] = []
-      if (l?.name) parts.push(l.name)
-      if (l) parts.push(`${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}`)
-      if (l?.ip) parts.push(l.ip)
-      if (l?.asn_org) parts.push(l.asn_org)
+      if (l?.name) parts.push(`${l.pubkey.slice(0, 8)}…${l.pubkey.slice(-4)}`)
       if (l?.city) parts.push(`${l.city}${l.country ? `, ${l.country}` : ''}`)
-      infoLeaderRef.current.textContent = parts.join('  ·  ')
+      if (l?.asn_org) parts.push(l.asn_org)
+      infoLeaderRef.current.textContent = parts.join(' · ')
     }
     for (const [f, span] of infoFeedValueRefs.current) { const v = info.feedData[f] ?? 0; span.textContent = v >= 100 ? '100%' : `${v.toFixed(1)}%` }
     // Always emphasize the winning feed (highest value at this slot)
@@ -1785,19 +1788,20 @@ function RecentSlotsChart({
         ))}
         </div>{/* end chart rows */}
         {/* Right info panel */}
-        <div className="w-44 shrink-0 border-l border-border pl-4 flex flex-col justify-center gap-3">
-          <div className="flex flex-col gap-2">
+        <div className="w-60 shrink-0 border-l border-border flex flex-col">
+          <div className="flex-1 flex flex-col justify-center px-5 py-5 gap-3.5">
             {feeds.map((f) => (
-              <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1.5 text-xs transition-opacity duration-150">
-                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
-                <span className="text-muted-foreground flex-1 truncate">{FEED_LABELS[f] ?? f}</span>
-                <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="tabular-nums text-foreground w-[4ch] text-right shrink-0">—</span>
+              <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-2.5 transition-opacity duration-150">
+                <span className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+                <span className="text-sm text-muted-foreground flex-1 truncate">{FEED_LABELS[f] ?? f}</span>
+                <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="text-sm font-medium tabular-nums w-[5ch] text-right shrink-0">—</span>
               </div>
             ))}
           </div>
           {!bucketed && (
-            <div className="border-t border-border pt-2 flex flex-col gap-0.5">
-              <span ref={infoSlotRef} className="text-xs tabular-nums text-muted-foreground" />
+            <div className="border-t border-border px-5 py-3.5 flex flex-col gap-0.5">
+              <span ref={infoSlotRef} className="text-[11px] tabular-nums text-muted-foreground" />
+              <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
               <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug" />
             </div>
           )}
