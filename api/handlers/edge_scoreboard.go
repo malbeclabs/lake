@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -168,6 +169,49 @@ func edgeScoreboardCacheKey(r *http.Request) string {
 	return "edge_scoreboard"
 }
 
+// edgeScoreboardLatestCacheKey returns the cache key for the fast-refreshed latest-slots
+// slice. Used by live-tail polls (since_slot set, no before_slot) to avoid hammering
+// ClickHouse every few seconds. Returns "" if the request isn't eligible.
+func edgeScoreboardLatestCacheKey(r *http.Request) string {
+	if r.URL.Query().Get("since_slot") == "" || r.URL.Query().Get("before_slot") != "" {
+		return ""
+	}
+	leadersOnly := strings.TrimSpace(r.URL.Query().Get("leaders_only")) != "false"
+	if leadersOnly {
+		return "edge_scoreboard:latest:leaders"
+	}
+	return "edge_scoreboard:latest"
+}
+
+// filterSlotsSince returns slots with slot > sinceSlot, in ASC order, capped at limit.
+// The cached payload is DESC (latest first) with multiple rows per slot (one per feed/host),
+// so we collect all matching rows, then sort ASC by slot, then cap by distinct slot count.
+func filterSlotsSince(slots []EdgeScoreboardSlotRace, sinceSlot uint64, limit int) []EdgeScoreboardSlotRace {
+	out := make([]EdgeScoreboardSlotRace, 0, len(slots))
+	for _, s := range slots {
+		if s.Slot > sinceSlot {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slot < out[j].Slot })
+	if limit <= 0 {
+		return out
+	}
+	// Cap by distinct slot count so N rows-per-slot don't truncate the feed groupings.
+	seen := make(map[uint64]struct{})
+	cut := len(out)
+	for i, s := range out {
+		if _, ok := seen[s.Slot]; !ok {
+			if len(seen) >= limit {
+				cut = i
+				break
+			}
+			seen[s.Slot] = struct{}{}
+		}
+	}
+	return out[:cut]
+}
+
 // GetEdgeScoreboard returns aggregated win rate / completeness data for DZ Edge nodes.
 func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	// Try to serve from cache for default (window=1h) requests.
@@ -206,6 +250,24 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Sscanf(l, "%d", &slotLimit)
 		if slotLimit < 1 || slotLimit > 1000 {
 			slotLimit = 200
+		}
+	}
+
+	// Live-tail fast path: serve since_slot from the fast-refreshed latest cache when possible.
+	if isMainnet(r.Context()) && sinceSlot > 0 && beforeSlot == 0 {
+		if cacheKey := edgeScoreboardLatestCacheKey(r); cacheKey != "" {
+			if data, err := a.readPageCache(r.Context(), cacheKey); err == nil {
+				var cached EdgeScoreboardResponse
+				if err := json.Unmarshal(data, &cached); err == nil && cached.CurrentSlot >= sinceSlot {
+					trimmed := filterSlotsSince(cached.RecentSlots, sinceSlot, slotLimit)
+					resp := cached
+					resp.RecentSlots = trimmed
+					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set("X-Cache", "HIT")
+					writeJSON(w, &resp)
+					return
+				}
+			}
 		}
 	}
 
@@ -1425,4 +1487,26 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		SlotBucketSize:     slotBucketSize,
 		SlotLeaders:        slotLeaders,
 	}, nil
+}
+
+// FetchEdgeScoreboardLatest fetches just the latest N slots (recent_slots + slot_leaders).
+// Skips the heavy aggregate queries. Intended for the fast page-cache refresher so live-tail
+// polls can be served from cache rather than hitting ClickHouse every few seconds.
+func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, slotLimit int) (*EdgeScoreboardResponse, error) {
+	if slotLimit <= 0 {
+		slotLimit = 1000
+	}
+	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
+	var maxSlot uint64
+	start := time.Now()
+	err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary`, shredderDB)).Scan(&maxSlot)
+	metrics.RecordClickHouseQuery(time.Since(start), err)
+	if err != nil {
+		return nil, fmt.Errorf("max slot: %w", err)
+	}
+	if maxSlot == 0 {
+		return &EdgeScoreboardResponse{LeadersOnly: leadersOnly, GeneratedAt: time.Now().UTC()}, nil
+	}
+	// beforeSlot = maxSlot+1 triggers cursor mode and returns the latest slotLimit slots DESC.
+	return a.FetchEdgeScoreboardData(ctx, "", leadersOnly, 0, maxSlot+1, slotLimit)
 }

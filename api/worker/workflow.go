@@ -18,6 +18,7 @@ const (
 	WorkflowID = "api-page-cache"
 
 	refreshInterval        = 30 * time.Second
+	fastRefreshInterval    = 3 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
 	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
 )
@@ -155,6 +156,34 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	return nil
 }
 
+// latestEntries are refreshed on the fast cadence (see fastRefreshInterval). They back
+// the edge scoreboard live-tail so client polls read cached latest slots instead of
+// hitting ClickHouse every few seconds.
+func (a *Activities) latestEntries() []cacheEntry {
+	api := a.API
+	return []cacheEntry{
+		{"edge scoreboard (latest)", "edge_scoreboard:latest", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardLatest(ctx, false, 1000)
+		}},
+		{"edge scoreboard (latest, leaders)", "edge_scoreboard:latest:leaders", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardLatest(ctx, true, 1000)
+		}},
+	}
+}
+
+// RefreshLatestCaches refreshes just the fast-cadence entries (latest slots slice).
+func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
+	g, gctx := errgroup.WithContext(ctx)
+	for _, entry := range a.latestEntries() {
+		g.Go(func() error {
+			a.refresh(gctx, entry.name, entry.key, entry.fn)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return nil
+}
+
 func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error)) {
 	const maxAttempts = 2
 	for attempt := range maxAttempts {
@@ -224,13 +253,35 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, actOpts)
 
+	fastActOpts := temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	}
+	fastCtx := temporalworkflow.WithActivityOptions(ctx, fastActOpts)
+
 	for iteration < continueAsNewThreshold {
 		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches).Get(ctx, nil)
 
 		iteration++
 		if iteration < continueAsNewThreshold {
-			if err := temporalworkflow.Sleep(ctx, refreshInterval); err != nil {
-				return err
+			// Tick the fast-cadence refresh repeatedly during the outer sleep window
+			// so latest-slots caches stay fresh for live-tail clients.
+			deadline := temporalworkflow.Now(ctx).Add(refreshInterval)
+			for temporalworkflow.Now(ctx).Before(deadline) {
+				_ = temporalworkflow.ExecuteActivity(fastCtx, (*Activities).RefreshLatestCaches).Get(fastCtx, nil)
+				remaining := deadline.Sub(temporalworkflow.Now(ctx))
+				if remaining <= 0 {
+					break
+				}
+				sleep := fastRefreshInterval
+				if remaining < sleep {
+					sleep = remaining
+				}
+				if err := temporalworkflow.Sleep(ctx, sleep); err != nil {
+					return err
+				}
 			}
 		}
 	}
