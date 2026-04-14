@@ -962,7 +962,7 @@ function RecentSlotsChart({
     if (!liveParamsChanged && slotsRef.current.length > 0) {
       seedBuffer(slotsRef.current, slotLeadersRef.current)
     } else {
-      fetchEdgeScoreboard(window, leadersOnly).then(data => {
+      fetchEdgeScoreboard(window, leadersOnly, { limit: viewSlotCount }).then(data => {
         if (cancelled) return
         seedBuffer(data.recent_slots, data.slot_leaders ?? undefined)
       }).catch(() => {})
@@ -973,7 +973,7 @@ function RecentSlotsChart({
     // at 5s means we catch a fresh cache within 5s of it arriving rather than up to 10s.
     const poll = () => {
       const prevMax = liveMaxSlotRef.current
-      fetchEdgeScoreboard(window, leadersOnly).then(data => {
+      fetchEdgeScoreboard(window, leadersOnly, { limit: viewSlotCount }).then(data => {
         if (cancelled) return
         loadSlots(data, prevMax)
       }).catch(() => {})
@@ -1892,8 +1892,8 @@ export function EdgeScoreboardPage() {
   const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['edge-scoreboard', activeWindow, leadersOnly],
-    queryFn: () => fetchEdgeScoreboard(activeWindow, leadersOnly),
+    queryKey: ['edge-scoreboard', activeWindow, leadersOnly, viewSlotCount],
+    queryFn: () => fetchEdgeScoreboard(activeWindow, leadersOnly, { limit: viewSlotCount }),
     refetchInterval: 30_000,
     staleTime: 15_000,
     placeholderData: keepPreviousData,
