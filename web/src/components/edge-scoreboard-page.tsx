@@ -365,8 +365,8 @@ function BucketedNodeChart({ data, feeds, bucketSize }: { data: Array<Record<str
       >
         {paths.map(({ feed, color, svgPaths, strokePaths }) => (
           <g key={feed}>
-            {svgPaths.map((d, i) => <path key={i} d={d} fill={color} />)}
-            {strokePaths.map((d, i) => <path key={i} d={d} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />)}
+            {svgPaths.map((d, i) => <path key={i} d={d} fill={color} fillOpacity={0.65} />)}
+            {strokePaths.map((d, i) => <path key={i} d={d} fill="none" stroke={color} strokeOpacity={0.65} strokeWidth={1.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />)}
           </g>
         ))}
         {hover != null && (
@@ -568,6 +568,7 @@ function SlotRaceNodeChart({
             ctx.clip()
             // Apply slide-in offset during data refresh animation
             ctx.translate(animOffsetRef.current, 0)
+            ctx.globalAlpha = 0.65
             const currentData = slotDataRef.current
             const currentN = currentData.length
             const cumulative = new Float64Array(currentN)
@@ -589,6 +590,7 @@ function SlotRaceNodeChart({
                 }
               }
               // Highlight hovered column (skip during drag — position is misleading while translating)
+              ctx.globalAlpha = 1
               const hIdx = hoveredIdxRef.current
               if (!draggingRef.current && hIdx != null && hIdx >= 0 && hIdx < currentN) {
                 const x1 = Math.floor(u.valToPos(hIdx - 0.5, 'x', true))
