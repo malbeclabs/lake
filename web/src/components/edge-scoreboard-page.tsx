@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
 import { useDrag } from '@use-gesture/react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
@@ -334,7 +334,7 @@ type SlotHoverInfo = {
 // effect only fires for the owner, so moving to another row clears the previous one.
 let activeChartId: string | null = null
 
-function SlotRaceNodeChart({
+const SlotRaceNodeChart = memo(function SlotRaceNodeChart({
   slotData,
   feeds,
   slotLeaders,
@@ -677,7 +677,7 @@ function SlotRaceNodeChart({
       <div ref={containerRef} />
     </div>
   )
-}
+})
 
 const LIVE_BUFFER_SIZE = 200
 const MAX_BUFFER_SLOTS = 2000
@@ -918,14 +918,6 @@ function RecentSlotsChart({
             const slotNum = races[0]?.slot
             if (slotNum) { liveEdgeRef.current = slotNum }
           }
-        }
-        // Drive dragFracPx at rAF rate (60fps) rather than pointer-event rate (~120Hz+)
-        // so sub-slot CSS updates don't trigger React re-renders faster than the display.
-        if (isDraggingRef.current && viewEndSlotRef.current !== null) {
-          const slotPxVal = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCountRef.current)
-          const rawEnd = viewEndSlotRef.current
-          const frac = -(rawEnd - Math.floor(rawEnd)) * slotPxVal
-          setDragFracPx(frac)
         }
       }
       drainRafId = requestAnimationFrame(tick)
@@ -1244,9 +1236,11 @@ function RecentSlotsChart({
         } else {
           setOverscrollPx(0)
           viewEndSlotRef.current = rawEnd
-          // Only trigger re-render at slot boundaries — sub-slot CSS offset is driven
-          // by the rAF drain loop at 60fps rather than at pointer-event rate.
+          // Only trigger activeSlots recomputation at slot boundaries.
+          // Sub-slot CSS offset is driven by dragFracPx so bars glide smoothly between slots.
           setViewEndSlot(Math.floor(rawEnd))
+          const slotPxVal = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCount)
+          setDragFracPx(-(rawEnd - Math.floor(rawEnd)) * slotPxVal)
         }
         setIsDragging(true)
       }
