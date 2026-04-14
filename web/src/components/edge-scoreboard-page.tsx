@@ -67,7 +67,7 @@ function WinRateGauge({ value }: { value: number }) {
     <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
         <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="currentColor" className="text-muted-foreground/25" strokeDasharray={`${arc} ${gap}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
-        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="#10b981" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
+        <circle cx={cx} cy={cy} r={r} fill="none" strokeWidth={4} stroke="#0ea5e9" strokeDasharray={`${fill} ${circ - fill}`} strokeLinecap="round" transform={`rotate(-225, ${cx}, ${cy})`} />
       </svg>
       <div className="flex flex-col items-center z-10">
         <div className="text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</div>
@@ -78,11 +78,11 @@ function WinRateGauge({ value }: { value: number }) {
 }
 
 const FEED_COLORS: Record<string, string> = {
-  dz_edge: '#10b981',
-  dz: '#10b981',
-  dz_rebop: '#10b981',
-  jito: '#374151',
-  turbine: '#1f2937',
+  dz_edge: '#0ea5e9',  // sky-500 — primary DZ
+  dz: '#38bdf8',       // sky-400 — lighter
+  dz_rebop: '#0284c7', // sky-600 — darker
+  jito: '#818cf8',     // indigo-400 — clearly distinct from sky
+  turbine: '#94a3b8',  // slate-400 — neutral
   pipe: '#e879f9',
   other: '#374151',
 }
@@ -1521,14 +1521,14 @@ function RecentSlotsChart({
             {live && (
               <span className="relative flex items-center">
                 {isPrefetching ? (
-                  <Loader2 size={12} className="animate-spin text-emerald-500/50" />
+                  <Loader2 size={12} className="animate-spin text-sky-500/50" />
                 ) : viewEndSlot === null ? (
                   <>
-                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-sky-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500" />
                   </>
                 ) : (
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500/30" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500/30" />
                 )}
               </span>
             )}
@@ -1563,7 +1563,7 @@ function RecentSlotsChart({
             {!bucketed && live && viewEndSlot !== null && (
               <button
                 onClick={scrollToLive}
-                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                className="text-sky-400 hover:text-sky-300 transition-colors"
               >
                 <ChevronsRight size={16} />
               </button>
@@ -1583,7 +1583,7 @@ function RecentSlotsChart({
                 className={cn(
                   'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                   live && viewEndSlot === null
-                    ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                    ? 'border-sky-500 bg-sky-500/10 text-sky-400 hover:bg-sky-500/20'
                     : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
@@ -1929,7 +1929,7 @@ export function EdgeScoreboardPage() {
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
                     {v === true && leadersOnly !== true && (
-                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
+                      <span className="absolute inset-0 rounded-md ring-1 ring-sky-400/40 shadow-[0_0_8px_2px_rgba(56,189,248,0.2)] animate-pulse pointer-events-none" />
                     )}
                     <button
                       type="button"
@@ -1989,7 +1989,7 @@ export function EdgeScoreboardPage() {
                   <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(data.publishing_stake_pct)}</span>
                 </div>
                 <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden">
-                  <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, data.publishing_stake_pct)}%` }} />
+                  <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${Math.min(100, data.publishing_stake_pct)}%` }} />
                 </div>
               </div>
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
@@ -2036,7 +2036,7 @@ export function EdgeScoreboardPage() {
                   {!bucketed && live && viewEndSlot !== null && (
                     <button
                       onClick={() => scrollToLiveRef.current?.()}
-                      className="text-[#10b981] hover:text-[#059669] transition-colors"
+                      className="text-[#0ea5e9] hover:text-[#0284c7] transition-colors"
                     >
                       <ChevronsRight size={16} />
                     </button>
@@ -2047,7 +2047,7 @@ export function EdgeScoreboardPage() {
                       className={cn(
                         'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
                         live && viewEndSlot === null
-                          ? 'border-[#10b981] bg-[#10b981]/10 text-[#10b981] hover:bg-[#059669]/20'
+                          ? 'border-[#0ea5e9] bg-[#0ea5e9]/10 text-[#0ea5e9] hover:bg-[#0284c7]/20'
                           : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
@@ -2207,7 +2207,7 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
           <>
             {formatPct(edgeFirstArrival)}
             <div className="h-1 rounded-full bg-muted-foreground/25 overflow-hidden mt-1.5">
-              <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, edgeFirstArrival)}%` }} />
+              <div className="h-full rounded-full bg-sky-500 transition-all duration-500" style={{ width: `${Math.min(100, edgeFirstArrival)}%` }} />
             </div>
           </>
         ) : '—'}
