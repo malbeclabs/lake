@@ -262,6 +262,19 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 					trimmed := filterSlotsSince(cached.RecentSlots, sinceSlot, slotLimit)
 					resp := cached
 					resp.RecentSlots = trimmed
+					// Trim slot_leaders to only the slots we're actually returning. The cached
+					// payload holds ~1000 leader entries (name/ip/asn/geoip per slot); sending
+					// them all on a "no new data" response is 100s of KB of waste per poll.
+					if len(cached.SlotLeaders) > 0 {
+						trimmedLeaders := make(map[string]*EdgeScoreboardLeader, len(trimmed))
+						for _, s := range trimmed {
+							key := fmt.Sprintf("%d", s.Slot)
+							if leader, ok := cached.SlotLeaders[key]; ok {
+								trimmedLeaders[key] = leader
+							}
+						}
+						resp.SlotLeaders = trimmedLeaders
+					}
 					w.Header().Set("Content-Type", "application/json")
 					w.Header().Set("X-Cache", "HIT")
 					writeJSON(w, &resp)
