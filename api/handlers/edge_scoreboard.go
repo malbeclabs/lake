@@ -1090,18 +1090,22 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		t := time.Now()
 		rows5, err := a.envDB(gctx).Query(gctx, query5)
 		metrics.RecordClickHouseQuery(time.Since(t), err)
-		if err != nil && gctx.Err() == nil {
-			log.Printf("EdgeScoreboard query5 error: %v", err)
-		} else if err == nil {
-			defer rows5.Close()
-			for rows5.Next() {
-				var sr EdgeScoreboardSlotRace
-				if err := rows5.Scan(&sr.Host, &sr.Slot, &sr.Feed, &sr.ShredsWon, &sr.WinPct); err != nil {
-					log.Printf("EdgeScoreboard query5 scan error: %v", err)
-					break
-				}
-				localSlots = append(localSlots, sr)
+		if err != nil {
+			if gctx.Err() != nil {
+				return nil
 			}
+			return fmt.Errorf("query5: %w", err)
+		}
+		defer rows5.Close()
+		for rows5.Next() {
+			var sr EdgeScoreboardSlotRace
+			if err := rows5.Scan(&sr.Host, &sr.Slot, &sr.Feed, &sr.ShredsWon, &sr.WinPct); err != nil {
+				return fmt.Errorf("query5 scan: %w", err)
+			}
+			localSlots = append(localSlots, sr)
+		}
+		if err := rows5.Err(); err != nil {
+			return fmt.Errorf("query5 rows: %w", err)
 		}
 
 		if len(localSlots) > 0 {
@@ -1142,23 +1146,26 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				t = time.Now()
 				rows6a, err := a.envDB(gctx).Query(gctx, query6a, relSlots)
 				metrics.RecordClickHouseQuery(time.Since(t), err)
-				if err != nil && gctx.Err() == nil {
-					log.Printf("EdgeScoreboard query6a error (epoch %d): %v", epoch, err)
-					continue
-				} else if err != nil {
-					continue
+				if err != nil {
+					if gctx.Err() != nil {
+						return nil
+					}
+					return fmt.Errorf("query6a (epoch %d): %w", epoch, err)
 				}
 				for rows6a.Next() {
 					var relSlot uint64
 					var pubkey string
 					if err := rows6a.Scan(&relSlot, &pubkey); err != nil {
-						log.Printf("EdgeScoreboard query6a scan error: %v", err)
 						rows6a.Close()
-						break
+						return fmt.Errorf("query6a scan: %w", err)
 					}
 					absSlot := relToAbs[epochRelSlot{epoch, relSlot}]
 					slotPubkeys[absSlot] = pubkey
 					pubkeySet[pubkey] = true
+				}
+				if err := rows6a.Err(); err != nil {
+					rows6a.Close()
+					return fmt.Errorf("query6a rows: %w", err)
 				}
 				rows6a.Close()
 			}
@@ -1183,24 +1190,28 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				t = time.Now()
 				rows6b, err := a.envDB(gctx).Query(gctx, query6b, pubkeys)
 				metrics.RecordClickHouseQuery(time.Since(t), err)
+				if err != nil {
+					if gctx.Err() != nil {
+						return nil
+					}
+					return fmt.Errorf("query6b: %w", err)
+				}
+				defer rows6b.Close()
 
 				type leaderInfo struct {
 					name, ip, asnOrg, city, country string
 				}
 				infoByPubkey := make(map[string]*leaderInfo)
-				if err != nil && gctx.Err() == nil {
-					log.Printf("EdgeScoreboard query6b error: %v", err)
-				} else if err == nil {
-					defer rows6b.Close()
-					for rows6b.Next() {
-						var pubkey string
-						var li leaderInfo
-						if err := rows6b.Scan(&pubkey, &li.name, &li.ip, &li.asnOrg, &li.city, &li.country); err != nil {
-							log.Printf("EdgeScoreboard query6b scan error: %v", err)
-							break
-						}
-						infoByPubkey[pubkey] = &li
+				for rows6b.Next() {
+					var pubkey string
+					var li leaderInfo
+					if err := rows6b.Scan(&pubkey, &li.name, &li.ip, &li.asnOrg, &li.city, &li.country); err != nil {
+						return fmt.Errorf("query6b scan: %w", err)
 					}
+					infoByPubkey[pubkey] = &li
+				}
+				if err := rows6b.Err(); err != nil {
+					return fmt.Errorf("query6b rows: %w", err)
 				}
 
 				for absSlot, pubkey := range slotPubkeys {
