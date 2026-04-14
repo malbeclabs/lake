@@ -58,7 +58,7 @@ function InfoTooltip({ text, direction = 'up' }: { text: string; direction?: 'up
   )
 }
 
-function SummaryCard({ label, value, sub, tooltip }: { label: string; value: string; sub?: string; tooltip?: string }) {
+function SummaryCard({ label, value, sub, tooltip, progress }: { label: string; value: string; sub?: string; tooltip?: string; progress?: number }) {
   return (
     <div className="bg-card border border-border rounded-lg p-4">
       <div className="text-sm text-muted-foreground mb-1 flex items-center">
@@ -66,6 +66,11 @@ function SummaryCard({ label, value, sub, tooltip }: { label: string; value: str
         {tooltip && <InfoTooltip text={tooltip} />}
       </div>
       <div className="text-2xl font-semibold tabular-nums">{value}</div>
+      {progress !== undefined && (
+        <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-2">
+          <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, progress)}%` }} />
+        </div>
+      )}
       {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
     </div>
   )
@@ -2159,7 +2164,7 @@ export function EdgeScoreboardPage() {
         {globalStats && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
             <SummaryCard label="Stakeweight Publishing to DZ Edge" value={formatPct(globalStats.avgCompleteness)} tooltip="Fraction of all observed slots where the scheduled leader was publishing shreds via DZ Edge." />
-            <SummaryCard label="DZ Edge Win Rate" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." />
+            <SummaryCard label="DZ Edge Win Rate" value={formatPct(globalStats.winRate)} tooltip="Percentage of shreds where a DZ Edge node (leader or retransmit) delivered the shred before all other sources (Jito Shredstream, Turbine)." progress={globalStats.winRate} />
             {Object.entries(globalStats.leads).map(([competitor, lead]) => (
               <SummaryCard
                 key={competitor}
