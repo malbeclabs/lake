@@ -135,8 +135,8 @@ const FEED_COLORS: Record<string, string> = {
   dz_edge: '#10b981',  // emerald-500 — primary DZ
   dz: '#34d399',       // emerald-400 — lighter
   dz_rebop: '#059669', // emerald-600 — darker
-  jito: '#f59e0b',     // amber-500
-  turbine: '#fb7185',  // rose-400
+  jito: '#fbbf24',     // amber-400 — brighter
+  turbine: '#f43f5e',  // rose-500 — more saturated
   pipe: '#e879f9',
   other: '#1f2937',
 }
