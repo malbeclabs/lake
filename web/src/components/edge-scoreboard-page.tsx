@@ -1865,18 +1865,20 @@ export function EdgeScoreboardPage() {
 
             {/* Middle: metrics */}
             <div className="border-l border-border flex-1 p-6 flex flex-col justify-center gap-4 min-w-0">
-              <StackedBar
-                popoverSide="right"
-                dzTotalPct={globalStats.winRate}
-                segments={Object.keys(globalStats.feedRatesGranular)
-                  .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
-                  .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
-                  <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(animWinRate ?? globalStats.winRate)}</span>
-                </div>
-              </StackedBar>
+              <div className="pb-2">
+                <StackedBar
+                  popoverSide="right"
+                  dzTotalPct={globalStats.winRate}
+                  segments={Object.keys(globalStats.feedRatesGranular)
+                    .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
+                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
+                    <span className="text-sm font-medium tabular-nums ml-4 shrink-0">{formatPct(animWinRate ?? globalStats.winRate)}</span>
+                  </div>
+                </StackedBar>
+              </div>
               {Object.entries(globalStats.leads).map(([competitor, lead]) => (
                 <div key={competitor}>
                   <div className="flex items-center justify-between">
