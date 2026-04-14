@@ -1437,6 +1437,12 @@ function RecentSlotsChart({
     }
     const feedData: Record<string, number | null> = {}
     for (const f of feeds) feedData[f] = feedTotals[f] ? feedTotals[f].sum / feedTotals[f].count : 0
+    // Normalize so values sum to 100%, matching the stacked chart visualization.
+    const total = feeds.reduce((sum, f) => sum + (feedData[f] ?? 0), 0)
+    if (total > 0) {
+      const scale = 100 / total
+      for (const f of feeds) feedData[f] = Math.round((feedData[f] ?? 0) * scale * 10) / 10
+    }
     const leaders = live ? (liveLeaders ?? slotLeaders) : slotLeaders
     const leader = leaders?.[String(slotNum)]
     const info: SlotHoverInfo = { slot: slotNum, leader, feedData }
