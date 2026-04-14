@@ -101,11 +101,11 @@ function WinRateBar({
 
   return (
     <div
-      className="relative flex-1 h-14"
+      className="relative flex-1 h-9"
       onMouseLeave={() => { setMousePos(null); onHover?.(null, null) }}
       onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
     >
-      <div className="relative flex h-full rounded overflow-hidden">
+      <div className="relative flex h-full rounded-sm overflow-hidden">
         {feeds.map((f) => {
           const pct = Number(data[f] ?? 0)
           if (pct < 0.1) return null
@@ -131,13 +131,13 @@ function WinRateBar({
       </div>
       {mousePos && (
         <div
-          className="fixed z-20 bg-[#1a1a2e] border border-[#333] rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none"
+          className="fixed z-20 bg-popover border border-border rounded-md px-3 py-2 text-xs shadow-lg pointer-events-none"
           style={{ left: mousePos.x + 10, top: mousePos.y - 60 }}
         >
-          <div className="text-[#e5e5e5] font-medium mb-1.5">{node.location}</div>
+          <div className="font-medium mb-1.5">{node.location}</div>
           <table className="border-spacing-0">
             <thead>
-              <tr className="text-[#777]">
+              <tr className="text-muted-foreground">
                 <th className="pr-3 py-0.5 text-left font-normal">Feed</th>
                 <th className="pr-3 py-0.5 text-right font-normal">Win Rate %</th>
                 <th className="py-0.5 text-right font-normal">Shreds</th>
@@ -155,20 +155,20 @@ function WinRateBar({
                       <td className="pr-3 py-0.5 font-medium" style={{ color: FEED_COLORS[f] ?? '#6b7280' }}>
                         {FEED_LABELS[f] ?? f}
                       </td>
-                      <td className="pr-3 py-0.5 text-right font-mono text-[#e5e5e5]">{raw.toFixed(1)}%</td>
-                      <td className="py-0.5 text-right font-mono text-[#999]">{shreds.toLocaleString()}</td>
+                      <td className="pr-3 py-0.5 text-right tabular-nums">{raw.toFixed(1)}%</td>
+                      <td className="py-0.5 text-right tabular-nums text-muted-foreground">{shreds.toLocaleString()}</td>
                     </tr>
                     {f === 'dz_edge' && leaderRaw > 0 && (
                       <tr key="dz_edge_leader">
-                        <td className="pr-3 py-0.5 pl-3 text-[#999]">Leaders</td>
-                        <td className="pr-3 py-0.5 text-right font-mono text-[#999]">{leaderRaw.toFixed(1)}%</td>
+                        <td className="pr-3 py-0.5 pl-3 text-muted-foreground">Leaders</td>
+                        <td className="pr-3 py-0.5 text-right tabular-nums text-muted-foreground">{leaderRaw.toFixed(1)}%</td>
                         <td />
                       </tr>
                     )}
                     {f === 'dz_edge' && rebopRaw > 0 && (
                       <tr key="dz_edge_rebop">
-                        <td className="pr-3 py-0.5 pl-3 text-[#999]">Retransmits</td>
-                        <td className="pr-3 py-0.5 text-right font-mono text-[#999]">{rebopRaw.toFixed(1)}%</td>
+                        <td className="pr-3 py-0.5 pl-3 text-muted-foreground">Retransmits</td>
+                        <td className="pr-3 py-0.5 text-right tabular-nums text-muted-foreground">{rebopRaw.toFixed(1)}%</td>
                         <td />
                       </tr>
                     )}
@@ -184,8 +184,8 @@ function WinRateBar({
 }
 
 /** Height per node row shared between Win Rate and Recent Slots charts. */
-const NODE_ROW_HEIGHT = 72
-const NODE_CHART_HEIGHT = 56 // matches WinRateBar h-14, leaving 8px top/bottom padding
+const NODE_ROW_HEIGHT = 52
+const NODE_CHART_HEIGHT = 36 // matches WinRateBar h-9, leaving 8px top/bottom padding
 
 function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string }) {
   const [show, setShow] = useState(false)
@@ -306,8 +306,8 @@ function WinRateChart({ nodes, bare }: { nodes: EdgeScoreboardNode[]; bare?: boo
             const defaultVal = formatPct(chartData.feedAgg[f])
             legendDefaultsRef.current.set(f, defaultVal)
             return (
-              <div key={f} ref={el => { if (el) legendItemRefs.current.set(f, el) }} className="flex items-center gap-1 text-[10px] text-muted-foreground transition-opacity duration-150">
-                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+              <div key={f} ref={el => { if (el) legendItemRefs.current.set(f, el) }} className="flex items-center gap-1.5 text-xs text-muted-foreground transition-opacity duration-150">
+                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
                 {FEED_LABELS[f] ?? f}
                 <span
                   ref={el => { if (el) legendValueRefs.current.set(f, el) }}
@@ -1746,12 +1746,12 @@ function RecentSlotsChart({
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 mt-3 text-[10px] text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 mt-2 text-xs text-muted-foreground">
           {feeds.map((f) => (
-            <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1 transition-opacity duration-150">
-              <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
+            <div key={f} ref={el => { if (el) infoFeedLegendItemRefs.current.set(f, el) }} className="flex items-center gap-1.5 transition-opacity duration-150">
+              <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: FEED_COLORS[f] ?? '#6b7280' }} />
               {FEED_LABELS[f] ?? f}
-              <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="font-mono text-foreground ml-0.5 inline-block w-[4ch] text-right">—</span>
+              <span ref={el => { if (el) infoFeedValueRefs.current.set(f, el) }} className="tabular-nums text-foreground ml-0.5 inline-block w-[4ch] text-right">—</span>
             </div>
           ))}
         </div>
