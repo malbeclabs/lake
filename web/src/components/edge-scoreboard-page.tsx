@@ -2286,7 +2286,14 @@ function NodeRow({ node, label }: { node: EdgeScoreboardNode; label: string }) {
         </div>
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm text-green-500">
-        {dz ? formatPct(edgeFirstArrival) : '—'}
+        {dz ? (
+          <>
+            {formatPct(edgeFirstArrival)}
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-1.5">
+              <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, edgeFirstArrival)}%` }} />
+            </div>
+          </>
+        ) : '—'}
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">
         {node.total_slots > 0 ? formatPct(node.dz_leader_slots / node.total_slots * 100) : '—'}
