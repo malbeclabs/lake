@@ -1037,8 +1037,8 @@ function RecentSlotsChart({
   const [overscrollPx, setOverscrollPx] = useState(0)
   // Sub-slot fractional offsets applied as CSS translate so bars glide smoothly between
   // slot boundaries without triggering activeSlots recomputation.
-  // dragFracPx: active during pointer drag (same pattern as inertiaFracPx during momentum).
-  const [dragFracPx, setDragFracPx] = useState(0)
+  // dragFracPx: set via CSS custom property (--drag-frac) on chartRowsRef so pointer
+  // events bypass React entirely between slot boundaries — zero re-renders during drag.
   const [inertiaFracPx, setInertiaFracPx] = useState(0)
   const [isInertia, setIsInertia] = useState(false)
   const [isScrollingToLive, setIsScrollingToLive] = useState(false)
@@ -1199,9 +1199,12 @@ function RecentSlotsChart({
       const px = () => Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCountRef.current)
 
       if (active) {
-        momentumStopRef.current?.stop()
-        momentumStopRef.current = null
-        setInertiaFracPx(0)
+        // Cancel any running inertia — only when it's actually running to avoid no-op re-renders.
+        if (momentumStopRef.current) {
+          momentumStopRef.current.stop()
+          momentumStopRef.current = null
+          setInertiaFracPx(0)
+        }
 
         const nums = slotNums()
         const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
@@ -1213,6 +1216,7 @@ function RecentSlotsChart({
           // This makes overscroll accumulate correctly — delta-based math resets each frame
           // when viewEndSlotRef is frozen at minEnd during overscroll.
           dragStartSlotRef.current = viewEndSlotRef.current ?? liveEdge
+          setIsDragging(true)
         }
 
         // Use cumulative movement from gesture start, not incremental delta.
@@ -1225,30 +1229,30 @@ function RecentSlotsChart({
           setOverscrollPx(Math.min(350, rawOverflowPx * 0.35))
           viewEndSlotRef.current = minEnd
           setViewEndSlot(minEnd)
-          setDragFracPx(0)
+          chartRowsRef.current?.style.removeProperty('--drag-frac')
         } else if (rawEnd > liveEdge) {
           // Past the right (live) edge: anchor at liveEdge, grow CSS transform leftward.
           const rawOverflowPx = (rawEnd - liveEdge) * px()
           setOverscrollPx(-Math.min(350, rawOverflowPx * 0.35))
           viewEndSlotRef.current = liveEdge
           setViewEndSlot(liveEdge)
-          setDragFracPx(0)
+          chartRowsRef.current?.style.removeProperty('--drag-frac')
         } else {
           setOverscrollPx(0)
           viewEndSlotRef.current = rawEnd
           // Only trigger activeSlots recomputation at slot boundaries.
-          // Sub-slot CSS offset is driven by dragFracPx so bars glide smoothly between slots.
+          // Sub-slot glide uses a CSS custom property set directly on the DOM — zero React
+          // re-renders between slot boundaries, pointer events handled at native speed.
           setViewEndSlot(Math.floor(rawEnd))
           const slotPxVal = Math.max(1, ((containerRef.current?.offsetWidth ?? 260) - 130) / viewSlotCount)
-          setDragFracPx(-(rawEnd - Math.floor(rawEnd)) * slotPxVal)
+          chartRowsRef.current?.style.setProperty('--drag-frac', `${-(rawEnd - Math.floor(rawEnd)) * slotPxVal}px`)
         }
-        setIsDragging(true)
       }
 
       if (last) {
         setIsDragging(false)
         setOverscrollPx(0)  // CSS transition snaps back
-        setDragFracPx(0)
+        chartRowsRef.current?.style.removeProperty('--drag-frac')
 
         const nums = slotNums()
         const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
@@ -1611,7 +1615,7 @@ function RecentSlotsChart({
             <div
               className="flex"
               style={{
-                transform: `translateX(${overscrollPx + dragFracPx + inertiaFracPx - (live && viewEndSlot === null && !isDragging ? scrollOffset : 0)}px)`,
+                transform: `translateX(calc(var(--drag-frac, 0px) + ${overscrollPx + inertiaFracPx - (live && viewEndSlot === null && !isDragging ? scrollOffset : 0)}px))`,
                 transition: (isDragging || isInertia || (live && viewEndSlot === null)) ? undefined : 'transform 0.15s cubic-bezier(0.2, 0, 0, 1)',
                 willChange: 'transform',
               }}
