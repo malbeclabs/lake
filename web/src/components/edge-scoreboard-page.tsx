@@ -35,6 +35,16 @@ function formatMs(v: number): string {
 }
 
 
+function windowLabel(w: TimeWindow): string {
+  const labels: Record<TimeWindow, string> = {
+    '1h': 'Past 1 hour',
+    '24h': 'Past 24 hours',
+    '3d': 'Past 3 days',
+    '7d': 'Past 7 days',
+  }
+  return labels[w] ?? w
+}
+
 function formatStake(sol: number): string {
   if (sol >= 1_000_000) return `${(sol / 1_000_000).toFixed(1)}M SOL`
   if (sol >= 1_000) return `${(sol / 1_000).toFixed(0)}K SOL`
@@ -638,6 +648,9 @@ function RecentSlotsChart({
   viewSlotCount,
   setViewSlotCount,
   bare,
+  scrollToLiveRef,
+  toggleLiveRef,
+  onViewEndSlotChange,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
@@ -653,6 +666,9 @@ function RecentSlotsChart({
   viewSlotCount: number
   setViewSlotCount: (n: number) => void
   bare?: boolean
+  scrollToLiveRef?: React.RefObject<(() => void) | null>
+  toggleLiveRef?: React.RefObject<(() => void) | null>
+  onViewEndSlotChange?: (slot: number | null) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewSlotCountRef = useRef(viewSlotCount)
@@ -674,8 +690,12 @@ function RecentSlotsChart({
   // viewEndSlot: the slot number anchoring the right edge of the visible window.
   // null = live (show up to liveEdge). Absolute slot number means the view is
   // stable when the buffer grows on either end — no offset math needed.
-  const [viewEndSlot, setViewEndSlot] = useState<number | null>(null)
+  const [viewEndSlot, setViewEndSlotRaw] = useState<number | null>(null)
   const viewEndSlotRef = useRef<number | null>(null)
+  const setViewEndSlot = (slot: number | null) => {
+    setViewEndSlotRaw(slot)
+    onViewEndSlotChange?.(slot)
+  }
 
   // Refs so the live effect can read current prop values without re-running.
   const slotsRef = useRef(slots)
@@ -1076,6 +1096,19 @@ function RecentSlotsChart({
     scrollToLiveAnimRef.current = requestAnimationFrame(tick)
   }
 
+  const toggleLive = () => {
+    if (live && viewEndSlot === null) {
+      viewEndSlotRef.current = liveEdgeRef.current
+      setViewEndSlot(liveEdgeRef.current)
+    } else {
+      scrollToLive()
+    }
+  }
+
+  // Expose scrollToLive and toggleLive to parent for header controls rendering.
+  if (scrollToLiveRef) scrollToLiveRef.current = scrollToLive
+  if (toggleLiveRef) toggleLiveRef.current = toggleLive
+
   // Captured at the start of each drag gesture so we can compute position from
   // cumulative movement rather than accumulating per-frame incremental deltas.
   const dragStartSlotRef = useRef<number>(0)
@@ -1435,7 +1468,7 @@ function RecentSlotsChart({
         }
       }}
     >
-      <div className="mb-4">
+      {!bare && <div className="mb-4">
         <div className={cn("flex items-center", bare ? "justify-end" : "justify-between")}>
           {!bare && <h3 className="text-sm font-medium flex items-center gap-2">
             {bucketed ? 'Win Rate Trend' : 'Win Rate per Slot'}
@@ -1539,7 +1572,7 @@ function RecentSlotsChart({
             </div>
           </div>
         </div>
-      </div>
+      </div>}
       <div className="flex gap-0">
         <div ref={chartRowsRef} className="relative flex-1 min-w-0">
         {/* Left-edge indicator: fixed at the chart boundary, shows while overscrolling or fetching */}
@@ -1624,7 +1657,7 @@ function RecentSlotsChart({
           ))}
         </div>
       )}
-      {bucketed && (
+      {bucketed && !bare && (
         <div className="text-xs text-muted-foreground text-center mt-1">
           {(() => {
             const totalSlots = slotCount * (activeBucketSize ?? 1)
@@ -1667,6 +1700,9 @@ export function EdgeScoreboardPage() {
   }
 
   const [live, setLive] = useState(true)
+  const [viewEndSlot, setViewEndSlot] = useState<number | null>(null)
+  const scrollToLiveRef = useRef<(() => void) | null>(null)
+  const toggleLiveRef = useRef<(() => void) | null>(null)
 
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -1823,9 +1859,10 @@ export function EdgeScoreboardPage() {
           icon={Trophy}
           title="Edge Scoreboard"
           subtitle={
-            freshness ? (
-              <span className="text-sm text-muted-foreground">updated {freshness}</span>
-            ) : undefined
+            <span className="text-sm text-muted-foreground flex items-center gap-2">
+              <span>{windowLabel(activeWindow)}</span>
+              {freshness && <span className="opacity-60">· updated {freshness}</span>}
+            </span>
           }
           actions={
             <div className="flex items-center gap-3">
@@ -1920,8 +1957,80 @@ export function EdgeScoreboardPage() {
         {/* Win Rate by Slot chart */}
         {data?.nodes && (
           <div className="mb-6">
-            <Section title="Win Rate by Slot" defaultOpen={true}>
-              <RecentSlotsChart slots={data.recent_slots ?? []} nodes={data.nodes} slotLeaders={stableRecent?.leaders} leadersOnly={leadersOnly} slotBuckets={data.slot_buckets} slotBucketSize={data.slot_bucket_size} window={activeWindow} bucketed={bucketed} setBucketed={setBucketed} live={live} setLive={setLive} viewSlotCount={viewSlotCount} setViewSlotCount={setViewSlotCount} bare />
+            <Section
+              title="Win Rate by Slot"
+              defaultOpen={true}
+              action={
+                <div className="flex items-center gap-2">
+                  {!bucketed && live && viewEndSlot !== null && (
+                    <button
+                      onClick={() => scrollToLiveRef.current?.()}
+                      className="text-[#059669] hover:text-[#047857] transition-colors"
+                    >
+                      <ChevronsRight size={16} />
+                    </button>
+                  )}
+                  {!bucketed && (
+                    <button
+                      onClick={() => toggleLiveRef.current?.()}
+                      className={cn(
+                        'text-xs px-2.5 h-[26px] rounded-md border transition-colors',
+                        live && viewEndSlot === null
+                          ? 'border-[#059669] bg-[#059669]/10 text-[#059669] hover:bg-[#059669]/20'
+                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                      )}
+                    >
+                      <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        Live
+                        {live && viewEndSlot === null
+                          ? <Square size={10} className="fill-current shrink-0" />
+                          : <Play size={10} className="fill-current shrink-0" />
+                        }
+                      </span>
+                    </button>
+                  )}
+                  <div className="inline-flex rounded-md border border-border overflow-hidden text-xs h-[26px]">
+                    <button
+                      onClick={() => { setBucketed(false); scrollToLiveRef.current?.() }}
+                      className={cn(
+                        'px-2.5 transition-colors',
+                        !bucketed ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      )}
+                    >
+                      Per Slot
+                    </button>
+                    <button
+                      onClick={() => { setBucketed(true); setLive(false) }}
+                      className={cn(
+                        'px-2.5 transition-colors border-l border-border',
+                        bucketed ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      )}
+                    >
+                      Trend
+                    </button>
+                  </div>
+                </div>
+              }
+            >
+              <RecentSlotsChart
+                slots={data.recent_slots ?? []}
+                nodes={data.nodes}
+                slotLeaders={stableRecent?.leaders}
+                leadersOnly={leadersOnly}
+                slotBuckets={data.slot_buckets}
+                slotBucketSize={data.slot_bucket_size}
+                window={activeWindow}
+                bucketed={bucketed}
+                setBucketed={setBucketed}
+                live={live}
+                setLive={setLive}
+                viewSlotCount={viewSlotCount}
+                setViewSlotCount={setViewSlotCount}
+                bare
+                scrollToLiveRef={scrollToLiveRef}
+                toggleLiveRef={toggleLiveRef}
+                onViewEndSlotChange={setViewEndSlot}
+              />
             </Section>
           </div>
         )}

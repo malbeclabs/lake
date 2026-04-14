@@ -8,6 +8,7 @@ export function Section({
   defaultOpen = true,
   loading = false,
   progress,
+  action,
   children,
 }: {
   title: string
@@ -15,15 +16,17 @@ export function Section({
   defaultOpen?: boolean
   loading?: boolean
   progress?: number
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
 
   return (
     <div className="border border-border rounded-lg bg-card overflow-hidden">
+      <div className="flex items-center">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+        className="flex-1 flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
       >
         <ChevronDown
           className={cn(
@@ -51,6 +54,8 @@ export function Section({
           )}
         </div>
       </button>
+      {action && <div className="pr-4 shrink-0">{action}</div>}
+      </div>
       <div className="h-0.5 w-full overflow-hidden">
         {loading && (
           <div className="h-full w-1/3 bg-muted-foreground/40 animate-[shimmer_1.5s_ease-in-out_infinite] rounded-full" />
