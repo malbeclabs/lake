@@ -433,6 +433,8 @@ function SlotRaceNodeChart({
           (u) => {
             const ctx = u.ctx
             ctx.save()
+            // uPlot may set globalAlpha < 1 for series focus/dim — reset to fully opaque.
+            ctx.globalAlpha = 1
             // Clip to the plot area so animated bars don't overflow
             ctx.beginPath()
             ctx.rect(u.bbox.left, u.bbox.top, u.bbox.width, u.bbox.height)
