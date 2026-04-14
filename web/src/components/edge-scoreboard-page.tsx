@@ -1810,6 +1810,7 @@ function RecentSlotsChart({
           </div>
           {!bucketed && (
             <div className="mt-5 flex flex-col gap-0.5">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
               <span ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate" />
               <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
             </div>
