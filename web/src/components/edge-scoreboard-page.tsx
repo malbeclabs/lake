@@ -468,7 +468,7 @@ function SlotRaceNodeChart({
             ctx.clip()
             // Apply slide-in offset during data refresh animation
             ctx.translate(animOffsetRef.current, 0)
-            ctx.globalAlpha = 0.65
+            ctx.globalAlpha = 0.8
             const currentData = slotDataRef.current
             const currentN = currentData.length
             const cumulative = new Float64Array(currentN)
