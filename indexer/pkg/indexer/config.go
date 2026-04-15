@@ -10,6 +10,7 @@ import (
 	"github.com/jonboulle/clockwork"
 	"github.com/malbeclabs/doublezero/tools/maxmind/pkg/geoip"
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
 	dzshreds "github.com/malbeclabs/lake/indexer/pkg/dz/shreds"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/shreds/escrowevents"
@@ -39,6 +40,9 @@ type Config struct {
 
 	// Serviceability RPC configuration.
 	ServiceabilityRPC dzsvc.ServiceabilityRPC
+
+	// Geolocation RPC configuration (optional).
+	GeolocationRPC dzgeoloc.GeolocationRPC
 
 	// Telemetry RPC configuration.
 	TelemetryRPC           dztelemlatency.TelemetryRPC

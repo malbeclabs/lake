@@ -23,6 +23,7 @@ import (
 	solanarpc "github.com/gagliardetto/solana-go/rpc"
 	"github.com/malbeclabs/doublezero/config"
 	telemetryconfig "github.com/malbeclabs/doublezero/controlplane/telemetry/pkg/config"
+	geolocsdk "github.com/malbeclabs/doublezero/sdk/geolocation/go"
 	shreds "github.com/malbeclabs/doublezero/sdk/shreds/go"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/serviceability"
 	"github.com/malbeclabs/doublezero/smartcontract/sdk/go/telemetry"
@@ -296,6 +297,7 @@ func run() error {
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
+	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
 	// Shreds subscription client (mainnet-beta and testnet only, not devnet).
 	// Mainnet uses Solana proper RPC; testnet uses the DZ ledger RPC.
@@ -531,6 +533,9 @@ func run() error {
 		// Serviceability configuration
 		ServiceabilityRPC: serviceabilityClient,
 
+		// Geolocation configuration
+		GeolocationRPC: geolocationClient,
+
 		// Telemetry configuration
 		TelemetryRPC:           telemetryClient,
 		DZEpochRPC:             dzRPCClient,
@@ -620,6 +625,7 @@ func run() error {
 				IngestionLog:   ingestionLogWriter,
 				Network:        *dzEnvFlag,
 				Serviceability: idx.Serviceability(),
+				Geolocation:    idx.Geolocation(),
 				Shreds:         idx.Shreds(),
 				EscrowEvents:   idx.EscrowEvents(),
 				TelemLatency:   idx.TelemLatency(),
@@ -869,6 +875,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 	defer dzRPCClient.Close()
 	serviceabilityClient := serviceability.New(dzRPCClient, networkConfig.ServiceabilityProgramID)
 	telemetryClient := telemetry.New(log, dzRPCClient, nil, networkConfig.TelemetryProgramID)
+	geolocationClient := geolocsdk.New(log, dzRPCClient, networkConfig.GeolocationProgramID)
 
 	// Shreds subscription client (testnet only, not devnet).
 	var shredsClient *shreds.Client
@@ -906,6 +913,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		RefreshInterval:        cfg.refreshInterval,
 		MaxConcurrency:         cfg.maxConcurrency,
 		ServiceabilityRPC:      serviceabilityClient,
+		GeolocationRPC:         geolocationClient,
 		TelemetryRPC:           telemetryClient,
 		DZEpochRPC:             dzRPCClient,
 		InternetLatencyAgentPK: networkConfig.InternetLatencyCollectorPK,
@@ -955,6 +963,7 @@ func startSecondaryNetwork(ctx context.Context, log *slog.Logger, env string, cf
 		IngestionLog:   secondaryIngestionLog,
 		Network:        env,
 		Serviceability: idx.Serviceability(),
+		Geolocation:    idx.Geolocation(),
 		Shreds:         idx.Shreds(),
 		EscrowEvents:   idx.EscrowEvents(),
 		TelemLatency:   idx.TelemLatency(),

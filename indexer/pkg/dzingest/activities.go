@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
@@ -24,6 +25,7 @@ type Activities struct {
 	IngestionLog   *ingestionlog.Writer
 	Network        string
 	Serviceability *dzsvc.View
+	Geolocation    *dzgeoloc.View     // nil when geolocation is not configured
 	Shreds         *dzshreds.View     // nil when shreds is not configured
 	EscrowEvents   *escrowevents.View // nil when shreds is not configured
 	TelemLatency   *dztelemlatency.View
@@ -40,6 +42,22 @@ func (a *Activities) RefreshServiceability(ctx context.Context) error {
 		result, err := a.Serviceability.Refresh(ctx)
 		if err != nil {
 			return result, fmt.Errorf("serviceability refresh: %w", err)
+		}
+		return result, nil
+	})
+}
+
+// RefreshGeolocation fetches geolocation program state from RPC
+// and writes it to ClickHouse dimension tables. No-op if geolocation is not configured.
+func (a *Activities) RefreshGeolocation(ctx context.Context) error {
+	if a.Geolocation == nil {
+		a.IngestionLog.WrapSkipped(ctx, "dzingest", "RefreshGeolocation", a.Network)
+		return nil
+	}
+	return a.IngestionLog.Wrap(ctx, "dzingest", "RefreshGeolocation", a.Network, func() (ingestionlog.RefreshResult, error) {
+		result, err := a.Geolocation.Refresh(ctx)
+		if err != nil {
+			return result, fmt.Errorf("geolocation refresh: %w", err)
 		}
 		return result, nil
 	})
