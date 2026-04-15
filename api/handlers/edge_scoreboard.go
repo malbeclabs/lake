@@ -122,6 +122,13 @@ type EdgeScoreboardResponse struct {
 	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
 }
 
+// maxValidSlot caps max(slot) queries against shredder tables to exclude corrupted rows.
+// Occasional bad inserts produce slot values near 2^64; any of those poison the preamble
+// `SELECT max(slot)` so the derived slot-range filter excludes all real data. Valid Solana
+// slots are currently ~4e8 and advance ~80M/year, so 1e12 is a generous cap with centuries
+// of headroom.
+const maxValidSlot = 1_000_000_000_000
+
 // scoreboardFeeds is the whitelist of feed names included in edge scoreboard results.
 const scoreboardFeeds = `'dz', 'dz_rebop', 'jito', 'turbine'`
 
@@ -323,7 +330,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	if slotWindow, ok := slotsPerWindow[window]; ok {
 		var maxSlot uint64
 		start := time.Now()
-		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary`, shredderDB)).Scan(&maxSlot)
+		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary WHERE slot < %d`, shredderDB, maxValidSlot)).Scan(&maxSlot)
 		metrics.RecordClickHouseQuery(time.Since(start), err)
 		if err != nil {
 			return nil, fmt.Errorf("max slot: %w", err)
@@ -1523,7 +1530,7 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 	var maxSlot uint64
 	start := time.Now()
-	err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary`, shredderDB)).Scan(&maxSlot)
+	err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary WHERE slot < %d`, shredderDB, maxValidSlot)).Scan(&maxSlot)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("max slot: %w", err)
