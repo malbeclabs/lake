@@ -34,7 +34,8 @@ type cacheEntry struct {
 type Activities struct {
 	Log      *slog.Logger
 	API      *handlers.API
-	failures sync.Map // map[string]int: consecutive failure count per cache key
+	failures sync.Map   // map[string]int: consecutive failure count per cache key
+	writeMu  sync.Mutex // serializes WritePageCache calls to avoid Postgres OOM from concurrent large JSONB upserts
 }
 
 func (a *Activities) entries() []cacheEntry {
@@ -218,7 +219,10 @@ func (a *Activities) refresh(parentCtx context.Context, name, key string, fn fun
 
 		a.failures.Delete(key)
 
-		if err := a.API.WritePageCache(parentCtx, key, result); err != nil {
+		a.writeMu.Lock()
+		err = a.API.WritePageCache(parentCtx, key, result)
+		a.writeMu.Unlock()
+		if err != nil {
 			if parentCtx.Err() != nil {
 				return
 			}

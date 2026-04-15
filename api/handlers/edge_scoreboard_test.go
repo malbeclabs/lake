@@ -215,7 +215,7 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, 80.0, dzFeed.WinRatePct)
 
 	// Check pairwise lead times — now attached to the synthetic dz_edge feed
-	// (combines dz + dz_rebop best-per-slot lead vs each loser).
+	// (combines dz + regional retransmit best-per-slot lead vs each loser).
 	dzEdgeFeed, ok := slc.Feeds["dz_edge"]
 	require.True(t, ok, "dz_edge feed should exist for slc")
 	assert.Len(t, dzEdgeFeed.LeadTimes, 2, "slc dz_edge should have 2 pairwise lead times")
