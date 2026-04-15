@@ -1511,7 +1511,7 @@ function RecentSlotsChart({
             })()}
           </h3>}
           <div className="flex items-center gap-2 -mt-2">
-            {live && viewEndSlot === null && liveTailStatus && liveTailStatus.delayMin > 0 && (
+            {debugEnabled && live && viewEndSlot === null && liveTailStatus && liveTailStatus.delayMin > 0 && (
               <div className="group relative">
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5 flex items-center gap-1 cursor-help">
                   <Info className="w-2.5 h-2.5" />
@@ -2031,7 +2031,7 @@ export function EdgeScoreboardPage() {
               <div className="flex items-center px-4 py-3">
                 <h2 className="text-sm font-semibold flex-1">Win Rate by Slot</h2>
                 <div className="flex items-center gap-2">
-                  {live && viewEndSlot === null && liveTailStatus && liveTailStatus.delayMin > 0 && (
+                  {debugEnabled && live && viewEndSlot === null && liveTailStatus && liveTailStatus.delayMin > 0 && (
                     <div className="group relative">
                       <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5 flex items-center gap-1 cursor-help">
                         <Info className="w-2.5 h-2.5" />
