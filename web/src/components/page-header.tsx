@@ -21,7 +21,7 @@ export function PageHeader({ icon: Icon, title, count, subtitle, actions }: Page
         {count !== undefined && <span className="text-muted-foreground">({count})</span>}
         {subtitle}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      {actions && <div className="w-full sm:w-auto flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
   )
 }

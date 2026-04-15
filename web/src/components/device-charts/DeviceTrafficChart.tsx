@@ -75,6 +75,7 @@ interface CategoryChartProps {
   /** Interface type metadata for badges */
   interfaceTypes?: Map<string, { cyoa_type?: string; link_pk?: string }>
   aggMode: AggMode
+  bidirectional: boolean
   loading?: boolean
   className?: string
   bucketSeconds: number
@@ -90,6 +91,7 @@ function CategoryChart({
   interfaceLabels,
   interfaceTypes,
   aggMode,
+  bidirectional,
   loading,
   className,
   bucketSeconds,
@@ -160,7 +162,7 @@ function CategoryChart({
           const inVal = (d as unknown as Record<string, number>)[inKey]
           const outVal = (d as unknown as Record<string, number>)[outKey]
           inVals.push(inVal || null)
-          outVals.push(outVal ? -outVal : null)
+          outVals.push(outVal ? (bidirectional ? -outVal : outVal) : null)
         } else {
           inVals.push(null)
           outVals.push(null)
@@ -181,7 +183,7 @@ function CategoryChart({
     }
 
     return { uPlotData: arrays as uPlot.AlignedData, uPlotSeries: series, seriesKeys: keys }
-  }, [bucketTimestamps, interfaces, dataMap, aggMode])
+  }, [bucketTimestamps, interfaces, dataMap, aggMode, bidirectional])
 
   uPlotDataRef.current = uPlotData
 
@@ -413,6 +415,7 @@ export function DeviceTrafficChart({
   onCursorTime,
 }: DeviceTrafficChartProps) {
   const [aggMode, setAggMode] = useState<AggMode>('avg')
+  const [bidirectional, setBidirectional] = useState(true)
 
   // Collect all interface data across buckets, classify, and build lookup
   const { categories, bucketTimestamps, dataMap, interfaceLabels, interfaceTypes } = useMemo(() => {
@@ -494,6 +497,12 @@ export function DeviceTrafficChart({
         ]}
         onChange={(v) => setAggMode(v as AggMode)}
       />
+      <button
+        onClick={() => setBidirectional(!bidirectional)}
+        className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
+      >
+        {bidirectional ? 'Rx / Tx' : 'Rx+Tx'}
+      </button>
     </div>
   )
 
@@ -510,6 +519,7 @@ export function DeviceTrafficChart({
           interfaceLabels={interfaceLabels}
           interfaceTypes={interfaceTypes}
           aggMode={aggMode}
+          bidirectional={bidirectional}
           loading={loading}
           className={className}
           bucketSeconds={data.bucket_seconds}

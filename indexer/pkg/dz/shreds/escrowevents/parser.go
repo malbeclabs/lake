@@ -142,6 +142,8 @@ func parseInstructionGroup(action string, details []string, clientSeatPK string)
 		return &parsedEvent{EventType: EventTypeAckWithdraw}
 	case "Set client seat price override":
 		return &parsedEvent{EventType: EventTypeSetPriceOverride}
+	case "Check CLI version":
+		return nil
 	default:
 		return &parsedEvent{EventType: EventTypeUnknown}
 	}

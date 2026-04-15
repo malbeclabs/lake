@@ -27,6 +27,7 @@ type API struct {
 	EnvDatabases  map[string]string
 	Database      string
 	ShredderDB    string
+	PublisherDB   string
 
 	// PostgreSQL
 	PgPool *pgxpool.Pool

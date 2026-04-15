@@ -13,13 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createShredderTables creates the slot_feed_race_summary and publisher_shred_stats tables in the shredder DB.
+// createShredderTables creates the slot_feed_race_summary and publisher_shred_stats tables in the shredder/publisher DBs.
 func createShredderTables(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
 	db := "`" + api.ShredderDB + "`"
+	publisherDB := "`" + api.PublisherDB + "`"
 	err := api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db))
 	require.NoError(t, err)
+	if publisherDB != db {
+		err = api.DB.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", publisherDB))
+		require.NoError(t, err)
+	}
 	err = api.DB.Exec(ctx, fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s.slot_feed_race_summary (
 			event_ts DateTime64(3),
@@ -66,7 +71,7 @@ func createShredderTables(t *testing.T, api *handlers.API) {
 		) ENGINE = MergeTree
 		PARTITION BY toYYYYMM(event_ts)
 		ORDER BY (slot, node_pubkey)
-	`, db))
+	`, publisherDB))
 	require.NoError(t, err)
 }
 
@@ -105,7 +110,7 @@ func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 			 1000000000, 'dz-user-1', 'slc-qa-bm1', 'slc',
 			 %d, %d, 100, 80, 60, 20,
 			 79, false, 0, 1000000, true)
-	`, "`"+api.ShredderDB+"`", epoch, slot1))
+	`, "`"+api.PublisherDB+"`", epoch, slot1))
 	require.NoError(t, err)
 
 	// Insert win-count rows (loser_feed = '') — per-feed summary for each slot
@@ -208,10 +213,13 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
 	assert.Equal(t, 80.0, dzFeed.WinRatePct)
 
-	// Check pairwise lead times for SLC DZ feed
-	assert.Len(t, dzFeed.LeadTimes, 2, "slc dz should have 2 pairwise lead times")
+	// Check pairwise lead times — now attached to the synthetic dz_edge feed
+	// (combines dz + dz_rebop best-per-slot lead vs each loser).
+	dzEdgeFeed, ok := slc.Feeds["dz_edge"]
+	require.True(t, ok, "dz_edge feed should exist for slc")
+	assert.Len(t, dzEdgeFeed.LeadTimes, 2, "slc dz_edge should have 2 pairwise lead times")
 	ltMap := make(map[string]handlers.EdgeScoreboardLeadTime)
-	for _, lt := range dzFeed.LeadTimes {
+	for _, lt := range dzEdgeFeed.LeadTimes {
 		ltMap[lt.LoserFeed] = lt
 	}
 	assert.InDelta(t, 1.5, ltMap["turbine"].P50Ms, 0.1)
@@ -235,8 +243,10 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(100), dzFeed.TotalShreds)
 	assert.Equal(t, 70.0, dzFeed.WinRatePct)
 
-	// Check pairwise lead times for FRA DZ feed
-	assert.Len(t, dzFeed.LeadTimes, 2, "fra dz should have 2 pairwise lead times")
+	// Check pairwise lead times for FRA — attached to dz_edge synthetic feed.
+	dzEdgeFeed, ok = fra.Feeds["dz_edge"]
+	require.True(t, ok, "dz_edge feed should exist for fra")
+	assert.Len(t, dzEdgeFeed.LeadTimes, 2, "fra dz_edge should have 2 pairwise lead times")
 }
 
 func TestGetEdgeScoreboard_WindowParam(t *testing.T) {

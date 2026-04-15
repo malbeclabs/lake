@@ -198,7 +198,7 @@ function SortHeader({
   onSort: (f: string) => void
 }) {
   return (
-    <th className={`px-4 py-3 font-medium ${align === 'right' ? 'text-right' : ''}`}>
+    <th className={`px-4 py-3 font-medium whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}>
       <button
         className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end w-full' : ''}`}
         onClick={() => onSort(field)}

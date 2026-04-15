@@ -18,9 +18,9 @@ const (
 	WorkflowID = "api-page-cache"
 
 	refreshInterval        = 30 * time.Second
+	fastRefreshInterval    = 3 * time.Second
 	continueAsNewThreshold = 60 // ~30 min at 30s intervals
-	maxConcurrentRefreshes = 2
-	errorAfterFailures     = 3 // log WARN for transient failures, ERROR after this many consecutive failures
+	errorAfterFailures     = 3  // log WARN for transient failures, ERROR after this many consecutive failures
 )
 
 // cacheEntry defines a single cache key to refresh.
@@ -96,10 +96,10 @@ func (a *Activities) entries() []cacheEntry {
 			return api.FetchPublisherCheckData(ctx, "", 2, 0)
 		}},
 		{"edge scoreboard", "edge_scoreboard", func(ctx context.Context) (any, error) {
-			return api.FetchEdgeScoreboardData(ctx, "1h", true, 0, 0, 1000)
+			return api.FetchEdgeScoreboardData(ctx, "24h", false, 0, 0, 1000)
 		}},
-		{"edge scoreboard (all)", "edge_scoreboard:all", func(ctx context.Context) (any, error) {
-			return api.FetchEdgeScoreboardData(ctx, "1h", false, 0, 0, 1000)
+		{"edge scoreboard (leaders)", "edge_scoreboard:leaders", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardData(ctx, "24h", true, 0, 0, 1000)
 		}},
 		{"bulk link metrics", "bulk_link_metrics", func(ctx context.Context) (any, error) {
 			return api.FetchBulkLinkMetricsData(ctx)
@@ -126,8 +126,13 @@ func (e *refreshError) Error() string { return e.msg }
 // RefreshCaches refreshes all page cache entries, writing results to Postgres.
 func (a *Activities) RefreshCaches(ctx context.Context) error {
 	start := time.Now()
+	// Run all entries fully in parallel. With ~21 entries at 2-wide concurrency,
+	// the batch took longer than the 30s refresh interval, causing each entry to
+	// effectively refresh only once every few minutes. Fully parallel execution
+	// means the activity completes in max(entry_times) rather than sum/2, so the
+	// 30s sleep actually achieves a ~30s refresh cycle. Each entry has its own
+	// 45s timeout, so failures remain bounded.
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrentRefreshes)
 
 	for _, entry := range a.entries() {
 		g.Go(func() error {
@@ -151,36 +156,79 @@ func (a *Activities) RefreshCaches(ctx context.Context) error {
 	return nil
 }
 
-func (a *Activities) refresh(ctx context.Context, name, key string, fn func(context.Context) (any, error)) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
+// latestEntries are refreshed on the fast cadence (see fastRefreshInterval). They back
+// the edge scoreboard live-tail so client polls read cached latest slots instead of
+// hitting ClickHouse every few seconds.
+func (a *Activities) latestEntries() []cacheEntry {
+	api := a.API
+	return []cacheEntry{
+		{"edge scoreboard (latest)", "edge_scoreboard:latest", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardLatest(ctx, false, 1000)
+		}},
+		{"edge scoreboard (latest, leaders)", "edge_scoreboard:latest:leaders", func(ctx context.Context) (any, error) {
+			return api.FetchEdgeScoreboardLatest(ctx, true, 1000)
+		}},
+	}
+}
 
-	result, err := fn(ctx)
-	if err != nil {
-		if ctx.Err() != nil {
-			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
+// RefreshLatestCaches refreshes just the fast-cadence entries (latest slots slice).
+func (a *Activities) RefreshLatestCaches(ctx context.Context) error {
+	g, gctx := errgroup.WithContext(ctx)
+	for _, entry := range a.latestEntries() {
+		g.Go(func() error {
+			a.refresh(gctx, entry.name, entry.key, entry.fn)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return nil
+}
+
+func (a *Activities) refresh(parentCtx context.Context, name, key string, fn func(context.Context) (any, error)) {
+	const maxAttempts = 2
+	for attempt := range maxAttempts {
+		if parentCtx.Err() != nil {
+			a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name)
 			return
 		}
-		n := a.incFailures(key)
-		if n >= errorAfterFailures {
-			a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-		} else {
-			a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
-		}
-		return
-	}
 
-	a.failures.Delete(key)
+		ctx, cancel := context.WithTimeout(parentCtx, 45*time.Second)
+		result, err := fn(ctx)
+		cancel()
 
-	if err := a.API.WritePageCache(ctx, key, result); err != nil {
-		if ctx.Err() != nil {
+		if err != nil {
+			if parentCtx.Err() != nil {
+				// Temporal is shutting down — not a query failure, don't count it.
+				a.Log.Warn("cache refresh interrupted (shutdown)", "cache", name, "error", err)
+				return
+			}
+			// Query error or timeout. Retry once before counting as a failure.
+			if attempt < maxAttempts-1 {
+				a.Log.Warn("cache refresh failed, retrying", "cache", name, "attempt", attempt+1, "error", err)
+				continue
+			}
+			n := a.incFailures(key)
+			if n >= errorAfterFailures {
+				a.Log.Error("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+			} else {
+				a.Log.Warn("cache refresh failed", "cache", name, "consecutive_failures", n, "error", err)
+			}
 			return
 		}
-		a.Log.Error("cache write failed", "cache", name, "error", err)
+
+		a.failures.Delete(key)
+
+		if err := a.API.WritePageCache(parentCtx, key, result); err != nil {
+			if parentCtx.Err() != nil {
+				return
+			}
+			a.Log.Error("cache write failed", "cache", name, "error", err)
+			return
+		}
+
+		a.Log.Debug("cache refreshed", "cache", name)
 		return
 	}
-
-	a.Log.Debug("cache refreshed", "cache", name)
 }
 
 func (a *Activities) incFailures(key string) int {
@@ -205,13 +253,35 @@ func PageCacheWorkflow(ctx temporalworkflow.Context, iteration int) error {
 	}
 	ctx = temporalworkflow.WithActivityOptions(ctx, actOpts)
 
+	fastActOpts := temporalworkflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	}
+	fastCtx := temporalworkflow.WithActivityOptions(ctx, fastActOpts)
+
 	for iteration < continueAsNewThreshold {
 		_ = temporalworkflow.ExecuteActivity(ctx, (*Activities).RefreshCaches).Get(ctx, nil)
 
 		iteration++
 		if iteration < continueAsNewThreshold {
-			if err := temporalworkflow.Sleep(ctx, refreshInterval); err != nil {
-				return err
+			// Tick the fast-cadence refresh repeatedly during the outer sleep window
+			// so latest-slots caches stay fresh for live-tail clients.
+			deadline := temporalworkflow.Now(ctx).Add(refreshInterval)
+			for temporalworkflow.Now(ctx).Before(deadline) {
+				_ = temporalworkflow.ExecuteActivity(fastCtx, (*Activities).RefreshLatestCaches).Get(fastCtx, nil)
+				remaining := deadline.Sub(temporalworkflow.Now(ctx))
+				if remaining <= 0 {
+					break
+				}
+				sleep := fastRefreshInterval
+				if remaining < sleep {
+					sleep = remaining
+				}
+				if err := temporalworkflow.Sleep(ctx, sleep); err != nil {
+					return err
+				}
 			}
 		}
 	}

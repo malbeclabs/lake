@@ -22,6 +22,7 @@ func NewTestAPIBare(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 		EnvDatabases:  map[string]string{},
 		Database:      dbName,
 		ShredderDB:    dbName,
+		PublisherDB:   dbName,
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 	return api
@@ -40,6 +41,7 @@ func NewTestAPI(t *testing.T, chDB *ClickHouseDB) *handlers.API {
 		EnvDatabases:  map[string]string{},
 		Database:      dbName,
 		ShredderDB:    dbName,
+		PublisherDB:   dbName,
 	}
 	api.Manager = handlers.NewWorkflowManager(api)
 	return api

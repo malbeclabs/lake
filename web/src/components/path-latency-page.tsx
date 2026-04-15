@@ -6,7 +6,6 @@ import {
   Route,
   Download,
   ArrowRight,
-  ChevronDown,
   X,
   Search,
   MapPin,

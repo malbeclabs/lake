@@ -18,6 +18,8 @@ type DeviceLinkLatencySampleHeader struct {
 	StartTimestampUs   uint64
 	SamplingIntervalUs uint64
 	LatestSampleIndex  int
+	AgentVersion       string
+	AgentCommit        string
 }
 
 // InternetMetroLatencySampleHeader mirrors the on-chain latency sample header
@@ -54,6 +56,8 @@ func (s *Store) AppendDeviceLinkLatencySampleHeaders(ctx context.Context, header
 			int64(h.StartTimestampUs),
 			h.SamplingIntervalUs,
 			int32(h.LatestSampleIndex),
+			h.AgentVersion,
+			h.AgentCommit,
 		}
 	}); err != nil {
 		return fmt.Errorf("failed to write device link latency sample headers: %w", err)

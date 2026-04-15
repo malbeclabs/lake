@@ -162,7 +162,7 @@ func (a *API) FetchPublisherCheckData(ctx context.Context, q string, epochsParam
 
 	shredGroupPK := ShredGroupPK
 
-	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.ShredderDB)
+	shredStatsTable := fmt.Sprintf("`%s`.publisher_shred_stats", a.PublisherDB)
 
 	var perSlotWhere string
 	var args []any
