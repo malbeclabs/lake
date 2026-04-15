@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info, ArrowRight } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
@@ -298,7 +298,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
-        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#10b981] transition-colors">
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="hover:text-[#10b981] transition-colors">
           {label}
         </Link>
       ) : (
@@ -754,6 +754,7 @@ function RecentSlotsChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewSlotCountRef = useRef(viewSlotCount)
   viewSlotCountRef.current = viewSlotCount
+  const navigate = useNavigate()
 
   // Live mode: fetch 300 slots on activate (show first 100 immediately, queue
   // the rest for animation), then poll every 5s with a since_slot cursor so
@@ -1631,7 +1632,17 @@ function RecentSlotsChart({
           </div>
           <div className="mt-5 flex flex-col gap-0.5">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
-            <a ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors" />
+            <a
+              ref={infoLeaderNameRef}
+              onClick={(e) => {
+                const href = e.currentTarget.getAttribute('href')
+                if (!href) return
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+                e.preventDefault()
+                navigate(href, { state: { back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } } })
+              }}
+              className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors"
+            />
             <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
           </div>
         </div>
@@ -1910,7 +1921,7 @@ export function EdgeScoreboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Trophy}
-          title="Edge Scoreboard"
+          title="Shreds Scoreboard"
           subtitle={
             <span className="text-xs text-muted-foreground/50 flex items-center gap-2">
               <span>{windowLabel(activeWindow)}</span>
@@ -2195,7 +2206,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           }
         }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#10b981] transition-colors">
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="text-sm font-medium hover:text-[#10b981] transition-colors">
               {label}
             </Link>
           ) : (

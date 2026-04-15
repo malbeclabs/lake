@@ -3,10 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, Layers, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchTenant } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 
 export function TenantDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const back = useBackLink({ to: '/dz/tenants', label: 'tenants' })
 
   const { data: tenant, isLoading, error } = useQuery({
     queryKey: ['tenant', pk],
@@ -31,10 +33,10 @@ export function TenantDetailPage() {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Tenant not found</div>
           <button
-            onClick={() => navigate('/dz/tenants')}
+            onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back to tenants
+            Back to {back.label}
           </button>
         </div>
       </div>
@@ -45,11 +47,11 @@ export function TenantDetailPage() {
     <div className="flex-1 overflow-auto">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
         <button
-          onClick={() => navigate('/dz/tenants')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to tenants
+          Back to {back.label}
         </button>
 
         <div className="flex items-center gap-3 mb-8">
