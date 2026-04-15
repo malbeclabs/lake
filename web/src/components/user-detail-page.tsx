@@ -7,6 +7,7 @@ import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 import { useTheme } from '@/hooks/use-theme'
 
 function formatBps(bps: number): string {
@@ -371,6 +372,7 @@ const statusColors: Record<string, string> = {
 export function UserDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const back = useBackLink({ to: '/dz/users', label: 'users' })
 
   const { data: user, isLoading, error } = useQuery({
     queryKey: ['user', pk],
@@ -401,10 +403,10 @@ export function UserDetailPage() {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">User not found</div>
           <button
-            onClick={() => navigate('/dz/users')}
+            onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back to users
+            Back to {back.label}
           </button>
         </div>
       </div>
@@ -416,11 +418,11 @@ export function UserDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
         {/* Back button */}
         <button
-          onClick={() => navigate('/dz/users')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to users
+          Back to {back.label}
         </button>
 
         {/* Header */}

@@ -298,7 +298,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
-        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#10b981] transition-colors">
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="hover:text-[#10b981] transition-colors">
           {label}
         </Link>
       ) : (
@@ -1910,7 +1910,7 @@ export function EdgeScoreboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Trophy}
-          title="Edge Scoreboard"
+          title="Shreds Scoreboard"
           subtitle={
             <span className="text-xs text-muted-foreground/50 flex items-center gap-2">
               <span>{windowLabel(activeWindow)}</span>
@@ -2195,7 +2195,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           }
         }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#10b981] transition-colors">
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="text-sm font-medium hover:text-[#10b981] transition-colors">
               {label}
             </Link>
           ) : (
