@@ -26,6 +26,7 @@ import {
   type MulticastMember,
 } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 import { useChartLegend } from '@/hooks/use-chart-legend'
 import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import { InlineFilter } from '@/components/inline-filter'
@@ -1478,6 +1479,7 @@ function toMemberFilterParam(filter: string): string {
 export function MulticastGroupDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const back = useBackLink({ to: '/dz/multicast-groups', label: 'multicast groups' })
   const [searchParams, setSearchParams] = useSearchParams()
   const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as
     | 'publishers'
@@ -1733,10 +1735,10 @@ export function MulticastGroupDetailPage() {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Multicast group not found</div>
           <button
-            onClick={() => navigate('/dz/multicast-groups')}
+            onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back to multicast groups
+            Back to {back.label}
           </button>
         </div>
       </div>
@@ -1824,11 +1826,11 @@ export function MulticastGroupDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
         {/* Back button */}
         <button
-          onClick={() => navigate('/dz/multicast-groups')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to multicast groups
+          Back to {back.label}
         </button>
 
         {/* Header */}

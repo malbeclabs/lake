@@ -6,6 +6,7 @@ import { CopyableText } from '@/components/copyable-text'
 import { fetchDevice, fetchDeviceMetrics } from '@/lib/api'
 import { DeviceInfoContent } from '@/components/shared/DeviceInfoContent'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 import { deviceDetailToInfo } from '@/components/shared/device-info-converters'
 import { toDeviceMetricsParams } from '@/components/shared/metrics-params'
 import { DeviceHealthTimeline } from '@/components/device-charts/DeviceHealthTimeline'
@@ -32,6 +33,7 @@ const statusColors: Record<string, string> = {
 
 export function DeviceDetailPage() {
   const { pk } = useParams<{ pk: string }>()
+  const back = useBackLink({ to: '/dz/devices', label: 'devices' })
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [hoveredTimeRange, setHoveredTimeRange] = useState<{
@@ -78,8 +80,11 @@ export function DeviceDetailPage() {
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Device not found</div>
-          <Link to="/dz/devices" className="text-sm text-muted-foreground hover:text-foreground">
-            Back to devices
+          <Link
+            to={back.to}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Back to {back.label}
           </Link>
         </div>
       </div>
@@ -94,11 +99,11 @@ export function DeviceDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
         <Link
-          to="/dz/devices"
+          to={back.to}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to devices
+          Back to {back.label}
         </Link>
 
         {/* Header */}

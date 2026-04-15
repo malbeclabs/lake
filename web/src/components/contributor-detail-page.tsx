@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, Building2, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchContributor } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -16,6 +17,7 @@ function formatBps(bps: number): string {
 export function ContributorDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const back = useBackLink({ to: '/dz/contributors', label: 'contributors' })
 
   const { data: contributor, isLoading, error } = useQuery({
     queryKey: ['contributor', pk],
@@ -40,10 +42,10 @@ export function ContributorDetailPage() {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Contributor not found</div>
           <button
-            onClick={() => navigate('/dz/contributors')}
+            onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back to contributors
+            Back to {back.label}
           </button>
         </div>
       </div>
@@ -55,11 +57,11 @@ export function ContributorDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
         {/* Back button */}
         <button
-          onClick={() => navigate('/dz/contributors')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to contributors
+          Back to {back.label}
         </button>
 
         {/* Header */}

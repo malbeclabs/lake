@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Loader2, MapPin, AlertCircle, ArrowLeft } from 'lucide-react'
 import { fetchMetro } from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -23,6 +24,7 @@ function formatStake(sol: number): string {
 export function MetroDetailPage() {
   const { pk } = useParams<{ pk: string }>()
   const navigate = useNavigate()
+  const back = useBackLink({ to: '/dz/metros', label: 'metros' })
 
   const { data: metro, isLoading, error } = useQuery({
     queryKey: ['metro', pk],
@@ -47,10 +49,10 @@ export function MetroDetailPage() {
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Metro not found</div>
           <button
-            onClick={() => navigate('/dz/metros')}
+            onClick={() => navigate(back.to)}
             className="text-sm text-muted-foreground hover:text-foreground"
           >
-            Back to metros
+            Back to {back.label}
           </button>
         </div>
       </div>
@@ -62,11 +64,11 @@ export function MetroDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 py-8">
         {/* Back button */}
         <button
-          onClick={() => navigate('/dz/metros')}
+          onClick={() => navigate(back.to)}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to metros
+          Back to {back.label}
         </button>
 
         {/* Header */}

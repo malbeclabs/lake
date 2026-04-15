@@ -17,9 +17,11 @@ import { TimeRangeSelector, TrafficFilters } from '@/components/topology/TimeRan
 import type { TimeRange, BucketSize } from '@/components/topology/utils'
 import { bucketLabels, resolveAutoBucket, type TimeRangePreset } from '@/components/topology/utils'
 import { useDocumentTitle } from '@/hooks/use-document-title'
+import { useBackLink } from '@/hooks/use-back-link'
 
 export function LinkDetailPage() {
   const { pk } = useParams<{ pk: string }>()
+  const back = useBackLink({ to: '/dz/links', label: 'links' })
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [bucket, setBucket] = useState<BucketSize>('auto')
@@ -72,8 +74,11 @@ export function LinkDetailPage() {
         <div className="text-center">
           <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
           <div className="text-lg font-medium mb-2">Link not found</div>
-          <Link to="/dz/links" className="text-sm text-muted-foreground hover:text-foreground">
-            Back to links
+          <Link
+            to={back.to}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Back to {back.label}
           </Link>
         </div>
       </div>
@@ -86,11 +91,11 @@ export function LinkDetailPage() {
       <div className="max-w-[1200px] mx-auto px-4 sm:px-8 pt-8">
         {/* Back button */}
         <Link
-          to="/dz/links"
+          to={back.to}
           className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to links
+          Back to {back.label}
         </Link>
 
         {/* Header */}

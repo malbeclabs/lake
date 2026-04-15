@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info } from 'lucide-react'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
+import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info, ArrowRight } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -298,7 +298,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
-        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#10b981] transition-colors">
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="hover:text-[#10b981] transition-colors">
           {label}
         </Link>
       ) : (
@@ -682,7 +682,16 @@ const SlotRaceNodeChart = memo(function SlotRaceNodeChart({
 })
 
 const LIVE_BUFFER_SIZE = 200
-const MAX_BUFFER_SLOTS = 2000
+const MAX_BUFFER_SLOTS = 3500
+
+// formatLag renders a millisecond duration as "Xm Ys" or "Ys" (no leading zeros).
+// Used by the scoreboard debug overlay so the queue/server lag read like "1m 5s".
+function formatLag(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000))
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
 
 // Returns the windowSize slots whose right edge is at `endSlot`.
 // When endSlot is null, uses `liveEdge` as the anchor (the drain-controlled live edge).
@@ -722,6 +731,8 @@ function RecentSlotsChart({
   scrollToLiveRef,
   toggleLiveRef,
   onViewEndSlotChange,
+  onLiveTailStatusChange,
+  dataLagMs,
 }: {
   slots: EdgeScoreboardSlotRace[]
   nodes: EdgeScoreboardNode[]
@@ -737,10 +748,13 @@ function RecentSlotsChart({
   scrollToLiveRef?: React.RefObject<(() => void) | null>
   toggleLiveRef?: React.RefObject<(() => void) | null>
   onViewEndSlotChange?: (slot: number | null) => void
+  onLiveTailStatusChange?: (status: { queueLen: number; queueLagMs: number; serverLagMs: number; totalLagMs: number; delayMin: number; timeLabel: string; edge: number } | null) => void
+  dataLagMs?: number
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewSlotCountRef = useRef(viewSlotCount)
   viewSlotCountRef.current = viewSlotCount
+  const navigate = useNavigate()
 
   // Live mode: fetch 300 slots on activate (show first 100 immediately, queue
   // the rest for animation), then poll every 5s with a since_slot cursor so
@@ -767,6 +781,29 @@ function RecentSlotsChart({
   // stable when the buffer grows on either end — no offset math needed.
   const [viewEndSlot, setViewEndSlotRaw] = useState<number | null>(null)
   const viewEndSlotRef = useRef<number | null>(null)
+  // liveTailStatus: what slot the chart is currently rendering and the derived wall-clock
+  // time that slot represents. Queue depth = wall-clock delta between the displayed slot and
+  // the server's latest. Wall-clock-as-of is reconstructed by subtracting that delta from now.
+  // Recomputed on liveEdge/bufferVersion changes, which track the drain/merge cycle.
+  const liveTailStatus = useMemo(() => {
+    if (!live || viewEndSlot !== null) return null
+    const queueLen = liveQueueRef.current.length
+    const queueLagMs = queueLen * 400
+    const serverLagMs = dataLagMs ?? 0
+    const totalLagMs = queueLagMs + serverLagMs
+    const delayMin = totalLagMs >= 60_000 ? Math.round(totalLagMs / 60_000) : 0
+    const asOf = new Date(Date.now() - totalLagMs)
+    const timeLabel = asOf.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    return { queueLen, queueLagMs, serverLagMs, totalLagMs, delayMin, timeLabel, edge: liveEdge }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, viewEndSlot, liveEdge, bufferVersion, dataLagMs])
+  // Bubble the status to the parent so it can render the indicator in its own header
+  // (when bare, this component's internal header isn't rendered).
+  useEffect(() => { onLiveTailStatusChange?.(liveTailStatus) }, [liveTailStatus, onLiveTailStatusChange])
+  // Debug overlay — enabled with ?debug=1. Never shown to end users.
+  // Note: `window` is a prop name in this component (TimeWindow), so we reach the global
+  // via globalThis.
+  const debugEnabled = typeof globalThis.window !== 'undefined' && new URLSearchParams(globalThis.window.location.search).has('debug')
   const setViewEndSlot = (slot: number | null) => {
     setViewEndSlotRaw(slot)
     onViewEndSlotChange?.(slot)
@@ -812,11 +849,19 @@ function RecentSlotsChart({
     // Seed the live buffer from a set of slot races (initial load path).
     // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
     // and queues only a small tail so the animation is visually active right away.
-    const INITIAL_QUEUE_SLOTS = 75 // ~30s of animation at 400ms/slot, matching server cache refresh cycle
+    // With a 2500-slot seed and 2250 slots in the queue, we get ~15 min of animation runway
+    // at 400ms/slot — enough to span the upstream MV's 5-min batch cadence many times over
+    // even if polls briefly hiccup. The immediate buffer (first 250 slots) gives the chart
+    // something to render instantly while the queue starts draining.
+    const INITIAL_QUEUE_SLOTS = 2250
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
-      const splitIdx = Math.max(0, nums.length - INITIAL_QUEUE_SLOTS)
+      // Keep at least LIVE_BUFFER_SIZE slots in the immediate buffer so the chart always has
+      // data to render. Only the slots beyond that go to the queue for animation. If the fetch
+      // returned fewer slots than LIVE_BUFFER_SIZE, put them all in immediate (empty queue).
+      const minImmediate = Math.min(nums.length, LIVE_BUFFER_SIZE)
+      const splitIdx = Math.max(minImmediate, nums.length - INITIAL_QUEUE_SLOTS)
       const immediate = nums.slice(0, splitIdx)
       const toQueue = nums.slice(splitIdx)
       const immediateSlot = immediate.at(-1) ?? nums.at(-1) ?? 0
@@ -887,20 +932,16 @@ function RecentSlotsChart({
       if (data.slot_leaders) setLiveLeaders(prev => ({ ...prev, ...data.slot_leaders }))
     }
 
-    // Seed immediately from the React Query data if already available, otherwise fetch.
-    // This eliminates a duplicate network round-trip on initial load and when re-entering live mode.
-    // If leadersOnly or window changed, slotsRef.current holds stale data (wrong filter),
-    // so we must fetch fresh to avoid seeding the buffer with mismatched slots.
-    const liveParamsChanged = prevLiveParamsRef.current.leadersOnly !== leadersOnly || prevLiveParamsRef.current.window !== window
+    // Fetch a deep seed (~15 min at 2.5 slots/sec) so the queue holds enough slots to span
+    // the upstream MV's ~5-min batch cadence without stalling. When live enters, the queue
+    // drains at a constant 400ms/slot; we want at least one MV batch cycle of runway so the
+    // animation never runs dry between polls.
+    const LIVE_SEED_LIMIT = 2500
     prevLiveParamsRef.current = { leadersOnly, window }
-    if (!liveParamsChanged && slotsRef.current.length > 0) {
-      seedBuffer(slotsRef.current, slotLeadersRef.current)
-    } else {
-      fetchEdgeScoreboard(window, leadersOnly).then(data => {
-        if (cancelled) return
-        seedBuffer(data.recent_slots, data.slot_leaders ?? undefined)
-      }).catch(() => {})
-    }
+    fetchEdgeScoreboard(window, leadersOnly, { limit: LIVE_SEED_LIMIT }).then(data => {
+      if (cancelled) return
+      seedBuffer(data.recent_slots, data.slot_leaders ?? undefined)
+    }).catch(() => {})
 
     // Poll every 5s. Pass sinceSlot with an OVERLAP_SLOTS rewind so lagging hosts
     // can fill in cells for already-admitted slots. The server returns rows for
@@ -1471,6 +1512,22 @@ function RecentSlotsChart({
             })()}
           </h3>}
           <div className="flex items-center gap-2 -mt-2">
+            {debugEnabled && live && viewEndSlot === null && liveTailStatus && liveTailStatus.delayMin > 0 && (
+              <div className="group relative">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5 flex items-center gap-1 cursor-help">
+                  <Info className="w-2.5 h-2.5" />
+                  {liveTailStatus.timeLabel} · ~{liveTailStatus.delayMin}m ago
+                </span>
+                <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                  The upstream aggregation pipeline batches data every ~5 minutes. The live tail runs ~{liveTailStatus.delayMin}m behind real time so every slot shown is complete and the scroll stays smooth.
+                </span>
+              </div>
+            )}
+            {debugEnabled && live && viewEndSlot === null && liveTailStatus && (
+              <span className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground/60 border border-border/50 rounded px-1.5 py-0.5">
+                queue={liveTailStatus.queueLen} · edge={liveEdge}
+              </span>
+            )}
             {live && viewEndSlot !== null && (
               <button
                 onClick={scrollToLive}
@@ -1575,7 +1632,17 @@ function RecentSlotsChart({
           </div>
           <div className="mt-5 flex flex-col gap-0.5">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
-            <a ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors" />
+            <a
+              ref={infoLeaderNameRef}
+              onClick={(e) => {
+                const href = e.currentTarget.getAttribute('href')
+                if (!href) return
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+                e.preventDefault()
+                navigate(href, { state: { back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } } })
+              }}
+              className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors"
+            />
             <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
           </div>
         </div>
@@ -1632,6 +1699,8 @@ export function EdgeScoreboardPage() {
 
   const [live, setLive] = useState(true)
   const [viewEndSlot, setViewEndSlot] = useState<number | null>(null)
+  const [liveTailStatus, setLiveTailStatus] = useState<{ queueLen: number; queueLagMs: number; serverLagMs: number; totalLagMs: number; delayMin: number; timeLabel: string; edge: number } | null>(null)
+  const debugEnabled = typeof globalThis.window !== 'undefined' && new URLSearchParams(globalThis.window.location.search).has('debug')
   const scrollToLiveRef = useRef<(() => void) | null>(null)
   const toggleLiveRef = useRef<(() => void) | null>(null)
 
@@ -1852,7 +1921,7 @@ export function EdgeScoreboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Trophy}
-          title="Edge Scoreboard"
+          title="Shreds Scoreboard"
           subtitle={
             <span className="text-xs text-muted-foreground/50 flex items-center gap-2">
               <span>{windowLabel(activeWindow)}</span>
@@ -1860,24 +1929,21 @@ export function EdgeScoreboardPage() {
             </span>
           }
           actions={
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5 text-xs">
                 {([
                   [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
                   [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
-                    {v === true && leadersOnly !== true && (
-                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
-                    )}
                     <button
                       type="button"
                       onClick={() => setLeadersOnly(v)}
                       className={cn(
-                        'px-3 py-1.5 rounded-md border border-border transition-colors',
+                        'px-2.5 py-1 rounded-md border transition-colors',
                         leadersOnly === v
-                          ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
-                          : 'hover:bg-muted'
+                          ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400'
+                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
                       {label}
@@ -1888,6 +1954,15 @@ export function EdgeScoreboardPage() {
                   </div>
                 ))}
               </div>
+              <a
+                href="https://docs.malbeclabs.com/Edge%20Subscriber%20Connection/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group inline-flex items-center gap-2 rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_4px_14px_-2px_rgba(16,185,129,0.45)] transition-all hover:bg-emerald-600 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_6px_20px_-2px_rgba(16,185,129,0.6)]"
+              >
+                Subscribe Now
+                <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+              </a>
             </div>
           }
         />
@@ -1973,6 +2048,22 @@ export function EdgeScoreboardPage() {
               <div className="flex items-center px-4 py-3">
                 <h2 className="text-sm font-semibold flex-1">Win Rate by Slot</h2>
                 <div className="flex items-center gap-2">
+                  {debugEnabled && live && viewEndSlot === null && liveTailStatus && liveTailStatus.delayMin > 0 && (
+                    <div className="group relative">
+                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground border border-border rounded px-1.5 py-0.5 flex items-center gap-1 cursor-help">
+                        <Info className="w-2.5 h-2.5" />
+                        {liveTailStatus.timeLabel} · ~{liveTailStatus.delayMin}m ago
+                      </span>
+                      <span className="pointer-events-none absolute top-full right-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                        The upstream aggregation pipeline batches data every ~5 minutes. The live tail runs ~{liveTailStatus.delayMin}m behind real time so every slot shown is complete and the scroll stays smooth.
+                      </span>
+                    </div>
+                  )}
+                  {debugEnabled && live && viewEndSlot === null && liveTailStatus && (
+                    <span className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground/60 border border-border/50 rounded px-1.5 py-0.5">
+                      queue={liveTailStatus.queueLen} ({formatLag(liveTailStatus.queueLagMs)}) · server={formatLag(liveTailStatus.serverLagMs)} · slot={liveTailStatus.edge}
+                    </span>
+                  )}
                   <div className="relative group">
                     <button
                       type="button"
@@ -2025,6 +2116,8 @@ export function EdgeScoreboardPage() {
                   scrollToLiveRef={scrollToLiveRef}
                   toggleLiveRef={toggleLiveRef}
                   onViewEndSlotChange={setViewEndSlot}
+                  onLiveTailStatusChange={setLiveTailStatus}
+                  dataLagMs={data.data_lag_ms}
                 />
               </div>
             </div>
@@ -2113,7 +2206,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           }
         }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#10b981] transition-colors">
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="text-sm font-medium hover:text-[#10b981] transition-colors">
               {label}
             </Link>
           ) : (

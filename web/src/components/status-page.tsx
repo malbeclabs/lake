@@ -1032,7 +1032,7 @@ function TabNavigation({
             onClick={() => navigateWithParams("/status/links")}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
               activeTab === "links"
-                ? "border-primary text-foreground"
+                ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -1042,7 +1042,7 @@ function TabNavigation({
             onClick={() => navigateWithParams("/status/devices")}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
               activeTab === "devices"
-                ? "border-primary text-foreground"
+                ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -1052,7 +1052,7 @@ function TabNavigation({
             onClick={() => navigateWithParams("/status/metros")}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
               activeTab === "metros"
-                ? "border-primary text-foreground"
+                ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
