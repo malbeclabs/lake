@@ -748,6 +748,11 @@ function RecentSlotsChart({
   // LIVE_BUFFER_SIZE so uPlot never re-initialises and the slide animation fires.
   const liveMaxSlotRef = useRef(0)
   const liveQueueRef = useRef<EdgeScoreboardSlotRace[][]>([])
+  // bufferVersion bumps when slotBufferRef cells are mutated in place (lagging host
+  // catches up and fills in its bars for an already-admitted slot). activeSlots
+  // memoizes on this so the chart re-renders when cells change without the slot
+  // itself being new.
+  const [bufferVersion, setBufferVersion] = useState(0)
   // Ref to the latest poll function so scrollToLive can trigger an immediate refresh.
   const pollRef = useRef<(() => void) | null>(null)
   // liveEdge: the slot number drain considers the right edge of the live window.
@@ -824,13 +829,61 @@ function RecentSlotsChart({
 
     const loadSlots = (data: Awaited<ReturnType<typeof fetchEdgeScoreboard>>) => {
       const { map, nums } = bySlotOrdered(data.recent_slots)
-      // Read liveMaxSlotRef at resolve time (not call time) so concurrent polls don't
-      // both see the same stale prevMax and double-queue the same slots.
+      if (!nums.length) return
+      // Poll requests an overlap window (see OVERLAP_SLOTS below) so lagging hosts can
+      // fill in cells for already-admitted slots. Partition the response:
+      //   - new slots (not in buffer or queue) → enqueue, animation picks up
+      //   - existing slots → merge rows in place by (slot, host, feed) key
       const prevMax = liveMaxSlotRef.current
-      const newNums = prevMax > 0 ? nums.filter(n => n > prevMax) : nums
-      if (!newNums.length) return
-      liveMaxSlotRef.current = nums.at(-1) ?? liveMaxSlotRef.current
-      liveQueueRef.current.push(...newNums.map(s => map.get(s)!))
+      const bufferedSlots = new Set(slotBufferRef.current.map(r => r.slot))
+      const queuedSlots = new Set<number>()
+      for (const arr of liveQueueRef.current) for (const r of arr) queuedSlots.add(r.slot)
+      const newNums: number[] = []
+      const updateNums: number[] = []
+      for (const n of nums) {
+        if (n > prevMax && !bufferedSlots.has(n) && !queuedSlots.has(n)) newNums.push(n)
+        else updateNums.push(n)
+      }
+      if (updateNums.length) {
+        // Merge-in-place: replace any (slot, host, feed) already present with the
+        // fresher row, append new (host, feed) cells.
+        const keyOf = (r: EdgeScoreboardSlotRace) => `${r.slot}|${r.host}|${r.feed}`
+        const updateSet = new Set(updateNums)
+        const incomingByKey = new Map<string, EdgeScoreboardSlotRace>()
+        for (const n of updateNums) for (const r of map.get(n)!) incomingByKey.set(keyOf(r), r)
+        // Update existing buffer cells.
+        let mutated = false
+        const nextBuf = slotBufferRef.current.map(r => {
+          if (!updateSet.has(r.slot)) return r
+          const k = keyOf(r)
+          const fresh = incomingByKey.get(k)
+          if (fresh) { incomingByKey.delete(k); mutated = true; return fresh }
+          return r
+        })
+        // Any remaining incoming rows are new (host, feed) cells for existing slots.
+        for (const r of incomingByKey.values()) { if (bufferedSlots.has(r.slot)) { nextBuf.push(r); mutated = true } }
+        // Also update cells queued but not yet drained.
+        for (const arr of liveQueueRef.current) {
+          for (let i = 0; i < arr.length; i++) {
+            const r = arr[i]
+            if (!updateSet.has(r.slot)) continue
+            const fresh = incomingByKey.get(keyOf(r))
+            if (fresh) arr[i] = fresh
+          }
+        }
+        if (mutated) {
+          slotBufferRef.current = nextBuf
+          setBufferVersion(v => v + 1)
+        }
+      }
+      if (newNums.length) {
+        liveMaxSlotRef.current = Math.max(liveMaxSlotRef.current, nums.at(-1) ?? 0)
+        liveQueueRef.current.push(...newNums.map(s => map.get(s)!))
+      } else if (nums.length) {
+        // No new slots but server may have advanced current_slot; keep prevMax in sync
+        // so subsequent polls don't re-request the same range.
+        liveMaxSlotRef.current = Math.max(liveMaxSlotRef.current, nums.at(-1) ?? 0)
+      }
       if (data.slot_leaders) setLiveLeaders(prev => ({ ...prev, ...data.slot_leaders }))
     }
 
@@ -849,14 +902,15 @@ function RecentSlotsChart({
       }).catch(() => {})
     }
 
-    // Poll every 5s. Pass sinceSlot so the server bypasses its 30s page cache and
-    // runs a lightweight cursor query (recent_slots only, no expensive aggregations).
-    // Without sinceSlot every poll hits the cache and returns the same slots for ~30s,
-    // keeping newNums empty and stalling the animation queue until the cache refreshes.
+    // Poll every 5s. Pass sinceSlot with an OVERLAP_SLOTS rewind so lagging hosts
+    // can fill in cells for already-admitted slots. The server returns rows for
+    // slot > (sinceSlot - overlap); loadSlots partitions them into new (enqueue)
+    // vs existing (merge-in-place). Without the overlap, a host that reports a
+    // slot after it was first admitted would never show up on that slot's column.
+    const OVERLAP_SLOTS = 50 // ~20s at 2.5 slots/sec
     const poll = () => {
-      // Use liveMaxSlotRef at call time (not closure time) so concurrent polls don't
-      // redundantly re-queue the same range. Only pass sinceSlot once the buffer is seeded.
-      const sinceSlot = liveMaxSlotRef.current > 0 ? liveMaxSlotRef.current : undefined
+      const max = liveMaxSlotRef.current
+      const sinceSlot = max > OVERLAP_SLOTS ? max - OVERLAP_SLOTS : (max > 0 ? 1 : undefined)
       fetchEdgeScoreboard(window, leadersOnly, { sinceSlot }).then(data => {
         if (cancelled) return
         loadSlots(data)
@@ -1241,14 +1295,15 @@ function RecentSlotsChart({
     })
   }, [viewEndSlot, window, leadersOnly])
 
-  // Memoized on liveEdge/viewEndSlot so 60fps scrollOffset re-renders don't recompute it.
-  // slotBufferRef is a ref that only changes when liveEdge advances, so this is correct.
+  // Memoized on liveEdge/viewEndSlot/bufferVersion so 60fps scrollOffset re-renders
+  // don't recompute it. bufferVersion bumps on merge-in-place updates when a lagging
+  // host catches up and fills in cells for an already-admitted slot.
   const activeSlots = useMemo(() => {
     const buf = slotBufferRef.current
     if (!buf.length) return live ? [] : slots
     return computeViewByEnd(buf, viewEndSlot, liveEdge, 0, viewSlotCount)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveEdge, viewEndSlot, live, slots, viewSlotCount])
+  }, [liveEdge, viewEndSlot, live, slots, viewSlotCount, bufferVersion])
 
   const chartData = useMemo(() => {
     if (!activeSlots.length || !nodes.length) return { nodeCharts: [], feeds: [] as string[], slotCount: 0 }

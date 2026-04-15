@@ -1052,7 +1052,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							%s
 					)
 					GROUP BY slot
-					HAVING count(DISTINCT host) >= greatest((SELECT count() FROM active_hosts) - 1, 2)
 					ORDER BY slot %s
 					LIMIT %d
 				)
@@ -1087,7 +1086,6 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							%s
 					)
 					GROUP BY slot
-					HAVING count(DISTINCT host) >= greatest((SELECT count() FROM active_hosts) - 1, 2)
 					ORDER BY slot %s
 					LIMIT %d
 				)
