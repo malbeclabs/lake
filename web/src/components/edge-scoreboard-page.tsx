@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info } from 'lucide-react'
+import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info, ArrowRight } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -1918,24 +1918,21 @@ export function EdgeScoreboardPage() {
             </span>
           }
           actions={
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5 text-xs">
                 {([
                   [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
                   [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
-                    {v === true && leadersOnly !== true && (
-                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
-                    )}
                     <button
                       type="button"
                       onClick={() => setLeadersOnly(v)}
                       className={cn(
-                        'px-3 py-1.5 rounded-md border border-border transition-colors',
+                        'px-2.5 py-1 rounded-md border transition-colors',
                         leadersOnly === v
-                          ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
-                          : 'hover:bg-muted'
+                          ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400'
+                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
                       {label}
@@ -1946,6 +1943,15 @@ export function EdgeScoreboardPage() {
                   </div>
                 ))}
               </div>
+              <a
+                href="https://docs.malbeclabs.com/Edge%20Subscriber%20Connection/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group inline-flex items-center gap-2 rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_4px_14px_-2px_rgba(16,185,129,0.45)] transition-all hover:bg-emerald-600 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_6px_20px_-2px_rgba(16,185,129,0.6)]"
+              >
+                Subscribe Now
+                <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+              </a>
             </div>
           }
         />
