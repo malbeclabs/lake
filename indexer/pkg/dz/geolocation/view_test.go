@@ -333,12 +333,14 @@ func TestLake_Geolocation_View_Refresh(t *testing.T) {
 
 		mockDB := testClient(t)
 
-		probePK := solana.MustPublicKeyFromBase58("11111111111111111111111111111111")
+		probePKBytes := testPubkeyBytes(10)
+		probePK := solana.PublicKeyFromBytes(probePKBytes[:])
 		ownerBytes := testPubkeyBytes(1)
 		exchangeBytes := testPubkeyBytes(2)
 		metricsBytes := testPubkeyBytes(3)
 
-		userPK := solana.MustPublicKeyFromBase58("22222222222222222222222222222222")
+		userPKBytes := testPubkeyBytes(20)
+		userPK := solana.PublicKeyFromBytes(userPKBytes[:])
 		userOwnerBytes := testPubkeyBytes(4)
 		tokenAcctBytes := testPubkeyBytes(5)
 		targetPKBytes := testPubkeyBytes(6)
