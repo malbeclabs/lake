@@ -553,7 +553,7 @@ func main() {
 		r.Get("/api/dz/multicast-groups/{pk}/member-counts", api.GetMulticastGroupMemberCounts)
 		r.Get("/api/dz/multicast-groups/{pk}/shred-stats", api.GetMulticastGroupShredStats)
 		r.Get("/api/dz/publisher-check", api.GetPublisherCheck)
-		r.With(handlers.RequireInternalDomain).Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
+		r.Get("/api/dz/edge/scoreboard", api.GetEdgeScoreboard)
 		r.Get("/api/dz/tenants", api.GetTenants)
 		r.Get("/api/dz/tenants/{pk}", api.GetTenant)
 		r.Get("/api/dz/shreds/overview", api.GetShredsOverview)
