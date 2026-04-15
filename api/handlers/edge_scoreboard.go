@@ -227,7 +227,7 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("X-Cache", "MISS")
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
 	window := strings.TrimSpace(r.URL.Query().Get("window"))
