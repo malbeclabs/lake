@@ -256,7 +256,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 		WITH user_counts AS (
 			SELECT device_pk, count(*) as user_count
 			FROM dz_users_current
-			WHERE status = 'activated'
+			WHERE status = 'activated' AND device_pk = ?
 			GROUP BY device_pk
 		),
 		traffic_rates AS (
@@ -268,6 +268,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
+				AND device_pk = ?
 			GROUP BY device_pk
 		),
 		peak_rates AS (
@@ -279,6 +280,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
 				AND user_tunnel_id IS NULL
 				AND link_pk = ''
+				AND device_pk = ?
 			GROUP BY device_pk
 		),
 		validator_stats AS (
@@ -290,6 +292,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
 			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
 			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
+				AND u.device_pk = ?
 			GROUP BY u.device_pk
 		),
 		total_stake AS (
@@ -334,7 +337,7 @@ func (a *API) GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	var device DeviceDetail
 	var interfacesJSON string
-	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&device.PK,
 		&device.Code,
 		&device.Status,

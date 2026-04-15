@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/malbeclabs/lake/api/handlers"
@@ -291,6 +292,66 @@ func TestGetDevice_IncludesContributorInfo(t *testing.T) {
 
 	assert.Equal(t, "contrib-1", device.ContributorPK)
 	assert.Equal(t, "CONTRIB1", device.ContributorCode)
+}
+
+func TestGetDevice_IncludesTrafficRates(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertDevicesTestData(t, api)
+
+	// Seed device-level interface rollup (link_pk = '' means device-level traffic, not a link interface)
+	now := time.Now()
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-1", "eth0", "", "", 0, 0, 1000.0, "up")
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-1", "eth1", "", "", 0, 0, 3000.0, "up")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "dev-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetDevice(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var device handlers.DeviceDetail
+	err := json.NewDecoder(rr.Body).Decode(&device)
+	require.NoError(t, err)
+
+	// avg(avg_in_bps) over two interfaces: (1000 + 3000) / 2 = 2000
+	assert.InDelta(t, 2000.0, device.InBps, 1.0)
+	// avg_out_bps = avg_in_bps * 0.5, so (500 + 1500) / 2 = 1000
+	assert.InDelta(t, 1000.0, device.OutBps, 1.0)
+	// max(max_in_bps): max_in_bps = avg_in_bps * 2.0, so max(2000, 6000) = 6000
+	assert.InDelta(t, 6000.0, device.PeakInBps, 1.0)
+}
+
+func TestGetDevice_TrafficIsolatedByDevice(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertDevicesTestData(t, api)
+
+	// Seed rollup for two different devices with very different rates
+	now := time.Now()
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-1", "eth0", "", "", 0, 0, 1000.0, "up")
+	seedInterfaceRollup(t, api, now.Add(-5*time.Minute), "dev-2", "eth0", "", "", 0, 0, 9000.0, "up")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/dz/devices/dev-1", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("pk", "dev-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rr := httptest.NewRecorder()
+	api.GetDevice(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var device handlers.DeviceDetail
+	err := json.NewDecoder(rr.Body).Decode(&device)
+	require.NoError(t, err)
+
+	// Should see dev-1's rate (1000), not dev-2's (9000) or an average of both (5000)
+	assert.InDelta(t, 1000.0, device.InBps, 1.0)
 }
 
 func TestGetDevice_HandlesNullContributor(t *testing.T) {
