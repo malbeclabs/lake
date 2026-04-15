@@ -447,7 +447,7 @@ func (a *API) GetLink(w http.ResponseWriter, r *http.Request) {
 	query := linkDetailQuery()
 
 	var link LinkDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&link.PK,
 		&link.Code,
 		&link.Status,
@@ -510,7 +510,7 @@ func linkDetailQuery() string {
 				avg(avg_out_bps) as out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts >= now() - INTERVAL 15 MINUTE
-				AND link_pk != ''
+				AND link_pk = ?
 			GROUP BY link_pk
 		),
 		peak_rates AS (
@@ -520,7 +520,7 @@ func linkDetailQuery() string {
 				max(max_out_bps) as peak_out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts >= now() - INTERVAL 1 HOUR
-				AND link_pk != ''
+				AND link_pk = ?
 			GROUP BY link_pk
 		),
 		latency_stats AS (
@@ -531,6 +531,7 @@ func linkDetailQuery() string {
 				sum(a_loss_pct * a_samples + z_loss_pct * z_samples) / greatest(sum(a_samples + z_samples), 1) as loss_percent
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				AND link_pk = ?
 			GROUP BY link_pk
 		),
 		latency_per_direction AS (
@@ -542,6 +543,7 @@ func linkDetailQuery() string {
 				ifNotFinite(sum(z_avg_jitter_us * z_samples) / greatest(sum(z_samples), 1), 0) as avg_jitter_z_to_a
 			FROM link_rollup_5m FINAL
 			WHERE bucket_ts >= now() - INTERVAL 3 HOUR
+				AND link_pk = ?
 			GROUP BY link_pk
 		)
 		SELECT
