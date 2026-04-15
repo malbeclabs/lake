@@ -36,18 +36,13 @@ import {
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/hooks/use-theme'
 import { useVersionCheck } from '@/hooks/use-version-check'
-import { useAuth } from '@/contexts/AuthContext'
 import { UserPopover } from './auth/UserPopover'
 
 export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const { features } = useEnv()
-  const { user } = useAuth()
-  // Non-internal users can't view the scoreboard (gated by InternalOnly), so the Shreds
-  // top-level link falls back to publishers — otherwise clicking Shreds bounces them to
-  // the home page and the Shreds sub-menu never opens.
-  const shredsDefaultPath = user?.is_internal_user ? '/dz/shreds/scoreboard' : '/dz/shreds/publishers'
+  const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
 const { resolvedTheme, setTheme } = useTheme()
@@ -467,11 +462,9 @@ const { resolvedTheme, setTheme } = useTheme()
             </Link>
             {isShredsRoute && (
               <>
-                {user?.is_internal_user && (
-                  <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
-                    Scoreboard
-                  </Link>
-                )}
+                <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
+                  Scoreboard
+                </Link>
                 <Link to="/dz/shreds/publishers" className={subNavItemClass(isShredsPublishersRoute)}>
                   Publishers
                 </Link>
