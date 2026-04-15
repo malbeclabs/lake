@@ -43,7 +43,11 @@ export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const { features } = useEnv()
-  useAuth()
+  const { user } = useAuth()
+  // Non-internal users can't view the scoreboard (gated by InternalOnly), so the Shreds
+  // top-level link falls back to publishers — otherwise clicking Shreds bounces them to
+  // the home page and the Shreds sub-menu never opens.
+  const shredsDefaultPath = user?.is_internal_user ? '/dz/shreds/scoreboard' : '/dz/shreds/publishers'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
 const { resolvedTheme, setTheme } = useTheme()
@@ -234,7 +238,7 @@ const { resolvedTheme, setTheme } = useTheme()
           <div className="w-6 border-t border-border/50 my-2" />
 
           {/* Entity sections */}
-          <Link to="/dz/shreds/scoreboard" className={collapsedIconClass(isEdgeRoute)} title="Edge">
+          <Link to={shredsDefaultPath} className={collapsedIconClass(isEdgeRoute)} title="Edge">
             <Trophy className="h-4 w-4" />
           </Link>
           <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
@@ -457,15 +461,17 @@ const { resolvedTheme, setTheme } = useTheme()
             <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Edge</span>
           </div>
           <div className="space-y-1">
-            <Link to="/dz/shreds/scoreboard" className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
+            <Link to={shredsDefaultPath} className={isShredsRoute ? navItemExpandedClass : navItemClass(false)}>
               <Puzzle className="h-4 w-4" />
               Shreds
             </Link>
             {isShredsRoute && (
               <>
-                <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
-                  Scoreboard
-                </Link>
+                {user?.is_internal_user && (
+                  <Link to="/dz/shreds/scoreboard" className={subNavItemClass(isScoreboardRoute)}>
+                    Scoreboard
+                  </Link>
+                )}
                 <Link to="/dz/shreds/publishers" className={subNavItemClass(isShredsPublishersRoute)}>
                   Publishers
                 </Link>
