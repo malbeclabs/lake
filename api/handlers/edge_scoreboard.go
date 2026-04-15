@@ -120,6 +120,10 @@ type EdgeScoreboardResponse struct {
 	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
 	SlotBucketSize     uint64                           `json:"slot_bucket_size,omitempty"`
 	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
+	// DataLagMs is how far behind wall clock the latest row in slot_feed_race_summary is
+	// (server now − max(event_ts)). The client adds this to its own queue depth to show a
+	// pill reflecting actual on-chain time.
+	DataLagMs uint64 `json:"data_lag_ms,omitempty"`
 }
 
 // maxValidSlot caps max(slot) queries against shredder tables to exclude corrupted rows.
@@ -255,7 +259,7 @@ func (a *API) GetEdgeScoreboard(w http.ResponseWriter, r *http.Request) {
 	slotLimit := 200
 	if l := r.URL.Query().Get("limit"); l != "" {
 		_, _ = fmt.Sscanf(l, "%d", &slotLimit)
-		if slotLimit < 1 || slotLimit > 1000 {
+		if slotLimit < 1 || slotLimit > 3000 {
 			slotLimit = 200
 		}
 	}
@@ -327,13 +331,21 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	// lets the index seek directly to the ~24h range. max(slot) is O(1) against
 	// the primary key so the preamble is effectively free.
 	rangeFilter := timeFilter
+	var dataLagMs uint64
 	if slotWindow, ok := slotsPerWindow[window]; ok {
 		var maxSlot uint64
+		var lagSec float64
 		start := time.Now()
-		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary WHERE slot < %d`, shredderDB, maxValidSlot)).Scan(&maxSlot)
+		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(
+			`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary WHERE slot < %d`,
+			shredderDB, maxValidSlot,
+		)).Scan(&maxSlot, &lagSec)
 		metrics.RecordClickHouseQuery(time.Since(start), err)
 		if err != nil {
 			return nil, fmt.Errorf("max slot: %w", err)
+		}
+		if lagSec > 0 {
+			dataLagMs = uint64(lagSec * 1000)
 		}
 		if maxSlot > slotWindow {
 			rangeFilter = fmt.Sprintf("%s AND slot >= %d", timeFilter, maxSlot-slotWindow)
@@ -1517,6 +1529,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		SlotBuckets:        slotBuckets,
 		SlotBucketSize:     slotBucketSize,
 		SlotLeaders:        slotLeaders,
+		DataLagMs:          dataLagMs,
 	}, nil
 }
 
@@ -1529,8 +1542,12 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 	}
 	shredderDB := fmt.Sprintf("`%s`", a.ShredderDB)
 	var maxSlot uint64
+	var lagSec float64
 	start := time.Now()
-	err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(`SELECT max(slot) FROM %s.slot_feed_race_summary WHERE slot < %d`, shredderDB, maxValidSlot)).Scan(&maxSlot)
+	err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(
+		`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary WHERE slot < %d`,
+		shredderDB, maxValidSlot,
+	)).Scan(&maxSlot, &lagSec)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
 	if err != nil {
 		return nil, fmt.Errorf("max slot: %w", err)
@@ -1539,5 +1556,12 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 		return &EdgeScoreboardResponse{LeadersOnly: leadersOnly, GeneratedAt: time.Now().UTC()}, nil
 	}
 	// beforeSlot = maxSlot+1 triggers cursor mode and returns the latest slotLimit slots DESC.
-	return a.FetchEdgeScoreboardData(ctx, "", leadersOnly, 0, maxSlot+1, slotLimit)
+	resp, err := a.FetchEdgeScoreboardData(ctx, "", leadersOnly, 0, maxSlot+1, slotLimit)
+	if err != nil {
+		return nil, err
+	}
+	if lagSec > 0 {
+		resp.DataLagMs = uint64(lagSec * 1000)
+	}
+	return resp, nil
 }

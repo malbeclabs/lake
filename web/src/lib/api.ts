@@ -5143,6 +5143,7 @@ export interface EdgeScoreboardResponse {
   slot_buckets?: EdgeScoreboardSlotBucket[]
   slot_bucket_size?: number
   slot_leaders?: Record<string, EdgeScoreboardLeader>
+  data_lag_ms?: number
 }
 
 export interface EdgeScoreboardLeader {
