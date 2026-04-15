@@ -23,6 +23,7 @@ var externalRemoteTables = []struct {
 	{"shredder_qa", "publisher_shred_stats"},
 	{"shredder_qa", "slot_feed_races"},
 	{"shredder_qa", "slot_feed_race_summary"},
+	{"shredder_qa", "shred_timing_events"},
 }
 
 // Config holds configuration for creating remote proxy tables.
