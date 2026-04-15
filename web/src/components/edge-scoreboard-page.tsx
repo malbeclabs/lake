@@ -1871,7 +1871,7 @@ export function EdgeScoreboardPage() {
                   </div>
                   <div className="text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
                   <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
-                    Percentage of total network stake held by validators actively publishing shreds — a measure of how much of the network's economic weight is represented in these race results.
+                    Percentage of total network stake held by validators actively publishing shreds.
                   </span>
                 </div>
               </div>
