@@ -191,7 +191,8 @@ func TestGetShredClientSeats_WithData(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats", nil)
 	rr := httptest.NewRecorder()
-	api.GetShredClientSeats(rr, req)
+	// Internal user can see client_ip.
+	api.GetShredClientSeats(rr, withAccount(req, &handlers.Account{IsInternalUser: true}))
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 
@@ -219,6 +220,45 @@ func TestGetShredClientSeats_WithData(t *testing.T) {
 	require.NotNil(t, seat2)
 	assert.Equal(t, int64(25), seat2.PricePerEpochDollars)
 	assert.Equal(t, uint8(1), seat2.HasPriceOverride)
+}
+
+func TestGetShredClientSeats_ClientIPRedacted(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api)
+
+	cases := []struct {
+		name string
+		req  func(r *http.Request) *http.Request
+	}{
+		{"anonymous", func(r *http.Request) *http.Request { return r }},
+		{"wallet auth", func(r *http.Request) *http.Request {
+			return withAccount(r, &handlers.Account{AccountType: "wallet", IsInternalUser: false})
+		}},
+		{"non-internal domain", func(r *http.Request) *http.Request {
+			return withAccount(r, &handlers.Account{AccountType: "domain", IsInternalUser: false})
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// IP filter and ip-sorted requests must be ignored (not leak via sort/filter either).
+			req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/client-seats?filters=ip:192.168&sort_by=ip", nil)
+			rr := httptest.NewRecorder()
+			api.GetShredClientSeats(rr, tc.req(req))
+
+			assert.Equal(t, http.StatusOK, rr.Code)
+
+			var response handlers.PaginatedResponse[handlers.ShredClientSeatItem]
+			err := json.NewDecoder(rr.Body).Decode(&response)
+			require.NoError(t, err)
+			// Filter is dropped, so all seats returned.
+			assert.Equal(t, 3, response.Total)
+			for _, item := range response.Items {
+				assert.Empty(t, item.ClientIP, "client_ip should be redacted for %s", tc.name)
+			}
+		})
+	}
 }
 
 func TestGetShredClientSeats_StatusFilter(t *testing.T) {
@@ -413,6 +453,57 @@ func TestGetShredEscrowEvents_WithData(t *testing.T) {
 	assert.Equal(t, "close", response.Items[0].EventType)
 	assert.NotEmpty(t, response.Items[0].SolscanURL)
 	assert.NotEmpty(t, response.Items[0].Signer)
+}
+
+func TestGetShredEscrowEvents_ClientIPRedacted(t *testing.T) {
+	t.Parallel()
+	api := apitesting.NewTestAPI(t, testChDB)
+	insertShredsTestData(t, api) // gives seat-1 -> client_ip 192.168.1.1
+	insertEscrowEventsTestData(t, api)
+
+	t.Run("anonymous redacts", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d", nil)
+		rr := httptest.NewRecorder()
+		api.GetShredEscrowEvents(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+		err := json.NewDecoder(rr.Body).Decode(&response)
+		require.NoError(t, err)
+		require.NotEmpty(t, response.Items)
+		for _, item := range response.Items {
+			assert.Empty(t, item.ClientIP, "client_ip should be redacted for anonymous users")
+		}
+	})
+
+	t.Run("wallet auth redacts", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d", nil)
+		rr := httptest.NewRecorder()
+		api.GetShredEscrowEvents(rr, withAccount(req, &handlers.Account{AccountType: "wallet", IsInternalUser: false}))
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+		err := json.NewDecoder(rr.Body).Decode(&response)
+		require.NoError(t, err)
+		for _, item := range response.Items {
+			assert.Empty(t, item.ClientIP, "client_ip should be redacted for wallet-auth users")
+		}
+	})
+
+	t.Run("internal user sees ip", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/dz/shreds/escrow-events?range=30d&filters=seat:seat-1", nil)
+		rr := httptest.NewRecorder()
+		api.GetShredEscrowEvents(rr, withAccount(req, &handlers.Account{AccountType: "domain", IsInternalUser: true}))
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var response handlers.PaginatedResponse[handlers.ShredEscrowEventItem]
+		err := json.NewDecoder(rr.Body).Decode(&response)
+		require.NoError(t, err)
+		require.NotEmpty(t, response.Items)
+		for _, item := range response.Items {
+			assert.Equal(t, "192.168.1.1", item.ClientIP)
+		}
+	})
 }
 
 func TestGetShredEscrowEvents_IncludeInternal(t *testing.T) {

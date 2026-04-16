@@ -26,6 +26,7 @@ import {
   type ShredFunder,
 } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
+import { useAuth } from '@/contexts/AuthContext'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
@@ -305,7 +306,7 @@ function ErrorState({ message }: { message: string }) {
 
 // --- Seats Page ---
 
-const seatFieldPrefixes = [
+const seatFieldPrefixesWithIP = [
   { prefix: 'seat:', description: 'Filter by seat key' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro code' },
@@ -316,6 +317,7 @@ const seatFieldPrefixes = [
   { prefix: 'balance:', description: 'Filter by USDC balance (e.g., >0)' },
   { prefix: 'prepaid:', description: 'Filter by prepaid epochs (e.g., >5)' },
 ]
+const seatFieldPrefixesWithoutIP = seatFieldPrefixesWithIP.filter(p => p.prefix !== 'ip:')
 
 function prepaidEpochs(seat: ShredClientSeat): number {
   if (seat.price_per_epoch_dollars <= 0 || seat.total_usdc_balance === 0) return 0
@@ -429,6 +431,8 @@ export function ShredsSeatsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const [showStatusInfo, setShowStatusInfo] = useState(false)
+  const { user } = useAuth()
+  const showClientIP = !!user?.is_internal_user
 
   // Fetch overview for current Solana epoch (used for status badges)
   const { data: overview } = useQuery({
@@ -602,10 +606,10 @@ export function ShredsSeatsPage() {
               removeFilter={removeFilter}
               clearAllFilters={clearAllFilters}
               setLiveFilter={() => {}}
-              fieldPrefixes={seatFieldPrefixes}
+              fieldPrefixes={showClientIP ? seatFieldPrefixesWithIP : seatFieldPrefixesWithoutIP}
               entity="shred-seats"
               placeholder="Filter seats..."
-              autocompleteFields={['device', 'metro', 'ip', 'funder']}
+              autocompleteFields={showClientIP ? ['device', 'metro', 'ip', 'funder'] : ['device', 'metro', 'funder']}
             />
           }
         />
@@ -729,13 +733,15 @@ export function ShredsSeatsPage() {
                     currentDir={sortDir}
                     onSort={handleSort}
                   />
-                  <SortHeader
-                    field="ip"
-                    label="Client IP"
-                    currentSort={sortBy}
-                    currentDir={sortDir}
-                    onSort={handleSort}
-                  />
+                  {showClientIP && (
+                    <SortHeader
+                      field="ip"
+                      label="Client IP"
+                      currentSort={sortBy}
+                      currentDir={sortDir}
+                      onSort={handleSort}
+                    />
+                  )}
                   <th className="px-4 py-3 font-medium">Status</th>
                   <SortHeader
                     field="tenure"
@@ -812,22 +818,24 @@ export function ShredsSeatsPage() {
                           <span className="text-muted-foreground">{'\u2014'}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm font-mono group/cell">
-                        <span className="inline-flex items-center gap-1">
-                          {seat.user_pk ? (
-                            <Link
-                              to={`/dz/users/${seat.user_pk}`}
-                              className="text-foreground/85 hover:text-foreground hover:underline"
-                              title={seat.user_pk}
-                            >
-                              {seat.client_ip}
-                            </Link>
-                          ) : (
-                            seat.client_ip
-                          )}
-                          <CopyIcon text={seat.client_ip} />
-                        </span>
-                      </td>
+                      {showClientIP && (
+                        <td className="px-4 py-3 text-sm font-mono group/cell">
+                          <span className="inline-flex items-center gap-1">
+                            {seat.user_pk ? (
+                              <Link
+                                to={`/dz/users/${seat.user_pk}`}
+                                className="text-foreground/85 hover:text-foreground hover:underline"
+                                title={seat.user_pk}
+                              >
+                                {seat.client_ip}
+                              </Link>
+                            ) : (
+                              seat.client_ip
+                            )}
+                            <CopyIcon text={seat.client_ip} />
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <SeatStatusBadge status={status} />
                       </td>
@@ -861,7 +869,7 @@ export function ShredsSeatsPage() {
                 })}
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={showClientIP ? 10 : 9} className="px-4 py-8 text-center text-muted-foreground">
                       No subscribers found
                     </td>
                   </tr>
@@ -1440,6 +1448,8 @@ function toLocalDatetimeString(ts: number): string {
 
 export function ShredsEscrowEventsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const { user } = useAuth()
+  const showClientIP = !!user?.is_internal_user
 
   // Pagination from URL.
   const page = parseInt(searchParams.get('page') || '1')
@@ -1771,7 +1781,7 @@ export function ShredsEscrowEventsPage() {
                     onSort={handleSort}
                   />
                   <th className="px-4 py-3 font-medium">Seat</th>
-                  <th className="px-4 py-3 font-medium">Client IP</th>
+                  {showClientIP && <th className="px-4 py-3 font-medium">Client IP</th>}
                   <th className="px-4 py-3 font-medium">Signer</th>
                   <SortHeader
                     field="amount"
@@ -1845,12 +1855,14 @@ export function ShredsEscrowEventsPage() {
                         )}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs">
-                      <span className="inline-flex items-center gap-1.5 group/cell">
-                        {e.client_ip || <span className="text-muted-foreground">{'\u2014'}</span>}
-                        {e.client_ip && <CopyIcon text={e.client_ip} />}
-                      </span>
-                    </td>
+                    {showClientIP && (
+                      <td className="px-4 py-3 font-mono text-xs">
+                        <span className="inline-flex items-center gap-1.5 group/cell">
+                          {e.client_ip || <span className="text-muted-foreground">{'\u2014'}</span>}
+                          {e.client_ip && <CopyIcon text={e.client_ip} />}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-4 py-3 font-mono text-xs" title={e.signer}>
                       <span className="inline-flex items-center gap-1.5 group/cell">
                         {e.signer ? (
@@ -1898,7 +1910,7 @@ export function ShredsEscrowEventsPage() {
                 ))}
                 {items.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                    <td colSpan={showClientIP ? 9 : 8} className="px-4 py-8 text-center text-muted-foreground">
                       No activity found
                     </td>
                   </tr>
