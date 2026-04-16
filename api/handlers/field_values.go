@@ -270,6 +270,16 @@ func (a *API) GetFieldValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Client IP autocomplete is gated to internal (domain-authenticated) users.
+	if entity == "shred-seats" && field == "ip" {
+		acc := GetAccountFromContext(ctx)
+		if acc == nil || !acc.IsInternalUser {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(FieldValuesResponse{Values: []string{}})
+			return
+		}
+	}
+
 	// Try scoped query first (dashboard filter-aware), fall back to generic
 	query := buildMulticastMembersFieldQuery(entity, field, fieldCfg, r)
 	if query == "" {
