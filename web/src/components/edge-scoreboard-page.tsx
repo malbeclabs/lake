@@ -2168,7 +2168,6 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
   const cellRef = useRef<HTMLDivElement>(null)
   const dz = node.feeds['dz']
   const dzEdge = node.feeds['dz_edge']
-  const edgeFirstArrival = dzEdge?.win_rate_pct ?? 0
 
   // Build lead time lookup: loser_feed -> { p50, p95 }.
   // Prefer dz_edge (dz + dz_rebop combined, matches the win-rate framing);
