@@ -151,7 +151,7 @@ const FEED_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
-type FeedSegment = { key: string; pct: number; color: string }
+type FeedSegment = { key: string; pct: number; rawPct: number; color: string }
 
 function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { segments: FeedSegment[]; children?: React.ReactNode; popoverSide?: 'top' | 'bottom' | 'right'; dzTotalPct?: number }) {
   const [hover, setHover] = useState(false)
@@ -182,23 +182,23 @@ function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { s
               <>
                 <div className="flex items-center gap-2 py-0.5 font-medium">
                   <span>DZ Edge</span>
-                  <span className="ml-auto pl-4 tabular-nums">{(dzTotalPct ?? dzSegs.reduce((s, seg) => s + seg.pct, 0)).toFixed(1)}%</span>
+                  <span className="ml-auto pl-4 tabular-nums">{(dzTotalPct ?? dzSegs.reduce((s, seg) => s + seg.rawPct, 0)).toFixed(1)}%</span>
                 </div>
-                {dzSegs.map(({ key, pct, color }) => (
+                {dzSegs.map(({ key, rawPct, color }) => (
                   <div key={key} className="flex items-center gap-2 py-0.5 pl-3">
                     <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
                     <span className="text-muted-foreground">{dzSubLabels[key] ?? key}</span>
-                    <span className="ml-auto pl-4 tabular-nums">{pct.toFixed(1)}%</span>
+                    <span className="ml-auto pl-4 tabular-nums">{rawPct.toFixed(1)}%</span>
                   </div>
                 ))}
                 {otherSegs.length > 0 && <div className="border-t border-border my-1.5" />}
               </>
             )}
-            {flatSegs.map(({ key, pct, color }) => (
+            {flatSegs.map(({ key, rawPct, color }) => (
               <div key={key} className="flex items-center gap-2 py-0.5">
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                 <span className="text-muted-foreground">{FEED_LABELS[key] ?? key}</span>
-                <span className="ml-auto pl-4 tabular-nums font-medium">{pct.toFixed(1)}%</span>
+                <span className="ml-auto pl-4 tabular-nums font-medium">{rawPct.toFixed(1)}%</span>
               </div>
             ))}
           </div>
@@ -1829,7 +1829,9 @@ export function EdgeScoreboardPage() {
       for (const key of Object.keys(feedRates)) feedRates[key] *= scale
     }
 
-    // Always-granular version for the hero bar (ignores the toggle)
+    // Always-granular version for the hero bar (ignores the toggle).
+    // Server returns all feed win_rate_pct on a shared per-host denominator, so
+    // dz + dz_rebop = dz_edge by construction and feed rates are already comparable.
     const granularAccum: Record<string, number> = {}
     for (const node of data.nodes) {
       const nodeRates: Record<string, number> = {}
@@ -1843,8 +1845,11 @@ export function EdgeScoreboardPage() {
       }
     }
     const feedRatesGranular: Record<string, number> = {}
+    const feedRatesGranularRaw: Record<string, number> = {}
     for (const [key, sum] of Object.entries(granularAccum)) {
-      feedRatesGranular[key] = nodeCount > 0 ? sum / nodeCount : 0
+      const avg = nodeCount > 0 ? sum / nodeCount : 0
+      feedRatesGranular[key] = avg
+      feedRatesGranularRaw[key] = avg
     }
     const granularTotal = Object.values(feedRatesGranular).reduce((s, v) => s + v, 0)
     if (granularTotal > 0) {
@@ -1858,6 +1863,7 @@ export function EdgeScoreboardPage() {
       avgCompleteness: data.completeness_pct,
       feedRates,
       feedRatesGranular,
+      feedRatesGranularRaw,
     }
   }, [data?.nodes, granular])
 
@@ -2015,7 +2021,7 @@ export function EdgeScoreboardPage() {
                   dzTotalPct={globalStats.winRate}
                   segments={Object.keys(globalStats.feedRatesGranular)
                     .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
-                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
+                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, rawPct: globalStats.feedRatesGranularRaw[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
@@ -2177,7 +2183,9 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
     }
   }
 
-  // Per-feed-key win rates for the stacked bar (normalized to 100%)
+  // Per-feed-key segments for the stacked bar.
+  // `rawPct` = server-provided win_rate_pct on the shared per-host denominator.
+  // `pct` = visual width, normalized so the bar always fills 100%.
   const feedBarSegments = useMemo(() => {
     const accumulated: Record<string, number> = {}
     const hasDzEdge = 'dz_edge' in node.feeds
@@ -2191,7 +2199,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
     const scale = total > 0 ? 100 / total : 1
     return Object.entries(accumulated)
       .sort(([a], [b]) => feedSortPriority(a) - feedSortPriority(b))
-      .map(([key, pct]) => ({ key, pct: pct * scale, color: FEED_COLORS[key] ?? '#6b7280' }))
+      .map(([key, pct]) => ({ key, pct: pct * scale, rawPct: pct, color: FEED_COLORS[key] ?? '#6b7280' }))
   }, [node.feeds, granular])
 
   const hasGossip = !!node.gossip_pubkey
