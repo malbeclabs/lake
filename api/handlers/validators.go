@@ -407,6 +407,10 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 			WHERE u.status = 'activated'
 				AND u.client_ip IS NOT NULL
 				AND u.client_ip != ''
+				AND u.client_ip = (
+					SELECT gossip_ip FROM solana_gossip_nodes_current
+					WHERE pubkey = (SELECT node_pubkey FROM solana_vote_accounts_current WHERE vote_pubkey = ?)
+				)
 			GROUP BY u.client_ip
 		),
 		traffic_rates AS (
@@ -416,7 +420,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 				SUM(avg_out_bps) as out_bps
 			FROM device_interface_rollup_5m
 			WHERE bucket_ts = (SELECT max(bucket_ts) FROM device_interface_rollup_5m)
-				AND user_pk != ''
+				AND user_pk IN (SELECT user_pk FROM dz_ip_info)
 			GROUP BY user_pk
 		),
 		skip_rates AS (
@@ -429,6 +433,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 				) as skip_rate
 			FROM fact_solana_block_production
 			WHERE event_ts > now() - INTERVAL 24 HOUR
+				AND leader_identity_pubkey = (SELECT node_pubkey FROM solana_vote_accounts_current WHERE vote_pubkey = ?)
 			GROUP BY leader_identity_pubkey
 			HAVING MAX(leader_slots_assigned_cum) > 0
 		),
@@ -438,6 +443,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 				software_client,
 				software_version
 			FROM validatorsapp_validators_current
+			WHERE vote_account = ?
 		)
 		SELECT
 			v.vote_pubkey,
@@ -475,7 +481,7 @@ func (a *API) GetValidator(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var validator ValidatorDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, votePubkey).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, votePubkey, votePubkey, votePubkey, votePubkey).Scan(
 		&validator.VotePubkey,
 		&validator.NodePubkey,
 		&validator.StakeSol,

@@ -606,6 +606,7 @@ func (a *API) GetUserMulticastGroups(w http.ResponseWriter, r *http.Request) {
 				FROM dz_users_current u
 				WHERE u.status = 'activated' AND u.kind = 'multicast' AND JSONLength(u.subscribers) > 0
 			)
+			WHERE group_pk IN (SELECT group_pk FROM user_groups)
 			GROUP BY group_pk
 		)
 		SELECT
