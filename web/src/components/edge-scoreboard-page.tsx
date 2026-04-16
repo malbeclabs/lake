@@ -879,14 +879,16 @@ function RecentSlotsChart({
       // fill in cells for already-admitted slots. Partition the response:
       //   - new slots (not in buffer or queue) → enqueue, animation picks up
       //   - existing slots → merge rows in place by (slot, host, feed) key
-      const prevMax = liveMaxSlotRef.current
+      // A slot absent from buffer+queue is always "new", regardless of prevMax — the
+      // server's strict host-coverage gate may admit slots < prevMax on later polls
+      // once the last host reports.
       const bufferedSlots = new Set(slotBufferRef.current.map(r => r.slot))
       const queuedSlots = new Set<number>()
       for (const arr of liveQueueRef.current) for (const r of arr) queuedSlots.add(r.slot)
       const newNums: number[] = []
       const updateNums: number[] = []
       for (const n of nums) {
-        if (n > prevMax && !bufferedSlots.has(n) && !queuedSlots.has(n)) newNums.push(n)
+        if (!bufferedSlots.has(n) && !queuedSlots.has(n)) newNums.push(n)
         else updateNums.push(n)
       }
       if (updateNums.length) {
@@ -923,7 +925,17 @@ function RecentSlotsChart({
       }
       if (newNums.length) {
         liveMaxSlotRef.current = Math.max(liveMaxSlotRef.current, nums.at(-1) ?? 0)
-        liveQueueRef.current.push(...newNums.map(s => map.get(s)!))
+        // Insert each new slot in ascending order so the drain animates slots in
+        // sequence. A late-completing slot (strict gate on server held it back) may
+        // arrive after newer slots were already enqueued; without ordered insertion
+        // the chart would briefly scroll backward when the older slot drains.
+        for (const s of newNums) {
+          const races = map.get(s)!
+          const q = liveQueueRef.current
+          let i = q.length
+          while (i > 0 && (q[i - 1][0]?.slot ?? 0) > s) i--
+          q.splice(i, 0, races)
+        }
       } else if (nums.length) {
         // No new slots but server may have advanced current_slot; keep prevMax in sync
         // so subsequent polls don't re-request the same range.
@@ -948,7 +960,7 @@ function RecentSlotsChart({
     // slot > (sinceSlot - overlap); loadSlots partitions them into new (enqueue)
     // vs existing (merge-in-place). Without the overlap, a host that reports a
     // slot after it was first admitted would never show up on that slot's column.
-    const OVERLAP_SLOTS = 50 // ~20s at 2.5 slots/sec
+    const OVERLAP_SLOTS = 125 // ~50s at 2.5 slots/sec — must exceed typical host report delay so the strict host-coverage gate has time to admit a slow-completing slot before it falls outside the re-query window.
     const poll = () => {
       const max = liveMaxSlotRef.current
       const sinceSlot = max > OVERLAP_SLOTS ? max - OVERLAP_SLOTS : (max > 0 ? 1 : undefined)
