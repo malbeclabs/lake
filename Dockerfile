@@ -52,6 +52,10 @@ RUN echo "$CACHE_BUSTER" > ${BIN_DIR}/.cache-buster && \
 # ----------------------------------------------------------------------------
 FROM ubuntu:24.04
 
+# Swap to the Azure-hosted Ubuntu mirror — GitHub-hosted runners are on Azure
+# and the default archive.ubuntu.com mirror is much slower from there.
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://azure.archive.ubuntu.com/ubuntu/|g; s|http://security.ubuntu.com/ubuntu/|http://azure.archive.ubuntu.com/ubuntu/|g' /etc/apt/sources.list.d/ubuntu.sources
+
 # Install build dependencies and other utilities
 RUN apt update -qq && \
     apt install --no-install-recommends -y \
