@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 import type { TimeRange, TimeRangePreset, BucketSize, TrafficMetric, TrafficView } from './utils'
 import { bucketLabels, TIME_RANGE_OPTIONS } from './utils'
 
-
 const BUCKET_OPTIONS: { value: BucketSize; label: string }[] = Object.entries(bucketLabels).map(
-  ([value, label]) => ({ value: value as BucketSize, label })
+  ([value, label]) => ({ value: value as BucketSize, label }),
 )
 
 const METRIC_OPTIONS: { value: TrafficMetric; label: string }[] = [
@@ -27,7 +27,7 @@ function cn(...classes: (string | false | undefined)[]) {
   return classes.filter(Boolean).join(' ')
 }
 
-function SmallDropdown<T extends string>({
+export function SmallDropdown<T extends string>({
   value,
   displayLabel,
   options,
@@ -39,38 +39,69 @@ function SmallDropdown<T extends string>({
   onChange: (v: T) => void
 }) {
   const [isOpen, setIsOpen] = useState(false)
-  const selectedLabel = displayLabel ?? options.find(o => o.value === value)?.label ?? value
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({} as React.CSSProperties)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const selectedLabel = displayLabel ?? options.find((o) => o.value === value)?.label ?? value
+
+  const handleOpen = () => {
+    if (!isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect()
+      const margin = 8
+      const onRightHalf = rect.left > window.innerWidth / 2
+      setMenuStyle(
+        onRightHalf
+          ? {
+              position: 'fixed',
+              top: rect.bottom + 4,
+              right: Math.max(margin, window.innerWidth - rect.right),
+            }
+          : {
+              position: 'fixed',
+              top: rect.bottom + 4,
+              left: Math.max(margin, rect.left),
+            },
+      )
+    }
+    setIsOpen(!isOpen)
+  }
 
   return (
     <div className="relative inline-block">
       <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded-md bg-background hover:bg-muted transition-colors"
+        ref={buttonRef}
+        onClick={handleOpen}
+        className="flex w-full! items-center gap-1 px-3 py-1.5 text-xs border border-border rounded-md bg-background hover:bg-muted transition-colors"
       >
         <span>{selectedLabel}</span>
         <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </button>
-      {isOpen && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-md shadow-lg py-1 min-w-[120px]">
-            {options.map(opt => (
-              <button
-                key={opt.value}
-                onClick={() => { onChange(opt.value); setIsOpen(false) }}
-                className={cn(
-                  'w-full text-left px-3 py-1.5 text-xs transition-colors',
-                  opt.value === value
-                    ? 'bg-accent text-accent-foreground'
-                    : 'hover:bg-muted'
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      {isOpen &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+            <div
+              style={menuStyle}
+              className="z-50 bg-popover border border-border rounded-md shadow-lg py-1"
+            >
+              {options.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => {
+                    onChange(opt.value)
+                    setIsOpen(false)
+                  }}
+                  className={cn(
+                    'block w-full min-w-24 text-left px-3 py-1.5 text-xs whitespace-nowrap transition-colors',
+                    opt.value === value ? 'bg-accent text-accent-foreground' : 'hover:bg-muted',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   )
 }
@@ -104,15 +135,11 @@ export function TimeRangeSelector({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <select
+        <SmallDropdown
           value={value.preset}
-          onChange={(e) => handlePresetChange(e.target.value)}
-          className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-        >
-          {TIME_RANGE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+          options={TIME_RANGE_OPTIONS as { value: string; label: string }[]}
+          onChange={handlePresetChange}
+        />
       </div>
       {showCustom && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -167,9 +194,8 @@ export function TrafficFilters({
   trafficView?: TrafficView
   onTrafficViewChange?: (view: TrafficView) => void
 }) {
-  const bucketDisplayLabel = bucket === 'auto' && effectiveBucketLabel
-    ? `Auto (${effectiveBucketLabel})`
-    : undefined
+  const bucketDisplayLabel =
+    bucket === 'auto' && effectiveBucketLabel ? `Auto (${effectiveBucketLabel})` : undefined
 
   return (
     <div className="flex items-center gap-2">
@@ -182,11 +208,7 @@ export function TrafficFilters({
         />
       )}
       {metric && onMetricChange && (
-        <SmallDropdown
-          value={metric}
-          options={METRIC_OPTIONS}
-          onChange={onMetricChange}
-        />
+        <SmallDropdown value={metric} options={METRIC_OPTIONS} onChange={onMetricChange} />
       )}
       {trafficView && onTrafficViewChange && (
         <SmallDropdown

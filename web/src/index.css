@@ -44,11 +44,11 @@
   --grey-50: oklch(0.867 0.003 285.82);
 
   /* Font variables with fallbacks */
-  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'Menlo', 'Monaco', ui-monospace, monospace;
-  --font-heading: 'Source Serif 4', Georgia, serif;
-  --font-page-title: 'Roboto', ui-sans-serif, system-ui, sans-serif;
-  --font-wordmark: 'Playfair Display', Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", ui-monospace, monospace;
+  --font-heading: "Source Serif 4", Georgia, serif;
+  --font-page-title: "Roboto", ui-sans-serif, system-ui, sans-serif;
+  --font-wordmark: "Playfair Display", Georgia, serif;
 }
 
 /* Dark theme variables */
@@ -80,7 +80,7 @@
 
   /* Additional accent colors - neutral for dark mode */
   --accent-orange-10: oklch(0.22 0 0);
-  --accent-orange-20: oklch(0.30 0 0);
+  --accent-orange-20: oklch(0.3 0 0);
   --accent-orange-50: oklch(0.8502 0.0978 57.42);
   --accent-orange-100: oklch(0.65 0.18 31.82);
 
@@ -91,6 +91,10 @@
 }
 
 @theme {
+  --breakpoint-xss: 360px;
+  --breakpoint-xs: 400px;
+  --breakpoint-xxs: 447px;
+
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --font-serif: var(--font-heading);
@@ -160,7 +164,10 @@
 }
 
 /* Serif for headlines */
-h1, h2, h3, .headline {
+h1,
+h2,
+h3,
+.headline {
   font-family: var(--font-heading);
   font-weight: 400;
   letter-spacing: -0.02em;
@@ -177,7 +184,7 @@ h1 {
   font-family: var(--font-wordmark);
   font-weight: 500;
   letter-spacing: -0.015em;
-  line-height: 1.0;
+  line-height: 1;
 }
 
 /* CodeMirror - de-emphasized, content-focused */
@@ -272,7 +279,10 @@ table {
   line-height: 1.7;
 }
 
-.prose h1, .prose h2, .prose h3, .prose h4 {
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
   font-family: var(--font-sans);
   font-weight: 500;
   color: var(--foreground);
@@ -315,7 +325,8 @@ table {
   font-size: 0.875em;
 }
 
-.prose th, .prose td {
+.prose th,
+.prose td {
   border: 1px solid var(--border);
   padding: 0.5em 0.75em;
   text-align: left;
@@ -392,6 +403,10 @@ table {
 }
 
 @keyframes shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
 }

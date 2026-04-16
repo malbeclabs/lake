@@ -1,12 +1,18 @@
 import { BarChart3 } from 'lucide-react'
 import { useIsFetching } from '@tanstack/react-query'
 import { DashboardProvider, useDashboard } from '@/components/traffic-dashboard/dashboard-context'
-import { DashboardFilters, DashboardFilterBadges } from '@/components/traffic-dashboard/dashboard-filters'
+import {
+  DashboardFilters,
+  DashboardFilterBadges,
+} from '@/components/traffic-dashboard/dashboard-filters'
 import { PageHeader } from '@/components/page-header'
 import { Section } from '@/components/traffic-dashboard/section'
 import { StressPanel } from '@/components/traffic-dashboard/stress-panel'
 import { LocalizationPanel } from '@/components/traffic-dashboard/localization-panel'
-import { TopDevicesPanel, TopInterfacesPanel } from '@/components/traffic-dashboard/attribution-panel'
+import {
+  TopDevicesPanel,
+  TopInterfacesPanel,
+} from '@/components/traffic-dashboard/attribution-panel'
 import { DrilldownPanel } from '@/components/traffic-dashboard/drilldown-panel'
 import { BurstinessPanel } from '@/components/traffic-dashboard/burstiness-panel'
 import { HealthPanel } from '@/components/traffic-dashboard/health-panel'
@@ -29,11 +35,7 @@ function DashboardContent() {
       {/* Sticky header */}
       <div className="flex-none bg-background border-b border-border px-4 sm:px-8 pt-6 pb-4 z-10">
         <div className="[&>div]:mb-0">
-          <PageHeader
-            icon={BarChart3}
-            title="Traffic Overview"
-            actions={<DashboardFilters />}
-          />
+          <PageHeader icon={BarChart3} title="Traffic Overview" actions={<DashboardFilters />} />
         </div>
         <div className="flex items-center mt-3">
           <div className="flex items-center gap-3 ml-auto">
@@ -46,30 +48,46 @@ function DashboardContent() {
       <div className="flex-1 overflow-auto px-4 sm:px-8 py-6">
         <div className="space-y-4">
           <Section
-            title={isUtil ? 'System Stress' : metric === 'packets' ? 'Aggregate Packet Rate' : 'Aggregate Throughput'}
-            description={isUtil
-              ? 'P50, P95, and max utilization across all interfaces per time bucket. Spikes indicate widespread congestion.'
-              : metric === 'packets'
-                ? 'P50, P95, and max packet rate across all interfaces per time bucket.'
-                : 'P50, P95, and max throughput across all interfaces per time bucket.'}
+            title={
+              isUtil
+                ? 'System Stress'
+                : metric === 'packets'
+                  ? 'Aggregate Packet Rate'
+                  : 'Aggregate Throughput'
+            }
+            description={
+              isUtil
+                ? 'P50, P95, and max utilization across all interfaces per time bucket. Spikes indicate widespread congestion.'
+                : metric === 'packets'
+                  ? 'P50, P95, and max packet rate across all interfaces per time bucket.'
+                  : 'P50, P95, and max throughput across all interfaces per time bucket.'
+            }
             loading={stressFetching}
           >
             <StressPanel />
           </Section>
 
           <Section
-            title={isUtil ? 'Utilization by Group' : metric === 'packets' ? 'Packet Rate by Group' : 'Throughput by Group'}
-            description={isUtil
-              ? 'Average P95 utilization per group. Click a group to filter the panels below.'
-              : metric === 'packets'
-                ? 'Average P95 packet rate per group. Click a group to filter the panels below.'
-                : 'Average P95 throughput per group. Click a group to filter the panels below.'}
+            title={
+              isUtil
+                ? 'Utilization by Group'
+                : metric === 'packets'
+                  ? 'Packet Rate by Group'
+                  : 'Throughput by Group'
+            }
+            description={
+              isUtil
+                ? 'Average P95 utilization per group. Click a group to filter the panels below.'
+                : metric === 'packets'
+                  ? 'Average P95 packet rate per group. Click a group to filter the panels below.'
+                  : 'Average P95 throughput per group. Click a group to filter the panels below.'
+            }
             loading={groupFetching}
           >
             <LocalizationPanel />
           </Section>
 
-          <div className="grid grid-cols-2 gap-4 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
             <Section
               title="Top Devices"
               description="Devices ranked by peak aggregate throughput. Click a row to drill down."
@@ -79,11 +97,13 @@ function DashboardContent() {
             </Section>
             <Section
               title="Top Interfaces"
-              description={isUtil
-                ? 'Interfaces ranked by utilization. Click a row to drill down.'
-                : metric === 'packets'
-                  ? 'Interfaces ranked by peak packet rate. Click a row to drill down.'
-                  : 'Interfaces ranked by peak throughput. Click a row to drill down.'}
+              description={
+                isUtil
+                  ? 'Interfaces ranked by utilization. Click a row to drill down.'
+                  : metric === 'packets'
+                    ? 'Interfaces ranked by peak packet rate. Click a row to drill down.'
+                    : 'Interfaces ranked by peak throughput. Click a row to drill down.'
+              }
               loading={topFetching}
             >
               <TopInterfacesPanel />

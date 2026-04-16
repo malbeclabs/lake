@@ -97,6 +97,10 @@ const { resolvedTheme, setTheme } = useTheme()
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
 
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 1024,
+  )
+
   const [isCollapsed, setIsCollapsed] = useState(() => {
     const userPref = localStorage.getItem('sidebar-user-collapsed')
     if (userPref !== null) return userPref === 'true'
@@ -120,6 +124,7 @@ const { resolvedTheme, setTheme } = useTheme()
   useEffect(() => {
     const checkWidth = () => {
       const isSmall = window.innerWidth < 1024
+      setIsMobile(isSmall)
       if (isSmall) {
         setIsCollapsed(true)
       } else if (userCollapsed === null) {
@@ -132,14 +137,23 @@ const { resolvedTheme, setTheme } = useTheme()
     return () => window.removeEventListener('resize', checkWidth)
   }, [userCollapsed])
 
+  // Auto-collapse on route change on mobile
+  useEffect(() => {
+    if (isMobile) {
+      setIsCollapsed(true)
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     localStorage.setItem('sidebar-collapsed', String(isCollapsed))
   }, [isCollapsed])
 
   const handleSetCollapsed = (collapsed: boolean) => {
     setIsCollapsed(collapsed)
-    setUserCollapsed(collapsed)
-    localStorage.setItem('sidebar-user-collapsed', String(collapsed))
+    if (!isMobile) {
+      setUserCollapsed(collapsed)
+      localStorage.setItem('sidebar-user-collapsed', String(collapsed))
+    }
   }
 
   // Active state classes for nav items
@@ -175,7 +189,15 @@ const { resolvedTheme, setTheme } = useTheme()
   // ─── Collapsed sidebar ───────────────────────────────────────────────
   if (isCollapsed) {
     return (
-      <div className="w-12 border-r bg-[var(--sidebar)] flex flex-col items-center relative z-10">
+      <>
+        {isMobile && <div className="w-12 shrink-0" />}
+        <div
+          className={
+            isMobile
+              ? 'fixed inset-y-0 left-0 z-50 w-12 border-r bg-(--sidebar) flex flex-col items-center'
+              : 'w-12 border-r bg-(--sidebar) flex flex-col items-center relative z-10'
+          }
+        >
         {/* Logo icon - matches expanded header height */}
         <div className="w-full h-12 flex items-center justify-center border-b border-border/50 shrink-0">
           <button
@@ -274,12 +296,24 @@ const { resolvedTheme, setTheme } = useTheme()
           </button>
         </div>
       </div>
+      </>
     )
   }
 
   // ─── Expanded sidebar ────────────────────────────────────────────────
   return (
-    <div className="w-64 border-r bg-[var(--sidebar)] flex flex-col relative z-10">
+    <>
+      {isMobile && <div className="w-12 shrink-0" />}
+      {isMobile && (
+        <div className="fixed inset-0 z-40 bg-black/50" onClick={() => handleSetCollapsed(true)} />
+      )}
+      <div
+        className={
+          isMobile
+            ? 'fixed inset-y-0 left-0 z-50 w-64 border-r bg-(--sidebar) flex flex-col'
+            : 'w-64 border-r bg-(--sidebar) flex flex-col relative z-10'
+        }
+      >
       {/* Header with logo and collapse */}
       <div className="px-3 h-12 flex items-center justify-between border-b border-border/50 shrink-0">
         <Link
@@ -587,5 +621,6 @@ const { resolvedTheme, setTheme } = useTheme()
         </div>
       </div>
     </div>
+    </>
   )
 }

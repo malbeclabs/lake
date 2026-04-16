@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Loader2, Network, Download, ArrowRight } from 'lucide-react'
+import { Loader2, Network, Download, ArrowRight, X } from 'lucide-react'
 import { fetchMetroConnectivity, fetchMetroPaths } from '@/lib/api'
 import type { MetroConnectivity, MetroPathsResponse } from '@/lib/api'
 import { ErrorState } from '@/components/ui/error-state'
@@ -66,9 +66,10 @@ function MatrixCell({
   const strength = getConnectivityStrength(connectivity.pathCount)
   const colors = STRENGTH_COLORS[strength]
 
-  const bwDisplay = connectivity.bottleneckBwGbps && connectivity.bottleneckBwGbps > 0
-    ? `${connectivity.bottleneckBwGbps.toFixed(0)}G`
-    : null
+  const bwDisplay =
+    connectivity.bottleneckBwGbps && connectivity.bottleneckBwGbps > 0
+      ? `${connectivity.bottleneckBwGbps.toFixed(0)}G`
+      : null
 
   return (
     <button
@@ -108,15 +109,12 @@ function ConnectivityDetail({
           <ArrowRight className="h-4 w-4 text-muted-foreground" />
           <span>{connectivity.toMetroCode}</span>
         </h3>
-        <button
-          onClick={onClose}
-          className="text-muted-foreground hover:text-foreground text-sm"
-        >
-          Close
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          <X className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-1 xs:grid-cols-2 gap-3 mb-4">
         <div className={`rounded-lg p-3 ${colors.bg}`}>
           <div className="text-xs text-muted-foreground mb-1">Paths</div>
           <div className={`text-xl font-bold ${colors.text}`}>{connectivity.pathCount}</div>
@@ -141,7 +139,9 @@ function ConnectivityDetail({
 
       {/* Paths breakdown */}
       <div className="mb-4">
-        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Available Paths</div>
+        <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+          Available Paths
+        </div>
         {isLoadingPaths ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -153,7 +153,9 @@ function ConnectivityDetail({
               <div key={pathIdx} className="bg-muted/50 rounded-lg p-2">
                 <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
                   <span>Path {pathIdx + 1}</span>
-                  <span>{path.totalHops} hops • {path.latencyMs.toFixed(1)}ms</span>
+                  <span>
+                    {path.totalHops} hops • {path.latencyMs.toFixed(1)}ms
+                  </span>
                 </div>
                 <div className="flex items-center gap-1 flex-wrap text-xs">
                   {path.hops.map((hop, hopIdx) => (
@@ -180,9 +182,11 @@ function ConnectivityDetail({
 
       <div className="flex gap-2 text-sm">
         <Link
-          to={pathsData?.paths[0]?.hops[0]?.devicePK
-            ? `/topology/graph?type=device&id=${pathsData.paths[0].hops[0].devicePK}`
-            : '/topology/graph'}
+          to={
+            pathsData?.paths[0]?.hops[0]?.devicePK
+              ? `/topology/graph?type=device&id=${pathsData.paths[0].hops[0].devicePK}`
+              : '/topology/graph'
+          }
           className="text-accent hover:underline flex items-center gap-1"
         >
           View {connectivity.fromMetroCode} in Graph
@@ -200,7 +204,10 @@ function ConnectivityDetail({
 }
 
 export function MetroConnectivityPage() {
-  const [selectedCell, setSelectedCell] = useState<{ from: string; to: string } | null>(null)
+  const [selectedCell, setSelectedCell] = useState<{
+    from: string
+    to: string
+  } | null>(null)
   const queryClient = useQueryClient()
 
   const { data, isLoading, error, isFetching } = useQuery({
@@ -241,8 +248,15 @@ export function MetroConnectivityPage() {
   const handleExport = () => {
     if (!data) return
 
-    const headers = ['From Metro', 'To Metro', 'Path Count', 'Min Hops', 'Min Latency (ms)', 'Bottleneck BW (Gbps)']
-    const rows = data.connectivity.map(conn => [
+    const headers = [
+      'From Metro',
+      'To Metro',
+      'Path Count',
+      'Min Hops',
+      'Min Latency (ms)',
+      'Bottleneck BW (Gbps)',
+    ]
+    const rows = data.connectivity.map((conn) => [
       conn.fromMetroCode,
       conn.toMetroCode,
       conn.pathCount.toString(),
@@ -251,7 +265,7 @@ export function MetroConnectivityPage() {
       conn.bottleneckBwGbps && conn.bottleneckBwGbps > 0 ? conn.bottleneckBwGbps.toFixed(1) : '-',
     ])
 
-    const csv = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+    const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -264,13 +278,18 @@ export function MetroConnectivityPage() {
   // Summary stats
   const summary = useMemo(() => {
     if (!data) return null
-    const connections = data.connectivity.filter(c =>
-      // Dedupe by only counting fromPK < toPK
-      c.fromMetroPK < c.toMetroPK
+    const connections = data.connectivity.filter(
+      (c) =>
+        // Dedupe by only counting fromPK < toPK
+        c.fromMetroPK < c.toMetroPK,
     )
-    const strong = connections.filter(c => getConnectivityStrength(c.pathCount) === 'strong').length
-    const medium = connections.filter(c => getConnectivityStrength(c.pathCount) === 'medium').length
-    const weak = connections.filter(c => getConnectivityStrength(c.pathCount) === 'weak').length
+    const strong = connections.filter(
+      (c) => getConnectivityStrength(c.pathCount) === 'strong',
+    ).length
+    const medium = connections.filter(
+      (c) => getConnectivityStrength(c.pathCount) === 'medium',
+    ).length
+    const weak = connections.filter((c) => getConnectivityStrength(c.pathCount) === 'weak').length
     return { total: connections.length, strong, medium, weak }
   }, [data])
 
@@ -308,49 +327,58 @@ export function MetroConnectivityPage() {
     <div className="flex-1 flex flex-col bg-background overflow-hidden">
       {/* Header */}
       <div className="border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
+        <div className="flex  sm:items-center justify-between flex-col sm:flex-row gap-2 sm:gap-0">
           <div className="flex items-center gap-3">
             <Network className="h-5 w-5 text-muted-foreground" />
             <h1 className="text-lg font-semibold">Metro Connectivity</h1>
           </div>
           <button
             onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-muted hover:bg-muted/80 rounded-md transition-colors"
+            className="flex items-center text-center justify-center gap-2 px-3 py-1.5 text-xs bg-muted hover:bg-muted/80 rounded-md transition-colors"
           >
-            <Download className="h-4 w-4" />
+            <Download className="h-3 w-3" />
             Export CSV
           </button>
         </div>
 
         <p className="mt-3 text-sm text-muted-foreground">
-          Shows routing paths and bottleneck bandwidth between each metro pair. More paths means better redundancy.
+          Shows routing paths and bottleneck bandwidth between each metro pair. More paths means
+          better redundancy.
         </p>
 
         {/* Summary stats */}
         {summary && (
-          <div className="flex gap-6 mt-4 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Metros:</span>
-              <span className="font-medium">{data.metros.length}</span>
+          <div className="flex flex-col gap-4 mt-4 text-sm">
+            <div className="flex flex-wrap gap-6">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Metros:</span>
+                <span className="font-medium">{data.metros.length}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Connections:</span>
+                <span className="font-medium">{summary.total}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Connections:</span>
-              <span className="font-medium">{summary.total}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded bg-green-500" />
-              <span className="text-muted-foreground">Strong (3+):</span>
-              <span className="font-medium text-green-600 dark:text-green-400">{summary.strong}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded bg-yellow-500" />
-              <span className="text-muted-foreground">Medium (2):</span>
-              <span className="font-medium text-yellow-600 dark:text-yellow-400">{summary.medium}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded bg-red-500" />
-              <span className="text-muted-foreground">Weak (1):</span>
-              <span className="font-medium text-red-600 dark:text-red-400">{summary.weak}</span>
+            <div className="flex flex-wrap gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-green-500" />
+                <span className="text-muted-foreground">Strong (3+):</span>
+                <span className="font-medium text-green-600 dark:text-green-400">
+                  {summary.strong}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-yellow-500" />
+                <span className="text-muted-foreground">Medium (2):</span>
+                <span className="font-medium text-yellow-600 dark:text-yellow-400">
+                  {summary.medium}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded bg-red-500" />
+                <span className="text-muted-foreground">Weak (1):</span>
+                <span className="font-medium text-red-600 dark:text-red-400">{summary.weak}</span>
+              </div>
             </div>
           </div>
         )}
@@ -372,7 +400,7 @@ export function MetroConnectivityPage() {
               <div className="bg-background sticky top-0 left-0 z-20" />
 
               {/* Column headers */}
-              {data.metros.map(metro => (
+              {data.metros.map((metro) => (
                 <div
                   key={`col-${metro.pk}`}
                   className="bg-muted px-1 py-2 text-xs font-medium text-center sticky top-0 z-10 flex items-end justify-center"
@@ -385,7 +413,7 @@ export function MetroConnectivityPage() {
               ))}
 
               {/* Rows */}
-              {data.metros.map(fromMetro => (
+              {data.metros.map((fromMetro) => (
                 <>
                   {/* Row header */}
                   <div
@@ -397,21 +425,23 @@ export function MetroConnectivityPage() {
                   </div>
 
                   {/* Cells */}
-                  {data.metros.map(toMetro => {
+                  {data.metros.map((toMetro) => {
                     const isSame = fromMetro.pk === toMetro.pk
-                    const connectivity = isSame ? null : connectivityMap.get(`${fromMetro.pk}:${toMetro.pk}`) ?? null
-                    const isSelected = selectedCell?.from === fromMetro.pk && selectedCell?.to === toMetro.pk
+                    const connectivity = isSame
+                      ? null
+                      : (connectivityMap.get(`${fromMetro.pk}:${toMetro.pk}`) ?? null)
+                    const isSelected =
+                      selectedCell?.from === fromMetro.pk && selectedCell?.to === toMetro.pk
 
                     return (
-                      <div
-                        key={`cell-${fromMetro.pk}-${toMetro.pk}`}
-                        className="bg-background"
-                      >
+                      <div key={`cell-${fromMetro.pk}-${toMetro.pk}`} className="bg-background">
                         <MatrixCell
                           connectivity={connectivity}
                           onClick={() => {
                             if (!isSame && connectivity) {
-                              setSelectedCell(isSelected ? null : { from: fromMetro.pk, to: toMetro.pk })
+                              setSelectedCell(
+                                isSelected ? null : { from: fromMetro.pk, to: toMetro.pk },
+                              )
                             }
                           }}
                           isSelected={isSelected}
@@ -426,14 +456,21 @@ export function MetroConnectivityPage() {
 
           {/* Detail panel */}
           {selectedConnectivity && (
-            <div className="w-80 flex-shrink-0">
-              <ConnectivityDetail
-                connectivity={selectedConnectivity}
-                pathsData={metroPathsData ?? null}
-                isLoadingPaths={metroPathsLoading}
-                onClose={() => setSelectedCell(null)}
+            <>
+              {/* Mobile backdrop */}
+              <div
+                className="fixed inset-0 z-40 bg-black/50 md:hidden"
+                onClick={() => setSelectedCell(null)}
               />
-            </div>
+              <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100%-2rem)] max-h-[85vh] rounded-xl overflow-y-auto md:static md:top-auto md:left-auto md:translate-x-0 md:translate-y-0 md:z-auto md:w-80 md:max-h-none md:rounded-none md:overflow-visible md:shrink-0">
+                <ConnectivityDetail
+                  connectivity={selectedConnectivity}
+                  pathsData={metroPathsData ?? null}
+                  isLoadingPaths={metroPathsLoading}
+                  onClose={() => setSelectedCell(null)}
+                />
+              </div>
+            </>
           )}
         </div>
 

@@ -3,19 +3,20 @@ import type { MultiPathResponse, SinglePath } from '@/lib/api'
 import { useTheme } from '@/hooks/use-theme'
 import { DeviceSelector, type DeviceOption } from '../DeviceSelector'
 import { cn } from '@/lib/utils'
+import { SmallDropdown } from '../TimeRangeSelector'
 
 // Path colors for K-shortest paths visualization
 const PATH_COLORS = [
-  { light: '#16a34a', dark: '#22c55e' },  // green
-  { light: '#2563eb', dark: '#3b82f6' },  // blue
-  { light: '#9333ea', dark: '#a855f7' },  // purple
-  { light: '#ea580c', dark: '#f97316' },  // orange
-  { light: '#0891b2', dark: '#06b6d4' },  // cyan
-  { light: '#dc2626', dark: '#ef4444' },  // red
-  { light: '#ca8a04', dark: '#eab308' },  // yellow
-  { light: '#db2777', dark: '#ec4899' },  // pink
-  { light: '#059669', dark: '#10b981' },  // emerald
-  { light: '#7c3aed', dark: '#8b5cf6' },  // violet
+  { light: '#16a34a', dark: '#22c55e' }, // green
+  { light: '#2563eb', dark: '#3b82f6' }, // blue
+  { light: '#9333ea', dark: '#a855f7' }, // purple
+  { light: '#ea580c', dark: '#f97316' }, // orange
+  { light: '#0891b2', dark: '#06b6d4' }, // cyan
+  { light: '#dc2626', dark: '#ef4444' }, // red
+  { light: '#ca8a04', dark: '#eab308' }, // yellow
+  { light: '#db2777', dark: '#ec4899' }, // pink
+  { light: '#059669', dark: '#10b981' }, // emerald
+  { light: '#7c3aed', dark: '#8b5cf6' }, // violet
 ]
 
 interface PathModePanelProps {
@@ -63,8 +64,8 @@ export function PathModePanel({
   const isDark = resolvedTheme === 'dark'
 
   // Get source and target device codes for labels
-  const sourceDevice = devices.find(d => d.pk === pathSource)
-  const targetDevice = devices.find(d => d.pk === pathTarget)
+  const sourceDevice = devices.find((d) => d.pk === pathSource)
+  const targetDevice = devices.find((d) => d.pk === pathTarget)
 
   // Pick which result set to show based on reverse toggle
   const activeResult = showReverse ? reversePathsResult : pathsResult
@@ -84,7 +85,11 @@ export function PathModePanel({
           Device Paths
         </span>
         {(pathSource || pathTarget) && (
-          <button onClick={onClearPath} className="p-1 hover:bg-[var(--muted)] rounded" title="Clear path">
+          <button
+            onClick={onClearPath}
+            className="p-1 hover:bg-[var(--muted)] rounded"
+            title="Clear path"
+          >
             <X className="h-3 w-3" />
           </button>
         )}
@@ -101,7 +106,7 @@ export function PathModePanel({
           labelColor="#22c55e"
         />
         <DeviceSelector
-          devices={devices.filter(d => d.pk !== pathSource)}
+          devices={devices.filter((d) => d.pk !== pathSource)}
           value={pathTarget}
           onChange={onSetTarget}
           placeholder="Search target device..."
@@ -127,7 +132,7 @@ export function PathModePanel({
               'flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors',
               showReverse
                 ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--muted)]'
+                : 'text-muted-foreground hover:text-foreground hover:bg-[var(--muted)]',
             )}
             title={showReverse ? 'Show forward path' : 'Show reverse path'}
           >
@@ -137,9 +142,7 @@ export function PathModePanel({
         </div>
       )}
 
-      {activeLoading && (
-        <div className="text-muted-foreground">Finding paths...</div>
-      )}
+      {activeLoading && <div className="text-muted-foreground">Finding paths...</div>}
 
       {/* Path results */}
       {activeResult && !activeResult.error && activeResult.paths.length > 0 && (
@@ -149,15 +152,14 @@ export function PathModePanel({
             <div className="mb-3">
               <div className="flex items-center gap-1.5 text-muted-foreground mb-1">
                 <span>Showing</span>
-                <select
-                  value={pathK}
-                  onChange={e => onPathKChange(Number(e.target.value))}
-                  className="bg-muted text-foreground rounded px-1 py-0.5 text-[10px] border border-[var(--border)]"
-                >
-                  {[3, 5, 10, 15, 20, 25].map(n => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
+                <SmallDropdown
+                  value={String(pathK)}
+                  options={[3, 5, 10, 15, 20, 25].map((n) => ({
+                    value: String(n),
+                    label: String(n),
+                  }))}
+                  onChange={(v) => onPathKChange(Number(v))}
+                />
               </div>
               <div className="flex flex-wrap gap-1">
                 {activeResult.paths.map((_, i) => (
@@ -168,7 +170,7 @@ export function PathModePanel({
                       'px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors',
                       activeSelectedIndex === i
                         ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                        : 'bg-muted hover:bg-muted/80 text-muted-foreground',
                     )}
                     style={{
                       borderLeft: `3px solid ${isDark ? PATH_COLORS[i % PATH_COLORS.length].dark : PATH_COLORS[i % PATH_COLORS.length].light}`,
@@ -183,17 +185,12 @@ export function PathModePanel({
 
           {/* Selected path stepper */}
           {activeResult.paths[activeSelectedIndex] && (
-            <PathStepper
-              path={activeResult.paths[activeSelectedIndex]}
-              isReverse={showReverse}
-            />
+            <PathStepper path={activeResult.paths[activeSelectedIndex]} isReverse={showReverse} />
           )}
         </div>
       )}
 
-      {activeResult?.error && (
-        <div className="text-destructive">{activeResult.error}</div>
-      )}
+      {activeResult?.error && <div className="text-destructive">{activeResult.error}</div>}
     </div>
   )
 }
@@ -210,7 +207,9 @@ function PathStepper({ path, isReverse }: { path: SinglePath; isReverse: boolean
         <span>{path.hopCount} hops</span>
         <span className="text-foreground font-medium">{isisLatencyMs.toFixed(2)}ms</span>
         {measuredLatencyMs != null && measuredLatencyMs > 0 && (
-          <span className="text-muted-foreground" title="Measured latency">({measuredLatencyMs.toFixed(2)}ms measured)</span>
+          <span className="text-muted-foreground" title="Measured latency">
+            ({measuredLatencyMs.toFixed(2)}ms measured)
+          </span>
         )}
       </div>
 
@@ -231,19 +230,21 @@ function PathStepper({ path, isReverse }: { path: SinglePath; isReverse: boolean
             <div key={hop.devicePK} className="flex items-stretch gap-3">
               {/* Timeline rail */}
               <div className="flex flex-col items-center w-5 flex-shrink-0">
-                <div className={cn(
-                  'w-2.5 h-2.5 rounded-full flex-shrink-0 ring-2 ring-background mt-1',
-                  isSource ? 'bg-green-500' : isTarget ? 'bg-red-500' : 'bg-muted-foreground/60'
-                )} />
-                {!isLast && (
-                  <div className="w-px flex-1 bg-border min-h-[28px]" />
-                )}
+                <div
+                  className={cn(
+                    'w-2.5 h-2.5 rounded-full flex-shrink-0 ring-2 ring-background mt-1',
+                    isSource ? 'bg-green-500' : isTarget ? 'bg-red-500' : 'bg-muted-foreground/60',
+                  )}
+                />
+                {!isLast && <div className="w-px flex-1 bg-border min-h-[28px]" />}
               </div>
 
               {/* Content */}
               <div className={cn('flex-1 flex items-start justify-between', !isLast && 'pb-2')}>
                 <div className="flex items-center gap-2 pt-0.5">
-                  <span className="font-mono text-[11px] font-medium leading-none">{hop.deviceCode}</span>
+                  <span className="font-mono text-[11px] font-medium leading-none">
+                    {hop.deviceCode}
+                  </span>
                   {hop.metroCode && (
                     <span className="text-[9px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                       {hop.metroCode}

@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import uPlot from 'uplot'
 import { Loader2 } from 'lucide-react'
 import { useTheme } from '@/hooks/use-theme'
@@ -36,7 +37,13 @@ function formatPps(value: number): string {
   return `${abs.toFixed(0)} pps`
 }
 
-function getTrafficValue(t: LinkMetricsTraffic, side: 'a' | 'z', dir: 'in' | 'out', agg: AggMode, metric: MetricMode): number {
+function getTrafficValue(
+  t: LinkMetricsTraffic,
+  side: 'a' | 'z',
+  dir: 'in' | 'out',
+  agg: AggMode,
+  metric: MetricMode,
+): number {
   const suffix = metric === 'bps' ? 'bps' : 'pps'
   let key: string
   if (agg === 'max') {
@@ -49,20 +56,29 @@ function getTrafficValue(t: LinkMetricsTraffic, side: 'a' | 'z', dir: 'in' | 'ou
   return (t as unknown as Record<string, number>)[key] ?? 0
 }
 
-export function LinkTrafficChart({ data, className, loading, highlightTimeRange, onCursorTime }: LinkTrafficChartProps) {
+export function LinkTrafficChart({
+  data,
+  className,
+  loading,
+  highlightTimeRange,
+  onCursorTime,
+}: LinkTrafficChartProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const uPlotDataRef = useRef<uPlot.AlignedData>([[]])
-  const handleCursorIdx = useCallback((idx: number | null) => {
-    setHoveredIdx(idx)
-    if (onCursorTime) {
-      const ts = idx != null ? (uPlotDataRef.current[0] as number[])?.[idx] ?? null : null
-      onCursorTime(ts)
-    }
-  }, [onCursorTime])
+  const handleCursorIdx = useCallback(
+    (idx: number | null) => {
+      setHoveredIdx(idx)
+      if (onCursorTime) {
+        const ts = idx != null ? ((uPlotDataRef.current[0] as number[])?.[idx] ?? null) : null
+        onCursorTime(ts)
+      }
+    },
+    [onCursorTime],
+  )
   const [bidir, setBidir] = useState(true)
   const [aggMode, setAggMode] = useState<AggMode>('avg')
   const [metricMode, setMetricMode] = useState<MetricMode>('bps')
@@ -75,19 +91,23 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
   const aOutColor = isDark ? '#86efac' : '#4ade80'
   const zOutColor = isDark ? '#93c5fd' : '#60a5fa'
 
-  const scales = useMemo((): uPlot.Scales => ({
-    x: { time: true },
-    y: { auto: true },
-  }), [])
+  const scales = useMemo(
+    (): uPlot.Scales => ({
+      x: { time: true },
+      y: { auto: true },
+    }),
+    [],
+  )
 
-  const axes = useMemo((): uPlot.Axis[] => [
-    {},
-    { values: (_u: uPlot, vals: number[]) => vals.map((v) => fmt(v)) },
-  ], [fmt])
+  const axes = useMemo(
+    (): uPlot.Axis[] => [{}, { values: (_u: uPlot, vals: number[]) => vals.map((v) => fmt(v)) }],
+    [fmt],
+  )
 
-  const seriesKeys = useMemo(() =>
-    bidir ? ['aRx', 'aTx', 'zRx', 'zTx'] : ['aIn', 'aOut', 'zIn', 'zOut'],
-    [bidir])
+  const seriesKeys = useMemo(
+    () => (bidir ? ['aRx', 'aTx', 'zRx', 'zTx'] : ['aIn', 'aOut', 'zIn', 'zOut']),
+    [bidir],
+  )
 
   const { uPlotData, uPlotSeries } = useMemo(() => {
     const buckets = data.buckets.filter((b) => !b.status?.collecting)
@@ -101,9 +121,15 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
 
     if (bidir) {
       const aRx = buckets.map((b) => val(b.traffic, 'a', 'in'))
-      const aTx = buckets.map((b) => { const v = val(b.traffic, 'a', 'out'); return v ? -v : null })
+      const aTx = buckets.map((b) => {
+        const v = val(b.traffic, 'a', 'out')
+        return v ? -v : null
+      })
       const zRx = buckets.map((b) => val(b.traffic, 'z', 'in'))
-      const zTx = buckets.map((b) => { const v = val(b.traffic, 'z', 'out'); return v ? -v : null })
+      const zTx = buckets.map((b) => {
+        const v = val(b.traffic, 'z', 'out')
+        return v ? -v : null
+      })
 
       return {
         uPlotData: [timestamps, aRx, aTx, zRx, zTx] as uPlot.AlignedData,
@@ -135,21 +161,23 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
   }, [data, bidir, aggMode, metricMode, aColor, aOutColor, zColor, zOutColor])
 
   const legend = useChartLegend()
-  const legendSeries: ChartLegendSeries[] = useMemo(() =>
-    bidir
-      ? [
-          { key: 'aRx', color: aColor, label: 'Side A Rx' },
-          { key: 'aTx', color: aColor, label: 'Side A Tx', dashed: true },
-          { key: 'zRx', color: zColor, label: 'Side Z Rx' },
-          { key: 'zTx', color: zColor, label: 'Side Z Tx', dashed: true },
-        ]
-      : [
-          { key: 'aIn', color: aColor, label: 'Side A In' },
-          { key: 'aOut', color: aOutColor, label: 'Side A Out', dashed: true },
-          { key: 'zIn', color: zColor, label: 'Side Z In' },
-          { key: 'zOut', color: zOutColor, label: 'Side Z Out', dashed: true },
-        ],
-    [bidir, aColor, aOutColor, zColor, zOutColor])
+  const legendSeries: ChartLegendSeries[] = useMemo(
+    () =>
+      bidir
+        ? [
+            { key: 'aRx', color: aColor, label: 'Side A Rx' },
+            { key: 'aTx', color: aColor, label: 'Side A Tx', dashed: true },
+            { key: 'zRx', color: zColor, label: 'Side Z Rx' },
+            { key: 'zTx', color: zColor, label: 'Side Z Tx', dashed: true },
+          ]
+        : [
+            { key: 'aIn', color: aColor, label: 'Side A In' },
+            { key: 'aOut', color: aOutColor, label: 'Side A Out', dashed: true },
+            { key: 'zIn', color: zColor, label: 'Side Z In' },
+            { key: 'zOut', color: zOutColor, label: 'Side Z Out', dashed: true },
+          ],
+    [bidir, aColor, aOutColor, zColor, zOutColor],
+  )
 
   uPlotDataRef.current = uPlotData
 
@@ -158,20 +186,25 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
   const isDarkRef = useRef(isDark)
   isDarkRef.current = isDark
 
-  const drawHooks = useMemo(() => [(u: uPlot) => {
-    const range = highlightTimeRangeRef.current
-    if (!range) return
-    const ctx = u.ctx
-    const left = u.valToPos(range.start, 'x', true)
-    const right = u.valToPos(range.end, 'x', true)
-    if (left == null || right == null) return
-    const top = u.bbox.top
-    const height = u.bbox.height
-    ctx.save()
-    ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
-    ctx.fillRect(left, top, right - left, height)
-    ctx.restore()
-  }], [])
+  const drawHooks = useMemo(
+    () => [
+      (u: uPlot) => {
+        const range = highlightTimeRangeRef.current
+        if (!range) return
+        const ctx = u.ctx
+        const left = u.valToPos(range.start, 'x', true)
+        const right = u.valToPos(range.end, 'x', true)
+        if (left == null || right == null) return
+        const top = u.bbox.top
+        const height = u.bbox.height
+        ctx.save()
+        ctx.fillStyle = isDarkRef.current ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
+        ctx.fillRect(left, top, right - left, height)
+        ctx.restore()
+      },
+    ],
+    [],
+  )
 
   const { plotRef } = useUPlotChart({
     containerRef: chartRef,
@@ -200,7 +233,10 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
     if (uPlotData[0].length === 0) return map
     let defaultIdx = uPlotData[0].length - 1
     for (let j = defaultIdx; j >= 0; j--) {
-      if (seriesKeys.some((_, si) => (uPlotData[si + 1] as (number | null)[])?.[j] != null)) { defaultIdx = j; break }
+      if (seriesKeys.some((_, si) => (uPlotData[si + 1] as (number | null)[])?.[j] != null)) {
+        defaultIdx = j
+        break
+      }
     }
     const idx = hoveredIdx != null && hoveredIdx < uPlotData[0].length ? hoveredIdx : defaultIdx
     for (let i = 0; i < seriesKeys.length; i++) {
@@ -222,12 +258,15 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
     return map
   }, [uPlotData, seriesKeys, fmt])
 
-  const hoveredTime = useMemo(() =>
-    formatHoveredTime(uPlotData[0] as ArrayLike<number>, hoveredIdx, data.bucket_seconds < 60),
-    [uPlotData, hoveredIdx])
+  const hoveredTime = useMemo(
+    () =>
+      formatHoveredTime(uPlotData[0] as ArrayLike<number>, hoveredIdx, data.bucket_seconds < 60),
+    [uPlotData, hoveredIdx],
+  )
 
-  const hasAnyData = uPlotData[0].length > 0 && uPlotData.slice(1).some(
-    (s) => (s as (number | null)[]).some((v) => v != null))
+  const hasAnyData =
+    uPlotData[0].length > 0 &&
+    uPlotData.slice(1).some((s) => (s as (number | null)[]).some((v) => v != null))
 
   if (!hasAnyData) {
     return (
@@ -235,7 +274,9 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
         <div className="flex items-center gap-2 text-xs text-muted-foreground uppercase tracking-wider mb-1">
           <span>Traffic</span>
         </div>
-        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">No data for this time range</div>
+        <div className="text-xs text-muted-foreground/60 pt-3 pb-6 text-center">
+          No data for this time range
+        </div>
       </div>
     )
   }
@@ -248,26 +289,26 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
           {loading && <Loader2 className="h-3 w-3 animate-spin" />}
         </div>
         <div className="flex items-center gap-1.5">
-          <select
+          <SmallDropdown
             value={aggMode}
-            onChange={e => setAggMode(e.target.value as AggMode)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-          >
-            <option value="avg">Avg</option>
-            <option value="p50">P50</option>
-            <option value="p90">P90</option>
-            <option value="p95">P95</option>
-            <option value="p99">P99</option>
-            <option value="max">Max</option>
-          </select>
-          <select
+            options={[
+              { value: 'avg', label: 'Avg' },
+              { value: 'p50', label: 'P50' },
+              { value: 'p90', label: 'P90' },
+              { value: 'p95', label: 'P95' },
+              { value: 'p99', label: 'P99' },
+              { value: 'max', label: 'Max' },
+            ]}
+            onChange={(v) => setAggMode(v as AggMode)}
+          />
+          <SmallDropdown
             value={metricMode}
-            onChange={e => setMetricMode(e.target.value as MetricMode)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-0.5 text-foreground cursor-pointer"
-          >
-            <option value="bps">bps</option>
-            <option value="pps">pps</option>
-          </select>
+            options={[
+              { value: 'bps', label: 'bps' },
+              { value: 'pps', label: 'pps' },
+            ]}
+            onChange={(v) => setMetricMode(v as MetricMode)}
+          />
           <button
             onClick={() => setBidir(!bidir)}
             className="text-[10px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors"
@@ -282,7 +323,13 @@ export function LinkTrafficChart({ data, className, loading, highlightTimeRange,
         )}
       </div>
       <div ref={chartRef} className="h-36" />
-      <ChartLegendTable series={legendSeries} legend={legend} values={displayValues} maxValues={maxValues} hoveredTime={hoveredTime} />
+      <ChartLegendTable
+        series={legendSeries}
+        legend={legend}
+        values={displayValues}
+        maxValues={maxValues}
+        hoveredTime={hoveredTime}
+      />
     </div>
   )
 }

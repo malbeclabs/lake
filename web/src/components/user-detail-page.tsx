@@ -9,6 +9,7 @@ import { fetchUser, fetchUserTraffic, fetchUserMulticastGroups } from '@/lib/api
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { useTheme } from '@/hooks/use-theme'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 function formatBps(bps: number): string {
   if (bps === 0) return '—'
@@ -45,37 +46,81 @@ function formatStake(sol: number): string {
 }
 
 const TUNNEL_COLORS = [
-  '#2563eb', '#9333ea', '#16a34a', '#ea580c', '#0891b2', '#dc2626', '#ca8a04', '#db2777',
+  '#2563eb',
+  '#9333ea',
+  '#16a34a',
+  '#ea580c',
+  '#0891b2',
+  '#dc2626',
+  '#ca8a04',
+  '#db2777',
 ]
 
 const TIME_RANGES = ['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'] as const
 
-const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR', '12 HOUR', '1 DAY'] as const
+const BUCKET_OPTIONS = [
+  'auto',
+  '10 SECOND',
+  '30 SECOND',
+  '1 MINUTE',
+  '5 MINUTE',
+  '10 MINUTE',
+  '15 MINUTE',
+  '30 MINUTE',
+  '1 HOUR',
+  '4 HOUR',
+  '12 HOUR',
+  '1 DAY',
+] as const
 const BUCKET_LABELS: Record<string, string> = {
-  'auto': 'Auto',
-  '10 SECOND': '10s', '30 SECOND': '30s', '1 MINUTE': '1m', '5 MINUTE': '5m',
-  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h',
-  '4 HOUR': '4h', '12 HOUR': '12h', '1 DAY': '1d',
+  auto: 'Auto',
+  '10 SECOND': '10s',
+  '30 SECOND': '30s',
+  '1 MINUTE': '1m',
+  '5 MINUTE': '5m',
+  '10 MINUTE': '10m',
+  '15 MINUTE': '15m',
+  '30 MINUTE': '30m',
+  '1 HOUR': '1h',
+  '4 HOUR': '4h',
+  '12 HOUR': '12h',
+  '1 DAY': '1d',
 }
 
 type AggMethod = 'max' | 'avg' | 'min' | 'p50' | 'p90' | 'p95' | 'p99'
 const AGG_OPTIONS: AggMethod[] = ['max', 'p99', 'p95', 'p90', 'p50', 'avg', 'min']
 const AGG_LABELS: Record<AggMethod, string> = {
-  max: 'Max', p99: 'P99', p95: 'P95', p90: 'P90', p50: 'P50', avg: 'Avg', min: 'Min',
+  max: 'Max',
+  p99: 'P99',
+  p95: 'P95',
+  p90: 'P90',
+  p50: 'P50',
+  avg: 'Avg',
+  min: 'Min',
 }
 
 function resolveAutoBucket(timeRange: string): string {
   switch (timeRange) {
-    case '1h': return '10 SECOND'
-    case '3h': return '30 SECOND'
-    case '6h': return '1 MINUTE'
-    case '12h': return '10 MINUTE'
-    case '24h': return '15 MINUTE'
-    case '3d': return '30 MINUTE'
-    case '7d': return '4 HOUR'
-    case '14d': return '12 HOUR'
-    case '30d': return '1 DAY'
-    default: return '5 MINUTE'
+    case '1h':
+      return '10 SECOND'
+    case '3h':
+      return '30 SECOND'
+    case '6h':
+      return '1 MINUTE'
+    case '12h':
+      return '10 MINUTE'
+    case '24h':
+      return '15 MINUTE'
+    case '3d':
+      return '30 MINUTE'
+    case '7d':
+      return '4 HOUR'
+    case '14d':
+      return '12 HOUR'
+    case '30d':
+      return '1 DAY'
+    default:
+      return '5 MINUTE'
   }
 }
 
@@ -194,7 +239,7 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
         {
           stroke: axisStroke,
           grid: { stroke: 'rgba(128,128,128,0.06)' },
-          values: (_: uPlot, vals: number[]) => vals.map(v => formatAxisBps(Math.abs(v))),
+          values: (_: uPlot, vals: number[]) => vals.map((v) => formatAxisBps(Math.abs(v))),
           size: 60,
         },
       ],
@@ -202,16 +247,18 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
         points: { size: 12, width: 2 },
       },
       hooks: {
-        setCursor: [(u: uPlot) => {
-          setHoveredIdx(u.cursor.idx ?? null)
-        }],
+        setCursor: [
+          (u: uPlot) => {
+            setHoveredIdx(u.cursor.idx ?? null)
+          },
+        ],
       },
       legend: { show: false },
     }
 
     plotRef.current = new uPlot(opts, uplotData, chartRef.current)
 
-    const ro = new ResizeObserver(entries => {
+    const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         plotRef.current?.setSize({ width: entry.contentRect.width, height: 224 })
       }
@@ -227,9 +274,11 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
 
   // Values to display in legend: hovered or latest
   const displayValues = useMemo(() => {
-    if (!uplotData || tunnelIds.length === 0) return new Map<number, { inVal: number; outVal: number }>()
+    if (!uplotData || tunnelIds.length === 0)
+      return new Map<number, { inVal: number; outVal: number }>()
     const timestamps = uplotData[0] as number[]
-    const idx = hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
+    const idx =
+      hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
     const map = new Map<number, { inVal: number; outVal: number }>()
     for (let i = 0; i < tunnelIds.length; i++) {
       const rxArr = uplotData[1 + i * 2] as (number | null)[]
@@ -247,9 +296,16 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
     if (!uplotData) return undefined
     const timestamps = uplotData[0] as number[]
     if (timestamps.length === 0) return undefined
-    const idx = hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
+    const idx =
+      hoveredIdx != null && hoveredIdx < timestamps.length ? hoveredIdx : timestamps.length - 1
     const d = new Date(timestamps[idx] * 1000)
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
   }, [uplotData, hoveredIdx])
 
   return (
@@ -270,41 +326,30 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <SmallDropdown
             value={metric}
-            onChange={e => setMetric(e.target.value as TrafficMetric)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            <option value="throughput">bps</option>
-            <option value="packets">pps</option>
-          </select>
-          <select
+            options={[
+              { value: 'throughput', label: 'bps' },
+              { value: 'packets', label: 'pps' },
+            ]}
+            onChange={(v) => setMetric(v as TrafficMetric)}
+          />
+          <SmallDropdown
             value={agg}
-            onChange={e => setAgg(e.target.value as AggMethod)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {AGG_OPTIONS.map(a => (
-              <option key={a} value={a}>{AGG_LABELS[a]}</option>
-            ))}
-          </select>
-          <select
+            options={AGG_OPTIONS.map((a) => ({ value: a, label: AGG_LABELS[a] }))}
+            onChange={(v) => setAgg(v as AggMethod)}
+          />
+          <SmallDropdown
             value={bucket}
-            onChange={e => setBucket(e.target.value)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {BUCKET_OPTIONS.map(b => (
-              <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
-            ))}
-          </select>
-          <select
+            displayLabel={bucket === 'auto' ? `Auto (${autoBucketLabel})` : undefined}
+            options={BUCKET_OPTIONS.map((b) => ({ value: b, label: BUCKET_LABELS[b] || b }))}
+            onChange={(v) => setBucket(v)}
+          />
+          <SmallDropdown
             value={timeRange}
-            onChange={e => setTimeRange(e.target.value)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {TIME_RANGES.map(r => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
+            options={TIME_RANGES.map((r) => ({ value: r, label: r }))}
+            onChange={(v) => setTimeRange(v)}
+          />
         </div>
       </div>
 
@@ -325,25 +370,39 @@ function UserTrafficChart({ userPk }: { userPk: string }) {
         <div>
           <div className="relative" style={{ minHeight: 224 }}>
             <div ref={chartRef} className="w-full" />
-            <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▲ Rx (in)</span>
-            <span className="absolute bottom-8 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">▼ Tx (out)</span>
+            <span className="absolute top-1 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">
+              ▲ Rx (in)
+            </span>
+            <span className="absolute bottom-8 right-3 text-[10px] text-muted-foreground/50 pointer-events-none">
+              ▼ Tx (out)
+            </span>
           </div>
           {/* Legend table */}
           {tunnelIds.length > 0 && (
             <div className="mt-2 text-xs">
-              <div className="grid gap-x-4 gap-y-0.5" style={{ gridTemplateColumns: 'auto 1fr 1fr' }}>
+              <div
+                className="grid gap-x-4 gap-y-0.5"
+                style={{ gridTemplateColumns: 'auto 1fr 1fr' }}
+              >
                 <div className="text-muted-foreground font-medium">Tunnel</div>
                 <div className="text-muted-foreground font-medium text-right">Rx (in)</div>
                 <div className="text-right">
-                  {hoveredTime && <span className="text-[10px] text-muted-foreground">{hoveredTime}</span>}
-                  {!hoveredTime && <span className="text-muted-foreground font-medium">Tx (out)</span>}
+                  {hoveredTime && (
+                    <span className="text-[10px] text-muted-foreground">{hoveredTime}</span>
+                  )}
+                  {!hoveredTime && (
+                    <span className="text-muted-foreground font-medium">Tx (out)</span>
+                  )}
                 </div>
                 {tunnelIds.map((tid, i) => {
                   const vals = displayValues.get(tid)
                   return (
                     <div key={tid} className="contents">
                       <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: TUNNEL_COLORS[i % TUNNEL_COLORS.length] }} />
+                        <div
+                          className="w-2.5 h-2.5 rounded-sm"
+                          style={{ backgroundColor: TUNNEL_COLORS[i % TUNNEL_COLORS.length] }}
+                        />
                         <span className="text-muted-foreground">{tid}</span>
                       </div>
                       <div className="text-right tabular-nums">{fmtValue(vals?.inVal ?? 0)}</div>
@@ -374,7 +433,11 @@ export function UserDetailPage() {
   const navigate = useNavigate()
   const back = useBackLink({ to: '/dz/users', label: 'users' })
 
-  const { data: user, isLoading, error } = useQuery({
+  const {
+    data: user,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['user', pk],
     queryFn: () => fetchUser(pk!),
     enabled: !!pk,
@@ -431,10 +494,14 @@ export function UserDetailPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-medium font-mono">
-                <CopyableText text={user.pk}>{user.pk.slice(0, 8)}...{user.pk.slice(-4)}</CopyableText>
+                <CopyableText text={user.pk}>
+                  {user.pk.slice(0, 8)}...{user.pk.slice(-4)}
+                </CopyableText>
               </h1>
               {user.is_deleted && (
-                <span className="text-xs px-2 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">Deleted</span>
+                <span className="text-xs px-2 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">
+                  Deleted
+                </span>
               )}
             </div>
             <div className="text-sm text-muted-foreground">{user.kind || 'Unknown type'}</div>
@@ -449,7 +516,9 @@ export function UserDetailPage() {
             <dl className="space-y-2">
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Status</dt>
-                <dd className={`text-sm capitalize ${statusColors[user.status] || ''}`}>{user.status}</dd>
+                <dd className={`text-sm capitalize ${statusColors[user.status] || ''}`}>
+                  {user.status}
+                </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Kind</dt>
@@ -459,7 +528,10 @@ export function UserDetailPage() {
                 <dt className="text-sm text-muted-foreground">Owner Pubkey</dt>
                 <dd className="text-sm">
                   <CopyableText text={user.owner_pubkey} className="font-mono" iconPosition="left">
-                    <Link to={`/dz/users?search=owner:${user.owner_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                    <Link
+                      to={`/dz/users?search=owner:${user.owner_pubkey}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                    >
                       {user.owner_pubkey.slice(0, 6)}...{user.owner_pubkey.slice(-4)}
                     </Link>
                   </CopyableText>
@@ -470,11 +542,16 @@ export function UserDetailPage() {
                 <dd className="text-sm">
                   {user.client_ip ? (
                     <CopyableText text={user.client_ip} className="font-mono" iconPosition="left">
-                      <Link to={`/dz/users?search=ip:${user.client_ip}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                      <Link
+                        to={`/dz/users?search=ip:${user.client_ip}`}
+                        className="text-blue-600 dark:text-blue-400 hover:underline"
+                      >
                         {user.client_ip}
                       </Link>
                     </CopyableText>
-                  ) : '—'}
+                  ) : (
+                    '—'
+                  )}
                 </dd>
               </div>
               <div className="flex justify-between">
@@ -482,7 +559,9 @@ export function UserDetailPage() {
                 <dd className="text-sm">
                   {user.dz_ip ? (
                     <CopyableText text={user.dz_ip} className="font-mono" iconPosition="left" />
-                  ) : '—'}
+                  ) : (
+                    '—'
+                  )}
                 </dd>
               </div>
               {user.tunnel_id > 0 && (
@@ -502,30 +581,45 @@ export function UserDetailPage() {
                 <dt className="text-sm text-muted-foreground">Device</dt>
                 <dd className="text-sm">
                   {user.device_pk ? (
-                    <Link to={`/dz/devices/${user.device_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                    <Link
+                      to={`/dz/devices/${user.device_pk}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                    >
                       {user.device_code}
                     </Link>
-                  ) : '—'}
+                  ) : (
+                    '—'
+                  )}
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Metro</dt>
                 <dd className="text-sm">
                   {user.metro_pk ? (
-                    <Link to={`/dz/metros/${user.metro_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                    <Link
+                      to={`/dz/metros/${user.metro_pk}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                    >
                       {user.metro_name || user.metro_code}
                     </Link>
-                  ) : '—'}
+                  ) : (
+                    '—'
+                  )}
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-sm text-muted-foreground">Contributor</dt>
                 <dd className="text-sm">
                   {user.contributor_pk ? (
-                    <Link to={`/dz/contributors/${user.contributor_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                    <Link
+                      to={`/dz/contributors/${user.contributor_pk}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline"
+                    >
                       {user.contributor_code}
                     </Link>
-                  ) : '—'}
+                  ) : (
+                    '—'
+                  )}
                 </dd>
               </div>
             </dl>
@@ -539,17 +633,23 @@ export function UserDetailPage() {
                 <div className="flex justify-between">
                   <dt className="text-sm text-muted-foreground">Node Pubkey</dt>
                   <dd className="text-sm">
-                        <Link to={`/solana/gossip-nodes/${user.node_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
-                          {user.node_pubkey.slice(0, 6)}...{user.node_pubkey.slice(-4)}
-                        </Link>
-                      </dd>
+                    <Link
+                      to={`/solana/gossip-nodes/${user.node_pubkey}`}
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                    >
+                      {user.node_pubkey.slice(0, 6)}...{user.node_pubkey.slice(-4)}
+                    </Link>
+                  </dd>
                 </div>
                 {user.is_validator && (
                   <>
                     <div className="flex justify-between">
                       <dt className="text-sm text-muted-foreground">Vote Account</dt>
                       <dd className="text-sm">
-                        <Link to={`/solana/validators/${user.vote_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                        <Link
+                          to={`/solana/validators/${user.vote_pubkey}`}
+                          className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                        >
                           {user.vote_pubkey.slice(0, 6)}...{user.vote_pubkey.slice(-4)}
                         </Link>
                       </dd>
@@ -560,7 +660,9 @@ export function UserDetailPage() {
                     </div>
                     <div className="flex justify-between">
                       <dt className="text-sm text-muted-foreground">Stake Weight</dt>
-                      <dd className="text-sm">{user.stake_weight_pct > 0 ? `${user.stake_weight_pct.toFixed(2)}%` : '—'}</dd>
+                      <dd className="text-sm">
+                        {user.stake_weight_pct > 0 ? `${user.stake_weight_pct.toFixed(2)}%` : '—'}
+                      </dd>
                     </div>
                   </>
                 )}
@@ -573,21 +675,30 @@ export function UserDetailPage() {
             <div className="border border-border rounded-lg p-4 bg-card">
               <h3 className="text-sm font-medium text-muted-foreground mb-3">Multicast Groups</h3>
               <div className="space-y-2">
-                {multicastGroups.map(g => (
+                {multicastGroups.map((g) => (
                   <div key={g.group_pk} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      <Link to={`/dz/multicast-groups/${g.group_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+                      <Link
+                        to={`/dz/multicast-groups/${g.group_pk}`}
+                        className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                      >
                         {g.group_code}
                       </Link>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        g.mode === 'P' ? 'bg-purple-500/15 text-purple-500' :
-                        g.mode === 'S' ? 'bg-blue-500/15 text-blue-500' :
-                        'bg-amber-500/15 text-amber-500'
-                      }`}>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                          g.mode === 'P'
+                            ? 'bg-purple-500/15 text-purple-500'
+                            : g.mode === 'S'
+                              ? 'bg-blue-500/15 text-blue-500'
+                              : 'bg-amber-500/15 text-amber-500'
+                        }`}
+                      >
                         {g.mode === 'P' ? 'Publisher' : g.mode === 'S' ? 'Subscriber' : 'Pub + Sub'}
                       </span>
                     </div>
-                    <span className="text-xs text-muted-foreground font-mono">{g.multicast_ip}</span>
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {g.multicast_ip}
+                    </span>
                   </div>
                 ))}
               </div>

@@ -1,15 +1,34 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { Loader2, Radio, AlertCircle, ArrowLeft, ChevronUp, ChevronDown, X, Info, Search, RefreshCw } from 'lucide-react'
+import {
+  Loader2,
+  Radio,
+  AlertCircle,
+  ArrowLeft,
+  ChevronUp,
+  ChevronDown,
+  X,
+  Info,
+  Search,
+  RefreshCw,
+} from 'lucide-react'
 import uPlot from 'uplot'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
 import { useUPlotLegendSync } from '@/hooks/use-uplot-legend-sync'
 import { formatChartAxisRate, formatChartAxisPps } from '@/components/topology/utils'
-import { fetchMulticastGroup, fetchMulticastGroupMembers, fetchMulticastGroupTraffic, fetchMulticastGroupMemberCounts, fetchMulticastGroupShredStats, type MulticastMember } from '@/lib/api'
+import {
+  fetchMulticastGroup,
+  fetchMulticastGroupMembers,
+  fetchMulticastGroupTraffic,
+  fetchMulticastGroupMemberCounts,
+  fetchMulticastGroupShredStats,
+  type MulticastMember,
+} from '@/lib/api'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { useBackLink } from '@/hooks/use-back-link'
 import { useChartLegend } from '@/hooks/use-chart-legend'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 import { InlineFilter } from '@/components/inline-filter'
 import { Pagination } from '@/components/pagination'
 
@@ -31,8 +50,6 @@ function formatPps(pps: number): string {
 }
 
 type TrafficMetric = 'throughput' | 'packets'
-
-
 
 function formatStake(sol: number): string {
   if (sol === 0) return '—'
@@ -62,32 +79,77 @@ function leaderTimingText(member: MulticastMember): string | null {
 }
 
 const TRAFFIC_COLORS = [
-  '#7c5cbf', '#4a8fe7', '#3dad6f', '#d4854a', '#2ba3a8', '#c4a23d', '#c45fa0', '#6ba8f2',
+  '#7c5cbf',
+  '#4a8fe7',
+  '#3dad6f',
+  '#d4854a',
+  '#2ba3a8',
+  '#c4a23d',
+  '#c45fa0',
+  '#6ba8f2',
 ]
 
 const TIME_RANGES = ['1h', '3h', '6h', '12h', '24h', '3d', '7d', '14d', '30d'] as const
-const BUCKET_OPTIONS = ['auto', '10 SECOND', '30 SECOND', '1 MINUTE', '5 MINUTE', '10 MINUTE', '15 MINUTE', '30 MINUTE', '1 HOUR', '4 HOUR', '12 HOUR', '1 DAY'] as const
+const BUCKET_OPTIONS = [
+  'auto',
+  '10 SECOND',
+  '30 SECOND',
+  '1 MINUTE',
+  '5 MINUTE',
+  '10 MINUTE',
+  '15 MINUTE',
+  '30 MINUTE',
+  '1 HOUR',
+  '4 HOUR',
+  '12 HOUR',
+  '1 DAY',
+] as const
 const BUCKET_LABELS: Record<string, string> = {
-  'auto': 'Auto', '10 SECOND': '10s', '30 SECOND': '30s', '1 MINUTE': '1m', '5 MINUTE': '5m',
-  '10 MINUTE': '10m', '15 MINUTE': '15m', '30 MINUTE': '30m', '1 HOUR': '1h',
-  '4 HOUR': '4h', '12 HOUR': '12h', '1 DAY': '1d',
+  auto: 'Auto',
+  '10 SECOND': '10s',
+  '30 SECOND': '30s',
+  '1 MINUTE': '1m',
+  '5 MINUTE': '5m',
+  '10 MINUTE': '10m',
+  '15 MINUTE': '15m',
+  '30 MINUTE': '30m',
+  '1 HOUR': '1h',
+  '4 HOUR': '4h',
+  '12 HOUR': '12h',
+  '1 DAY': '1d',
 }
 function resolveAutoBucket(timeRange: string): string {
   switch (timeRange) {
-    case '1h': return '10 SECOND'
-    case '3h': return '30 SECOND'
-    case '6h': return '1 MINUTE'
-    case '12h': return '10 MINUTE'
-    case '24h': return '15 MINUTE'
-    case '3d': return '30 MINUTE'
-    case '7d': return '4 HOUR'
-    case '14d': return '12 HOUR'
-    case '30d': return '1 DAY'
-    default: return '5 MINUTE'
+    case '1h':
+      return '10 SECOND'
+    case '3h':
+      return '30 SECOND'
+    case '6h':
+      return '1 MINUTE'
+    case '12h':
+      return '10 MINUTE'
+    case '24h':
+      return '15 MINUTE'
+    case '3d':
+      return '30 MINUTE'
+    case '7d':
+      return '4 HOUR'
+    case '14d':
+      return '12 HOUR'
+    case '30d':
+      return '1 DAY'
+    default:
+      return '5 MINUTE'
   }
 }
 
-function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, onSelectMember }: {
+function MulticastTrafficChart({
+  groupCode,
+  members,
+  activeTab,
+  onHoverMember,
+  onSelectMember,
+}: {
   groupCode: string
   members: MulticastMember[]
   activeTab: 'publishers' | 'subscribers'
@@ -111,7 +173,10 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
 
   // Build a lookup from device_pk+tunnel_id to display info
   const seriesInfo = useMemo(() => {
-    const map = new Map<string, { ownerPubkey: string; nodePubkey: string; code: string; tunnelId: number; mode: string }>()
+    const map = new Map<
+      string,
+      { ownerPubkey: string; nodePubkey: string; code: string; tunnelId: number; mode: string }
+    >()
     for (const m of members) {
       if (m.tunnel_id > 0) {
         const key = `${m.device_pk}_${m.tunnel_id}`
@@ -150,20 +215,25 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
         byKey = new Map()
         timeMap.set(p.time, byKey)
       }
-      const value = metric === 'throughput'
-        ? (showPubs ? p.in_bps : p.out_bps)
-        : (showPubs ? p.in_pps : p.out_pps)
+      const value =
+        metric === 'throughput'
+          ? showPubs
+            ? p.in_bps
+            : p.out_bps
+          : showPubs
+            ? p.in_pps
+            : p.out_pps
       byKey.set(seriesKey, value)
     }
 
     const memberKeys = new Set(
-      members.filter(m => m.tunnel_id > 0).map(m => `${m.device_pk}_${m.tunnel_id}`)
+      members.filter((m) => m.tunnel_id > 0).map((m) => `${m.device_pk}_${m.tunnel_id}`),
     )
-    const keys = [...keySet].filter(k => memberKeys.has(k)).sort()
+    const keys = [...keySet].filter((k) => memberKeys.has(k)).sort()
     const sortedTimes = [...timeMap.keys()].sort()
-    const timestamps = new Float64Array(sortedTimes.map(t => new Date(t).getTime() / 1000))
-    const columns = keys.map(key =>
-      new Float64Array(sortedTimes.map(t => timeMap.get(t)?.get(key) ?? 0))
+    const timestamps = new Float64Array(sortedTimes.map((t) => new Date(t).getTime() / 1000))
+    const columns = keys.map(
+      (key) => new Float64Array(sortedTimes.map((t) => timeMap.get(t)?.get(key) ?? 0)),
     )
 
     return {
@@ -232,9 +302,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   const displayValues = useMemo(() => {
     const map = new Map<string, number>()
     if (!uplotData[0] || uplotData[0].length === 0) return map
-    const idx = hoveredIdx != null && hoveredIdx < uplotData[0].length
-      ? hoveredIdx
-      : uplotData[0].length - 1
+    const idx =
+      hoveredIdx != null && hoveredIdx < uplotData[0].length ? hoveredIdx : uplotData[0].length - 1
     for (let i = 0; i < seriesKeys.length; i++) {
       map.set(seriesKeys[i], (uplotData[i + 1] as number[])?.[idx] ?? 0)
     }
@@ -247,16 +316,19 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     setHoveredIdx(idx)
   }, [])
 
-  const handleFocusSeries = useCallback((seriesIdx: number | null) => {
-    if (seriesIdx != null && seriesIdx > 0 && seriesIdx <= seriesKeys.length) {
-      const key = seriesKeys[seriesIdx - 1]
-      focusedKeyRef.current = key
-      legend.handleMouseEnter(key)
-    } else {
-      focusedKeyRef.current = null
-      legend.handleMouseLeave()
-    }
-  }, [seriesKeys, legend])
+  const handleFocusSeries = useCallback(
+    (seriesIdx: number | null) => {
+      if (seriesIdx != null && seriesIdx > 0 && seriesIdx <= seriesKeys.length) {
+        const key = seriesKeys[seriesIdx - 1]
+        focusedKeyRef.current = key
+        legend.handleMouseEnter(key)
+      } else {
+        focusedKeyRef.current = null
+        legend.handleMouseLeave()
+      }
+    },
+    [seriesKeys, legend],
+  )
 
   const uplotSeries = useMemo((): uPlot.Series[] => {
     const s: uPlot.Series[] = [{}]
@@ -271,18 +343,26 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     return s
   }, [seriesKeys])
 
-  const uplotAxes = useMemo((): uPlot.Axis[] => [
-    {},
-    {
-      values: (_u: uPlot, vals: number[]) =>
-        vals.map(v => metric === 'throughput' ? formatChartAxisRate(v) : formatChartAxisPps(v)),
-    },
-  ], [metric])
+  const uplotAxes = useMemo(
+    (): uPlot.Axis[] => [
+      {},
+      {
+        values: (_u: uPlot, vals: number[]) =>
+          vals.map((v) =>
+            metric === 'throughput' ? formatChartAxisRate(v) : formatChartAxisPps(v),
+          ),
+      },
+    ],
+    [metric],
+  )
 
-  const chartScales = useMemo((): uPlot.Scales => ({
-    x: { time: true },
-    y: { auto: true },
-  }), [])
+  const chartScales = useMemo(
+    (): uPlot.Scales => ({
+      x: { time: true },
+      y: { auto: true },
+    }),
+    [],
+  )
 
   const { plotRef } = useUPlotChart({
     containerRef: chartContainerRef,
@@ -323,15 +403,17 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     let keys = seriesKeys
     if (legendSearchText) {
       const needle = legendSearchText.toLowerCase()
-      keys = keys.filter(key => {
+      keys = keys.filter((key) => {
         const info = seriesInfo.get(key)
         const ownerPk = info?.ownerPubkey ?? ''
         const nodePk = info?.nodePubkey ?? ''
         const code = info?.code ?? ''
-        return ownerPk.toLowerCase().includes(needle) ||
+        return (
+          ownerPk.toLowerCase().includes(needle) ||
           nodePk.toLowerCase().includes(needle) ||
           code.toLowerCase().includes(needle) ||
           key.toLowerCase().includes(needle)
+        )
       })
     }
     const sorted = [...keys].sort((a, b) => {
@@ -350,7 +432,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   }, [seriesKeys, legendSearchText, legendSortBy, legendSortDir, seriesInfo, displayValues])
 
   const legendHeight = useMemo(() => {
-    const contentHeight = LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
+    const contentHeight =
+      LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
     return Math.min(legendMaxHeight, contentHeight)
   }, [legendMaxHeight, legendFilteredKeys.length])
 
@@ -358,14 +441,14 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
     <div className="border border-border rounded-lg p-4 bg-card group/chart">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">
-            Traffic ({activeTab})
-          </h3>
+          <h3 className="text-sm font-medium text-muted-foreground">Traffic ({activeTab})</h3>
           <div className="relative group/info flex-shrink-0">
             <Info className="h-3.5 w-3.5 text-muted-foreground/50 group-hover/info:text-muted-foreground cursor-help" />
             <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 hidden group-hover/info:block z-50 pointer-events-none">
               <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-3 py-2 text-xs leading-relaxed w-64 shadow-md">
-                Traffic is measured per tunnel and does not distinguish between multicast groups. If a member publishes or subscribes on multiple groups, their traffic will look similar across each group.
+                Traffic is measured per tunnel and does not distinguish between multicast groups. If
+                a member publishes or subscribes on multiple groups, their traffic will look similar
+                across each group.
               </div>
             </div>
           </div>
@@ -373,7 +456,9 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : (
             <button
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['multicast-traffic', groupCode] })}
+              onClick={() =>
+                queryClient.invalidateQueries({ queryKey: ['multicast-traffic', groupCode] })
+              }
               className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
               title="Refresh"
             >
@@ -382,32 +467,25 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
           )}
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <SmallDropdown
             value={metric}
-            onChange={e => setMetric(e.target.value as TrafficMetric)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            <option value="throughput">bps</option>
-            <option value="packets">pps</option>
-          </select>
-          <select
+            options={[
+              { value: 'throughput', label: 'bps' },
+              { value: 'packets', label: 'pps' },
+            ]}
+            onChange={(v) => setMetric(v as TrafficMetric)}
+          />
+          <SmallDropdown
             value={bucket}
-            onChange={e => setBucket(e.target.value)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {BUCKET_OPTIONS.map(b => (
-              <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
-            ))}
-          </select>
-          <select
+            displayLabel={bucket === 'auto' ? `Auto (${autoBucketLabel})` : undefined}
+            options={BUCKET_OPTIONS.map((b) => ({ value: b, label: BUCKET_LABELS[b] || b }))}
+            onChange={(v) => setBucket(v)}
+          />
+          <SmallDropdown
             value={timeRange}
-            onChange={e => setTimeRange(e.target.value)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {TIME_RANGES.map(r => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
+            options={TIME_RANGES.map((r) => ({ value: r, label: r }))}
+            onChange={(v) => setTimeRange(v)}
+          />
         </div>
       </div>
       <div className="h-0.5 w-full overflow-hidden rounded-full mb-2">
@@ -424,13 +502,13 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
 
       {(trafficData || isFetching) && (
         <div>
-          <div
-            ref={chartContainerRef}
-            className="h-56"
-            onClick={handleChartClick}
-          />
+          <div ref={chartContainerRef} className="h-56" onClick={handleChartClick} />
           {seriesKeys.length > 0 && (
-            <div ref={legendContainerRef} className="relative mt-2" style={{ height: `${legendHeight}px` }}>
+            <div
+              ref={legendContainerRef}
+              className="relative mt-2"
+              style={{ height: `${legendHeight}px` }}
+            >
               <div className="flex flex-col h-full text-xs">
                 {/* Sticky header */}
                 <div className="flex-none px-2 pt-2">
@@ -445,13 +523,18 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
                           type="text"
                           value={legendSearchText}
                           onChange={(e) => setLegendSearchText(e.target.value)}
-                          onBlur={() => { if (!legendSearchText) setLegendSearchExpanded(false) }}
+                          onBlur={() => {
+                            if (!legendSearchText) setLegendSearchExpanded(false)
+                          }}
                           placeholder="Filter by owner, node, device..."
                           className="w-full px-1.5 py-0.5 pr-6 text-xs bg-transparent border-b border-border focus:outline-none focus:border-foreground placeholder:text-muted-foreground/60"
                         />
                         {legendSearchText && (
                           <button
-                            onClick={() => { setLegendSearchText(''); legendSearchInputRef.current?.focus() }}
+                            onClick={() => {
+                              setLegendSearchText('')
+                              legendSearchInputRef.current?.focus()
+                            }}
                             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
                             aria-label="Clear search"
                           >
@@ -461,7 +544,10 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
                       </div>
                     ) : (
                       <button
-                        onClick={() => { setLegendSearchExpanded(true); setTimeout(() => legendSearchInputRef.current?.focus(), 0) }}
+                        onClick={() => {
+                          setLegendSearchExpanded(true)
+                          setTimeout(() => legendSearchInputRef.current?.focus(), 0)
+                        }}
                         className="text-muted-foreground hover:text-foreground"
                         aria-label="Search series"
                       >
@@ -484,8 +570,15 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
                       <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
                       <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
                         <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[10px] leading-relaxed whitespace-nowrap shadow-md">
-                          <div><strong>Click</strong> — solo select</div>
-                          <div><strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle</div>
+                          <div>
+                            <strong>Click</strong> — solo select
+                          </div>
+                          <div>
+                            <strong>
+                              {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click
+                            </strong>{' '}
+                            — toggle
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -494,19 +587,49 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
                   <div className="flex items-center gap-4 px-1 mb-1">
                     <div className="w-2.5" />
                     <button
-                      onClick={() => { setLegendSortBy('name'); setLegendSortDir(legendSortBy === 'name' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
+                      onClick={() => {
+                        setLegendSortBy('name')
+                        setLegendSortDir(
+                          legendSortBy === 'name'
+                            ? legendSortDir === 'asc'
+                              ? 'desc'
+                              : 'asc'
+                            : 'asc',
+                        )
+                      }}
                       className="flex-1 min-w-0 flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
                     >
                       Owner
-                      {legendSortBy === 'name' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                      {legendSortBy === 'name' &&
+                        (legendSortDir === 'asc' ? (
+                          <ChevronUp className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        ))}
                     </button>
-                    <div className="w-48 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">DZ ID</div>
+                    <div className="w-48 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">
+                      DZ ID
+                    </div>
                     <button
-                      onClick={() => { setLegendSortBy('value'); setLegendSortDir(legendSortBy === 'value' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
+                      onClick={() => {
+                        setLegendSortBy('value')
+                        setLegendSortDir(
+                          legendSortBy === 'value'
+                            ? legendSortDir === 'asc'
+                              ? 'desc'
+                              : 'asc'
+                            : 'desc',
+                        )
+                      }}
                       className="w-20 flex items-center justify-end gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
                     >
                       Rate
-                      {legendSortBy === 'value' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                      {legendSortBy === 'value' &&
+                        (legendSortDir === 'asc' ? (
+                          <ChevronUp className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        ))}
                     </button>
                   </div>
                 </div>
@@ -518,7 +641,8 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
                       const info = seriesInfo.get(key)
                       const val = displayValues.get(key)
                       const opacity = legend.getOpacity(key)
-                      const isSelected = legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
+                      const isSelected =
+                        legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
                       const ownerLabel = info?.ownerPubkey
                         ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
                         : key.split('_')[0].slice(0, 8)
@@ -534,14 +658,28 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
                         >
                           <div
                             className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors"
-                            style={{ backgroundColor: isSelected ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] : 'var(--border)' }}
+                            style={{
+                              backgroundColor: isSelected
+                                ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length]
+                                : 'var(--border)',
+                            }}
                           />
                           <div className="flex-1 min-w-0 text-foreground truncate font-mono">
                             {ownerLabel}
-                            <span className="text-muted-foreground ml-2">{info?.code ?? key.split('_')[0].slice(0, 8)}{info?.tunnelId ? ` / ${info.tunnelId}` : ''}</span>
+                            <span className="text-muted-foreground ml-2">
+                              {info?.code ?? key.split('_')[0].slice(0, 8)}
+                              {info?.tunnelId ? ` / ${info.tunnelId}` : ''}
+                            </span>
                           </div>
-                          <div className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text" title={dzIdLabel}>{dzIdLabel}</div>
-                          <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
+                          <div
+                            className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text"
+                            title={dzIdLabel}
+                          >
+                            {dzIdLabel}
+                          </div>
+                          <div className="w-20 text-right tabular-nums">
+                            {val !== undefined && opacity > 0 ? fmtValue(val) : '—'}
+                          </div>
                         </div>
                       )
                     })}
@@ -564,7 +702,13 @@ function MulticastTrafficChart({ groupCode, members, activeTab, onHoverMember, o
   )
 }
 
-type ShredMetric = 'unique_shreds' | 'total_packets' | 'data_shreds' | 'coding_shreds' | 'leader_slots' | 'repair_slots'
+type ShredMetric =
+  | 'unique_shreds'
+  | 'total_packets'
+  | 'data_shreds'
+  | 'coding_shreds'
+  | 'leader_slots'
+  | 'repair_slots'
 
 const SHRED_METRIC_LABELS: Record<ShredMetric, string> = {
   unique_shreds: 'Unique Shreds',
@@ -596,15 +740,25 @@ function bucketToSeconds(bucket: string): number {
   if (!match) return 60
   const n = parseInt(match[1])
   switch (match[2]) {
-    case 'SECOND': return n
-    case 'MINUTE': return n * 60
-    case 'HOUR': return n * 3600
-    case 'DAY': return n * 86400
-    default: return 60
+    case 'SECOND':
+      return n
+    case 'MINUTE':
+      return n * 60
+    case 'HOUR':
+      return n * 3600
+    case 'DAY':
+      return n * 86400
+    default:
+      return 60
   }
 }
 
-function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: {
+function ShredStatsChart({
+  groupCode,
+  members,
+  onHoverMember,
+  onSelectMember,
+}: {
   groupCode: string
   members: MulticastMember[]
   onHoverMember?: (seriesKey: string | null) => void
@@ -677,9 +831,9 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
 
     const keys = [...keySet].sort()
     const sortedTimes = [...timeMap.keys()].sort()
-    const timestamps = new Float64Array(sortedTimes.map(t => new Date(t).getTime() / 1000))
-    const columns = keys.map(key =>
-      new Float64Array(sortedTimes.map(t => timeMap.get(t)?.get(key) ?? 0))
+    const timestamps = new Float64Array(sortedTimes.map((t) => new Date(t).getTime() / 1000))
+    const columns = keys.map(
+      (key) => new Float64Array(sortedTimes.map((t) => timeMap.get(t)?.get(key) ?? 0)),
     )
 
     return {
@@ -736,9 +890,8 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
   const displayValues = useMemo(() => {
     const map = new Map<string, number>()
     if (!uplotData[0] || uplotData[0].length === 0) return map
-    const idx = hoveredIdx != null && hoveredIdx < uplotData[0].length
-      ? hoveredIdx
-      : uplotData[0].length - 1
+    const idx =
+      hoveredIdx != null && hoveredIdx < uplotData[0].length ? hoveredIdx : uplotData[0].length - 1
     for (let i = 0; i < seriesKeys.length; i++) {
       map.set(seriesKeys[i], (uplotData[i + 1] as number[])?.[idx] ?? 0)
     }
@@ -749,16 +902,19 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
     setHoveredIdx(idx)
   }, [])
 
-  const handleFocusSeries = useCallback((seriesIdx: number | null) => {
-    if (seriesIdx != null && seriesIdx > 0 && seriesIdx <= seriesKeys.length) {
-      const key = seriesKeys[seriesIdx - 1]
-      focusedKeyRef.current = key
-      legend.handleMouseEnter(key)
-    } else {
-      focusedKeyRef.current = null
-      legend.handleMouseLeave()
-    }
-  }, [seriesKeys, legend])
+  const handleFocusSeries = useCallback(
+    (seriesIdx: number | null) => {
+      if (seriesIdx != null && seriesIdx > 0 && seriesIdx <= seriesKeys.length) {
+        const key = seriesKeys[seriesIdx - 1]
+        focusedKeyRef.current = key
+        legend.handleMouseEnter(key)
+      } else {
+        focusedKeyRef.current = null
+        legend.handleMouseLeave()
+      }
+    },
+    [seriesKeys, legend],
+  )
 
   const uplotSeries = useMemo((): uPlot.Series[] => {
     const s: uPlot.Series[] = [{}]
@@ -775,17 +931,24 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
 
   const fmtValue = rateMode ? formatRate : formatCount
 
-  const uplotAxes = useMemo((): uPlot.Axis[] => [
-    {},
-    {
-      values: (_u: uPlot, vals: number[]) => vals.map(v => rateMode ? formatRate(v) : formatCount(v)),
-    },
-  ], [rateMode])
+  const uplotAxes = useMemo(
+    (): uPlot.Axis[] => [
+      {},
+      {
+        values: (_u: uPlot, vals: number[]) =>
+          vals.map((v) => (rateMode ? formatRate(v) : formatCount(v))),
+      },
+    ],
+    [rateMode],
+  )
 
-  const chartScales = useMemo((): uPlot.Scales => ({
-    x: { time: true },
-    y: { auto: true },
-  }), [])
+  const chartScales = useMemo(
+    (): uPlot.Scales => ({
+      x: { time: true },
+      y: { auto: true },
+    }),
+    [],
+  )
 
   const { plotRef } = useUPlotChart({
     containerRef: chartContainerRef,
@@ -834,7 +997,7 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
         const memberKeySet = new Set<string>()
         for (const userPk of legend.selectedSeries) {
           const keys = userPkToMemberKeys.get(userPk)
-          if (keys) keys.forEach(k => memberKeySet.add(k))
+          if (keys) keys.forEach((k) => memberKeySet.add(k))
         }
         onSelectMember?.(memberKeySet)
       }
@@ -846,13 +1009,15 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
     let keys = seriesKeys
     if (legendSearchText) {
       const needle = legendSearchText.toLowerCase()
-      keys = keys.filter(key => {
+      keys = keys.filter((key) => {
         const info = userInfo.get(key)
         const ownerPk = info?.ownerPubkey ?? ''
         const code = info?.code ?? ''
-        return ownerPk.toLowerCase().includes(needle) ||
+        return (
+          ownerPk.toLowerCase().includes(needle) ||
           code.toLowerCase().includes(needle) ||
           key.toLowerCase().includes(needle)
+        )
       })
     }
     const sorted = [...keys].sort((a, b) => {
@@ -871,7 +1036,8 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
   }, [seriesKeys, legendSearchText, legendSortBy, legendSortDir, userInfo, displayValues])
 
   const legendHeight = useMemo(() => {
-    const contentHeight = LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
+    const contentHeight =
+      LEGEND_HEADER_HEIGHT + legendFilteredKeys.length * LEGEND_ROW_HEIGHT + LEGEND_HANDLE_HEIGHT
     return Math.min(legendMaxHeight, contentHeight)
   }, [legendMaxHeight, legendFilteredKeys.length])
 
@@ -879,14 +1045,14 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
     <div className="border border-border rounded-lg p-4 bg-card group/chart">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium text-muted-foreground">
-            Shred Stats (publishers)
-          </h3>
+          <h3 className="text-sm font-medium text-muted-foreground">Shred Stats (publishers)</h3>
           {isFetching ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : (
             <button
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['multicast-shred-stats', groupCode] })}
+              onClick={() =>
+                queryClient.invalidateQueries({ queryKey: ['multicast-shred-stats', groupCode] })
+              }
               className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
               title="Refresh"
             >
@@ -895,41 +1061,33 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
           )}
         </div>
         <div className="flex items-center gap-2">
-          <select
+          <SmallDropdown
             value={metric}
-            onChange={e => setMetric(e.target.value as ShredMetric)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {(Object.keys(SHRED_METRIC_LABELS) as ShredMetric[]).map(m => (
-              <option key={m} value={m}>{SHRED_METRIC_LABELS[m]}</option>
-            ))}
-          </select>
-          <select
+            options={(Object.keys(SHRED_METRIC_LABELS) as ShredMetric[]).map((m) => ({
+              value: m,
+              label: SHRED_METRIC_LABELS[m],
+            }))}
+            onChange={(v) => setMetric(v as ShredMetric)}
+          />
+          <SmallDropdown
             value={rateMode ? 'rate' : 'total'}
-            onChange={e => setRateMode(e.target.value === 'rate')}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            <option value="rate">Rate (/s)</option>
-            <option value="total">Total</option>
-          </select>
-          <select
+            options={[
+              { value: 'rate', label: 'Rate (/s)' },
+              { value: 'total', label: 'Total' },
+            ]}
+            onChange={(v) => setRateMode(v === 'rate')}
+          />
+          <SmallDropdown
             value={bucket}
-            onChange={e => setBucket(e.target.value)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {BUCKET_OPTIONS.map(b => (
-              <option key={b} value={b}>{b === 'auto' ? `Auto (${autoBucketLabel})` : BUCKET_LABELS[b] || b}</option>
-            ))}
-          </select>
-          <select
+            displayLabel={bucket === 'auto' ? `Auto (${autoBucketLabel})` : undefined}
+            options={BUCKET_OPTIONS.map((b) => ({ value: b, label: BUCKET_LABELS[b] || b }))}
+            onChange={(v) => setBucket(v)}
+          />
+          <SmallDropdown
             value={timeRange}
-            onChange={e => setTimeRange(e.target.value)}
-            className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-          >
-            {TIME_RANGES.map(r => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
+            options={TIME_RANGES.map((r) => ({ value: r, label: r }))}
+            onChange={(v) => setTimeRange(v)}
+          />
         </div>
       </div>
       <div className="h-0.5 w-full overflow-hidden rounded-full mb-2">
@@ -946,11 +1104,7 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
 
       {(shredData || isFetching) && (
         <div>
-          <div
-            ref={chartContainerRef}
-            className="h-56"
-            onClick={handleChartClick}
-          />
+          <div ref={chartContainerRef} className="h-56" onClick={handleChartClick} />
           {seriesKeys.length > 0 && (
             <div className="relative mt-2" style={{ height: `${legendHeight}px` }}>
               <div className="flex flex-col h-full text-xs">
@@ -967,13 +1121,18 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                           type="text"
                           value={legendSearchText}
                           onChange={(e) => setLegendSearchText(e.target.value)}
-                          onBlur={() => { if (!legendSearchText) setLegendSearchExpanded(false) }}
+                          onBlur={() => {
+                            if (!legendSearchText) setLegendSearchExpanded(false)
+                          }}
                           placeholder="Filter by owner, device..."
                           className="w-full px-1.5 py-0.5 pr-6 text-xs bg-transparent border-b border-border focus:outline-none focus:border-foreground placeholder:text-muted-foreground/60"
                         />
                         {legendSearchText && (
                           <button
-                            onClick={() => { setLegendSearchText(''); legendSearchInputRef.current?.focus() }}
+                            onClick={() => {
+                              setLegendSearchText('')
+                              legendSearchInputRef.current?.focus()
+                            }}
                             className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground z-10"
                             aria-label="Clear search"
                           >
@@ -983,7 +1142,10 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                       </div>
                     ) : (
                       <button
-                        onClick={() => { setLegendSearchExpanded(true); setTimeout(() => legendSearchInputRef.current?.focus(), 0) }}
+                        onClick={() => {
+                          setLegendSearchExpanded(true)
+                          setTimeout(() => legendSearchInputRef.current?.focus(), 0)
+                        }}
                         className="text-muted-foreground hover:text-foreground"
                         aria-label="Search series"
                       >
@@ -1006,8 +1168,15 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                       <Info className="h-3 w-3 text-muted-foreground/50 group-hover:text-muted-foreground cursor-help" />
                       <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 hidden group-hover:block z-50 pointer-events-none">
                         <div className="bg-[var(--popover)] text-[var(--popover-foreground)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[10px] leading-relaxed whitespace-nowrap shadow-md">
-                          <div><strong>Click</strong> — solo select</div>
-                          <div><strong>{navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click</strong> — toggle</div>
+                          <div>
+                            <strong>Click</strong> — solo select
+                          </div>
+                          <div>
+                            <strong>
+                              {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+click
+                            </strong>{' '}
+                            — toggle
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1016,19 +1185,49 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                   <div className="flex items-center gap-4 px-1 mb-1">
                     <div className="w-2.5" />
                     <button
-                      onClick={() => { setLegendSortBy('name'); setLegendSortDir(legendSortBy === 'name' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'asc') }}
+                      onClick={() => {
+                        setLegendSortBy('name')
+                        setLegendSortDir(
+                          legendSortBy === 'name'
+                            ? legendSortDir === 'asc'
+                              ? 'desc'
+                              : 'asc'
+                            : 'asc',
+                        )
+                      }}
                       className="flex-1 min-w-0 flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
                     >
                       Owner
-                      {legendSortBy === 'name' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                      {legendSortBy === 'name' &&
+                        (legendSortDir === 'asc' ? (
+                          <ChevronUp className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        ))}
                     </button>
-                    <div className="w-48 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">DZ ID</div>
+                    <div className="w-48 text-right text-xs text-muted-foreground font-medium whitespace-nowrap">
+                      DZ ID
+                    </div>
                     <button
-                      onClick={() => { setLegendSortBy('value'); setLegendSortDir(legendSortBy === 'value' ? (legendSortDir === 'asc' ? 'desc' : 'asc') : 'desc') }}
+                      onClick={() => {
+                        setLegendSortBy('value')
+                        setLegendSortDir(
+                          legendSortBy === 'value'
+                            ? legendSortDir === 'asc'
+                              ? 'desc'
+                              : 'asc'
+                            : 'desc',
+                        )
+                      }}
                       className="w-20 flex items-center justify-end gap-0.5 text-xs text-muted-foreground hover:text-foreground font-medium"
                     >
                       Value
-                      {legendSortBy === 'value' && (legendSortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                      {legendSortBy === 'value' &&
+                        (legendSortDir === 'asc' ? (
+                          <ChevronUp className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        ))}
                     </button>
                   </div>
                 </div>
@@ -1040,7 +1239,8 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                       const info = userInfo.get(key)
                       const val = displayValues.get(key)
                       const opacity = legend.getOpacity(key)
-                      const isSelected = legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
+                      const isSelected =
+                        legend.selectedSeries.size === 0 || legend.selectedSeries.has(key)
                       const ownerLabel = info?.ownerPubkey
                         ? `${info.ownerPubkey.slice(0, 4)}..${info.ownerPubkey.slice(-4)}`
                         : key.slice(0, 8)
@@ -1056,14 +1256,27 @@ function ShredStatsChart({ groupCode, members, onHoverMember, onSelectMember }: 
                         >
                           <div
                             className="w-2.5 h-2.5 rounded-sm flex-shrink-0 transition-colors"
-                            style={{ backgroundColor: isSelected ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length] : 'var(--border)' }}
+                            style={{
+                              backgroundColor: isSelected
+                                ? TRAFFIC_COLORS[i % TRAFFIC_COLORS.length]
+                                : 'var(--border)',
+                            }}
                           />
                           <div className="flex-1 min-w-0 text-foreground truncate font-mono">
                             {ownerLabel}
-                            <span className="text-muted-foreground ml-2">{info?.code ?? key.slice(0, 8)}</span>
+                            <span className="text-muted-foreground ml-2">
+                              {info?.code ?? key.slice(0, 8)}
+                            </span>
                           </div>
-                          <div className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text" title={dzIdLabel}>{dzIdLabel}</div>
-                          <div className="w-20 text-right tabular-nums">{val !== undefined && opacity > 0 ? fmtValue(val) : '—'}</div>
+                          <div
+                            className="w-48 text-right truncate tabular-nums font-mono text-muted-foreground select-text"
+                            title={dzIdLabel}
+                          >
+                            {dzIdLabel}
+                          </div>
+                          <div className="w-20 text-right tabular-nums">
+                            {val !== undefined && opacity > 0 ? fmtValue(val) : '—'}
+                          </div>
                         </div>
                       )
                     })}
@@ -1105,29 +1318,47 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
       return { uplotData: [[]] as uPlot.AlignedData, uplotSeries: [] as uPlot.Series[] }
     }
 
-    const timestamps = countData.map(p => new Date(p.time).getTime() / 1000)
-    const pubs = countData.map(p => p.publisher_count)
-    const subs = countData.map(p => p.subscriber_count)
+    const timestamps = countData.map((p) => new Date(p.time).getTime() / 1000)
+    const pubs = countData.map((p) => p.publisher_count)
+    const subs = countData.map((p) => p.subscriber_count)
 
     return {
       uplotData: [timestamps, pubs, subs] as uPlot.AlignedData,
       uplotSeries: [
         {},
-        { label: 'Publishers', stroke: '#7c5cbf', width: 1.5, points: { show: false }, paths: steppedPaths },
-        { label: 'Subscribers', stroke: '#4a8fe7', width: 1.5, points: { show: false }, paths: steppedPaths },
+        {
+          label: 'Publishers',
+          stroke: '#7c5cbf',
+          width: 1.5,
+          points: { show: false },
+          paths: steppedPaths,
+        },
+        {
+          label: 'Subscribers',
+          stroke: '#4a8fe7',
+          width: 1.5,
+          points: { show: false },
+          paths: steppedPaths,
+        },
       ] as uPlot.Series[],
     }
   }, [countData, steppedPaths])
 
-  const chartScales = useMemo((): uPlot.Scales => ({
-    x: { time: true },
-    y: { auto: true },
-  }), [])
+  const chartScales = useMemo(
+    (): uPlot.Scales => ({
+      x: { time: true },
+      y: { auto: true },
+    }),
+    [],
+  )
 
-  const axes = useMemo((): uPlot.Axis[] => [
-    {},
-    { values: (_u: uPlot, vals: number[]) => vals.map(v => String(Math.round(v))) },
-  ], [])
+  const axes = useMemo(
+    (): uPlot.Axis[] => [
+      {},
+      { values: (_u: uPlot, vals: number[]) => vals.map((v) => String(Math.round(v))) },
+    ],
+    [],
+  )
 
   useUPlotChart({
     containerRef: chartRef,
@@ -1147,7 +1378,9 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
             <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
           ) : (
             <button
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['multicast-member-counts', groupCode] })}
+              onClick={() =>
+                queryClient.invalidateQueries({ queryKey: ['multicast-member-counts', groupCode] })
+              }
               className="opacity-0 group-hover/chart:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
               title="Refresh"
             >
@@ -1155,15 +1388,11 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
             </button>
           )}
         </div>
-        <select
+        <SmallDropdown
           value={timeRange}
-          onChange={e => setTimeRange(e.target.value)}
-          className="text-xs bg-transparent border border-border rounded px-1.5 py-1 text-foreground cursor-pointer"
-        >
-          {TIME_RANGES.map(r => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-        </select>
+          options={TIME_RANGES.map((r) => ({ value: r, label: r }))}
+          onChange={(v) => setTimeRange(v)}
+        />
       </div>
       <div className="h-0.5 w-full overflow-hidden rounded-full mb-2">
         {isFetching && (
@@ -1196,7 +1425,15 @@ function MemberCountChart({ groupCode }: { groupCode: string }) {
   )
 }
 
-type MemberSortField = 'owner_pubkey' | 'node_pubkey' | 'device_code' | 'metro_name' | 'dz_ip' | 'tunnel_id' | 'stake_sol' | 'leader_schedule'
+type MemberSortField =
+  | 'owner_pubkey'
+  | 'node_pubkey'
+  | 'device_code'
+  | 'metro_name'
+  | 'dz_ip'
+  | 'tunnel_id'
+  | 'stake_sol'
+  | 'leader_schedule'
 type SortDirection = 'asc' | 'desc'
 
 const DEFAULT_PAGE_SIZE = 10
@@ -1214,7 +1451,10 @@ const memberAutocompleteFields = ['device', 'metro']
 
 function parseMemberSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
-  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+  return searchParam
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
 }
 
 // Base58 character class (no 0, O, I, l)
@@ -1241,7 +1481,9 @@ export function MulticastGroupDetailPage() {
   const navigate = useNavigate()
   const back = useBackLink({ to: '/dz/multicast-groups', label: 'multicast groups' })
   const [searchParams, setSearchParams] = useSearchParams()
-  const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as 'publishers' | 'subscribers'
+  const activeTab = (searchParams.get('tab') === 'subscribers' ? 'subscribers' : 'publishers') as
+    | 'publishers'
+    | 'subscribers'
   const sortField = (searchParams.get('sort') || 'stake_sol') as MemberSortField
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
   const page = parseInt(searchParams.get('page') || '1')
@@ -1252,45 +1494,58 @@ export function MulticastGroupDetailPage() {
   const [hoveredSeriesKey, setHoveredSeriesKey] = useState<string | null>(null)
   const [selectedSeriesKeys, setSelectedSeriesKeys] = useState<Set<string>>(new Set())
 
-  const setActiveTab = useCallback((tab: 'publishers' | 'subscribers') => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (tab === 'publishers') { p.delete('tab') } else { p.set('tab', tab) }
-      p.delete('page') // Reset to page 1
-      return p
-    })
-  }, [setSearchParams])
+  const setActiveTab = useCallback(
+    (tab: 'publishers' | 'subscribers') => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (tab === 'publishers') {
+          p.delete('tab')
+        } else {
+          p.set('tab', tab)
+        }
+        p.delete('page') // Reset to page 1
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const setOffset = useCallback((newOffset: number) => {
-    setSearchParams(prev => {
-      const newParams = new URLSearchParams(prev)
-      const curSize = parseInt(newParams.get('limit') || '0')
-      const effectiveSize = PAGE_SIZE_OPTIONS.includes(curSize) ? curSize : DEFAULT_PAGE_SIZE
-      const newPage = Math.floor(newOffset / effectiveSize) + 1
-      if (newPage <= 1) {
-        newParams.delete('page')
-      } else {
-        newParams.set('page', String(newPage))
-      }
-      return newParams
-    })
-  }, [setSearchParams])
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const newParams = new URLSearchParams(prev)
+        const curSize = parseInt(newParams.get('limit') || '0')
+        const effectiveSize = PAGE_SIZE_OPTIONS.includes(curSize) ? curSize : DEFAULT_PAGE_SIZE
+        const newPage = Math.floor(newOffset / effectiveSize) + 1
+        if (newPage <= 1) {
+          newParams.delete('page')
+        } else {
+          newParams.set('page', String(newPage))
+        }
+        return newParams
+      })
+    },
+    [setSearchParams],
+  )
 
-  const setPageSize = useCallback((size: number) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (size === DEFAULT_PAGE_SIZE) {
-        p.delete('limit')
-      } else {
-        p.set('limit', String(size))
-      }
-      p.delete('page') // Reset to page 1
-      return p
-    })
-  }, [setSearchParams])
+  const setPageSize = useCallback(
+    (size: number) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (size === DEFAULT_PAGE_SIZE) {
+          p.delete('limit')
+        } else {
+          p.set('limit', String(size))
+        }
+        p.delete('page') // Reset to page 1
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
   const handleSort = (field: MemberSortField) => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       let newField = field
       let newDir: SortDirection = 'desc'
@@ -1317,14 +1572,16 @@ export function MulticastGroupDetailPage() {
 
   const SortIcon = ({ field }: { field: MemberSortField }) => {
     if (sortField !== field) return null
-    return sortDirection === 'asc'
-      ? <ChevronUp className="h-3 w-3" />
-      : <ChevronDown className="h-3 w-3" />
+    return sortDirection === 'asc' ? (
+      <ChevronUp className="h-3 w-3" />
+    ) : (
+      <ChevronDown className="h-3 w-3" />
+    )
   }
 
   const sortAria = (field: MemberSortField) => {
     if (sortField !== field) return 'none' as const
-    return sortDirection === 'asc' ? 'ascending' as const : 'descending' as const
+    return sortDirection === 'asc' ? ('ascending' as const) : ('descending' as const)
   }
 
   // Filter state from URL
@@ -1333,28 +1590,28 @@ export function MulticastGroupDetailPage() {
   const allFilters = liveFilter ? [...searchFilters, liveFilter] : searchFilters
 
   // Convert all filters to "field:value" params for the API
-  const filterParams = useMemo(
-    () => allFilters.map(toMemberFilterParam),
-    [allFilters]
-  )
+  const filterParams = useMemo(() => allFilters.map(toMemberFilterParam), [allFilters])
   const filterKey = filterParams.join(',')
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    const newFilters = searchFilters.filter(f => f !== filterToRemove)
-    setSearchParams(prev => {
-      const newParams = new URLSearchParams(prev)
-      if (newFilters.length === 0) {
-        newParams.delete('search')
-      } else {
-        newParams.set('search', newFilters.join(','))
-      }
-      newParams.delete('page') // Reset to page 1
-      return newParams
-    })
-  }, [searchFilters, setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const newParams = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          newParams.delete('search')
+        } else {
+          newParams.set('search', newFilters.join(','))
+        }
+        newParams.delete('page') // Reset to page 1
+        return newParams
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('search')
       newParams.delete('page')
@@ -1367,7 +1624,7 @@ export function MulticastGroupDetailPage() {
   useEffect(() => {
     if (prevFilterRef.current === filterKey) return
     prevFilterRef.current = filterKey
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
@@ -1375,7 +1632,11 @@ export function MulticastGroupDetailPage() {
   }, [filterKey, setSearchParams])
 
   // Group metadata query
-  const { data: group, isLoading: groupLoading, error: groupError } = useQuery({
+  const {
+    data: group,
+    isLoading: groupLoading,
+    error: groupError,
+  } = useQuery({
     queryKey: ['multicast-group', pk],
     queryFn: () => fetchMulticastGroup(pk!),
     enabled: !!pk,
@@ -1383,17 +1644,31 @@ export function MulticastGroupDetailPage() {
   })
 
   // Members query (server-side pagination)
-  const { data: membersResponse, isLoading: membersLoading, isFetching: membersFetching } = useQuery({
-    queryKey: ['multicast-group-members', pk, activeTab, offset, pageSize, sortField, sortDirection, filterKey],
-    queryFn: () => fetchMulticastGroupMembers(
-      pk!,
-      pageSize,
+  const {
+    data: membersResponse,
+    isLoading: membersLoading,
+    isFetching: membersFetching,
+  } = useQuery({
+    queryKey: [
+      'multicast-group-members',
+      pk,
+      activeTab,
       offset,
+      pageSize,
       sortField,
       sortDirection,
-      activeTab,
-      filterParams.length > 0 ? filterParams : undefined
-    ),
+      filterKey,
+    ],
+    queryFn: () =>
+      fetchMulticastGroupMembers(
+        pk!,
+        pageSize,
+        offset,
+        sortField,
+        sortDirection,
+        activeTab,
+        filterParams.length > 0 ? filterParams : undefined,
+      ),
     enabled: !!pk,
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
@@ -1409,9 +1684,9 @@ export function MulticastGroupDetailPage() {
   // Selected members not on current page — surfaced at top of table
   const surfacedMembers = useMemo(() => {
     if (selectedSeriesKeys.size === 0 || !group) return []
-    const activeKeys = new Set(activeMembers.map(m => `${m.device_pk}_${m.tunnel_id}`))
+    const activeKeys = new Set(activeMembers.map((m) => `${m.device_pk}_${m.tunnel_id}`))
     const modeFilter = activeTab === 'publishers' ? 'P' : 'S'
-    return group.members.filter(m => {
+    return group.members.filter((m) => {
       const key = `${m.device_pk}_${m.tunnel_id}`
       if (!selectedSeriesKeys.has(key)) return false
       if (activeKeys.has(key)) return false
@@ -1435,7 +1710,10 @@ export function MulticastGroupDetailPage() {
         const rowTop = row.offsetTop
         const containerScroll = container.scrollTop
         const containerHeight = container.clientHeight
-        if (rowTop < containerScroll || rowTop > containerScroll + containerHeight - row.offsetHeight) {
+        if (
+          rowTop < containerScroll ||
+          rowTop > containerScroll + containerHeight - row.offsetHeight
+        ) {
           container.scrollTo({ top: Math.max(0, rowTop - 80), behavior: 'smooth' })
         }
       })
@@ -1471,35 +1749,53 @@ export function MulticastGroupDetailPage() {
     <>
       <td className="px-4 py-3 text-sm font-mono">
         {member.owner_pubkey ? (
-          <Link to={`/dz/users/${member.user_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+          <Link
+            to={`/dz/users/${member.user_pk}`}
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
             {member.owner_pubkey.slice(0, 4)}..{member.owner_pubkey.slice(-4)}
           </Link>
-        ) : '—'}
+        ) : (
+          '—'
+        )}
       </td>
       <td className="px-4 py-3 text-sm font-mono">
         {member.node_pubkey ? (
-          <Link to={`/solana/gossip-nodes/${member.node_pubkey}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+          <Link
+            to={`/solana/gossip-nodes/${member.node_pubkey}`}
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
             {member.node_pubkey.slice(0, 4)}..{member.node_pubkey.slice(-4)}
           </Link>
-        ) : '—'}
+        ) : (
+          '—'
+        )}
       </td>
       <td className="px-4 py-3 text-sm">
         {member.device_pk ? (
-          <Link to={`/dz/devices/${member.device_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+          <Link
+            to={`/dz/devices/${member.device_pk}`}
+            className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+          >
             {member.device_code || member.device_pk.slice(0, 8)}
           </Link>
-        ) : '—'}
+        ) : (
+          '—'
+        )}
       </td>
       <td className="px-4 py-3 text-sm">
         {member.metro_pk ? (
-          <Link to={`/dz/metros/${member.metro_pk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+          <Link
+            to={`/dz/metros/${member.metro_pk}`}
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
             {member.metro_name || member.metro_code}
           </Link>
-        ) : '—'}
+        ) : (
+          '—'
+        )}
       </td>
-      <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-        {member.dz_ip || '—'}
-      </td>
+      <td className="px-4 py-3 text-sm font-mono text-muted-foreground">{member.dz_ip || '—'}</td>
       <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground font-mono">
         {member.tunnel_id > 0 ? member.tunnel_id : '—'}
       </td>
@@ -1610,49 +1906,87 @@ export function MulticastGroupDetailPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('owner_pubkey')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('owner_pubkey')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('owner_pubkey')}
+                    >
                       Owner
                       <SortIcon field="owner_pubkey" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('node_pubkey')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('node_pubkey')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('node_pubkey')}
+                    >
                       Node
                       <SortIcon field="node_pubkey" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('device_code')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('device_code')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('device_code')}
+                    >
                       Device
                       <SortIcon field="device_code" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('metro_name')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('metro_name')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('metro_name')}
+                    >
                       Metro
                       <SortIcon field="metro_name" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('dz_ip')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('dz_ip')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('dz_ip')}
+                    >
                       DZ IP
                       <SortIcon field="dz_ip" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('tunnel_id')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('tunnel_id')}>
+                  <th
+                    className="px-4 py-3 font-medium text-right"
+                    aria-sort={sortAria('tunnel_id')}
+                  >
+                    <button
+                      className="inline-flex items-center gap-1 justify-end w-full"
+                      type="button"
+                      onClick={() => handleSort('tunnel_id')}
+                    >
                       Tunnel
                       <SortIcon field="tunnel_id" />
                     </button>
                   </th>
-                  <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('stake_sol')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('stake_sol')}>
+                  <th
+                    className="px-4 py-3 font-medium text-right"
+                    aria-sort={sortAria('stake_sol')}
+                  >
+                    <button
+                      className="inline-flex items-center gap-1 justify-end w-full"
+                      type="button"
+                      onClick={() => handleSort('stake_sol')}
+                    >
                       Stake
                       <SortIcon field="stake_sol" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('leader_schedule')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('leader_schedule')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('leader_schedule')}
+                    >
                       Leader Schedule
                       <SortIcon field="leader_schedule" />
                     </button>
@@ -1679,15 +2013,16 @@ export function MulticastGroupDetailPage() {
                 {activeMembers.map((member) => {
                   const memberSeriesKey = `${member.device_pk}_${member.tunnel_id}`
                   const isHovered = hoveredSeriesKey === memberSeriesKey
-                  const isSelected = selectedSeriesKeys.size > 0 && selectedSeriesKeys.has(memberSeriesKey)
+                  const isSelected =
+                    selectedSeriesKeys.size > 0 && selectedSeriesKeys.has(memberSeriesKey)
                   return (
-                  <tr
-                    key={member.user_pk}
-                    ref={isSelected && surfacedMembers.length === 0 ? selectedRowRef : undefined}
-                    className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${isSelected ? 'bg-muted border-l-2 border-l-purple-500' : isHovered ? 'bg-muted' : ''}`}
-                  >
-                    {renderMemberCells(member)}
-                  </tr>
+                    <tr
+                      key={member.user_pk}
+                      ref={isSelected && surfacedMembers.length === 0 ? selectedRowRef : undefined}
+                      className={`border-b border-border last:border-b-0 hover:bg-muted transition-colors ${isSelected ? 'bg-muted border-l-2 border-l-purple-500' : isHovered ? 'bg-muted' : ''}`}
+                    >
+                      {renderMemberCells(member)}
+                    </tr>
                   )
                 })}
                 {!membersLoading && activeMembers.length === 0 && surfacedMembers.length === 0 && (
@@ -1714,14 +2049,18 @@ export function MulticastGroupDetailPage() {
 
         <div className="space-y-6">
           {/* Shred stats chart — only for groups with shred stats */}
-          {pk && group && group.has_shred_stats && activeTab === 'publishers' && group.members.length > 0 && (
-            <ShredStatsChart
-              groupCode={pk}
-              members={group.members}
-              onHoverMember={setHoveredSeriesKey}
-              onSelectMember={setSelectedSeriesKeys}
-            />
-          )}
+          {pk &&
+            group &&
+            group.has_shred_stats &&
+            activeTab === 'publishers' &&
+            group.members.length > 0 && (
+              <ShredStatsChart
+                groupCode={pk}
+                members={group.members}
+                onHoverMember={setHoveredSeriesKey}
+                onSelectMember={setSelectedSeriesKeys}
+              />
+            )}
 
           {/* Traffic chart — uses all members (not just current page) for series labels */}
           {pk && group && group.members.length > 0 && (

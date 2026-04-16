@@ -25,14 +25,22 @@ export function LinkDetailPage() {
   const queryClient = useQueryClient()
   const [timeRange, setTimeRange] = useState<TimeRange>({ preset: '24h' })
   const [bucket, setBucket] = useState<BucketSize>('auto')
-  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
-  const effectiveBucketLabel = bucket === 'auto'
-    ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
-    : undefined
+  const effectiveBucketLabel =
+    bucket === 'auto'
+      ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
+      : undefined
 
-  const { data: link, isLoading, error } = useQuery({
+  const {
+    data: link,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['link', pk],
     queryFn: () => fetchLink(pk!),
     enabled: !!pk,
@@ -40,7 +48,11 @@ export function LinkDetailPage() {
 
   const metricsParams = useMemo(() => toLinkMetricsParams(timeRange, bucket), [timeRange, bucket])
 
-  const { data: metrics, isLoading: metricsLoading, isFetching: metricsFetching } = useQuery({
+  const {
+    data: metrics,
+    isLoading: metricsLoading,
+    isFetching: metricsFetching,
+  } = useQuery({
     queryKey: ['linkMetrics', pk, metricsParams],
     queryFn: () => fetchLinkMetrics(pk!, metricsParams),
     enabled: !!pk,
@@ -88,13 +100,15 @@ export function LinkDetailPage() {
 
         {/* Header */}
         <div className="flex items-center gap-3 mb-8">
-          <Cable className="h-8 w-8 text-muted-foreground" />
-          <div>
-            <h1 className="text-2xl font-medium font-mono">
-              <CopyableText text={link.code} />
-            </h1>
-            <div className="text-sm text-muted-foreground font-mono">
-              <CopyableText text={link.pk} />
+          <Cable className="hidden sm:block h-8 w-8 text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <CopyableText text={link.code} className="w-full cursor-pointer">
+              <h1 className="text-2xl font-medium font-mono break-all">{link.code}</h1>
+            </CopyableText>
+            <div className="text-sm text-muted-foreground font-mono mt-0.5">
+              <CopyableText text={link.pk} className="flex-wrap">
+                <span className="break-all">{link.pk}</span>
+              </CopyableText>
             </div>
           </div>
         </div>
@@ -114,7 +128,11 @@ export function LinkDetailPage() {
             className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
             title="Refresh"
           >
-            {metricsFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {metricsFetching ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
           </button>
           <TrafficFilters
             bucket={bucket}
@@ -137,12 +155,46 @@ export function LinkDetailPage() {
         )}
         {metrics && (
           <div className="space-y-4">
-            <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
-            <LinkPacketLossChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkTrafficChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkLatencyChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkJitterChart data={metrics} loading={metricsFetching} className="rounded-lg border border-border p-4" highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkHealthTimeline
+              data={metrics}
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
+            <LinkPacketLossChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkInterfaceIssuesChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkTrafficChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkLatencyChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkJitterChart
+              data={metrics}
+              loading={metricsFetching}
+              className="rounded-lg border border-border p-4"
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
           </div>
         )}
       </div>

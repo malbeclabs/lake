@@ -35,11 +35,32 @@ function truncatePubkey(pubkey: string): string {
   return `${pubkey.slice(0, 6)}...${pubkey.slice(-4)}`
 }
 
-type SortField = 'owner' | 'kind' | 'dzip' | 'clientip' | 'device' | 'metro' | 'tenant' | 'status' | 'in' | 'out'
+type SortField =
+  | 'owner'
+  | 'kind'
+  | 'dzip'
+  | 'clientip'
+  | 'device'
+  | 'metro'
+  | 'tenant'
+  | 'status'
+  | 'in'
+  | 'out'
 type SortDirection = 'asc' | 'desc'
 
 // Valid filter field names as accepted by the API
-const validFilterFields = ['owner', 'kind', 'dzip', 'clientip', 'device', 'metro', 'tenant', 'status', 'in', 'out']
+const validFilterFields = [
+  'owner',
+  'kind',
+  'dzip',
+  'clientip',
+  'device',
+  'metro',
+  'tenant',
+  'status',
+  'in',
+  'out',
+]
 
 const userFieldPrefixes = [
   { prefix: 'owner:', description: 'Filter by owner pubkey' },
@@ -54,11 +75,19 @@ const userFieldPrefixes = [
   { prefix: 'out:', description: 'Filter by outbound traffic (e.g., >1gbps)' },
 ]
 
-const userAutocompleteFields: (string | { field: string; minChars: number })[] = ['status', 'kind', 'metro', { field: 'device', minChars: 2 }]
+const userAutocompleteFields: (string | { field: string; minChars: number })[] = [
+  'status',
+  'kind',
+  'metro',
+  { field: 'device', minChars: 2 },
+]
 
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
-  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+  return searchParam
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
 }
 
 function toFilterParam(filter: string): string {
@@ -80,9 +109,13 @@ export function UsersPage() {
 
   const showDeleted = searchParams.get('deleted') === '1'
   const toggleDeleted = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
-      if (showDeleted) { newParams.delete('deleted') } else { newParams.set('deleted', '1') }
+      if (showDeleted) {
+        newParams.delete('deleted')
+      } else {
+        newParams.set('deleted', '1')
+      }
       newParams.delete('page')
       return newParams
     })
@@ -90,14 +123,21 @@ export function UsersPage() {
 
   const page = parseInt(searchParams.get('page') || '1')
   const offset = (page - 1) * PAGE_SIZE
-  const setOffset = useCallback((newOffset: number) => {
-    setSearchParams(prev => {
-      const newParams = new URLSearchParams(prev)
-      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
-      if (newPage <= 1) { newParams.delete('page') } else { newParams.set('page', String(newPage)) }
-      return newParams
-    })
-  }, [setSearchParams])
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const newParams = new URLSearchParams(prev)
+        const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+        if (newPage <= 1) {
+          newParams.delete('page')
+        } else {
+          newParams.set('page', String(newPage))
+        }
+        return newParams
+      })
+    },
+    [setSearchParams],
+  )
 
   const sortField = (searchParams.get('sort') || 'owner') as SortField
   const sortDirection = (searchParams.get('dir') || 'asc') as SortDirection
@@ -109,37 +149,45 @@ export function UsersPage() {
   const filterParams = useMemo(() => allFilters.map(toFilterParam), [allFilters])
   const filterKey = filterParams.join(',')
 
-  const { data: response, isLoading, error } = useQuery({
+  const {
+    data: response,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['users', offset, sortField, sortDirection, filterKey, showDeleted],
-    queryFn: () => fetchUsers(
-      PAGE_SIZE,
-      offset,
-      sortField,
-      sortDirection,
-      filterParams.length > 0 ? filterParams : undefined,
-      showDeleted
-    ),
+    queryFn: () =>
+      fetchUsers(
+        PAGE_SIZE,
+        offset,
+        sortField,
+        sortDirection,
+        filterParams.length > 0 ? filterParams : undefined,
+        showDeleted,
+      ),
     refetchInterval: 30000,
     placeholderData: keepPreviousData,
   })
 
   const users = response?.items ?? []
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    const newFilters = searchFilters.filter(f => f !== filterToRemove)
-    setSearchParams(prev => {
-      const newParams = new URLSearchParams(prev)
-      if (newFilters.length === 0) {
-        newParams.delete('search')
-      } else {
-        newParams.set('search', newFilters.join(','))
-      }
-      return newParams
-    })
-  }, [searchFilters, setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const newParams = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          newParams.delete('search')
+        } else {
+          newParams.set('search', newFilters.join(','))
+        }
+        return newParams
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('search')
       return newParams
@@ -147,7 +195,7 @@ export function UsersPage() {
   }, [setSearchParams])
 
   const handleSort = (field: SortField) => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
       if (sortField === field) {
         newParams.set('dir', sortDirection === 'asc' ? 'desc' : 'asc')
@@ -162,9 +210,11 @@ export function UsersPage() {
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null
-    return sortDirection === 'asc'
-      ? <ChevronUp className="h-3 w-3" />
-      : <ChevronDown className="h-3 w-3" />
+    return sortDirection === 'asc' ? (
+      <ChevronUp className="h-3 w-3" />
+    ) : (
+      <ChevronDown className="h-3 w-3" />
+    )
   }
 
   const sortAria = (field: SortField) => {
@@ -177,7 +227,7 @@ export function UsersPage() {
   useEffect(() => {
     if (prevFilterRef.current === filterKey) return
     prevFilterRef.current = filterKey
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
       newParams.delete('page')
       return newParams
@@ -233,7 +283,7 @@ export function UsersPage() {
               )}
               <button
                 onClick={toggleDeleted}
-                className={`text-xs px-2 py-1 rounded-md border transition-colors ${
+                className={`text-sm px-2 py-1 rounded-md border transition-colors ${
                   showDeleted
                     ? 'bg-gray-500/15 text-gray-500 border-gray-500/30 hover:bg-gray-500/25'
                     : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -259,61 +309,101 @@ export function UsersPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('owner')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('owner')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('owner')}
+                    >
                       Owner
                       <SortIcon field="owner" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('kind')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('kind')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('kind')}
+                    >
                       Kind
                       <SortIcon field="kind" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('clientip')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('clientip')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('clientip')}
+                    >
                       Client IP
                       <SortIcon field="clientip" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('dzip')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('dzip')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('dzip')}
+                    >
                       DZ IP
                       <SortIcon field="dzip" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('device')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('device')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('device')}
+                    >
                       Device
                       <SortIcon field="device" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('metro')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('metro')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('metro')}
+                    >
                       Metro
                       <SortIcon field="metro" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('tenant')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('tenant')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('tenant')}
+                    >
                       Tenant
                       <SortIcon field="tenant" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium" aria-sort={sortAria('status')}>
-                    <button className="inline-flex items-center gap-1" type="button" onClick={() => handleSort('status')}>
+                    <button
+                      className="inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => handleSort('status')}
+                    >
                       Status
                       <SortIcon field="status" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('in')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('in')}>
+                    <button
+                      className="inline-flex items-center gap-1 justify-end w-full"
+                      type="button"
+                      onClick={() => handleSort('in')}
+                    >
                       In
                       <SortIcon field="in" />
                     </button>
                   </th>
                   <th className="px-4 py-3 font-medium text-right" aria-sort={sortAria('out')}>
-                    <button className="inline-flex items-center gap-1 justify-end w-full" type="button" onClick={() => handleSort('out')}>
+                    <button
+                      className="inline-flex items-center gap-1 justify-end w-full"
+                      type="button"
+                      onClick={() => handleSort('out')}
+                    >
                       Out
                       <SortIcon field="out" />
                     </button>
@@ -332,36 +422,70 @@ export function UsersPage() {
                         <span title={user.owner_pubkey}>{truncatePubkey(user.owner_pubkey)}</span>
                       </CopyableText>
                     </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {user.kind || '—'}
+                    <td className="px-4 py-3 text-sm text-muted-foreground">{user.kind || '—'}</td>
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">
+                      {user.client_ip ? (
+                        <CopyableText text={user.client_ip} className="font-mono" />
+                      ) : (
+                        <span className="font-mono text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {user.client_ip ? <CopyableText text={user.client_ip} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
+                      {user.dz_ip ? (
+                        <CopyableText text={user.dz_ip} className="font-mono" />
+                      ) : (
+                        <span className="font-mono text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {user.dz_ip ? <CopyableText text={user.dz_ip} className="font-mono" /> : <span className="font-mono text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      {user.device_pk
-                        ? <Link to={`/dz/devices/${user.device_pk}`} className="font-mono text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{user.device_code}</Link>
-                        : <span className="font-mono text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {user.metro_pk
-                        ? <Link to={`/dz/metros/${user.metro_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" onClick={e => e.stopPropagation()}>{user.metro_name || user.metro_code}</Link>
-                        : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {user.tenant_code
-                        ? <Link to={`/dz/tenants/${user.tenant_pk}`} className="font-mono hover:underline" onClick={e => e.stopPropagation()}>{user.tenant_code}</Link>
-                        : <span className="text-muted-foreground">—</span>
-                      }
+                      {user.device_pk ? (
+                        <Link
+                          to={`/dz/devices/${user.device_pk}`}
+                          className="font-mono text-foreground/85 hover:text-foreground hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {user.device_code}
+                        </Link>
+                      ) : (
+                        <span className="font-mono text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      {user.is_deleted
-                        ? <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">Deleted</span>
-                        : <span className={`capitalize ${statusColors[user.status] || ''}`}>{user.status}</span>
-                      }
+                      {user.metro_pk ? (
+                        <Link
+                          to={`/dz/metros/${user.metro_pk}`}
+                          className="text-foreground/85 hover:text-foreground hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {user.metro_name || user.metro_code}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {user.tenant_code ? (
+                        <Link
+                          to={`/dz/tenants/${user.tenant_pk}`}
+                          className="font-mono hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {user.tenant_code}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {user.is_deleted ? (
+                        <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-gray-500/15 text-gray-500">
+                          Deleted
+                        </span>
+                      ) : (
+                        <span className={`capitalize ${statusColors[user.status] || ''}`}>
+                          {user.status}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right text-muted-foreground">
                       {formatBps(user.in_bps)}

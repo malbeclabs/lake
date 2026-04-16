@@ -51,28 +51,48 @@ function formatBandwidth(bps: number): string {
 function InterfaceTypeBadges({ iface }: { iface: DeviceInterface }) {
   const badges: { label: string; className: string }[] = []
   if (iface.interface_type === 'loopback') {
-    badges.push({ label: 'loopback', className: 'bg-purple-500/15 text-purple-400' })
+    badges.push({
+      label: 'loopback',
+      className: 'bg-purple-500/15 text-purple-400',
+    })
     if (iface.loopback_type && iface.loopback_type !== 'none') {
-      badges.push({ label: iface.loopback_type, className: 'bg-purple-500/10 text-purple-400/80' })
+      badges.push({
+        label: iface.loopback_type,
+        className: 'bg-purple-500/10 text-purple-400/80',
+      })
     }
   }
   if (iface.cyoa_type && iface.cyoa_type !== 'none') {
-    badges.push({ label: iface.cyoa_type.replace(/_/g, ' '), className: 'bg-amber-500/15 text-amber-400' })
+    badges.push({
+      label: iface.cyoa_type.replace(/_/g, ' '),
+      className: 'bg-amber-500/15 text-amber-400',
+    })
   }
   if (iface.dia_type && iface.dia_type !== 'none') {
-    badges.push({ label: 'DIA', className: 'bg-orange-500/15 text-orange-400' })
+    badges.push({
+      label: 'DIA',
+      className: 'bg-orange-500/15 text-orange-400',
+    })
   }
   if (iface.routing_mode && iface.routing_mode !== 'static') {
-    badges.push({ label: iface.routing_mode.toUpperCase(), className: 'bg-blue-500/15 text-blue-400' })
+    badges.push({
+      label: iface.routing_mode.toUpperCase(),
+      className: 'bg-blue-500/15 text-blue-400',
+    })
   }
   if (iface.bandwidth && iface.bandwidth > 0) {
-    badges.push({ label: formatBandwidth(iface.bandwidth), className: 'bg-green-500/15 text-green-400' })
+    badges.push({
+      label: formatBandwidth(iface.bandwidth),
+      className: 'bg-green-500/15 text-green-400',
+    })
   }
   if (badges.length === 0) return null
   return (
-    <span className="inline-flex gap-1 ml-1.5">
+    <span className="inline-flex gap-1">
       {badges.map((b, i) => (
-        <span key={i} className={`px-1 py-0.5 rounded text-[10px] leading-none ${b.className}`}>{b.label}</span>
+        <span key={i} className={`px-1 py-0.5 rounded text-[10px] leading-none ${b.className}`}>
+          {b.label}
+        </span>
       ))}
     </span>
   )
@@ -102,10 +122,15 @@ export function DeviceInfoContent({
   hideStatusRow = false,
   hideCharts = false,
 }: DeviceInfoContentProps) {
-  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
-  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({
+    preset: '24h',
+  })
 
   const timeRange = controlledTimeRange ?? internalTimeRange
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
@@ -118,13 +143,16 @@ export function DeviceInfoContent({
     enabled: !hideCharts,
   })
 
-  const cardClass = "rounded-lg border border-border p-4"
+  const cardClass = 'rounded-lg border border-border p-4'
   const stats = [
     { label: 'Type', value: device.deviceType },
     {
       label: 'Contributor',
       value: device.contributorPk ? (
-        <Link to={`/dz/contributors/${device.contributorPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+        <Link
+          to={`/dz/contributors/${device.contributorPk}`}
+          className="text-blue-600 dark:text-blue-400 hover:underline"
+        >
           {device.contributorCode}
         </Link>
       ) : (
@@ -134,7 +162,10 @@ export function DeviceInfoContent({
     {
       label: 'Metro',
       value: device.metroPk ? (
-        <Link to={`/dz/metros/${device.metroPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+        <Link
+          to={`/dz/metros/${device.metroPk}`}
+          className="text-blue-600 dark:text-blue-400 hover:underline"
+        >
           {device.metroName}
         </Link>
       ) : (
@@ -152,7 +183,7 @@ export function DeviceInfoContent({
     if (a.status === 'activated' && b.status !== 'activated') return -1
     if (a.status !== 'activated' && b.status === 'activated') return 1
     // Physical before loopback
-    const typeOrder = (t?: string) => t === 'physical' ? 0 : t === 'loopback' ? 1 : 2
+    const typeOrder = (t?: string) => (t === 'physical' ? 0 : t === 'loopback' ? 1 : 2)
     const typeA = typeOrder(a.interface_type)
     const typeB = typeOrder(b.interface_type)
     if (typeA !== typeB) return typeA - typeB
@@ -167,9 +198,7 @@ export function DeviceInfoContent({
         <div className="grid grid-cols-2 gap-2">
           {stats.map((stat, i) => (
             <div key={i} className="text-center p-2 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums tracking-tight">
-                {stat.value}
-              </div>
+              <div className="text-base font-medium tabular-nums tracking-tight">{stat.value}</div>
               <div className="text-xs text-muted-foreground">{stat.label}</div>
             </div>
           ))}
@@ -191,9 +220,7 @@ export function DeviceInfoContent({
                     {iface.name}
                     <InterfaceTypeBadges iface={iface} />
                   </span>
-                  <span className="text-muted-foreground whitespace-nowrap">
-                    {iface.ip || '—'}
-                  </span>
+                  <span className="text-muted-foreground whitespace-nowrap">{iface.ip || '—'}</span>
                 </div>
               ))}
             </div>
@@ -210,9 +237,27 @@ export function DeviceInfoContent({
         {/* Charts from unified metrics endpoint */}
         {!hideCharts && metrics && (
           <div className="space-y-4">
-            {!hideStatusRow && <DeviceHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />}
-            <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            {!hideStatusRow && (
+              <DeviceHealthTimeline
+                data={metrics}
+                onBarHover={setHoveredTimeRange}
+                highlightedTime={chartHoveredTime}
+              />
+            )}
+            <DeviceInterfaceIssuesChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <DeviceTrafficChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
           </div>
         )}
       </div>
@@ -223,12 +268,10 @@ export function DeviceInfoContent({
   return (
     <div className="space-y-6">
       {/* Stats grid - responsive columns */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+      <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2">
         {stats.map((stat, i) => (
           <div key={i} className="text-center p-3 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums tracking-tight">
-              {stat.value}
-            </div>
+            <div className="text-base font-medium tabular-nums tracking-tight">{stat.value}</div>
             <div className="text-xs text-muted-foreground">{stat.label}</div>
           </div>
         ))}
@@ -240,17 +283,15 @@ export function DeviceInfoContent({
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
             Interfaces ({sortedInterfaces.length})
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-1.5">
             {sortedInterfaces.map((iface, i) => (
               <div
                 key={i}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/30 rounded text-xs font-mono"
+                className="flex flex-wrap items-center gap-1.5 px-2.5 py-1.5 bg-muted/30 rounded text-xs font-mono"
                 title={`${iface.name} — ${iface.ip || 'no IP'}`}
               >
                 <span>{iface.name}</span>
-                {iface.ip && (
-                  <span className="text-muted-foreground">{iface.ip}</span>
-                )}
+                {iface.ip && <span className="text-muted-foreground">{iface.ip}</span>}
                 <InterfaceTypeBadges iface={iface} />
               </div>
             ))}
@@ -267,12 +308,29 @@ export function DeviceInfoContent({
 
       {!hideCharts && metrics && (
         <div className="space-y-4">
-          {!hideStatusRow && <DeviceHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />}
-          <DeviceInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-          <DeviceTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+          {!hideStatusRow && (
+            <DeviceHealthTimeline
+              data={metrics}
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
+          )}
+          <DeviceInterfaceIssuesChart
+            data={metrics}
+            loading={metricsFetching}
+            className={cardClass}
+            highlightTimeRange={hoveredTimeRange}
+            onCursorTime={setChartHoveredTime}
+          />
+          <DeviceTrafficChart
+            data={metrics}
+            loading={metricsFetching}
+            className={cardClass}
+            highlightTimeRange={hoveredTimeRange}
+            onCursorTime={setChartHoveredTime}
+          />
         </div>
       )}
     </div>
   )
 }
-
