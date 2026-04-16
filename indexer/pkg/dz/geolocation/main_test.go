@@ -25,4 +25,3 @@ func TestMain(m *testing.M) {
 	sharedDB.Close()
 	os.Exit(code)
 }
-
