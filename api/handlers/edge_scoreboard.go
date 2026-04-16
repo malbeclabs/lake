@@ -133,8 +133,18 @@ type EdgeScoreboardResponse struct {
 // of headroom.
 const maxValidSlot = 1_000_000_000_000
 
+// regionalRetransmitFeeds lists the DZ regional retransmit feed names that have
+// replaced dz_rebop as the DZ retransmit infrastructure. They're folded into a
+// synthetic 'dz_rebop' feed in the API response so the frontend keeps one
+// "DZ Edge Retransmits" bucket.
+var regionalRetransmitFeeds = []string{"edge-solana-retrans-amer", "edge-solana-retrans-eu", "edge-solana-retrans-apac"}
+
+// dzFamilyFeeds is the SQL IN-list of DZ-family feed names (leader + regional retransmits).
+const dzFamilyFeeds = `'dz', 'edge-solana-retrans-amer', 'edge-solana-retrans-eu', 'edge-solana-retrans-apac'`
+
 // scoreboardFeeds is the whitelist of feed names included in edge scoreboard results.
-const scoreboardFeeds = `'dz', 'dz_rebop', 'jito', 'turbine'`
+// dz_rebop is excluded — its role is filled by the regional retransmit feeds.
+const scoreboardFeeds = dzFamilyFeeds + `, 'jito', 'turbine'`
 
 // scoreboardLoserFeeds is the whitelist of competitor feeds shown in lead-time comparisons.
 const scoreboardLoserFeeds = `'jito', 'turbine'`
@@ -391,14 +401,15 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 	} else {
 
 		// Query 1: Per-node slot counts from win-count rows (loser_feed = '').
-		// dz_slots counts all Edge feed slots (dz + dz_rebop) for use as SlotsObserved in
-		// all-slots mode. In leaders-only mode, query1b overrides this with DZ-leader slots only.
-		// Includes feed count to filter out nodes that only record one feed (e.g. DZ-only nodes).
+		// dz_slots counts all DZ-family feed slots (dz + regional retransmits) for use as
+		// SlotsObserved in all-slots mode. In leaders-only mode, query1b overrides this
+		// with DZ-leader slots only. Includes feed count to filter out nodes that only
+		// record one feed (e.g. DZ-only nodes).
 		query1 := fmt.Sprintf(`
 		SELECT
 			host,
 			uniqExact(slot) AS total_slots,
-			uniqExactIf(slot, feed IN ('dz', 'dz_rebop')) AS dz_slots,
+			uniqExactIf(slot, feed IN (%s)) AS dz_slots,
 			max(epoch) AS max_epoch,
 			min(slot) AS min_slot,
 			max(slot) AS max_slot,
@@ -408,7 +419,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		WHERE feed_type = 'shred' AND loser_feed = '' %s
 		GROUP BY host
 	SETTINGS final=1
-`, shredderDB, rangeFilter)
+`, dzFamilyFeeds, shredderDB, rangeFilter)
 
 		start := time.Now()
 		rows1, err := a.envDB(ctx).Query(ctx, query1)
@@ -768,13 +779,43 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2 rows: %w", err)
 			}
 
-			// Synthesize dz_edge = dz + dz_rebop on the shared per-host denominator.
-			// Because both dz and dz_rebop carry the same host_denom as TotalShreds,
-			// dz_edge.win_rate_pct == dz.win_rate_pct + dz_rebop.win_rate_pct exactly.
+			// Fold the regional retransmit feeds into a synthetic 'dz_rebop' entry so the
+			// frontend sees one "DZ Edge Retransmits" bucket. dz_rebop is no longer
+			// queried directly — the regional feeds replace it.
 			hosts := make(map[string]struct{})
 			for k := range localFeedStats {
 				hosts[k.nodeID] = struct{}{}
 			}
+			for nodeID := range hosts {
+				var wonSum, denom uint64
+				var anyRegional bool
+				for _, rk := range regionalRetransmitFeeds {
+					if fs := localFeedStats[feedKey{nodeID, rk}]; fs != nil {
+						wonSum += fs.ShredsWon
+						if denom == 0 {
+							denom = fs.TotalShreds
+						}
+						anyRegional = true
+						delete(localFeedStats, feedKey{nodeID, rk})
+					}
+				}
+				if !anyRegional {
+					continue
+				}
+				var rate float64
+				if denom > 0 {
+					rate = float64(int(float64(wonSum)/float64(denom)*1000+0.5)) / 10
+				}
+				localFeedStats[feedKey{nodeID, "dz_rebop"}] = &EdgeScoreboardFeedStats{
+					ShredsWon:   wonSum,
+					TotalShreds: denom,
+					WinRatePct:  rate,
+				}
+			}
+
+			// Synthesize dz_edge = dz + dz_rebop on the shared per-host denominator.
+			// Because both dz and dz_rebop carry the same host_denom as TotalShreds,
+			// dz_edge.win_rate_pct == dz.win_rate_pct + dz_rebop.win_rate_pct exactly.
 			for nodeID := range hosts {
 				dz := localFeedStats[feedKey{nodeID, "dz"}]
 				rebop := localFeedStats[feedKey{nodeID, "dz_rebop"}]
@@ -839,12 +880,12 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
 				FROM %s.slot_feed_race_summary
-				WHERE feed_type = 'shred' AND feed IN ('dz', 'dz_rebop') AND loser_feed IN (%s)
+				WHERE feed_type = 'shred' AND feed IN (%s) AND loser_feed IN (%s)
 					AND lead_time_p50_ms <= 500
 					%s
 				GROUP BY host, loser_feed
 			SETTINGS final=1
-`, shredderDB, scoreboardLoserFeeds, rangeFilter)
+`, shredderDB, dzFamilyFeeds, scoreboardLoserFeeds, rangeFilter)
 			}
 			t := time.Now()
 			rows2b, err := a.envDB(gctx).Query(gctx, q2b)
