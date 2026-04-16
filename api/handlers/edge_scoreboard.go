@@ -695,7 +695,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			// denom = sum(shreds_won) across all scoreboard feeds for in-scope slots —
 			// only races one of the tracked feeds won first. Every feed's win_rate_pct is
 			// its share of those races, so dz + dz_rebop + jito + turbine sum to 100%
-			// and dz_edge (synthesized below from dz + dz_rebop) is additive.
+			// and dz_edge (synthesized below as a copy of dz) overlays the leader-path share.
 			// This excludes shreds won first by untracked feeds (regional retransmits,
 			// provider_one, etc.) so the scoreboard isn't diluted by new feeds we don't track.
 			var q2 string
@@ -768,38 +768,22 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2 rows: %w", err)
 			}
 
-			// Synthesize dz_edge = dz + dz_rebop on the shared per-host denominator.
-			// Because both dz and dz_rebop carry the same host_denom as TotalShreds,
-			// dz_edge.win_rate_pct == dz.win_rate_pct + dz_rebop.win_rate_pct exactly.
+			// Synthesize dz_edge from dz only (the leader-path feed). dz_rebop is excluded
+			// so the headline edge metric reflects shreds the leader's DZ feed won first,
+			// not retransmit fill-ins.
 			hosts := make(map[string]struct{})
 			for k := range localFeedStats {
 				hosts[k.nodeID] = struct{}{}
 			}
 			for nodeID := range hosts {
 				dz := localFeedStats[feedKey{nodeID, "dz"}]
-				rebop := localFeedStats[feedKey{nodeID, "dz_rebop"}]
-				if dz == nil && rebop == nil {
+				if dz == nil {
 					continue
 				}
-				var denom, won uint64
-				if dz != nil {
-					denom = dz.TotalShreds
-					won += dz.ShredsWon
-				}
-				if rebop != nil {
-					if denom == 0 {
-						denom = rebop.TotalShreds
-					}
-					won += rebop.ShredsWon
-				}
-				var rate float64
-				if denom > 0 {
-					rate = float64(int(float64(won)/float64(denom)*1000+0.5)) / 10
-				}
 				localFeedStats[feedKey{nodeID, "dz_edge"}] = &EdgeScoreboardFeedStats{
-					ShredsWon:   won,
-					TotalShreds: denom,
-					WinRatePct:  rate,
+					ShredsWon:   dz.ShredsWon,
+					TotalShreds: dz.TotalShreds,
+					WinRatePct:  dz.WinRatePct,
 				}
 			}
 
