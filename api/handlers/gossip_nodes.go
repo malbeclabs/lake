@@ -239,6 +239,7 @@ func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 			WHERE u.status = 'activated'
 				AND u.client_ip IS NOT NULL
 				AND u.client_ip != ''
+				AND u.client_ip = (SELECT gossip_ip FROM solana_gossip_nodes_current WHERE pubkey = ?)
 			GROUP BY u.client_ip
 		),
 		validator_stake AS (
@@ -248,6 +249,7 @@ func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 				activated_stake_lamports / 1e9 as stake_sol
 			FROM solana_vote_accounts_current
 			WHERE epoch_vote_account = 'true'
+				AND node_pubkey = ?
 		)
 		SELECT
 			g.pubkey,
@@ -274,7 +276,7 @@ func (a *API) GetGossipNode(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var node GossipNodeDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pubkey).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pubkey, pubkey, pubkey).Scan(
 		&node.Pubkey,
 		&node.GossipIP,
 		&node.GossipPort,

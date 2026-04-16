@@ -177,14 +177,14 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 		WITH device_counts AS (
 			SELECT metro_pk, count(*) as device_count
 			FROM dz_devices_current
-			WHERE metro_pk IS NOT NULL
+			WHERE metro_pk = ?
 			GROUP BY metro_pk
 		),
 		user_counts AS (
 			SELECT d.metro_pk, count(*) as user_count
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
-			WHERE u.status = 'activated' AND d.metro_pk IS NOT NULL
+			WHERE u.status = 'activated' AND d.metro_pk = ?
 			GROUP BY d.metro_pk
 		),
 		validator_stats AS (
@@ -196,7 +196,8 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			JOIN dz_devices_current d ON u.device_pk = d.pk
 			JOIN solana_gossip_nodes_current g ON u.client_ip = g.gossip_ip
 			JOIN solana_vote_accounts_current v ON g.pubkey = v.node_pubkey
-			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true' AND d.metro_pk IS NOT NULL
+			WHERE u.status = 'activated' AND u.client_ip != '' AND v.epoch_vote_account = 'true'
+				AND d.metro_pk = ?
 			GROUP BY d.metro_pk
 		),
 		traffic_rates AS (
@@ -209,7 +210,7 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 			WHERE f.bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND f.user_tunnel_id IS NULL
 				AND f.link_pk = ''
-				AND d.metro_pk IS NOT NULL
+				AND d.metro_pk = ?
 			GROUP BY d.metro_pk
 		)
 		SELECT
@@ -233,7 +234,7 @@ func (a *API) GetMetro(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var metro MetroDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk).Scan(
 		&metro.PK,
 		&metro.Code,
 		&metro.Name,

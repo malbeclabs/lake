@@ -192,34 +192,34 @@ func (a *API) GetContributor(w http.ResponseWriter, r *http.Request) {
 		WITH device_counts AS (
 			SELECT contributor_pk, count(*) as cnt
 			FROM dz_devices_current
-			WHERE contributor_pk IS NOT NULL
+			WHERE contributor_pk = ?
 			GROUP BY contributor_pk
 		),
 		side_a_counts AS (
 			SELECT d.contributor_pk as cpk, count(DISTINCT l.pk) as cnt
 			FROM dz_links_current l
 			JOIN dz_devices_current d ON l.side_a_pk = d.pk
-			WHERE d.contributor_pk IS NOT NULL
+			WHERE d.contributor_pk = ?
 			GROUP BY d.contributor_pk
 		),
 		side_z_counts AS (
 			SELECT d.contributor_pk as cpk, count(DISTINCT l.pk) as cnt
 			FROM dz_links_current l
 			JOIN dz_devices_current d ON l.side_z_pk = d.pk
-			WHERE d.contributor_pk IS NOT NULL
+			WHERE d.contributor_pk = ?
 			GROUP BY d.contributor_pk
 		),
 		link_counts AS (
 			SELECT contributor_pk, count(*) as cnt
 			FROM dz_links_current
-			WHERE contributor_pk IS NOT NULL
+			WHERE contributor_pk = ?
 			GROUP BY contributor_pk
 		),
 		user_counts AS (
 			SELECT d.contributor_pk, count(*) as cnt
 			FROM dz_users_current u
 			JOIN dz_devices_current d ON u.device_pk = d.pk
-			WHERE u.status = 'activated' AND d.contributor_pk IS NOT NULL
+			WHERE u.status = 'activated' AND d.contributor_pk = ?
 			GROUP BY d.contributor_pk
 		),
 		traffic_rates AS (
@@ -232,7 +232,7 @@ func (a *API) GetContributor(w http.ResponseWriter, r *http.Request) {
 			WHERE f.bucket_ts >= now() - INTERVAL 15 MINUTE
 				AND f.user_tunnel_id IS NULL
 				AND f.link_pk = ''
-				AND d.contributor_pk IS NOT NULL
+				AND d.contributor_pk = ?
 			GROUP BY d.contributor_pk
 		)
 		SELECT
@@ -257,7 +257,7 @@ func (a *API) GetContributor(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var contributor ContributorDetail
-	err := a.envDB(ctx).QueryRow(ctx, query, pk).Scan(
+	err := a.envDB(ctx).QueryRow(ctx, query, pk, pk, pk, pk, pk, pk, pk).Scan(
 		&contributor.PK,
 		&contributor.Code,
 		&contributor.Name,
