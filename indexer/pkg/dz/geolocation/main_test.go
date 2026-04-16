@@ -5,7 +5,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
 	clickhousetesting "github.com/malbeclabs/lake/indexer/pkg/clickhouse/testing"
 	laketesting "github.com/malbeclabs/lake/utils/pkg/testing"
 )
@@ -27,7 +26,3 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func testClient(t *testing.T) clickhouse.Client {
-	client := laketesting.NewClient(t, sharedDB)
-	return client
-}
