@@ -93,23 +93,6 @@ const queryClient = new QueryClient({
   },
 })
 
-// Redirect to latest or new query session
-function InternalOnly({ children, redirectTo = '/' }: { children: React.ReactNode; redirectTo?: string }) {
-  const { user, isLoading } = useAuth()
-  if (isLoading) return null
-  if (!user?.is_internal_user) return <Navigate to={redirectTo} replace />
-  return <>{children}</>
-}
-
-// /dz/shreds lands on the scoreboard for internal users (the hero dashboard) and on the
-// public publishers page for everyone else. Without this, non-internal users hitting
-// /dz/shreds directly would bounce to the home page via the scoreboard's InternalOnly gate.
-function ShredsIndexRedirect() {
-  const { user, isLoading } = useAuth()
-  if (isLoading) return null
-  return <Navigate to={user?.is_internal_user ? '/dz/shreds/scoreboard' : '/dz/shreds/publishers'} replace />
-}
-
 function QueryRedirect() {
   const navigate = useNavigate()
   const { data: sessions, isLoading, isError } = useQuerySessions()
@@ -711,8 +694,8 @@ function AppContent() {
             <Route path="/dz/users/:pk" element={<UserDetailPage />} />
             <Route path="/dz/multicast-groups" element={<MulticastGroupsPage />} />
             <Route path="/dz/multicast-groups/:pk" element={<MulticastGroupDetailPage />} />
-            <Route path="/dz/shreds" element={<ShredsIndexRedirect />} />
-            <Route path="/dz/shreds/scoreboard" element={<InternalOnly redirectTo="/dz/shreds/publishers"><EdgeScoreboardPage /></InternalOnly>} />
+            <Route path="/dz/shreds" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
+            <Route path="/dz/shreds/scoreboard" element={<EdgeScoreboardPage />} />
             <Route path="/dz/shreds/publishers" element={<PublisherCheckPage />} />
             <Route path="/dz/publisher-check" element={<Navigate to="/dz/shreds/publishers" replace />} />
             <Route path="/dz/shreds/subscribers" element={<ShredsSeatsPage />} />
