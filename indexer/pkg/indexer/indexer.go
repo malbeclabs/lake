@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/malbeclabs/lake/indexer/pkg/clickhouse"
+	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
@@ -25,6 +26,7 @@ type Indexer struct {
 	cfg Config
 
 	svc           *dzsvc.View
+	geoloc        *dzgeoloc.View
 	shreds        *dzshreds.View
 	escrowEvents  *escrowevents.View
 	graphStore    *dzgraph.Store
@@ -81,6 +83,21 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create serviceability view: %w", err)
+	}
+
+	// Initialize geolocation view (optional)
+	var geolocView *dzgeoloc.View
+	if cfg.GeolocationRPC != nil {
+		geolocView, err = dzgeoloc.NewView(dzgeoloc.ViewConfig{
+			Logger:          cfg.Logger,
+			Clock:           cfg.Clock,
+			GeolocationRPC:  cfg.GeolocationRPC,
+			RefreshInterval: cfg.RefreshInterval,
+			ClickHouse:      cfg.ClickHouse,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create geolocation view: %w", err)
+		}
 	}
 
 	// Initialize shreds subscription view (optional, mainnet-beta + testnet only)
@@ -250,6 +267,7 @@ func New(ctx context.Context, cfg Config) (*Indexer, error) {
 		cfg: cfg,
 
 		svc:           svcView,
+		geoloc:        geolocView,
 		shreds:        shredsView,
 		escrowEvents:  escrowEventsView,
 		graphStore:    graphStore,
@@ -332,6 +350,11 @@ func (i *Indexer) ISISSource() isis.Source {
 // ISISStore returns the ISIS ClickHouse store, or nil if not configured.
 func (i *Indexer) ISISStore() *isis.Store {
 	return i.isisStore
+}
+
+// Geolocation returns the geolocation view, or nil if not configured.
+func (i *Indexer) Geolocation() *dzgeoloc.View {
+	return i.geoloc
 }
 
 // Shreds returns the shreds subscription view, or nil if not configured.
