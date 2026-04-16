@@ -31,6 +31,17 @@ func (m *MockGeolocationRPC) GetGeolocationUsers(ctx context.Context) ([]geolocs
 	return nil, nil
 }
 
+func nonEmptyGeolocationRPC() *MockGeolocationRPC {
+	return &MockGeolocationRPC{
+		getGeoProbesFunc: func(ctx context.Context) ([]geolocsdk.KeyedGeoProbe, error) {
+			return []geolocsdk.KeyedGeoProbe{{Pubkey: solana.MustPublicKeyFromBase58("11111111111111111111111111111111")}}, nil
+		},
+		getGeolocationUsersFunc: func(ctx context.Context) ([]geolocsdk.KeyedGeolocationUser, error) {
+			return []geolocsdk.KeyedGeolocationUser{{Pubkey: solana.MustPublicKeyFromBase58("11111111111111111111111111111111")}}, nil
+		},
+	}
+}
+
 func testPubkeyBytes(seed byte) [32]byte {
 	var pk [32]byte
 	for i := range pk {
@@ -66,7 +77,7 @@ func TestLake_Geolocation_View_Ready(t *testing.T) {
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
 			Clock:           clockwork.NewFakeClock(),
-			GeolocationRPC:  &MockGeolocationRPC{},
+			GeolocationRPC:  nonEmptyGeolocationRPC(),
 			RefreshInterval: time.Second,
 			ClickHouse:      mockDB,
 		})
@@ -90,7 +101,7 @@ func TestLake_Geolocation_View_WaitReady(t *testing.T) {
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
 			Clock:           clockwork.NewFakeClock(),
-			GeolocationRPC:  &MockGeolocationRPC{},
+			GeolocationRPC:  nonEmptyGeolocationRPC(),
 			RefreshInterval: time.Second,
 			ClickHouse:      mockDB,
 		})
@@ -435,12 +446,16 @@ func TestLake_Geolocation_View_Refresh(t *testing.T) {
 		require.Equal(t, uint16(8080), targets[0].LocationOffsetPort)
 	})
 
-	t.Run("handles empty RPC response", func(t *testing.T) {
+	t.Run("rejects empty probes response", func(t *testing.T) {
 		t.Parallel()
 
 		mockDB := testClient(t)
 
-		rpc := &MockGeolocationRPC{}
+		rpc := &MockGeolocationRPC{
+			getGeolocationUsersFunc: func(ctx context.Context) ([]geolocsdk.KeyedGeolocationUser, error) {
+				return []geolocsdk.KeyedGeolocationUser{{Pubkey: solana.MustPublicKeyFromBase58("11111111111111111111111111111111")}}, nil
+			},
+		}
 
 		view, err := NewView(ViewConfig{
 			Logger:          laketesting.NewLogger(),
@@ -453,6 +468,33 @@ func TestLake_Geolocation_View_Refresh(t *testing.T) {
 
 		ctx := context.Background()
 		_, err = view.Refresh(ctx)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no probes")
+	})
+
+	t.Run("rejects empty users response", func(t *testing.T) {
+		t.Parallel()
+
+		mockDB := testClient(t)
+
+		rpc := &MockGeolocationRPC{
+			getGeoProbesFunc: func(ctx context.Context) ([]geolocsdk.KeyedGeoProbe, error) {
+				return []geolocsdk.KeyedGeoProbe{{Pubkey: solana.MustPublicKeyFromBase58("11111111111111111111111111111111")}}, nil
+			},
+		}
+
+		view, err := NewView(ViewConfig{
+			Logger:          laketesting.NewLogger(),
+			Clock:           clockwork.NewFakeClock(),
+			GeolocationRPC:  rpc,
+			RefreshInterval: time.Second,
+			ClickHouse:      mockDB,
+		})
 		require.NoError(t, err)
+
+		ctx := context.Background()
+		_, err = view.Refresh(ctx)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no users")
 	})
 }

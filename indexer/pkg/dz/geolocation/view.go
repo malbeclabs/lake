@@ -58,10 +58,15 @@ type Target struct {
 func (t Target) EntityID() string {
 	h := sha256.New()
 	h.Write([]byte(t.GeolocUserPK))
+	h.Write([]byte{0})
 	h.Write([]byte(t.ProbePK))
+	h.Write([]byte{0})
 	h.Write([]byte(t.TargetType))
+	h.Write([]byte{0})
 	h.Write([]byte(t.IP))
+	h.Write([]byte{0})
 	h.Write([]byte{byte(t.LocationOffsetPort >> 8), byte(t.LocationOffsetPort)})
+	h.Write([]byte{0})
 	h.Write([]byte(t.TargetPK))
 	return fmt.Sprintf("%x", h.Sum(nil))[:32]
 }
@@ -228,6 +233,16 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 	v.log.Debug("geolocation: fetched program data",
 		"probes", len(onchainProbes),
 		"users", len(onchainUsers))
+
+	// Validate that we received data — empty responses would tombstone all existing entities.
+	if len(onchainProbes) == 0 {
+		metrics.ViewRefreshTotal.WithLabelValues("geolocation", "error").Inc()
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no probes (possible RPC issue)")
+	}
+	if len(onchainUsers) == 0 {
+		metrics.ViewRefreshTotal.WithLabelValues("geolocation", "error").Inc()
+		return result, fmt.Errorf("refusing to write snapshot: RPC returned no users (possible RPC issue)")
+	}
 
 	probes := convertProbes(onchainProbes)
 	users := convertUsers(onchainUsers)

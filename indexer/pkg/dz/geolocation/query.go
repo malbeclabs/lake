@@ -66,7 +66,9 @@ func QueryCurrentProbes(ctx context.Context, log *slog.Logger, db clickhouse.Cli
 	for i, row := range rows {
 		var parentDevices []string
 		if row.ParentDevices != "" {
-			_ = json.Unmarshal([]byte(row.ParentDevices), &parentDevices)
+			if err := json.Unmarshal([]byte(row.ParentDevices), &parentDevices); err != nil {
+				log.Debug("geolocation: failed to unmarshal parent_devices", "pk", row.PK, "error", err)
+			}
 		}
 		probes[i] = Probe{
 			PK:                 row.PK,
