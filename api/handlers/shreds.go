@@ -158,8 +158,32 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Client IPs are only exposed to internal (domain-authenticated) users.
+	// For everyone else, drop the ip-based sort/filter fields so the column
+	// can't be sorted, filtered, or substring-searched via the "all" filter.
+	acc := GetAccountFromContext(ctx)
+	canSeeClientIP := acc != nil && acc.IsInternalUser
+	sortFields := seatSortFields
+	filterFields := seatFilterFields
+	if !canSeeClientIP {
+		sortFields = make(map[string]string, len(seatSortFields)-1)
+		for k, v := range seatSortFields {
+			if k == "ip" {
+				continue
+			}
+			sortFields[k] = v
+		}
+		filterFields = make(map[string]FilterFieldConfig, len(seatFilterFields)-1)
+		for k, v := range seatFilterFields {
+			if k == "ip" {
+				continue
+			}
+			filterFields[k] = v
+		}
+	}
+
 	pagination := ParsePagination(r, 100)
-	sort := ParseSort(r, "active_epoch", seatSortFields)
+	sort := ParseSort(r, "active_epoch", sortFields)
 	filters := ParseFilters(r)
 
 	// Status filter: active, inactive, closed (comma-separated).
@@ -171,7 +195,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	var whereClauses []string
 	var whereArgs []any
 
-	filterClause, filterArgs := filters.BuildFilterClause(seatFilterFields)
+	filterClause, filterArgs := filters.BuildFilterClause(filterFields)
 	if filterClause != "" {
 		whereClauses = append(whereClauses, filterClause)
 		whereArgs = append(whereArgs, filterArgs...)
@@ -252,7 +276,7 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Data query.
-	orderBy := sort.OrderByClause(seatSortFields)
+	orderBy := sort.OrderByClause(sortFields)
 	query := `
 		WITH escrow_balances AS (
 			SELECT client_seat_key, sum(usdc_balance) as total_usdc_balance
@@ -318,6 +342,9 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 		}
 		if lastActivity != nil && !lastActivity.IsZero() {
 			s.LastActivity = lastActivity.UTC().Format(time.RFC3339)
+		}
+		if !canSeeClientIP {
+			s.ClientIP = ""
 		}
 		items = append(items, s)
 	}
@@ -642,6 +669,10 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Client IPs are only exposed to internal (domain-authenticated) users.
+	acc := GetAccountFromContext(ctx)
+	canSeeClientIP := acc != nil && acc.IsInternalUser
+
 	pagination := ParsePagination(r, 100)
 	sort := ParseSort(r, "time", escrowEventSortFields)
 	filters := ParseFilters(r)
@@ -737,6 +768,9 @@ func (a *API) GetShredEscrowEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		e.EventTS = eventTS.UTC().Format(time.RFC3339)
 		e.SolscanURL = "https://solscan.io/tx/" + e.TxSignature
+		if !canSeeClientIP {
+			e.ClientIP = ""
+		}
 		items = append(items, e)
 	}
 	if items == nil {

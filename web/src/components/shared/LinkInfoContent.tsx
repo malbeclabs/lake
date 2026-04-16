@@ -104,15 +104,27 @@ const statusColors: Record<string, string> = {
  * Shared component for displaying link information.
  * Used by both the topology panel and the link detail page.
  */
-export function LinkInfoContent({ link, compact = false, hideStatusRow = false, hideCharts = false, timeRange: controlledTimeRange, onTimeRangeChange }: LinkInfoContentProps) {
-  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({ preset: '24h' })
+export function LinkInfoContent({
+  link,
+  compact = false,
+  hideStatusRow = false,
+  hideCharts = false,
+  timeRange: controlledTimeRange,
+  onTimeRangeChange,
+}: LinkInfoContentProps) {
+  const [internalTimeRange, setInternalTimeRange] = useState<TimeRange>({
+    preset: '24h',
+  })
   const timeRange = controlledTimeRange ?? internalTimeRange
   const setTimeRange = onTimeRangeChange ?? setInternalTimeRange
 
   // Check if we have directional latency data
   const hasDirectionalData = link.latencyAtoZUs > 0 || link.latencyZtoAUs > 0
 
-  const [hoveredTimeRange, setHoveredTimeRange] = useState<{ start: number; end: number } | null>(null)
+  const [hoveredTimeRange, setHoveredTimeRange] = useState<{
+    start: number
+    end: number
+  } | null>(null)
   const [chartHoveredTime, setChartHoveredTime] = useState<number | null>(null)
 
   const [bucket, setBucket] = useState<BucketSize>('auto')
@@ -125,11 +137,12 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
     enabled: !hideCharts,
   })
 
-  const effectiveBucketLabel = bucket === 'auto'
-    ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
-    : undefined
+  const effectiveBucketLabel =
+    bucket === 'auto'
+      ? bucketLabels[resolveAutoBucket(timeRange.preset as TimeRangePreset)]
+      : undefined
 
-  const cardClass = "rounded-lg border border-border p-4"
+  const cardClass = 'rounded-lg border border-border p-4'
 
   // Compact mode: optimized for sidebar panels
   if (compact) {
@@ -138,7 +151,9 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         {/* Status badge for non-activated links */}
         {link.status !== 'activated' && (
           <div className="flex items-center gap-1.5">
-            <span className={`text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/15 ${statusColors[link.status] || 'text-muted-foreground'}`}>
+            <span
+              className={`text-xs font-medium px-1.5 py-0.5 rounded bg-amber-500/15 ${statusColors[link.status] || 'text-muted-foreground'}`}
+            >
               {link.status}
             </span>
           </div>
@@ -149,12 +164,17 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
           <div className="p-2 bg-muted/30 rounded-lg">
             <div className="text-xs text-muted-foreground mb-1">A-Side</div>
             <div className="text-sm font-medium">
-              <Link to={`/dz/devices/${link.sideAPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+              <Link
+                to={`/dz/devices/${link.sideAPk}`}
+                className="text-blue-600 dark:text-blue-400 hover:underline"
+              >
                 {link.sideACode}
               </Link>
             </div>
             {link.sideAIfaceName && (
-              <div className="text-xs text-muted-foreground font-mono mt-0.5">{link.sideAIfaceName}</div>
+              <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                {link.sideAIfaceName}
+              </div>
             )}
             {link.sideAIP && (
               <div className="text-xs text-muted-foreground font-mono">{link.sideAIP}</div>
@@ -162,21 +182,30 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             {hasDirectionalData && (
               <div className="mt-2 pt-2 border-t border-muted/50">
                 <div className="text-xs text-muted-foreground">RTT from A</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyAtoZUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.latencyAtoZUs)}
+                </div>
                 <div className="text-xs text-muted-foreground mt-1">Jitter from A</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterAtoZUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.jitterAtoZUs)}
+                </div>
               </div>
             )}
           </div>
           <div className="p-2 bg-muted/30 rounded-lg">
             <div className="text-xs text-muted-foreground mb-1">Z-Side</div>
             <div className="text-sm font-medium">
-              <Link to={`/dz/devices/${link.sideZPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+              <Link
+                to={`/dz/devices/${link.sideZPk}`}
+                className="text-blue-600 dark:text-blue-400 hover:underline"
+              >
                 {link.sideZCode}
               </Link>
             </div>
             {link.sideZIfaceName && (
-              <div className="text-xs text-muted-foreground font-mono mt-0.5">{link.sideZIfaceName}</div>
+              <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                {link.sideZIfaceName}
+              </div>
             )}
             {link.sideZIP && (
               <div className="text-xs text-muted-foreground font-mono">{link.sideZIP}</div>
@@ -184,9 +213,13 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             {hasDirectionalData && (
               <div className="mt-2 pt-2 border-t border-muted/50">
                 <div className="text-xs text-muted-foreground">RTT from Z</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyZtoAUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.latencyZtoAUs)}
+                </div>
                 <div className="text-xs text-muted-foreground mt-1">Jitter from Z</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterZtoAUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.jitterZtoAUs)}
+                </div>
               </div>
             )}
           </div>
@@ -198,7 +231,9 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             <div className="text-base font-medium tabular-nums tracking-tight">
               {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? (
                 <div>
-                  <div className="line-through text-muted-foreground text-sm">{formatLatencyNs(link.committedRttNs)}</div>
+                  <div className="line-through text-muted-foreground text-sm">
+                    {formatLatencyNs(link.committedRttNs)}
+                  </div>
                   <div>{formatLatencyNs(link.isisDelayOverrideNs)}</div>
                 </div>
               ) : (
@@ -206,7 +241,9 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Committed Latency (override)' : 'Committed Latency'}
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0
+                ? 'Committed Latency (override)'
+                : 'Committed Latency'}
             </div>
           </div>
         )}
@@ -215,11 +252,15 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         {!hasDirectionalData && (
           <div className="grid grid-cols-2 gap-2">
             <div className="text-center p-2 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums tracking-tight">{formatLatencyUs(link.latencyUs)}</div>
+              <div className="text-base font-medium tabular-nums tracking-tight">
+                {formatLatencyUs(link.latencyUs)}
+              </div>
               <div className="text-xs text-muted-foreground">Latency</div>
             </div>
             <div className="text-center p-2 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums tracking-tight">{formatLatencyUs(link.jitterUs)}</div>
+              <div className="text-base font-medium tabular-nums tracking-tight">
+                {formatLatencyUs(link.jitterUs)}
+              </div>
               <div className="text-xs text-muted-foreground">Jitter</div>
             </div>
           </div>
@@ -228,25 +269,36 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         {/* Stats grid - 2 columns for sidebar */}
         <div className="grid grid-cols-2 gap-2">
           <div className="text-center p-2 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums tracking-tight">{formatPercent(link.lossPercent)}</div>
+            <div className="text-base font-medium tabular-nums tracking-tight">
+              {formatPercent(link.lossPercent)}
+            </div>
             <div className="text-xs text-muted-foreground">Packet Loss</div>
           </div>
           <div className="text-center p-2 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums tracking-tight">{formatBps(link.bandwidthBps)}</div>
+            <div className="text-base font-medium tabular-nums tracking-tight">
+              {formatBps(link.bandwidthBps)}
+            </div>
             <div className="text-xs text-muted-foreground">Bandwidth</div>
           </div>
           <div className="text-center p-2 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums tracking-tight">{formatBps(link.inBps)}</div>
+            <div className="text-base font-medium tabular-nums tracking-tight">
+              {formatBps(link.inBps)}
+            </div>
             <div className="text-xs text-muted-foreground">Current In</div>
           </div>
           <div className="text-center p-2 bg-muted/30 rounded-lg">
-            <div className="text-base font-medium tabular-nums tracking-tight">{formatBps(link.outBps)}</div>
+            <div className="text-base font-medium tabular-nums tracking-tight">
+              {formatBps(link.outBps)}
+            </div>
             <div className="text-xs text-muted-foreground">Current Out</div>
           </div>
           <div className="text-center p-2 bg-muted/30 rounded-lg col-span-2">
             <div className="text-base font-medium tabular-nums tracking-tight">
               {link.contributorPk ? (
-                <Link to={`/dz/contributors/${link.contributorPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+                <Link
+                  to={`/dz/contributors/${link.contributorPk}`}
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                >
                   {link.contributorCode}
                 </Link>
               ) : (
@@ -270,12 +322,46 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         {/* Charts from unified metrics endpoint */}
         {metrics && (
           <div className="space-y-4">
-            <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />
-            <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-            <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+            <LinkHealthTimeline
+              data={metrics}
+              onBarHover={setHoveredTimeRange}
+              highlightedTime={chartHoveredTime}
+            />
+            <LinkPacketLossChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkInterfaceIssuesChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkTrafficChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkLatencyChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
+            <LinkJitterChart
+              data={metrics}
+              loading={metricsFetching}
+              className={cardClass}
+              highlightTimeRange={hoveredTimeRange}
+              onCursorTime={setChartHoveredTime}
+            />
           </div>
         )}
       </div>
@@ -290,13 +376,20 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         <div className="p-3 bg-muted/30 rounded-lg">
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">A-Side</div>
           <div className="text-sm font-medium">
-            <Link to={`/dz/devices/${link.sideAPk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+            <Link
+              to={`/dz/devices/${link.sideAPk}`}
+              className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+            >
               {link.sideACode}
             </Link>
-            {link.sideAMetro && <span className="text-muted-foreground ml-1">({link.sideAMetro})</span>}
+            {link.sideAMetro && (
+              <span className="text-muted-foreground ml-1">({link.sideAMetro})</span>
+            )}
           </div>
           {link.sideAIfaceName && (
-            <div className="text-xs text-muted-foreground font-mono mt-1">{link.sideAIfaceName}</div>
+            <div className="text-xs text-muted-foreground font-mono mt-1">
+              {link.sideAIfaceName}
+            </div>
           )}
           {link.sideAIP && (
             <div className="text-xs text-muted-foreground font-mono">{link.sideAIP}</div>
@@ -305,11 +398,15 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             <div className="mt-3 pt-3 border-t border-muted/50 grid grid-cols-2 gap-2">
               <div>
                 <div className="text-xs text-muted-foreground">RTT</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyAtoZUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.latencyAtoZUs)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">Jitter</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterAtoZUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.jitterAtoZUs)}
+                </div>
               </div>
             </div>
           )}
@@ -317,13 +414,20 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
         <div className="p-3 bg-muted/30 rounded-lg">
           <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Z-Side</div>
           <div className="text-sm font-medium">
-            <Link to={`/dz/devices/${link.sideZPk}`} className="text-blue-600 dark:text-blue-400 hover:underline font-mono">
+            <Link
+              to={`/dz/devices/${link.sideZPk}`}
+              className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+            >
               {link.sideZCode}
             </Link>
-            {link.sideZMetro && <span className="text-muted-foreground ml-1">({link.sideZMetro})</span>}
+            {link.sideZMetro && (
+              <span className="text-muted-foreground ml-1">({link.sideZMetro})</span>
+            )}
           </div>
           {link.sideZIfaceName && (
-            <div className="text-xs text-muted-foreground font-mono mt-1">{link.sideZIfaceName}</div>
+            <div className="text-xs text-muted-foreground font-mono mt-1">
+              {link.sideZIfaceName}
+            </div>
           )}
           {link.sideZIP && (
             <div className="text-xs text-muted-foreground font-mono">{link.sideZIP}</div>
@@ -332,11 +436,15 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             <div className="mt-3 pt-3 border-t border-muted/50 grid grid-cols-2 gap-2">
               <div>
                 <div className="text-xs text-muted-foreground">RTT</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.latencyZtoAUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.latencyZtoAUs)}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">Jitter</div>
-                <div className="text-sm font-medium tabular-nums">{formatLatencyUs(link.jitterZtoAUs)}</div>
+                <div className="text-sm font-medium tabular-nums">
+                  {formatLatencyUs(link.jitterZtoAUs)}
+                </div>
               </div>
             </div>
           )}
@@ -344,9 +452,11 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
       </div>
 
       {/* Stats grid - responsive columns */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-1 xss:grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
         <div className="text-center p-3 bg-muted/30 rounded-lg">
-          <div className={`text-base font-medium capitalize ${statusColors[link.status] || ''}`}>{link.status}</div>
+          <div className={`text-base font-medium capitalize ${statusColors[link.status] || ''}`}>
+            {link.status}
+          </div>
           <div className="text-xs text-muted-foreground">Status</div>
         </div>
         <div className="text-center p-3 bg-muted/30 rounded-lg">
@@ -362,7 +472,9 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
           <div className="text-xs text-muted-foreground">Util In</div>
         </div>
         <div className="text-center p-3 bg-muted/30 rounded-lg">
-          <div className="text-base font-medium tabular-nums">{link.utilizationOut.toFixed(1)}%</div>
+          <div className="text-base font-medium tabular-nums">
+            {link.utilizationOut.toFixed(1)}%
+          </div>
           <div className="text-xs text-muted-foreground">Util Out</div>
         </div>
         <div className="text-center p-3 bg-muted/30 rounded-lg">
@@ -390,7 +502,9 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
             <div className="text-base font-medium tabular-nums">
               {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? (
                 <div>
-                  <div className="line-through text-muted-foreground">{formatLatencyNs(link.committedRttNs)}</div>
+                  <div className="line-through text-muted-foreground">
+                    {formatLatencyNs(link.committedRttNs)}
+                  </div>
                   <div>{formatLatencyNs(link.isisDelayOverrideNs)}</div>
                 </div>
               ) : (
@@ -398,30 +512,41 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
               )}
             </div>
             <div className="text-xs text-muted-foreground">
-              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0 ? 'Committed Latency (override)' : 'Committed Latency'}
+              {link.isisDelayOverrideNs !== undefined && link.isisDelayOverrideNs > 0
+                ? 'Committed Latency (override)'
+                : 'Committed Latency'}
             </div>
           </div>
         )}
         {!hasDirectionalData && (
           <>
             <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums">{formatLatencyUs(link.latencyUs)}</div>
+              <div className="text-base font-medium tabular-nums">
+                {formatLatencyUs(link.latencyUs)}
+              </div>
               <div className="text-xs text-muted-foreground">Latency</div>
             </div>
             <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <div className="text-base font-medium tabular-nums">{formatLatencyUs(link.jitterUs)}</div>
+              <div className="text-base font-medium tabular-nums">
+                {formatLatencyUs(link.jitterUs)}
+              </div>
               <div className="text-xs text-muted-foreground">Jitter</div>
             </div>
           </>
         )}
         <div className="text-center p-3 bg-muted/30 rounded-lg">
-          <div className="text-base font-medium tabular-nums">{formatPercent(link.lossPercent)}</div>
+          <div className="text-base font-medium tabular-nums">
+            {formatPercent(link.lossPercent)}
+          </div>
           <div className="text-xs text-muted-foreground">Packet Loss</div>
         </div>
         <div className="text-center p-3 bg-muted/30 rounded-lg">
           <div className="text-base font-medium">
             {link.contributorPk ? (
-              <Link to={`/dz/contributors/${link.contributorPk}`} className="text-blue-600 dark:text-blue-400 hover:underline">
+              <Link
+                to={`/dz/contributors/${link.contributorPk}`}
+                className="text-blue-600 dark:text-blue-400 hover:underline"
+              >
                 {link.contributorCode}
               </Link>
             ) : (
@@ -449,12 +574,48 @@ export function LinkInfoContent({ link, compact = false, hideStatusRow = false, 
 
           {metrics && (
             <div className="space-y-4">
-              {!hideStatusRow && <LinkHealthTimeline data={metrics} onBarHover={setHoveredTimeRange} highlightedTime={chartHoveredTime} />}
-              <LinkPacketLossChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-              <LinkInterfaceIssuesChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-              <LinkTrafficChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-              <LinkLatencyChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
-              <LinkJitterChart data={metrics} loading={metricsFetching} className={cardClass} highlightTimeRange={hoveredTimeRange} onCursorTime={setChartHoveredTime} />
+              {!hideStatusRow && (
+                <LinkHealthTimeline
+                  data={metrics}
+                  onBarHover={setHoveredTimeRange}
+                  highlightedTime={chartHoveredTime}
+                />
+              )}
+              <LinkPacketLossChart
+                data={metrics}
+                loading={metricsFetching}
+                className={cardClass}
+                highlightTimeRange={hoveredTimeRange}
+                onCursorTime={setChartHoveredTime}
+              />
+              <LinkInterfaceIssuesChart
+                data={metrics}
+                loading={metricsFetching}
+                className={cardClass}
+                highlightTimeRange={hoveredTimeRange}
+                onCursorTime={setChartHoveredTime}
+              />
+              <LinkTrafficChart
+                data={metrics}
+                loading={metricsFetching}
+                className={cardClass}
+                highlightTimeRange={hoveredTimeRange}
+                onCursorTime={setChartHoveredTime}
+              />
+              <LinkLatencyChart
+                data={metrics}
+                loading={metricsFetching}
+                className={cardClass}
+                highlightTimeRange={hoveredTimeRange}
+                onCursorTime={setChartHoveredTime}
+              />
+              <LinkJitterChart
+                data={metrics}
+                loading={metricsFetching}
+                className={cardClass}
+                highlightTimeRange={hoveredTimeRange}
+                onCursorTime={setChartHoveredTime}
+              />
             </div>
           )}
         </>

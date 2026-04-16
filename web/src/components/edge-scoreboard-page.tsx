@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, memo } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
-import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info } from 'lucide-react'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
+import { Trophy, Loader2, ChevronLeft, ChevronRight, Play, Square, Layers, Info, ArrowRight } from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 
@@ -151,7 +151,7 @@ const FEED_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
-type FeedSegment = { key: string; pct: number; color: string }
+type FeedSegment = { key: string; pct: number; rawPct: number; color: string }
 
 function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { segments: FeedSegment[]; children?: React.ReactNode; popoverSide?: 'top' | 'bottom' | 'right'; dzTotalPct?: number }) {
   const [hover, setHover] = useState(false)
@@ -182,23 +182,23 @@ function StackedBar({ segments, children, popoverSide = 'top', dzTotalPct }: { s
               <>
                 <div className="flex items-center gap-2 py-0.5 font-medium">
                   <span>DZ Edge</span>
-                  <span className="ml-auto pl-4 tabular-nums">{(dzTotalPct ?? dzSegs.reduce((s, seg) => s + seg.pct, 0)).toFixed(1)}%</span>
+                  <span className="ml-auto pl-4 tabular-nums">{(dzTotalPct ?? dzSegs.reduce((s, seg) => s + seg.rawPct, 0)).toFixed(1)}%</span>
                 </div>
-                {dzSegs.map(({ key, pct, color }) => (
+                {dzSegs.map(({ key, rawPct, color }) => (
                   <div key={key} className="flex items-center gap-2 py-0.5 pl-3">
                     <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
                     <span className="text-muted-foreground">{dzSubLabels[key] ?? key}</span>
-                    <span className="ml-auto pl-4 tabular-nums">{pct.toFixed(1)}%</span>
+                    <span className="ml-auto pl-4 tabular-nums">{rawPct.toFixed(1)}%</span>
                   </div>
                 ))}
                 {otherSegs.length > 0 && <div className="border-t border-border my-1.5" />}
               </>
             )}
-            {flatSegs.map(({ key, pct, color }) => (
+            {flatSegs.map(({ key, rawPct, color }) => (
               <div key={key} className="flex items-center gap-2 py-0.5">
                 <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                 <span className="text-muted-foreground">{FEED_LABELS[key] ?? key}</span>
-                <span className="ml-auto pl-4 tabular-nums font-medium">{pct.toFixed(1)}%</span>
+                <span className="ml-auto pl-4 tabular-nums font-medium">{rawPct.toFixed(1)}%</span>
               </div>
             ))}
           </div>
@@ -298,7 +298,7 @@ function NodeLabel({ node, label }: { node: EdgeScoreboardNode; label: string })
       onMouseLeave={() => setFixedPos(null)}
     >
       {hasGossip ? (
-        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="hover:text-[#10b981] transition-colors">
+        <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="hover:text-[#10b981] transition-colors">
           {label}
         </Link>
       ) : (
@@ -754,6 +754,7 @@ function RecentSlotsChart({
   const containerRef = useRef<HTMLDivElement>(null)
   const viewSlotCountRef = useRef(viewSlotCount)
   viewSlotCountRef.current = viewSlotCount
+  const navigate = useNavigate()
 
   // Live mode: fetch 300 slots on activate (show first 100 immediately, queue
   // the rest for animation), then poll every 5s with a since_slot cursor so
@@ -848,11 +849,11 @@ function RecentSlotsChart({
     // Seed the live buffer from a set of slot races (initial load path).
     // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
     // and queues only a small tail so the animation is visually active right away.
-    // With a 2500-slot seed and 2250 slots in the queue, we get ~15 min of animation runway
+    // With a 4000-slot seed and 3750 slots in the queue, we get ~25 min of animation runway
     // at 400ms/slot — enough to span the upstream MV's 5-min batch cadence many times over
     // even if polls briefly hiccup. The immediate buffer (first 250 slots) gives the chart
     // something to render instantly while the queue starts draining.
-    const INITIAL_QUEUE_SLOTS = 2250
+    const INITIAL_QUEUE_SLOTS = 3750
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
@@ -878,14 +879,16 @@ function RecentSlotsChart({
       // fill in cells for already-admitted slots. Partition the response:
       //   - new slots (not in buffer or queue) → enqueue, animation picks up
       //   - existing slots → merge rows in place by (slot, host, feed) key
-      const prevMax = liveMaxSlotRef.current
+      // A slot absent from buffer+queue is always "new", regardless of prevMax — the
+      // server's strict host-coverage gate may admit slots < prevMax on later polls
+      // once the last host reports.
       const bufferedSlots = new Set(slotBufferRef.current.map(r => r.slot))
       const queuedSlots = new Set<number>()
       for (const arr of liveQueueRef.current) for (const r of arr) queuedSlots.add(r.slot)
       const newNums: number[] = []
       const updateNums: number[] = []
       for (const n of nums) {
-        if (n > prevMax && !bufferedSlots.has(n) && !queuedSlots.has(n)) newNums.push(n)
+        if (!bufferedSlots.has(n) && !queuedSlots.has(n)) newNums.push(n)
         else updateNums.push(n)
       }
       if (updateNums.length) {
@@ -922,7 +925,17 @@ function RecentSlotsChart({
       }
       if (newNums.length) {
         liveMaxSlotRef.current = Math.max(liveMaxSlotRef.current, nums.at(-1) ?? 0)
-        liveQueueRef.current.push(...newNums.map(s => map.get(s)!))
+        // Insert each new slot in ascending order so the drain animates slots in
+        // sequence. A late-completing slot (strict gate on server held it back) may
+        // arrive after newer slots were already enqueued; without ordered insertion
+        // the chart would briefly scroll backward when the older slot drains.
+        for (const s of newNums) {
+          const races = map.get(s)!
+          const q = liveQueueRef.current
+          let i = q.length
+          while (i > 0 && (q[i - 1][0]?.slot ?? 0) > s) i--
+          q.splice(i, 0, races)
+        }
       } else if (nums.length) {
         // No new slots but server may have advanced current_slot; keep prevMax in sync
         // so subsequent polls don't re-request the same range.
@@ -931,11 +944,11 @@ function RecentSlotsChart({
       if (data.slot_leaders) setLiveLeaders(prev => ({ ...prev, ...data.slot_leaders }))
     }
 
-    // Fetch a deep seed (~15 min at 2.5 slots/sec) so the queue holds enough slots to span
+    // Fetch a deep seed (~25 min at 2.5 slots/sec) so the queue holds enough slots to span
     // the upstream MV's ~5-min batch cadence without stalling. When live enters, the queue
-    // drains at a constant 400ms/slot; we want at least one MV batch cycle of runway so the
+    // drains at a constant 400ms/slot; we want several MV batch cycles of runway so the
     // animation never runs dry between polls.
-    const LIVE_SEED_LIMIT = 2500
+    const LIVE_SEED_LIMIT = 4000
     prevLiveParamsRef.current = { leadersOnly, window }
     fetchEdgeScoreboard(window, leadersOnly, { limit: LIVE_SEED_LIMIT }).then(data => {
       if (cancelled) return
@@ -947,7 +960,7 @@ function RecentSlotsChart({
     // slot > (sinceSlot - overlap); loadSlots partitions them into new (enqueue)
     // vs existing (merge-in-place). Without the overlap, a host that reports a
     // slot after it was first admitted would never show up on that slot's column.
-    const OVERLAP_SLOTS = 50 // ~20s at 2.5 slots/sec
+    const OVERLAP_SLOTS = 125 // ~50s at 2.5 slots/sec — must exceed typical host report delay so the strict host-coverage gate has time to admit a slow-completing slot before it falls outside the re-query window.
     const poll = () => {
       const max = liveMaxSlotRef.current
       const sinceSlot = max > OVERLAP_SLOTS ? max - OVERLAP_SLOTS : (max > 0 ? 1 : undefined)
@@ -1631,7 +1644,17 @@ function RecentSlotsChart({
           </div>
           <div className="mt-5 flex flex-col gap-0.5">
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground/60 mb-1">Slot Leader</span>
-            <a ref={infoLeaderNameRef} className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors" />
+            <a
+              ref={infoLeaderNameRef}
+              onClick={(e) => {
+                const href = e.currentTarget.getAttribute('href')
+                if (!href) return
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+                e.preventDefault()
+                navigate(href, { state: { back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } } })
+              }}
+              className="text-sm font-medium leading-snug truncate hover:text-emerald-400 transition-colors"
+            />
             <span ref={infoLeaderRef} className="text-xs text-muted-foreground leading-snug mt-0.5" />
           </div>
         </div>
@@ -1818,7 +1841,9 @@ export function EdgeScoreboardPage() {
       for (const key of Object.keys(feedRates)) feedRates[key] *= scale
     }
 
-    // Always-granular version for the hero bar (ignores the toggle)
+    // Always-granular version for the hero bar (ignores the toggle).
+    // Server returns all feed win_rate_pct on a shared per-host denominator, so
+    // dz + dz_rebop = dz_edge by construction and feed rates are already comparable.
     const granularAccum: Record<string, number> = {}
     for (const node of data.nodes) {
       const nodeRates: Record<string, number> = {}
@@ -1832,8 +1857,11 @@ export function EdgeScoreboardPage() {
       }
     }
     const feedRatesGranular: Record<string, number> = {}
+    const feedRatesGranularRaw: Record<string, number> = {}
     for (const [key, sum] of Object.entries(granularAccum)) {
-      feedRatesGranular[key] = nodeCount > 0 ? sum / nodeCount : 0
+      const avg = nodeCount > 0 ? sum / nodeCount : 0
+      feedRatesGranular[key] = avg
+      feedRatesGranularRaw[key] = avg
     }
     const granularTotal = Object.values(feedRatesGranular).reduce((s, v) => s + v, 0)
     if (granularTotal > 0) {
@@ -1847,6 +1875,7 @@ export function EdgeScoreboardPage() {
       avgCompleteness: data.completeness_pct,
       feedRates,
       feedRatesGranular,
+      feedRatesGranularRaw,
     }
   }, [data?.nodes, granular])
 
@@ -1910,7 +1939,7 @@ export function EdgeScoreboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8">
         <PageHeader
           icon={Trophy}
-          title="Edge Scoreboard"
+          title="Shreds Scoreboard"
           subtitle={
             <span className="text-xs text-muted-foreground/50 flex items-center gap-2">
               <span>{windowLabel(activeWindow)}</span>
@@ -1918,24 +1947,21 @@ export function EdgeScoreboardPage() {
             </span>
           }
           actions={
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5 text-xs">
                 {([
                   [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
                   [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
                 ]).map(([v, label, tooltip]) => (
                   <div key={String(v)} className="relative group">
-                    {v === true && leadersOnly !== true && (
-                      <span className="absolute inset-0 rounded-md ring-1 ring-emerald-400/40 shadow-[0_0_8px_2px_rgba(52,211,153,0.2)] animate-pulse pointer-events-none" />
-                    )}
                     <button
                       type="button"
                       onClick={() => setLeadersOnly(v)}
                       className={cn(
-                        'px-3 py-1.5 rounded-md border border-border transition-colors',
+                        'px-2.5 py-1 rounded-md border transition-colors',
                         leadersOnly === v
-                          ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
-                          : 'hover:bg-muted'
+                          ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400'
+                          : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                       )}
                     >
                       {label}
@@ -1946,6 +1972,15 @@ export function EdgeScoreboardPage() {
                   </div>
                 ))}
               </div>
+              <a
+                href="https://docs.malbeclabs.com/Edge%20Subscriber%20Connection/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group inline-flex items-center gap-2 rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow-[0_0_0_1px_rgba(16,185,129,0.5),0_4px_14px_-2px_rgba(16,185,129,0.45)] transition-all hover:bg-emerald-600 hover:shadow-[0_0_0_1px_rgba(16,185,129,0.6),0_6px_20px_-2px_rgba(16,185,129,0.6)]"
+              >
+                Subscribe Now
+                <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+              </a>
             </div>
           }
         />
@@ -1998,7 +2033,7 @@ export function EdgeScoreboardPage() {
                   dzTotalPct={globalStats.winRate}
                   segments={Object.keys(globalStats.feedRatesGranular)
                     .sort((a, b) => feedSortPriority(a) - feedSortPriority(b))
-                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
+                    .map(key => ({ key, pct: globalStats.feedRatesGranular[key] ?? 0, rawPct: globalStats.feedRatesGranularRaw[key] ?? 0, color: FEED_COLORS[key] ?? '#6b7280' }))}
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-sm text-muted-foreground">DZ Edge Win Rate</span>
@@ -2160,7 +2195,9 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
     }
   }
 
-  // Per-feed-key win rates for the stacked bar (normalized to 100%)
+  // Per-feed-key segments for the stacked bar.
+  // `rawPct` = server-provided win_rate_pct on the shared per-host denominator.
+  // `pct` = visual width, normalized so the bar always fills 100%.
   const feedBarSegments = useMemo(() => {
     const accumulated: Record<string, number> = {}
     const hasDzEdge = 'dz_edge' in node.feeds
@@ -2174,7 +2211,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
     const scale = total > 0 ? 100 / total : 1
     return Object.entries(accumulated)
       .sort(([a], [b]) => feedSortPriority(a) - feedSortPriority(b))
-      .map(([key, pct]) => ({ key, pct: pct * scale, color: FEED_COLORS[key] ?? '#6b7280' }))
+      .map(([key, pct]) => ({ key, pct: pct * scale, rawPct: pct, color: FEED_COLORS[key] ?? '#6b7280' }))
   }, [node.feeds, granular])
 
   const hasGossip = !!node.gossip_pubkey
@@ -2189,7 +2226,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           }
         }} onMouseLeave={() => setFixedPos(null)}>
           {hasGossip ? (
-            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} className="text-sm font-medium hover:text-[#10b981] transition-colors">
+            <Link to={`/solana/gossip-nodes/${node.gossip_pubkey}`} state={{ back: { to: '/dz/shreds/scoreboard', label: 'Shreds Scoreboard' } }} className="text-sm font-medium hover:text-[#10b981] transition-colors">
               {label}
             </Link>
           ) : (

@@ -15,13 +15,13 @@ export function PageHeader({ icon: Icon, title, count, subtitle, actions }: Page
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-      <div className="flex items-center gap-3">
-        {Icon && <Icon className="h-6 w-6 text-muted-foreground" />}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {Icon && <Icon className="h-6 w-6 text-muted-foreground shrink-0" />}
         <h1 className="text-2xl font-medium">{title}</h1>
         {count !== undefined && <span className="text-muted-foreground">({count})</span>}
         {subtitle}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
+      {actions && <div className="w-full sm:w-auto flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
   )
 }

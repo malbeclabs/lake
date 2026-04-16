@@ -1,9 +1,21 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Loader2, Shield, AlertTriangle, AlertCircle, Info, ExternalLink, ChevronDown, ChevronRight, Activity, Wifi } from 'lucide-react'
+import {
+  Loader2,
+  Shield,
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  ExternalLink,
+  ChevronDown,
+  ChevronRight,
+  Activity,
+  Wifi,
+} from 'lucide-react'
 import { fetchRedundancyReport, fetchLinkHealth } from '@/lib/api'
 import type { RedundancyIssue, TopologyLinkHealth } from '@/lib/api'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 // Severity colors
 const SEVERITY_COLORS = {
@@ -102,23 +114,24 @@ function IssueRow({
           <Icon className={`h-4 w-4 ${severity.text}`} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="font-medium break-all">
               {issue.entityType === 'link' ? (
                 <>
-                  {issue.entityCode} <span className="text-muted-foreground">↔</span> {issue.targetCode}
+                  {issue.entityCode} <span className="text-muted-foreground">↔</span>{' '}
+                  {issue.targetCode}
                 </>
               ) : (
                 issue.entityCode
               )}
             </span>
-            <span className={`text-xs px-2 py-0.5 rounded ${severity.bg} ${severity.text}`}>
+            <span
+              className={`text-xs px-2 py-0.5 rounded shrink-0 ${severity.bg} ${severity.text}`}
+            >
               {ISSUE_TYPE_LABELS[issue.type] || issue.type}
             </span>
           </div>
-          <div className="text-sm text-muted-foreground truncate">
-            {issue.description}
-          </div>
+          <div className="text-sm text-muted-foreground truncate">{issue.description}</div>
         </div>
         {isExpanded ? (
           <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -131,13 +144,17 @@ function IssueRow({
         <div className="px-3 pb-3 border-t border-border bg-muted/30">
           <div className="pt-3 space-y-3">
             <div>
-              <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Impact</div>
+              <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                Impact
+              </div>
               <div className="text-sm">{issue.impact}</div>
             </div>
 
             {issue.metroCode && (
               <div>
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Metro</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  Metro
+                </div>
                 <Link
                   to={`/dz/metros/${issue.metroPK}`}
                   className="text-sm hover:underline text-primary inline-flex items-center gap-1"
@@ -240,7 +257,11 @@ function DegradedLinkRow({
             <span className="inline-flex items-center gap-1">
               <Activity className="h-3 w-3" />
               P95: {formatMicroseconds(link.p95_rtt_us)}
-              {link.exceeds_commit && <span className="text-red-500">(exceeds {formatMicroseconds(committedRttUs)} commit)</span>}
+              {link.exceeds_commit && (
+                <span className="text-red-500">
+                  (exceeds {formatMicroseconds(committedRttUs)} commit)
+                </span>
+              )}
             </span>
             {link.has_packet_loss && (
               <span className="inline-flex items-center gap-1 text-red-500">
@@ -262,26 +283,36 @@ function DegradedLinkRow({
           <div className="pt-3 space-y-3">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Average RTT</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  Average RTT
+                </div>
                 <div className="text-sm font-medium">{formatMicroseconds(link.avg_rtt_us)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">P95 RTT</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  P95 RTT
+                </div>
                 <div className="text-sm font-medium">{formatMicroseconds(link.p95_rtt_us)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Committed RTT</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  Committed RTT
+                </div>
                 <div className="text-sm font-medium">{formatMicroseconds(committedRttUs)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">SLO Ratio</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  SLO Ratio
+                </div>
                 <div className="text-sm font-medium">{(link.sla_ratio * 100).toFixed(1)}%</div>
               </div>
             </div>
 
             {link.has_packet_loss && (
               <div>
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Packet Loss</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">
+                  Packet Loss
+                </div>
                 <div className="text-sm font-medium text-red-500">{link.loss_pct.toFixed(2)}%</div>
               </div>
             )}
@@ -346,7 +377,7 @@ export function RedundancyReportPage() {
 
   const filteredIssues = useMemo(() => {
     if (!data?.issues) return []
-    return data.issues.filter(issue => {
+    return data.issues.filter((issue) => {
       if (filterType !== 'all' && issue.type !== filterType) return false
       if (filterSeverity !== 'all' && issue.severity !== filterSeverity) return false
       return true
@@ -354,7 +385,7 @@ export function RedundancyReportPage() {
   }, [data?.issues, filterType, filterSeverity])
 
   const toggleIssue = (issueKey: string) => {
-    setExpandedIssues(prev => {
+    setExpandedIssues((prev) => {
       const next = new Set(prev)
       if (next.has(issueKey)) {
         next.delete(issueKey)
@@ -372,12 +403,12 @@ export function RedundancyReportPage() {
   const degradedLinks = useMemo(() => {
     if (!linkHealthData?.links) return []
     return linkHealthData.links.filter(
-      link => link.sla_status === 'critical' || link.sla_status === 'warning'
+      (link) => link.sla_status === 'critical' || link.sla_status === 'warning',
     )
   }, [linkHealthData?.links])
 
   const toggleDegradedLink = (linkPk: string) => {
-    setExpandedDegradedLinks(prev => {
+    setExpandedDegradedLinks((prev) => {
       const next = new Set(prev)
       if (next.has(linkPk)) {
         next.delete(linkPk)
@@ -412,202 +443,204 @@ export function RedundancyReportPage() {
 
   return (
     <div className="h-full overflow-auto p-6">
-    <div className="max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <Shield className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-semibold">Redundancy Report</h1>
-        </div>
-        <p className="text-muted-foreground">
-          Analysis of single points of failure and redundancy gaps in the network topology.
-        </p>
-      </div>
-
-      {/* Summary Cards */}
-      {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <SummaryCard
-            label="Critical Issues"
-            value={summary.criticalCount}
-            color="critical"
-            icon={AlertCircle}
-          />
-          <SummaryCard
-            label="Warnings"
-            value={summary.warningCount}
-            color="warning"
-            icon={AlertTriangle}
-          />
-          <SummaryCard
-            label="Leaf Devices"
-            value={summary.leafDevices}
-            color="critical"
-            icon={AlertCircle}
-          />
-          <SummaryCard
-            label="Single-Exit Metros"
-            value={summary.singleExitMetros}
-            color="warning"
-            icon={AlertTriangle}
-          />
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-4 mb-6 p-4 bg-muted/50 rounded-lg">
-        <div>
-          <label className="block text-xs text-muted-foreground uppercase tracking-wider mb-1">
-            Issue Type
-          </label>
-          <select
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value as FilterType)}
-            className="px-3 py-1.5 border border-border rounded-md bg-card text-sm"
-          >
-            <option value="all">All Types</option>
-            <option value="leaf_device">Leaf Devices</option>
-            <option value="critical_link">Critical Links</option>
-            <option value="single_exit_metro">Single-Exit Metros</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-muted-foreground uppercase tracking-wider mb-1">
-            Severity
-          </label>
-          <select
-            value={filterSeverity}
-            onChange={(e) => setFilterSeverity(e.target.value as FilterSeverity)}
-            className="px-3 py-1.5 border border-border rounded-md bg-card text-sm"
-          >
-            <option value="all">All Severities</option>
-            <option value="critical">Critical</option>
-            <option value="warning">Warning</option>
-            <option value="info">Info</option>
-          </select>
-        </div>
-        <div className="flex items-end ml-auto">
-          <span className="text-sm text-muted-foreground">
-            {filteredIssues.length} of {data?.issues?.length || 0} issues
-          </span>
-        </div>
-      </div>
-
-      {/* Issues List */}
-      <div className="space-y-3">
-        {filteredIssues.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            {data?.issues?.length === 0 ? (
-              <>
-                <Shield className="h-12 w-12 mx-auto mb-4 text-green-500" />
-                <div className="text-lg font-medium text-foreground">No redundancy issues found</div>
-                <div className="text-sm mt-1">The network topology has good redundancy.</div>
-              </>
-            ) : (
-              <>No issues match the current filters.</>
-            )}
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-2">
+            <Shield className="h-6 w-6 text-primary" />
+            <h1 className="text-2xl font-semibold">Redundancy Report</h1>
           </div>
-        ) : (
-          filteredIssues.map((issue, index) => {
-            const key = getIssueKey(issue, index)
-            return (
-              <IssueRow
-                key={key}
-                issue={issue}
-                isExpanded={expandedIssues.has(key)}
-                onToggle={() => toggleIssue(key)}
-              />
-            )
-          })
-        )}
-      </div>
-
-      {/* Degraded Links Section */}
-      <div className="mt-8">
-        <div className="flex items-center gap-3 mb-4">
-          <Activity className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Latency Degradation</h2>
-          {linkHealthLoading && (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          )}
+          <p className="text-muted-foreground">
+            Analysis of single points of failure and redundancy gaps in the network topology.
+          </p>
         </div>
 
-        {linkHealthData && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {/* Summary Cards */}
+        {summary && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <SummaryCard
-              label="Critical Links"
-              value={linkHealthData.critical_count}
+              label="Critical Issues"
+              value={summary.criticalCount}
               color="critical"
               icon={AlertCircle}
             />
             <SummaryCard
-              label="Warning Links"
-              value={linkHealthData.warning_count}
+              label="Warnings"
+              value={summary.warningCount}
               color="warning"
               icon={AlertTriangle}
             />
             <SummaryCard
-              label="Healthy Links"
-              value={linkHealthData.healthy_count}
-              color="neutral"
-              icon={Shield}
+              label="Leaf Devices"
+              value={summary.leafDevices}
+              color="critical"
+              icon={AlertCircle}
             />
             <SummaryCard
-              label="Total Links"
-              value={linkHealthData.total_links}
-              color="neutral"
-              icon={Activity}
+              label="Single-Exit Metros"
+              value={summary.singleExitMetros}
+              color="warning"
+              icon={AlertTriangle}
             />
           </div>
         )}
 
+        {/* Filters */}
+        <div className="flex flex-wrap gap-4 mb-6 p-4 bg-muted/50 rounded-lg">
+          <div>
+            <label className="block text-xs text-muted-foreground uppercase tracking-wider mb-1">
+              Issue Type
+            </label>
+            <SmallDropdown
+              value={filterType}
+              options={[
+                { value: 'all', label: 'All Types' },
+                { value: 'leaf_device', label: 'Leaf Devices' },
+                { value: 'critical_link', label: 'Critical Links' },
+                { value: 'single_exit_metro', label: 'Single-Exit Metros' },
+              ]}
+              onChange={(v) => setFilterType(v as FilterType)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground uppercase tracking-wider mb-1">
+              Severity
+            </label>
+            <SmallDropdown
+              value={filterSeverity}
+              options={[
+                { value: 'all', label: 'All Severities' },
+                { value: 'critical', label: 'Critical' },
+                { value: 'warning', label: 'Warning' },
+                { value: 'info', label: 'Info' },
+              ]}
+              onChange={(v) => setFilterSeverity(v as FilterSeverity)}
+            />
+          </div>
+          <div className="flex items-end ml-auto">
+            <span className="text-sm text-muted-foreground">
+              {filteredIssues.length} of {data?.issues?.length || 0} issues
+            </span>
+          </div>
+        </div>
+
+        {/* Issues List */}
         <div className="space-y-3">
-          {degradedLinks.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground bg-muted/30 rounded-lg">
-              {linkHealthLoading ? (
-                <>Loading link health data...</>
-              ) : (
+          {filteredIssues.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              {data?.issues?.length === 0 ? (
                 <>
-                  <Shield className="h-10 w-10 mx-auto mb-3 text-green-500" />
-                  <div className="text-base font-medium text-foreground">All links healthy</div>
-                  <div className="text-sm mt-1">No SLO violations detected.</div>
+                  <Shield className="h-12 w-12 mx-auto mb-4 text-green-500" />
+                  <div className="text-lg font-medium text-foreground">
+                    No redundancy issues found
+                  </div>
+                  <div className="text-sm mt-1">The network topology has good redundancy.</div>
                 </>
+              ) : (
+                <>No issues match the current filters.</>
               )}
             </div>
           ) : (
-            degradedLinks.map(link => (
-              <DegradedLinkRow
-                key={link.link_pk}
-                link={link}
-                isExpanded={expandedDegradedLinks.has(link.link_pk)}
-                onToggle={() => toggleDegradedLink(link.link_pk)}
-              />
-            ))
+            filteredIssues.map((issue, index) => {
+              const key = getIssueKey(issue, index)
+              return (
+                <IssueRow
+                  key={key}
+                  issue={issue}
+                  isExpanded={expandedIssues.has(key)}
+                  onToggle={() => toggleIssue(key)}
+                />
+              )
+            })
           )}
         </div>
-      </div>
 
-      {/* Footer links */}
-      <div className="mt-8 pt-6 border-t border-border">
-        <div className="text-sm text-muted-foreground mb-2">Related Tools</div>
-        <div className="flex gap-4">
-          <Link
-            to="/topology/graph"
-            className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-          >
-            View Topology Graph
-            <ExternalLink className="h-3 w-3" />
-          </Link>
-          <Link
-            to="/topology/map"
-            className="text-sm text-primary hover:underline inline-flex items-center gap-1"
-          >
-            View Topology Map
-            <ExternalLink className="h-3 w-3" />
-          </Link>
+        {/* Degraded Links Section */}
+        <div className="mt-8">
+          <div className="flex items-center gap-3 mb-4">
+            <Activity className="h-5 w-5 text-primary" />
+            <h2 className="text-lg font-semibold">Latency Degradation</h2>
+            {linkHealthLoading && (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            )}
+          </div>
+
+          {linkHealthData && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <SummaryCard
+                label="Critical Links"
+                value={linkHealthData.critical_count}
+                color="critical"
+                icon={AlertCircle}
+              />
+              <SummaryCard
+                label="Warning Links"
+                value={linkHealthData.warning_count}
+                color="warning"
+                icon={AlertTriangle}
+              />
+              <SummaryCard
+                label="Healthy Links"
+                value={linkHealthData.healthy_count}
+                color="neutral"
+                icon={Shield}
+              />
+              <SummaryCard
+                label="Total Links"
+                value={linkHealthData.total_links}
+                color="neutral"
+                icon={Activity}
+              />
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {degradedLinks.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground bg-muted/30 rounded-lg">
+                {linkHealthLoading ? (
+                  <>Loading link health data...</>
+                ) : (
+                  <>
+                    <Shield className="h-10 w-10 mx-auto mb-3 text-green-500" />
+                    <div className="text-base font-medium text-foreground">All links healthy</div>
+                    <div className="text-sm mt-1">No SLO violations detected.</div>
+                  </>
+                )}
+              </div>
+            ) : (
+              degradedLinks.map((link) => (
+                <DegradedLinkRow
+                  key={link.link_pk}
+                  link={link}
+                  isExpanded={expandedDegradedLinks.has(link.link_pk)}
+                  onToggle={() => toggleDegradedLink(link.link_pk)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Footer links */}
+        <div className="mt-8 pt-6 border-t border-border">
+          <div className="text-sm text-muted-foreground mb-2">Related Tools</div>
+          <div className="flex gap-4">
+            <Link
+              to="/topology/graph"
+              className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+            >
+              View Topology Graph
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+            <Link
+              to="/topology/map"
+              className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+            >
+              View Topology Map
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          </div>
         </div>
       </div>
-    </div>
     </div>
   )
 }

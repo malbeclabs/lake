@@ -1,6 +1,7 @@
 import { BarChart3, LineChart, PieChart, AreaChart, ScatterChart } from 'lucide-react'
 import type { ChartType, VisualizationConfig, ColumnAnalysis } from '@/lib/visualization'
 import { getCompatibleChartTypes } from '@/lib/visualization'
+import { SmallDropdown } from '@/components/topology/TimeRangeSelector'
 
 interface ChartConfigPanelProps {
   columns: string[]
@@ -25,7 +26,12 @@ const chartTypeLabels: Record<ChartType, string> = {
   scatter: 'Scatter',
 }
 
-export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChange }: ChartConfigPanelProps) {
+export function ChartConfigPanel({
+  columns,
+  columnAnalysis,
+  config,
+  onConfigChange,
+}: ChartConfigPanelProps) {
   const compatibleTypes = getCompatibleChartTypes(columnAnalysis)
 
   // Get columns suitable for X axis (categorical or temporal preferred)
@@ -52,7 +58,7 @@ export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChan
       if (currentYAxis.includes(yAxis)) {
         // Remove if already selected (but keep at least one)
         if (currentYAxis.length > 1) {
-          onConfigChange({ ...config, yAxis: currentYAxis.filter(y => y !== yAxis) })
+          onConfigChange({ ...config, yAxis: currentYAxis.filter((y) => y !== yAxis) })
         }
       } else {
         // Add to selection (max 4)
@@ -64,7 +70,7 @@ export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChan
   }
 
   const getColumnTypeIcon = (col: string) => {
-    const analysis = columnAnalysis.find(c => c.name === col)
+    const analysis = columnAnalysis.find((c) => c.name === col)
     if (!analysis) return null
 
     switch (analysis.dataType) {
@@ -85,7 +91,7 @@ export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChan
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground text-xs font-medium">Type</span>
         <div className="flex items-center gap-1">
-          {(['bar', 'line', 'pie', 'area', 'scatter'] as ChartType[]).map(type => {
+          {(['bar', 'line', 'pie', 'area', 'scatter'] as ChartType[]).map((type) => {
             const isCompatible = compatibleTypes.includes(type)
             const isSelected = config.chartType === type
             return (
@@ -98,8 +104,8 @@ export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChan
                   isSelected
                     ? 'bg-foreground text-background'
                     : isCompatible
-                    ? 'bg-card hover:bg-muted text-foreground'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed opacity-50'
+                      ? 'bg-card hover:bg-muted text-foreground'
+                      : 'bg-muted text-muted-foreground cursor-not-allowed opacity-50'
                 }`}
               >
                 {chartTypeIcons[type]}
@@ -112,17 +118,11 @@ export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChan
       {/* X Axis Selector */}
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground text-xs font-medium">X Axis</span>
-        <select
+        <SmallDropdown
           value={config.xAxis}
-          onChange={(e) => handleXAxisChange(e.target.value)}
-          className="px-2 py-1 rounded border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-        >
-          {xAxisOptions.map(col => (
-            <option key={col} value={col}>
-              {col}
-            </option>
-          ))}
-        </select>
+          options={xAxisOptions.map((col) => ({ value: col, label: col }))}
+          onChange={handleXAxisChange}
+        />
         {getColumnTypeIcon(config.xAxis)}
       </div>
 
@@ -132,36 +132,34 @@ export function ChartConfigPanel({ columns, columnAnalysis, config, onConfigChan
           Y Axis {config.chartType !== 'pie' && config.chartType !== 'scatter' && '(multi)'}
         </span>
         {config.chartType === 'pie' || config.chartType === 'scatter' ? (
-          <select
+          <SmallDropdown
             value={config.yAxis[0] || ''}
-            onChange={(e) => handleYAxisChange(e.target.value)}
-            className="px-2 py-1 rounded border border-border bg-card text-sm focus:outline-none focus:ring-1 focus:ring-accent"
-          >
-            {yAxisOptions.filter(col => col !== config.xAxis).map(col => (
-              <option key={col} value={col}>
-                {col}
-              </option>
-            ))}
-          </select>
+            options={yAxisOptions
+              .filter((col) => col !== config.xAxis)
+              .map((col) => ({ value: col, label: col }))}
+            onChange={handleYAxisChange}
+          />
         ) : (
           <div className="flex flex-wrap gap-1">
-            {yAxisOptions.filter(col => col !== config.xAxis).map(col => {
-              const isSelected = config.yAxis.includes(col)
-              return (
-                <button
-                  key={col}
-                  onClick={() => handleYAxisChange(col)}
-                  className={`px-2 py-0.5 rounded text-xs transition-colors flex items-center gap-1 ${
-                    isSelected
-                      ? 'bg-foreground text-background'
-                      : 'bg-card border border-border hover:bg-muted'
-                  }`}
-                >
-                  {getColumnTypeIcon(col)}
-                  <span className="truncate max-w-[80px]">{col}</span>
-                </button>
-              )
-            })}
+            {yAxisOptions
+              .filter((col) => col !== config.xAxis)
+              .map((col) => {
+                const isSelected = config.yAxis.includes(col)
+                return (
+                  <button
+                    key={col}
+                    onClick={() => handleYAxisChange(col)}
+                    className={`px-2 py-0.5 rounded text-xs transition-colors flex items-center gap-1 ${
+                      isSelected
+                        ? 'bg-foreground text-background'
+                        : 'bg-card border border-border hover:bg-muted'
+                    }`}
+                  >
+                    {getColumnTypeIcon(col)}
+                    <span className="truncate max-w-[80px]">{col}</span>
+                  </button>
+                )
+              })}
           </div>
         )}
       </div>

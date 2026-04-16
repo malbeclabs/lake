@@ -1,17 +1,29 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Loader2, Route, AlertCircle, ArrowRight, Search, X, Copy, Check, ExternalLink, RotateCcw } from 'lucide-react'
+import {
+  Loader2,
+  Route,
+  AlertCircle,
+  ArrowRight,
+  ArrowDown,
+  Search,
+  X,
+  Copy,
+  Check,
+  ExternalLink,
+  RotateCcw,
+} from 'lucide-react'
 import { fetchISISTopology, fetchISISPaths } from '@/lib/api'
 import type { MultiPathResponse, SinglePath } from '@/lib/api'
 
 // Path colors matching the graph view
 const PATH_COLORS = [
-  '#22c55e',  // green - primary/shortest
-  '#3b82f6',  // blue - alternate 1
-  '#a855f7',  // purple - alternate 2
-  '#f97316',  // orange - alternate 3
-  '#06b6d4',  // cyan - alternate 4
+  '#22c55e', // green - primary/shortest
+  '#3b82f6', // blue - alternate 1
+  '#a855f7', // purple - alternate 2
+  '#f97316', // orange - alternate 3
+  '#06b6d4', // cyan - alternate 4
 ]
 
 interface DeviceOption {
@@ -42,20 +54,23 @@ function DeviceSearch({
   const filteredDevices = useMemo(() => {
     const query = search.toLowerCase()
     return devices
-      .filter(d => d.pk !== excludePK)
-      .filter(d => d.code.toLowerCase().includes(query))
+      .filter((d) => d.pk !== excludePK)
+      .filter((d) => d.code.toLowerCase().includes(query))
       .slice(0, 20)
   }, [devices, search, excludePK])
 
   return (
-    <div className="flex-1">
+    <div className="flex-1 w-full">
       <label className="block text-sm font-medium text-muted-foreground mb-2">{label}</label>
       <div className="relative">
         {value ? (
           <div className="flex items-center gap-2 px-3 py-2 border border-border rounded-md bg-card">
             <span className="font-mono text-sm flex-1">{value.code}</span>
             <button
-              onClick={() => { onChange(null); setSearch('') }}
+              onClick={() => {
+                onChange(null)
+                setSearch('')
+              }}
               className="p-1 hover:bg-muted rounded"
             >
               <X className="h-4 w-4 text-muted-foreground" />
@@ -68,7 +83,10 @@ function DeviceSearch({
               <input
                 type="text"
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setIsOpen(true) }}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setIsOpen(true)
+                }}
                 onFocus={() => setIsOpen(true)}
                 placeholder={placeholder}
                 className="w-full pl-9 pr-3 py-2 border border-border rounded-md bg-card text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -76,7 +94,7 @@ function DeviceSearch({
             </div>
             {isOpen && search && filteredDevices.length > 0 && (
               <div className="absolute z-50 w-full mt-1 bg-card border border-border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                {filteredDevices.map(device => (
+                {filteredDevices.map((device) => (
                   <button
                     key={device.pk}
                     onClick={() => {
@@ -87,7 +105,9 @@ function DeviceSearch({
                     className="w-full px-3 py-2 text-left hover:bg-muted flex items-center justify-between"
                   >
                     <span className="font-mono text-sm">{device.code}</span>
-                    <span className="text-xs text-muted-foreground capitalize">{device.deviceType}</span>
+                    <span className="text-xs text-muted-foreground capitalize">
+                      {device.deviceType}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -118,7 +138,7 @@ function PathCard({
   const [copied, setCopied] = useState(false)
 
   const copyPath = () => {
-    const pathText = path.path.map(h => h.deviceCode).join(' → ')
+    const pathText = path.path.map((h) => h.deviceCode).join(' → ')
     navigator.clipboard.writeText(pathText)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
@@ -147,7 +167,10 @@ function PathCard({
           )}
         </div>
         <button
-          onClick={(e) => { e.stopPropagation(); copyPath() }}
+          onClick={(e) => {
+            e.stopPropagation()
+            copyPath()
+          }}
           className="p-1.5 hover:bg-muted rounded-md"
           title="Copy path"
         >
@@ -159,7 +182,7 @@ function PathCard({
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 text-sm">
         <div>
           <span className="text-muted-foreground">Hops:</span>{' '}
           <span className="font-medium">{path.hopCount}</span>
@@ -172,7 +195,9 @@ function PathCard({
           <>
             <div>
               <span className="text-muted-foreground">Measured:</span>{' '}
-              <span className="font-medium text-primary">{path.measuredLatencyMs.toFixed(2)}ms</span>
+              <span className="font-medium text-primary">
+                {path.measuredLatencyMs.toFixed(2)}ms
+              </span>
             </div>
             {path.totalSamples !== undefined && (
               <div>
@@ -184,35 +209,70 @@ function PathCard({
         )}
       </div>
 
-      <div className="space-y-1">
+      <div className="space-y-3">
         {path.path.map((hop, i) => (
-          <div key={hop.devicePK} className="flex items-center gap-2 text-sm">
-            <span className="w-5 text-muted-foreground">{i + 1}.</span>
-            <Link
-              to={`/dz/devices/${hop.devicePK}`}
-              onClick={(e) => e.stopPropagation()}
-              className="font-mono hover:text-primary flex items-center gap-1"
-            >
-              {hop.deviceCode}
-              <ExternalLink className="h-3 w-3 opacity-0 hover:opacity-100" />
-            </Link>
-            <div className="ml-auto flex items-center gap-2">
-              {hop.edgeMeasuredMs !== undefined && hop.edgeMeasuredMs > 0 && (
-                <span className="text-primary text-xs" title={`Measured RTT: ${hop.edgeMeasuredMs.toFixed(2)}ms (${hop.edgeSampleCount?.toLocaleString() ?? 0} samples)`}>
-                  {hop.edgeMeasuredMs.toFixed(1)}ms measured
-                </span>
-              )}
-              {hop.edgeLossPct !== undefined && hop.edgeLossPct > 0.1 && (
-                <span className={`text-xs ${hop.edgeLossPct > 1 ? 'text-red-500' : 'text-yellow-500'}`} title={`Packet loss: ${hop.edgeLossPct.toFixed(2)}%`}>
-                  {hop.edgeLossPct.toFixed(1)}% loss
-                </span>
-              )}
-              {hop.edgeMetric !== undefined && hop.edgeMetric > 0 && (
-                <span className="text-muted-foreground text-xs" title="ISIS metric (configured on router)">
-                  {(hop.edgeMetric / 1000).toFixed(1)}ms ISIS
-                </span>
-              )}
+          <div key={hop.devicePK} className="text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-5 shrink-0 text-muted-foreground">{i + 1}.</span>
+              <Link
+                to={`/dz/devices/${hop.devicePK}`}
+                onClick={(e) => e.stopPropagation()}
+                className="font-mono hover:text-primary flex items-center gap-1 min-w-0 break-all"
+              >
+                {hop.deviceCode}
+                <ExternalLink className="h-3 w-3 shrink-0 opacity-0 hover:opacity-100" />
+              </Link>
+              <div className="hidden sm:flex items-center gap-2 ml-auto shrink-0">
+                {hop.edgeMeasuredMs !== undefined && hop.edgeMeasuredMs > 0 && (
+                  <span
+                    className="text-primary text-xs"
+                    title={`Measured RTT: ${hop.edgeMeasuredMs.toFixed(2)}ms (${hop.edgeSampleCount?.toLocaleString() ?? 0} samples)`}
+                  >
+                    {hop.edgeMeasuredMs.toFixed(1)}ms meas.
+                  </span>
+                )}
+                {hop.edgeLossPct !== undefined && hop.edgeLossPct > 0.1 && (
+                  <span
+                    className={`text-xs ${hop.edgeLossPct > 1 ? 'text-red-500' : 'text-yellow-500'}`}
+                    title={`Packet loss: ${hop.edgeLossPct.toFixed(2)}%`}
+                  >
+                    {hop.edgeLossPct.toFixed(1)}% loss
+                  </span>
+                )}
+                {hop.edgeMetric !== undefined && hop.edgeMetric > 0 && (
+                  <span
+                    className="text-muted-foreground text-xs"
+                    title="ISIS metric (configured on router)"
+                  >
+                    {(hop.edgeMetric / 1000).toFixed(1)}ms ISIS
+                  </span>
+                )}
+              </div>
             </div>
+            {(hop.edgeMeasuredMs !== undefined && hop.edgeMeasuredMs > 0) ||
+            (hop.edgeLossPct !== undefined && hop.edgeLossPct > 0.1) ||
+            (hop.edgeMetric !== undefined && hop.edgeMetric > 0) ? (
+              <div className="sm:hidden flex items-center gap-2 pl-7 mt-0.5 text-xs">
+                {hop.edgeMeasuredMs !== undefined && hop.edgeMeasuredMs > 0 && (
+                  <span
+                    className="text-primary"
+                    title={`Measured RTT: ${hop.edgeMeasuredMs.toFixed(2)}ms`}
+                  >
+                    {hop.edgeMeasuredMs.toFixed(1)}ms meas.
+                  </span>
+                )}
+                {hop.edgeLossPct !== undefined && hop.edgeLossPct > 0.1 && (
+                  <span className={hop.edgeLossPct > 1 ? 'text-red-500' : 'text-yellow-500'}>
+                    {hop.edgeLossPct.toFixed(1)}% loss
+                  </span>
+                )}
+                {hop.edgeMetric !== undefined && hop.edgeMetric > 0 && (
+                  <span className="text-muted-foreground">
+                    {(hop.edgeMetric / 1000).toFixed(1)}ms ISIS
+                  </span>
+                )}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -237,12 +297,14 @@ export function PathCalculatorPage() {
   // Convert topology nodes to device options
   const devices: DeviceOption[] = useMemo(() => {
     if (!topology?.nodes) return []
-    return topology.nodes.map(n => ({
-      pk: n.data.id,
-      code: n.data.label,
-      status: n.data.status,
-      deviceType: n.data.deviceType,
-    })).sort((a, b) => a.code.localeCompare(b.code))
+    return topology.nodes
+      .map((n) => ({
+        pk: n.data.id,
+        code: n.data.label,
+        status: n.data.status,
+        deviceType: n.data.deviceType,
+      }))
+      .sort((a, b) => a.code.localeCompare(b.code))
   }, [topology])
 
   // Initialize from URL params once devices are loaded
@@ -253,11 +315,11 @@ export function PathCalculatorPage() {
     const toParam = searchParams.get('to')
 
     if (fromParam) {
-      const device = devices.find(d => d.pk === fromParam || d.code === fromParam)
+      const device = devices.find((d) => d.pk === fromParam || d.code === fromParam)
       if (device) setSourceDevice(device)
     }
     if (toParam) {
-      const device = devices.find(d => d.pk === toParam || d.code === toParam)
+      const device = devices.find((d) => d.pk === toParam || d.code === toParam)
       if (device) setTargetDevice(device)
     }
 
@@ -336,7 +398,7 @@ export function PathCalculatorPage() {
 
         {/* Device Selection */}
         <div className="bg-card border border-border rounded-lg p-6 mb-6">
-          <div className="flex items-end gap-4">
+          <div className="flex items-end gap-4 flex-col sm:flex-row">
             <DeviceSearch
               label="Source Device"
               placeholder="Search source..."
@@ -346,8 +408,9 @@ export function PathCalculatorPage() {
               excludePK={targetDevice?.pk}
             />
 
-            <div className="pb-2">
-              <ArrowRight className="h-5 w-5 text-muted-foreground" />
+            <div className="self-center sm:self-auto sm:pb-2">
+              <ArrowRight className="hidden sm:block h-5 w-5 text-muted-foreground" />
+              <ArrowDown className="block sm:hidden h-5 w-5 text-muted-foreground" />
             </div>
 
             <DeviceSearch
@@ -362,7 +425,7 @@ export function PathCalculatorPage() {
             {(sourceDevice || targetDevice) && (
               <button
                 onClick={resetSelection}
-                className="pb-2 p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
+                className="hidden md:block pb-2 p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
                 title="Reset selection"
               >
                 <RotateCcw className="h-5 w-5" />
@@ -371,7 +434,7 @@ export function PathCalculatorPage() {
           </div>
 
           {sourceDevice && targetDevice && (
-            <div className="mt-4 pt-4 border-t border-border">
+            <div className="mt-4 pt-4 border-t border-border flex items-center justify-between md:justify-start">
               <Link
                 to={`/topology/graph?path_source=${sourceDevice.pk}&path_target=${targetDevice.pk}`}
                 className="text-sm text-primary hover:underline flex items-center gap-1"
@@ -379,6 +442,13 @@ export function PathCalculatorPage() {
                 View in graph
                 <ExternalLink className="h-3 w-3" />
               </Link>
+              <button
+                onClick={resetSelection}
+                className="md:hidden p-2 hover:bg-muted rounded-md text-muted-foreground hover:text-foreground transition-colors"
+                title="Reset selection"
+              >
+                <RotateCcw className="h-5 w-5" />
+              </button>
             </div>
           )}
         </div>
@@ -429,13 +499,17 @@ export function PathCalculatorPage() {
           </div>
         )}
 
-        {sourceDevice && targetDevice && !pathsLoading && !pathsResult?.error && paths.length === 0 && (
-          <div className="text-center py-12 text-muted-foreground">
-            <Route className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>No paths found between these devices.</p>
-            <p className="text-sm mt-2">They may not be connected in the ISIS topology.</p>
-          </div>
-        )}
+        {sourceDevice &&
+          targetDevice &&
+          !pathsLoading &&
+          !pathsResult?.error &&
+          paths.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Route className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No paths found between these devices.</p>
+              <p className="text-sm mt-2">They may not be connected in the ISIS topology.</p>
+            </div>
+          )}
       </div>
     </div>
   )

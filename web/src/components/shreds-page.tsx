@@ -1,7 +1,21 @@
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
-import { Loader2, Puzzle, AlertCircle, ChevronDown, ChevronUp, ChevronRight, X, ExternalLink, Filter, Copy, Check, RefreshCw, Info } from 'lucide-react'
+import {
+  Loader2,
+  Puzzle,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  X,
+  ExternalLink,
+  Filter,
+  Copy,
+  Check,
+  RefreshCw,
+  Info,
+} from 'lucide-react'
 import {
   fetchShredClientSeats,
   fetchShredDevices,
@@ -12,6 +26,7 @@ import {
   type ShredFunder,
 } from '@/lib/api'
 import { handleRowClick } from '@/lib/utils'
+import { useAuth } from '@/contexts/AuthContext'
 import { Pagination } from './pagination'
 import { InlineFilter } from './inline-filter'
 import { PageHeader } from './page-header'
@@ -38,17 +53,25 @@ function parseNumericFilter(input: string): NumericFilter | null {
 
 function matchesNumericFilter(value: number, filter: NumericFilter): boolean {
   switch (filter.op) {
-    case '>': return value > filter.value
-    case '>=': return value >= filter.value
-    case '<': return value < filter.value
-    case '<=': return value <= filter.value
-    case '=': return value === filter.value
+    case '>':
+      return value > filter.value
+    case '>=':
+      return value >= filter.value
+    case '<':
+      return value < filter.value
+    case '<=':
+      return value <= filter.value
+    case '=':
+      return value === filter.value
   }
 }
 
 function parseSearchFilters(searchParam: string): string[] {
   if (!searchParam) return []
-  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+  return searchParam
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
 }
 
 function parseFilter(filter: string, validFields: string[]): { field: string; value: string } {
@@ -67,41 +90,62 @@ function usePageState() {
   const [searchParams, setSearchParams] = useSearchParams()
   const page = parseInt(searchParams.get('page') || '1')
   const offset = (page - 1) * PAGE_SIZE
-  const setOffset = useCallback((newOffset: number) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
-      if (newPage <= 1) { p.delete('page') } else { p.set('page', String(newPage)) }
-      return p
-    })
-  }, [setSearchParams])
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+        if (newPage <= 1) {
+          p.delete('page')
+        } else {
+          p.set('page', String(newPage))
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
   const sortField = searchParams.get('sort') || ''
   const sortDirection = (searchParams.get('dir') || 'desc') as SortDirection
-  const handleSort = useCallback((field: string) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (prev.get('sort') === field) { p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc') }
-      else { p.set('sort', field); p.set('dir', 'desc') }
-      return p
-    })
-  }, [setSearchParams])
+  const handleSort = useCallback(
+    (field: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (prev.get('sort') === field) {
+          p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc')
+        } else {
+          p.set('sort', field)
+          p.set('dir', 'desc')
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
   const searchParam = searchParams.get('search') || ''
   const searchFilters = parseSearchFilters(searchParam)
   const [liveFilter, setLiveFilter] = useState('')
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    const newFilters = searchFilters.filter(f => f !== filterToRemove)
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (newFilters.length === 0) { p.delete('search') } else { p.set('search', newFilters.join(',')) }
-      return p
-    })
-  }, [searchFilters, setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          p.delete('search')
+        } else {
+          p.set('search', newFilters.join(','))
+        }
+        return p
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       p.delete('search')
       return p
@@ -115,7 +159,7 @@ function usePageState() {
     const key = JSON.stringify(allFilters)
     if (prevFilterRef.current === key) return
     prevFilterRef.current = key
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       p.delete('page')
       return p
@@ -123,34 +167,72 @@ function usePageState() {
   }, [allFilters, setSearchParams])
 
   return {
-    searchParams, setSearchParams,
-    offset, setOffset,
-    sortField, sortDirection, handleSort,
-    searchFilters, liveFilter, setLiveFilter, allFilters,
-    removeFilter, clearAllFilters,
+    searchParams,
+    setSearchParams,
+    offset,
+    setOffset,
+    sortField,
+    sortDirection,
+    handleSort,
+    searchFilters,
+    liveFilter,
+    setLiveFilter,
+    allFilters,
+    removeFilter,
+    clearAllFilters,
   }
 }
 
-function SortHeader({ field, label, align, currentSort, currentDir, onSort }: {
-  field: string; label: string; align?: 'right'; currentSort: string; currentDir: SortDirection; onSort: (f: string) => void
+function SortHeader({
+  field,
+  label,
+  align,
+  currentSort,
+  currentDir,
+  onSort,
+}: {
+  field: string
+  label: string
+  align?: 'right'
+  currentSort: string
+  currentDir: SortDirection
+  onSort: (f: string) => void
 }) {
   return (
-    <th className={`px-4 py-3 font-medium ${align === 'right' ? 'text-right' : ''}`}>
+    <th className={`px-4 py-3 font-medium whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}>
       <button
         className={`inline-flex items-center gap-1 ${align === 'right' ? 'justify-end w-full' : ''}`}
         onClick={() => onSort(field)}
       >
         {label}
-        {currentSort === field && (currentDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+        {currentSort === field &&
+          (currentDir === 'asc' ? (
+            <ChevronUp className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3" />
+          ))}
       </button>
     </th>
   )
 }
 
-function FilterActions({ searchFilters, removeFilter, clearAllFilters, setLiveFilter, fieldPrefixes, entity, placeholder, autocompleteFields = [] }: {
-  searchFilters: string[]; removeFilter: (f: string) => void; clearAllFilters: () => void
+function FilterActions({
+  searchFilters,
+  removeFilter,
+  clearAllFilters,
+  setLiveFilter,
+  fieldPrefixes,
+  entity,
+  placeholder,
+  autocompleteFields = [],
+}: {
+  searchFilters: string[]
+  removeFilter: (f: string) => void
+  clearAllFilters: () => void
   setLiveFilter: (f: string) => void
-  fieldPrefixes: { prefix: string; description: string }[]; entity: string; placeholder: string
+  fieldPrefixes: { prefix: string; description: string }[]
+  entity: string
+  placeholder: string
   autocompleteFields?: (string | { field: string; minChars: number })[]
 }) {
   return (
@@ -166,7 +248,10 @@ function FilterActions({ searchFilters, removeFilter, clearAllFilters, setLiveFi
         </button>
       ))}
       {searchFilters.length > 1 && (
-        <button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <button
+          onClick={clearAllFilters}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
           Clear all
         </button>
       )}
@@ -185,7 +270,12 @@ function CopyIcon({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
-      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+      onClick={(e) => {
+        e.stopPropagation()
+        navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }}
       className="inline-flex items-center justify-center h-4 w-4 text-muted-foreground opacity-0 group-hover/cell:opacity-100 hover:text-foreground transition-opacity cursor-pointer"
       title={copied ? 'Copied!' : 'Copy'}
     >
@@ -216,7 +306,7 @@ function ErrorState({ message }: { message: string }) {
 
 // --- Seats Page ---
 
-const seatFieldPrefixes = [
+const seatFieldPrefixesWithIP = [
   { prefix: 'seat:', description: 'Filter by seat key' },
   { prefix: 'device:', description: 'Filter by device code' },
   { prefix: 'metro:', description: 'Filter by metro code' },
@@ -227,10 +317,11 @@ const seatFieldPrefixes = [
   { prefix: 'balance:', description: 'Filter by USDC balance (e.g., >0)' },
   { prefix: 'prepaid:', description: 'Filter by prepaid epochs (e.g., >5)' },
 ]
+const seatFieldPrefixesWithoutIP = seatFieldPrefixesWithIP.filter(p => p.prefix !== 'ip:')
 
 function prepaidEpochs(seat: ShredClientSeat): number {
   if (seat.price_per_epoch_dollars <= 0 || seat.total_usdc_balance === 0) return 0
-  return Math.floor((seat.total_usdc_balance / 1e6) / seat.price_per_epoch_dollars)
+  return Math.floor(seat.total_usdc_balance / 1e6 / seat.price_per_epoch_dollars)
 }
 
 type SeatStatus = 'active' | 'expiring' | 'pending' | 'expired' | 'closed'
@@ -280,7 +371,12 @@ function useRefreshButton(refetch: () => void, isFetching: boolean, minMs = 400)
     timerRef.current = setTimeout(() => setSpinning(false), minMs)
   }, [refetch, minMs])
 
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    },
+    [],
+  )
 
   return { spinning: spinning || isFetching, onClick }
 }
@@ -292,12 +388,21 @@ function useDebouncedFetching(isFetching: boolean, { delayMs = 300, minMs = 800 
 
   useEffect(() => {
     if (isFetching) {
-      if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null }
+      if (hideTimerRef.current) {
+        clearTimeout(hideTimerRef.current)
+        hideTimerRef.current = null
+      }
       if (!visible && !showTimerRef.current) {
-        showTimerRef.current = setTimeout(() => { showTimerRef.current = null; setVisible(true) }, delayMs)
+        showTimerRef.current = setTimeout(() => {
+          showTimerRef.current = null
+          setVisible(true)
+        }, delayMs)
       }
     } else {
-      if (showTimerRef.current) { clearTimeout(showTimerRef.current); showTimerRef.current = null }
+      if (showTimerRef.current) {
+        clearTimeout(showTimerRef.current)
+        showTimerRef.current = null
+      }
       if (visible) {
         hideTimerRef.current = setTimeout(() => setVisible(false), minMs)
       }
@@ -314,7 +419,9 @@ function useDebouncedFetching(isFetching: boolean, { delayMs = 300, minMs = 800 
 function SeatStatusBadge({ status }: { status: SeatStatus }) {
   const config = seatStatusConfig[status]
   return (
-    <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border whitespace-nowrap ${config.className}`}>
+    <span
+      className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border whitespace-nowrap ${config.className}`}
+    >
       {config.label}
     </span>
   )
@@ -324,6 +431,8 @@ export function ShredsSeatsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const [showStatusInfo, setShowStatusInfo] = useState(false)
+  const { user } = useAuth()
+  const showClientIP = !!user?.is_internal_user
 
   // Fetch overview for current Solana epoch (used for status badges)
   const { data: overview } = useQuery({
@@ -343,19 +452,35 @@ export function ShredsSeatsPage() {
 
   // Status filter from URL (comma-separated, default: active,expiring,pending).
   const statusParam = searchParams.get('status') || 'active,expiring,pending'
-  const activeStatuses = useMemo(() => new Set(statusParam.split(',').filter(Boolean)), [statusParam])
+  const activeStatuses = useMemo(
+    () => new Set(statusParam.split(',').filter(Boolean)),
+    [statusParam],
+  )
 
-  const toggleStatus = useCallback((status: string) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      const current = new Set((prev.get('status') || 'active,expiring,pending').split(',').filter(Boolean))
-      if (current.has(status)) { current.delete(status) } else { current.add(status) }
-      const val = Array.from(current).join(',')
-      if (val === 'active,expiring,pending') { p.delete('status') } else { p.set('status', val) }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const toggleStatus = useCallback(
+    (status: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const current = new Set(
+          (prev.get('status') || 'active,expiring,pending').split(',').filter(Boolean),
+        )
+        if (current.has(status)) {
+          current.delete(status)
+        } else {
+          current.add(status)
+        }
+        const val = Array.from(current).join(',')
+        if (val === 'active,expiring,pending') {
+          p.delete('status')
+        } else {
+          p.set('status', val)
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
   // Filters from URL.
   const searchParam = searchParams.get('search') || ''
@@ -366,16 +491,23 @@ export function ShredsSeatsPage() {
     return searchFilters.length > 0 ? searchFilters : undefined
   }, [searchFilters])
 
-  const { data, isLoading, isFetching: rawFetching, error, refetch } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching: rawFetching,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ['shred-client-seats', offset, sortBy, sortDir, statusParam, searchParam],
-    queryFn: () => fetchShredClientSeats({
-      limit: PAGE_SIZE,
-      offset,
-      sortBy,
-      sortDir,
-      status: statusParam,
-      filters: serverFilters,
-    }),
+    queryFn: () =>
+      fetchShredClientSeats({
+        limit: PAGE_SIZE,
+        offset,
+        sortBy,
+        sortDir,
+        status: statusParam,
+        filters: serverFilters,
+      }),
     placeholderData: keepPreviousData,
     refetchInterval: 30000,
   })
@@ -386,37 +518,58 @@ export function ShredsSeatsPage() {
   const total = data?.total ?? 0
 
   // URL state setters.
-  const handleSort = useCallback((field: string) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (prev.get('sort') === field) { p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc') }
-      else { p.set('sort', field); p.set('dir', 'desc') }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleSort = useCallback(
+    (field: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (prev.get('sort') === field) {
+          p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc')
+        } else {
+          p.set('sort', field)
+          p.set('dir', 'desc')
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const setOffset = useCallback((newOffset: number) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
-      if (newPage <= 1) { p.delete('page') } else { p.set('page', String(newPage)) }
-      return p
-    })
-  }, [setSearchParams])
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+        if (newPage <= 1) {
+          p.delete('page')
+        } else {
+          p.set('page', String(newPage))
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    const newFilters = searchFilters.filter(f => f !== filterToRemove)
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (newFilters.length === 0) { p.delete('search') } else { p.set('search', newFilters.join(',')) }
-      p.delete('page')
-      return p
-    })
-  }, [searchFilters, setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          p.delete('search')
+        } else {
+          p.set('search', newFilters.join(','))
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       p.delete('search')
       p.delete('page')
@@ -440,29 +593,62 @@ export function ShredsSeatsPage() {
               className="text-muted-foreground hover:text-foreground transition-colors"
               title="Refresh"
             >
-              {refresh.spinning
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : <RefreshCw className="h-4 w-4" />}
+              {refresh.spinning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
             </button>
           }
           actions={
             <FilterActions
-              searchFilters={searchFilters} removeFilter={removeFilter} clearAllFilters={clearAllFilters}
+              searchFilters={searchFilters}
+              removeFilter={removeFilter}
+              clearAllFilters={clearAllFilters}
               setLiveFilter={() => {}}
-              fieldPrefixes={seatFieldPrefixes} entity="shred-seats" placeholder="Filter seats..."
-              autocompleteFields={['device', 'metro', 'ip', 'funder']}
+              fieldPrefixes={showClientIP ? seatFieldPrefixesWithIP : seatFieldPrefixesWithoutIP}
+              entity="shred-seats"
+              placeholder="Filter seats..."
+              autocompleteFields={showClientIP ? ['device', 'metro', 'ip', 'funder'] : ['device', 'metro', 'funder']}
             />
           }
         />
 
-        <div className="flex items-center gap-2 mb-3">
-          {([
-            { key: 'active', label: 'Active', onClass: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20', dotClass: 'bg-green-500' },
-            { key: 'expiring', label: 'Expiring', onClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20', dotClass: 'bg-amber-500' },
-            { key: 'pending', label: 'Pending', onClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20', dotClass: 'bg-blue-500' },
-            { key: 'inactive', label: 'Expired', onClass: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20', dotClass: 'bg-red-500' },
-            { key: 'closed', label: 'Closed', onClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20', dotClass: 'bg-gray-500' },
-          ] as const).map(({ key, label, onClass, dotClass }) => {
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          {(
+            [
+              {
+                key: 'active',
+                label: 'Active',
+                onClass: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20',
+                dotClass: 'bg-green-500',
+              },
+              {
+                key: 'expiring',
+                label: 'Expiring',
+                onClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+                dotClass: 'bg-amber-500',
+              },
+              {
+                key: 'pending',
+                label: 'Pending',
+                onClass: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
+                dotClass: 'bg-blue-500',
+              },
+              {
+                key: 'inactive',
+                label: 'Expired',
+                onClass: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20',
+                dotClass: 'bg-red-500',
+              },
+              {
+                key: 'closed',
+                label: 'Closed',
+                onClass: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/20',
+                dotClass: 'bg-gray-500',
+              },
+            ] as const
+          ).map(({ key, label, onClass, dotClass }) => {
             const on = activeStatuses.has(key)
             return (
               <button
@@ -472,7 +658,9 @@ export function ShredsSeatsPage() {
                   on ? onClass : 'bg-muted text-muted-foreground border-border opacity-50'
                 }`}
               >
-                <div className={`h-1.5 w-1.5 rounded-full ${on ? dotClass : 'bg-muted-foreground'}`} />
+                <div
+                  className={`h-1.5 w-1.5 rounded-full ${on ? dotClass : 'bg-muted-foreground'}`}
+                />
                 {label}
               </button>
             )
@@ -491,19 +679,27 @@ export function ShredsSeatsPage() {
               <span className="inline-flex items-center gap-1.5 font-medium text-green-600 dark:text-green-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-green-500" /> Active
               </span>
-              <span className="text-muted-foreground">Allocated for the current epoch with 1+ epochs of prepaid balance</span>
+              <span className="text-muted-foreground">
+                Allocated for the current epoch with 1+ epochs of prepaid balance
+              </span>
               <span className="inline-flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Expiring
               </span>
-              <span className="text-muted-foreground">Active but less than 1 epoch of balance remaining</span>
+              <span className="text-muted-foreground">
+                Active but less than 1 epoch of balance remaining
+              </span>
               <span className="inline-flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-blue-500" /> Pending
               </span>
-              <span className="text-muted-foreground">Funded with enough for at least 1 epoch but not yet allocated</span>
+              <span className="text-muted-foreground">
+                Funded with enough for at least 1 epoch but not yet allocated
+              </span>
               <span className="inline-flex items-center gap-1.5 font-medium text-red-600 dark:text-red-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-red-500" /> Expired
               </span>
-              <span className="text-muted-foreground">Not active and insufficient balance to renew</span>
+              <span className="text-muted-foreground">
+                Not active and insufficient balance to renew
+              </span>
               <span className="inline-flex items-center gap-1.5 font-medium text-gray-500 dark:text-gray-400">
                 <div className="h-1.5 w-1.5 rounded-full bg-gray-500" /> Closed
               </span>
@@ -523,86 +719,174 @@ export function ShredsSeatsPage() {
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
                   <th className="px-4 py-3 font-medium">Seat</th>
-                  <SortHeader field="device" label="Device" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="metro" label="Metro" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="ip" label="Client IP" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortHeader
+                    field="device"
+                    label="Device"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="metro"
+                    label="Metro"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  {showClientIP && (
+                    <SortHeader
+                      field="ip"
+                      label="Client IP"
+                      currentSort={sortBy}
+                      currentDir={sortDir}
+                      onSort={handleSort}
+                    />
+                  )}
                   <th className="px-4 py-3 font-medium">Status</th>
-                  <SortHeader field="tenure" label="Tenure" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="balance" label="Balance (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="prepaid" label="Prepaid Epochs" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="last_activity" label="Last Activity" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortHeader
+                    field="tenure"
+                    label="Tenure"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="balance"
+                    label="Balance (USDC)"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="prepaid"
+                    label="Prepaid Epochs"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="last_activity"
+                    label="Last Activity"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
                 </tr>
               </thead>
               <tbody>
                 {items.map((seat) => {
                   const status = getSeatStatus(seat, currentSolanaEpoch)
                   return (
-                  <tr key={seat.pk} className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors" onClick={(e) => handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)}>
-                    <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.pk}>
-                      <span className="inline-flex items-center gap-1">
-                        {truncatePK(seat.pk)}
-                        <CopyIcon text={seat.pk} />
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm whitespace-nowrap group/cell">
-                      <span className="inline-flex items-center gap-1">
-                        <Link to={`/dz/devices/${seat.device_key}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={seat.device_key}>
-                          {seat.device_code || truncatePK(seat.device_key)}
-                        </Link>
-                        <CopyIcon text={seat.device_code || seat.device_key} />
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {seat.metro_pk ? (
-                        <Link to={`/dz/metros/${seat.metro_pk}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={seat.metro_pk}>
-                          {seat.metro_code || truncatePK(seat.metro_pk)}
-                        </Link>
-                      ) : <span className="text-muted-foreground">{'\u2014'}</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-mono group/cell">
-                      <span className="inline-flex items-center gap-1">
-                        {seat.user_pk ? (
-                          <Link to={`/dz/users/${seat.user_pk}`} className="text-foreground/85 hover:text-foreground hover:underline" title={seat.user_pk}>
-                            {seat.client_ip}
+                    <tr
+                      key={seat.pk}
+                      className="border-b border-border last:border-b-0 hover:bg-muted cursor-pointer transition-colors"
+                      onClick={(e) =>
+                        handleRowClick(e, `/dz/shreds/activity?search=seat:${seat.pk}`, navigate)
+                      }
+                    >
+                      <td className="px-4 py-3 font-mono text-xs group/cell" title={seat.pk}>
+                        <span className="inline-flex items-center gap-1">
+                          {truncatePK(seat.pk)}
+                          <CopyIcon text={seat.pk} />
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm whitespace-nowrap group/cell">
+                        <span className="inline-flex items-center gap-1">
+                          <Link
+                            to={`/dz/devices/${seat.device_key}`}
+                            className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                            title={seat.device_key}
+                          >
+                            {seat.device_code || truncatePK(seat.device_key)}
                           </Link>
-                        ) : seat.client_ip}
-                        <CopyIcon text={seat.client_ip} />
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <SeatStatusBadge status={status} />
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">{seat.tenure_epochs}</td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {`$${(seat.total_usdc_balance / 1e6).toFixed(2)}`}
-                    </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {prepaidEpochs(seat)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        to={`/dz/shreds/activity?search=seat:${seat.pk}`}
-                        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
-                      >
-                        {seat.last_activity ? new Date(seat.last_activity).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '\u2014'}
-                        <ChevronRight className="h-3 w-3" />
-                      </Link>
-                    </td>
-                  </tr>
+                          <CopyIcon text={seat.device_code || seat.device_key} />
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {seat.metro_pk ? (
+                          <Link
+                            to={`/dz/metros/${seat.metro_pk}`}
+                            className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                            title={seat.metro_pk}
+                          >
+                            {seat.metro_code || truncatePK(seat.metro_pk)}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">{'\u2014'}</span>
+                        )}
+                      </td>
+                      {showClientIP && (
+                        <td className="px-4 py-3 text-sm font-mono group/cell">
+                          <span className="inline-flex items-center gap-1">
+                            {seat.user_pk ? (
+                              <Link
+                                to={`/dz/users/${seat.user_pk}`}
+                                className="text-foreground/85 hover:text-foreground hover:underline"
+                                title={seat.user_pk}
+                              >
+                                {seat.client_ip}
+                              </Link>
+                            ) : (
+                              seat.client_ip
+                            )}
+                            <CopyIcon text={seat.client_ip} />
+                          </span>
+                        </td>
+                      )}
+                      <td className="px-4 py-3">
+                        <SeatStatusBadge status={status} />
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums text-right">
+                        {seat.tenure_epochs}
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums text-right">
+                        {`$${(seat.total_usdc_balance / 1e6).toFixed(2)}`}
+                      </td>
+                      <td className="px-4 py-3 text-sm tabular-nums text-right">
+                        {prepaidEpochs(seat)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          to={`/dz/shreds/activity?search=seat:${seat.pk}`}
+                          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+                        >
+                          {seat.last_activity
+                            ? new Date(seat.last_activity).toLocaleString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : '\u2014'}
+                          <ChevronRight className="h-3 w-3" />
+                        </Link>
+                      </td>
+                    </tr>
                   )
                 })}
                 {items.length === 0 && (
-                  <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">No subscribers found</td></tr>
+                  <tr>
+                    <td colSpan={showClientIP ? 10 : 9} className="px-4 py-8 text-center text-muted-foreground">
+                      No subscribers found
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
           {total > PAGE_SIZE && (
-            <Pagination total={total} limit={PAGE_SIZE} offset={offset} onOffsetChange={setOffset} />
+            <Pagination
+              total={total}
+              limit={PAGE_SIZE}
+              offset={offset}
+              onOffsetChange={setOffset}
+            />
           )}
         </div>
       </div>
-
     </div>
   )
 }
@@ -614,7 +898,10 @@ const deviceFieldPrefixes = [
   { prefix: 'metro:', description: 'Filter by metro code' },
   { prefix: 'price:', description: 'Filter by price/epoch (e.g., >0)' },
   { prefix: 'granted:', description: 'Filter by granted seats (e.g., >0)' },
-  { prefix: 'available:', description: 'Filter by available seats (e.g., >10)' },
+  {
+    prefix: 'available:',
+    description: 'Filter by available seats (e.g., >10)',
+  },
 ]
 
 export function ShredsDevicesPage() {
@@ -626,17 +913,27 @@ export function ShredsDevicesPage() {
   const sortDir = (searchParams.get('dir') || 'desc') as SortDirection
   const searchParam = searchParams.get('search') || ''
   const searchFilters = useMemo(() => parseSearchFilters(searchParam), [searchParam])
-  const serverFilters = useMemo(() => searchFilters.length > 0 ? searchFilters : undefined, [searchFilters])
+  const serverFilters = useMemo(
+    () => (searchFilters.length > 0 ? searchFilters : undefined),
+    [searchFilters],
+  )
 
-  const { data, isLoading, isFetching: rawFetchingDevices, error, refetch: refetchDevices } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching: rawFetchingDevices,
+    error,
+    refetch: refetchDevices,
+  } = useQuery({
     queryKey: ['shred-devices', offset, sortBy, sortDir, searchParam],
-    queryFn: () => fetchShredDevices({
-      limit: PAGE_SIZE,
-      offset,
-      sortBy,
-      sortDir,
-      filters: serverFilters,
-    }),
+    queryFn: () =>
+      fetchShredDevices({
+        limit: PAGE_SIZE,
+        offset,
+        sortBy,
+        sortDir,
+        filters: serverFilters,
+      }),
     placeholderData: keepPreviousData,
     refetchInterval: 30000,
   })
@@ -646,37 +943,58 @@ export function ShredsDevicesPage() {
   const items = data?.items ?? []
   const total = data?.total ?? 0
 
-  const handleSort = useCallback((field: string) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (prev.get('sort') === field) { p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc') }
-      else { p.set('sort', field); p.set('dir', 'desc') }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleSort = useCallback(
+    (field: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (prev.get('sort') === field) {
+          p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc')
+        } else {
+          p.set('sort', field)
+          p.set('dir', 'desc')
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const setOffset = useCallback((newOffset: number) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
-      if (newPage <= 1) { p.delete('page') } else { p.set('page', String(newPage)) }
-      return p
-    })
-  }, [setSearchParams])
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+        if (newPage <= 1) {
+          p.delete('page')
+        } else {
+          p.set('page', String(newPage))
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    const newFilters = searchFilters.filter(f => f !== filterToRemove)
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (newFilters.length === 0) { p.delete('search') } else { p.set('search', newFilters.join(',')) }
-      p.delete('page')
-      return p
-    })
-  }, [searchFilters, setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          p.delete('search')
+        } else {
+          p.set('search', newFilters.join(','))
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       p.delete('search')
       p.delete('page')
@@ -695,15 +1013,27 @@ export function ShredsDevicesPage() {
           title="Shred Devices"
           count={total}
           subtitle={
-            <button onClick={refreshDevices.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {refreshDevices.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <button
+              onClick={refreshDevices.onClick}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh"
+            >
+              {refreshDevices.spinning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
             </button>
           }
           actions={
             <FilterActions
-              searchFilters={searchFilters} removeFilter={removeFilter} clearAllFilters={clearAllFilters}
+              searchFilters={searchFilters}
+              removeFilter={removeFilter}
+              clearAllFilters={clearAllFilters}
               setLiveFilter={() => {}}
-              fieldPrefixes={deviceFieldPrefixes} entity="shred-devices" placeholder="Filter devices..."
+              fieldPrefixes={deviceFieldPrefixes}
+              entity="shred-devices"
+              placeholder="Filter devices..."
               autocompleteFields={['device', 'metro']}
             />
           }
@@ -719,46 +1049,112 @@ export function ShredsDevicesPage() {
             <table className="w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <SortHeader field="device" label="Device" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="metro" label="Metro" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="price" label="Price (USDC) / Epoch" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="granted" label="Granted" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="capacity" label="Capacity" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="available" label="Available" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortHeader
+                    field="device"
+                    label="Device"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="metro"
+                    label="Metro"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="price"
+                    label="Price (USDC) / Epoch"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="granted"
+                    label="Granted"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="capacity"
+                    label="Capacity"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="available"
+                    label="Available"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
                 </tr>
               </thead>
               <tbody>
                 {items.map((d) => (
-                  <tr key={d.device_key} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
+                  <tr
+                    key={d.device_key}
+                    className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
+                  >
                     <td className="px-4 py-3 text-sm group/cell">
                       <span className="inline-flex items-center gap-1">
-                        <Link to={`/dz/devices/${d.device_key}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={d.device_key}>
+                        <Link
+                          to={`/dz/devices/${d.device_key}`}
+                          className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                          title={d.device_key}
+                        >
                           {d.device_code || truncatePK(d.device_key)}
                         </Link>
                         <CopyIcon text={d.device_key} />
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm">
-                      <Link to={`/dz/metros/${d.metro_exchange_key}`} className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs" title={d.metro_exchange_key}>
+                      <Link
+                        to={`/dz/metros/${d.metro_exchange_key}`}
+                        className="text-foreground/85 hover:text-foreground hover:underline font-mono text-xs"
+                        title={d.metro_exchange_key}
+                      >
                         {d.metro_code || truncatePK(d.metro_exchange_key)}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-sm tabular-nums text-right">${d.total_price_dollars}</td>
+                    <td className="px-4 py-3 text-sm tabular-nums text-right">
+                      ${d.total_price_dollars}
+                    </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">{d.granted_seats}</td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">{d.capacity}</td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {d.available_seats > 0 ? d.available_seats : <span className="text-red-500">0</span>}
+                      {d.available_seats > 0 ? (
+                        d.available_seats
+                      ) : (
+                        <span className="text-red-500">0</span>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No devices found</td></tr>
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      No devices found
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
           {total > PAGE_SIZE && (
-            <Pagination total={total} limit={PAGE_SIZE} offset={offset} onOffsetChange={setOffset} />
+            <Pagination
+              total={total}
+              limit={PAGE_SIZE}
+              offset={offset}
+              onOffsetChange={setOffset}
+            />
           )}
         </div>
       </div>
@@ -785,11 +1181,22 @@ function matchesFunderFilter(f: ShredFunder, filter: string): boolean {
   }
 
   switch (field) {
-    case 'funder': return f.funding_authority_key.toLowerCase().includes(needle)
-    case 'active': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(f.active_seats, nf) : false }
-    case 'inactive': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(f.inactive_seats, nf) : false }
-    case 'closed': { const nf = parseNumericFilter(value); return nf ? matchesNumericFilter(f.closed_seats, nf) : false }
-    default: return true
+    case 'funder':
+      return f.funding_authority_key.toLowerCase().includes(needle)
+    case 'active': {
+      const nf = parseNumericFilter(value)
+      return nf ? matchesNumericFilter(f.active_seats, nf) : false
+    }
+    case 'inactive': {
+      const nf = parseNumericFilter(value)
+      return nf ? matchesNumericFilter(f.inactive_seats, nf) : false
+    }
+    case 'closed': {
+      const nf = parseNumericFilter(value)
+      return nf ? matchesNumericFilter(f.closed_seats, nf) : false
+    }
+    default:
+      return true
   }
 }
 
@@ -797,7 +1204,13 @@ export function ShredsFundersPage() {
   const ps = usePageState()
   const sortField = ps.sortField || 'active'
 
-  const { data, isLoading, isFetching: rawFetchingFunders, error, refetch: refetchFunders } = useQuery({
+  const {
+    data,
+    isLoading,
+    isFetching: rawFetchingFunders,
+    error,
+    refetch: refetchFunders,
+  } = useQuery({
     queryKey: ['shred-funders'],
     queryFn: fetchShredFunders,
     refetchInterval: 30000,
@@ -813,17 +1226,27 @@ export function ShredsFundersPage() {
       const { field } = parseFilter(f, funderFilterFields)
       grouped.set(field, [...(grouped.get(field) ?? []), f])
     }
-    return data.filter(f => Array.from(grouped.values()).every(group => group.some(fl => matchesFunderFilter(f, fl))))
+    return data.filter((f) =>
+      Array.from(grouped.values()).every((group) => group.some((fl) => matchesFunderFilter(f, fl))),
+    )
   }, [data, ps.allFilters])
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
       let cmp = 0
       switch (sortField) {
-        case 'funder': cmp = a.funding_authority_key.localeCompare(b.funding_authority_key); break
-        case 'active': cmp = a.active_seats - b.active_seats; break
-        case 'inactive': cmp = a.inactive_seats - b.inactive_seats; break
-        case 'closed': cmp = a.closed_seats - b.closed_seats; break
+        case 'funder':
+          cmp = a.funding_authority_key.localeCompare(b.funding_authority_key)
+          break
+        case 'active':
+          cmp = a.active_seats - b.active_seats
+          break
+        case 'inactive':
+          cmp = a.inactive_seats - b.inactive_seats
+          break
+        case 'closed':
+          cmp = a.closed_seats - b.closed_seats
+          break
       }
       return ps.sortDirection === 'asc' ? cmp : -cmp
     })
@@ -840,15 +1263,27 @@ export function ShredsFundersPage() {
           title="Shred Funders"
           count={sorted.length}
           subtitle={
-            <button onClick={refreshFunders.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {refreshFunders.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <button
+              onClick={refreshFunders.onClick}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh"
+            >
+              {refreshFunders.spinning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
             </button>
           }
           actions={
             <FilterActions
-              searchFilters={ps.searchFilters} removeFilter={ps.removeFilter} clearAllFilters={ps.clearAllFilters}
+              searchFilters={ps.searchFilters}
+              removeFilter={ps.removeFilter}
+              clearAllFilters={ps.clearAllFilters}
               setLiveFilter={ps.setLiveFilter}
-              fieldPrefixes={funderFieldPrefixes} entity="shred-funders" placeholder="Filter funders..."
+              fieldPrefixes={funderFieldPrefixes}
+              entity="shred-funders"
+              placeholder="Filter funders..."
             />
           }
         />
@@ -863,27 +1298,71 @@ export function ShredsFundersPage() {
             <table className="w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <SortHeader field="funder" label="Funder" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
-                  <SortHeader field="active" label="Active Seats" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
-                  <SortHeader field="inactive" label="Inactive Seats" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
-                  <SortHeader field="closed" label="Closed Seats" align="right" currentSort={sortField} currentDir={ps.sortDirection} onSort={ps.handleSort} />
+                  <SortHeader
+                    field="funder"
+                    label="Funder"
+                    currentSort={sortField}
+                    currentDir={ps.sortDirection}
+                    onSort={ps.handleSort}
+                  />
+                  <SortHeader
+                    field="active"
+                    label="Active Seats"
+                    align="right"
+                    currentSort={sortField}
+                    currentDir={ps.sortDirection}
+                    onSort={ps.handleSort}
+                  />
+                  <SortHeader
+                    field="inactive"
+                    label="Inactive Seats"
+                    align="right"
+                    currentSort={sortField}
+                    currentDir={ps.sortDirection}
+                    onSort={ps.handleSort}
+                  />
+                  <SortHeader
+                    field="closed"
+                    label="Closed Seats"
+                    align="right"
+                    currentSort={sortField}
+                    currentDir={ps.sortDirection}
+                    onSort={ps.handleSort}
+                  />
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((f) => (
-                  <tr key={f.funding_authority_key} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs" title={f.funding_authority_key}>{truncatePK(f.funding_authority_key)}</td>
+                  <tr
+                    key={f.funding_authority_key}
+                    className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs" title={f.funding_authority_key}>
+                      {truncatePK(f.funding_authority_key)}
+                    </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">{f.active_seats}</td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {f.inactive_seats > 0 ? f.inactive_seats : <span className="text-muted-foreground">—</span>}
+                      {f.inactive_seats > 0 ? (
+                        f.inactive_seats
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {f.closed_seats > 0 ? f.closed_seats : <span className="text-muted-foreground">—</span>}
+                      {f.closed_seats > 0 ? (
+                        f.closed_seats
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {sorted.length === 0 && (
-                  <tr><td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">No funders found</td></tr>
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
+                      No funders found
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -897,7 +1376,10 @@ export function ShredsFundersPage() {
 // --- Escrow Events Page ---
 
 const eventFieldPrefixes = [
-  { prefix: 'type:', description: 'Filter by event type (fund, close, batch_allocate, ...)' },
+  {
+    prefix: 'type:',
+    description: 'Filter by event type (fund, close, batch_allocate, ...)',
+  },
   { prefix: 'escrow:', description: 'Filter by escrow key' },
   { prefix: 'seat:', description: 'Filter by client seat key' },
   { prefix: 'signer:', description: 'Filter by transaction signer' },
@@ -907,7 +1389,13 @@ const eventFieldPrefixes = [
 
 function formatUSDC(raw: number | null): string {
   if (raw === null) return '\u2014'
-  return '$' + (raw / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return (
+    '$' +
+    (raw / 1_000_000).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  )
 }
 
 const eventTypeBadgeColors: Record<string, string> = {
@@ -960,6 +1448,8 @@ function toLocalDatetimeString(ts: number): string {
 
 export function ShredsEscrowEventsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const { user } = useAuth()
+  const showClientIP = !!user?.is_internal_user
 
   // Pagination from URL.
   const page = parseInt(searchParams.get('page') || '1')
@@ -994,17 +1484,32 @@ export function ShredsEscrowEventsPage() {
     return { range: timeRange }
   }, [timeRange, customStart, customEnd])
 
-  const { data, isLoading, isFetching: rawFetchingEvents, error, refetch: refetchEvents } = useQuery({
-    queryKey: ['shred-escrow-events', offset, sortBy, sortDir, timeParams, searchParam, includeInternal],
-    queryFn: () => fetchShredEscrowEvents({
-      limit: PAGE_SIZE,
+  const {
+    data,
+    isLoading,
+    isFetching: rawFetchingEvents,
+    error,
+    refetch: refetchEvents,
+  } = useQuery({
+    queryKey: [
+      'shred-escrow-events',
       offset,
       sortBy,
       sortDir,
-      ...timeParams,
-      filters: serverFilters,
+      timeParams,
+      searchParam,
       includeInternal,
-    }),
+    ],
+    queryFn: () =>
+      fetchShredEscrowEvents({
+        limit: PAGE_SIZE,
+        offset,
+        sortBy,
+        sortDir,
+        ...timeParams,
+        filters: serverFilters,
+        includeInternal,
+      }),
     placeholderData: keepPreviousData,
     refetchInterval: 30000,
   })
@@ -1015,88 +1520,121 @@ export function ShredsEscrowEventsPage() {
   const total = data?.total ?? 0
 
   // URL state setters.
-  const handleSort = useCallback((field: string) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (prev.get('sort') === field) { p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc') }
-      else { p.set('sort', field); p.set('dir', 'desc') }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleSort = useCallback(
+    (field: string) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (prev.get('sort') === field) {
+          p.set('dir', prev.get('dir') === 'asc' ? 'desc' : 'asc')
+        } else {
+          p.set('sort', field)
+          p.set('dir', 'desc')
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const handleTimeRange = useCallback((range: TimeRangePreset | 'custom') => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      p.set('range', range)
-      if (range !== 'custom') {
-        p.delete('start_time')
-        p.delete('end_time')
-      } else if (!prev.get('start_time')) {
-        // Default custom to last 7 days.
-        const now = Math.floor(Date.now() / 1000)
-        p.set('start_time', String(now - 7 * 86400))
-        p.set('end_time', String(now))
-      }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleTimeRange = useCallback(
+    (range: TimeRangePreset | 'custom') => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        p.set('range', range)
+        if (range !== 'custom') {
+          p.delete('start_time')
+          p.delete('end_time')
+        } else if (!prev.get('start_time')) {
+          // Default custom to last 7 days.
+          const now = Math.floor(Date.now() / 1000)
+          p.set('start_time', String(now - 7 * 86400))
+          p.set('end_time', String(now))
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const handleCustomStart = useCallback((value: string) => {
-    const ts = Math.floor(new Date(value).getTime() / 1000)
-    if (isNaN(ts)) return
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      p.set('start_time', String(ts))
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleCustomStart = useCallback(
+    (value: string) => {
+      const ts = Math.floor(new Date(value).getTime() / 1000)
+      if (isNaN(ts)) return
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        p.set('start_time', String(ts))
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const handleCustomEnd = useCallback((value: string) => {
-    const ts = Math.floor(new Date(value).getTime() / 1000)
-    if (isNaN(ts)) return
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      p.set('end_time', String(ts))
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleCustomEnd = useCallback(
+    (value: string) => {
+      const ts = Math.floor(new Date(value).getTime() / 1000)
+      if (isNaN(ts)) return
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        p.set('end_time', String(ts))
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const setOffset = useCallback((newOffset: number) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
-      if (newPage <= 1) { p.delete('page') } else { p.set('page', String(newPage)) }
-      return p
-    })
-  }, [setSearchParams])
+  const setOffset = useCallback(
+    (newOffset: number) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        const newPage = Math.floor(newOffset / PAGE_SIZE) + 1
+        if (newPage <= 1) {
+          p.delete('page')
+        } else {
+          p.set('page', String(newPage))
+        }
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
-  const removeFilter = useCallback((filterToRemove: string) => {
-    const newFilters = searchFilters.filter(f => f !== filterToRemove)
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (newFilters.length === 0) { p.delete('search') } else { p.set('search', newFilters.join(',')) }
-      p.delete('page')
-      return p
-    })
-  }, [searchFilters, setSearchParams])
+  const removeFilter = useCallback(
+    (filterToRemove: string) => {
+      const newFilters = searchFilters.filter((f) => f !== filterToRemove)
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (newFilters.length === 0) {
+          p.delete('search')
+        } else {
+          p.set('search', newFilters.join(','))
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
-  const addFilter = useCallback((filter: string) => {
-    if (searchFilters.includes(filter)) return
-    const newFilters = [...searchFilters, filter]
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      p.set('search', newFilters.join(','))
-      p.delete('page')
-      return p
-    })
-  }, [searchFilters, setSearchParams])
+  const addFilter = useCallback(
+    (filter: string) => {
+      if (searchFilters.includes(filter)) return
+      const newFilters = [...searchFilters, filter]
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        p.set('search', newFilters.join(','))
+        p.delete('page')
+        return p
+      })
+    },
+    [searchFilters, setSearchParams],
+  )
 
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       const p = new URLSearchParams(prev)
       p.delete('search')
       p.delete('page')
@@ -1104,14 +1642,21 @@ export function ShredsEscrowEventsPage() {
     })
   }, [setSearchParams])
 
-  const handleIncludeInternal = useCallback((value: boolean) => {
-    setSearchParams(prev => {
-      const p = new URLSearchParams(prev)
-      if (value) { p.set('internal', 'true') } else { p.delete('internal') }
-      p.delete('page')
-      return p
-    })
-  }, [setSearchParams])
+  const handleIncludeInternal = useCallback(
+    (value: boolean) => {
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev)
+        if (value) {
+          p.set('internal', 'true')
+        } else {
+          p.delete('internal')
+        }
+        p.delete('page')
+        return p
+      })
+    },
+    [setSearchParams],
+  )
 
   const maxDate = new Date().toISOString().slice(0, 16)
 
@@ -1126,24 +1671,36 @@ export function ShredsEscrowEventsPage() {
           title="Shred Activity"
           count={total}
           subtitle={
-            <button onClick={refreshEvents.onClick} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              {refreshEvents.spinning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <button
+              onClick={refreshEvents.onClick}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Refresh"
+            >
+              {refreshEvents.spinning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
             </button>
           }
           actions={
             <FilterActions
-              searchFilters={searchFilters} removeFilter={removeFilter} clearAllFilters={clearAllFilters}
+              searchFilters={searchFilters}
+              removeFilter={removeFilter}
+              clearAllFilters={clearAllFilters}
               setLiveFilter={() => {}}
-              fieldPrefixes={eventFieldPrefixes} entity="escrow-events" placeholder="Filter events..."
+              fieldPrefixes={eventFieldPrefixes}
+              entity="escrow-events"
+              placeholder="Filter events..."
               autocompleteFields={['type', 'seat', 'signer', 'status']}
             />
           }
         />
 
         {/* Time range selector */}
-        <div className="flex items-center gap-3 mb-4">
-          <div className="inline-flex rounded-md border border-border bg-background p-0.5">
-            {timeRangePresets.map(option => (
+        <div className="flex sm:items-center flex-col sm:flex-row gap-3 mb-4">
+          <div className="inline-flex rounded-md border border-border bg-background p-0.5 overflow-x-auto max-w-fit">
+            {timeRangePresets.map((option) => (
               <button
                 key={option.value}
                 onClick={() => handleTimeRange(option.value)}
@@ -1185,12 +1742,16 @@ export function ShredsEscrowEventsPage() {
             className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <span>Internal</span>
-            <div className={`relative w-7 h-4 rounded-full transition-colors ${
-              includeInternal ? 'bg-primary' : 'bg-muted-foreground/30'
-            }`}>
-              <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
-                includeInternal ? 'translate-x-3.5' : 'translate-x-0.5'
-              }`} />
+            <div
+              className={`relative w-7 h-4 rounded-full transition-colors ${
+                includeInternal ? 'bg-primary' : 'bg-muted-foreground/30'
+              }`}
+            >
+              <div
+                className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                  includeInternal ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`}
+              />
             </div>
           </button>
         </div>
@@ -1205,25 +1766,68 @@ export function ShredsEscrowEventsPage() {
             <table className="w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <SortHeader field="time" label="Time" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="type" label="Event" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortHeader
+                    field="time"
+                    label="Time"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="type"
+                    label="Event"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
                   <th className="px-4 py-3 font-medium">Seat</th>
-                  <th className="px-4 py-3 font-medium">Client IP</th>
+                  {showClientIP && <th className="px-4 py-3 font-medium">Client IP</th>}
                   <th className="px-4 py-3 font-medium">Signer</th>
-                  <SortHeader field="amount" label="Amount (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="balance" label="Balance (USDC)" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                  <SortHeader field="epoch" label="Epoch" align="right" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                  <SortHeader
+                    field="amount"
+                    label="Amount (USDC)"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="balance"
+                    label="Balance (USDC)"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    field="epoch"
+                    label="Epoch"
+                    align="right"
+                    currentSort={sortBy}
+                    currentDir={sortDir}
+                    onSort={handleSort}
+                  />
                   <th className="px-4 py-3 font-medium">Tx</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((e) => (
-                  <tr key={`${e.tx_signature}-${e.event_type}-${e.escrow_pk}`} className="border-b border-border last:border-b-0 hover:bg-muted transition-colors">
+                  <tr
+                    key={`${e.tx_signature}-${e.event_type}-${e.escrow_pk}`}
+                    className="border-b border-border last:border-b-0 hover:bg-muted transition-colors"
+                  >
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                      {new Date(e.event_ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      {new Date(e.event_ts).toLocaleString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border whitespace-nowrap ${eventTypeBadgeColors[e.event_type] || eventTypeBadgeColors.unknown}`}>
+                      <span
+                        className={`inline-flex items-center text-xs px-2 py-0.5 rounded-lg border whitespace-nowrap ${eventTypeBadgeColors[e.event_type] || eventTypeBadgeColors.unknown}`}
+                      >
                         {eventTypeLabels[e.event_type] || e.event_type}
                       </span>
                       {e.status === 'failed' && (
@@ -1240,7 +1844,7 @@ export function ShredsEscrowEventsPage() {
                         >
                           {truncatePK(e.client_seat_pk)}
                         </Link>
-                        {!searchFilters.some(f => f.startsWith('seat:')) && (
+                        {!searchFilters.some((f) => f.startsWith('seat:')) && (
                           <button
                             onClick={() => addFilter(`seat:${e.client_seat_pk}`)}
                             className="text-muted-foreground hover:text-foreground opacity-0 group-hover/cell:opacity-100 transition-opacity p-0.5"
@@ -1251,26 +1855,44 @@ export function ShredsEscrowEventsPage() {
                         )}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs">
-                      <span className="inline-flex items-center gap-1.5 group/cell">
-                        {e.client_ip || <span className="text-muted-foreground">{'\u2014'}</span>}
-                        {e.client_ip && <CopyIcon text={e.client_ip} />}
-                      </span>
-                    </td>
+                    {showClientIP && (
+                      <td className="px-4 py-3 font-mono text-xs">
+                        <span className="inline-flex items-center gap-1.5 group/cell">
+                          {e.client_ip || <span className="text-muted-foreground">{'\u2014'}</span>}
+                          {e.client_ip && <CopyIcon text={e.client_ip} />}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-4 py-3 font-mono text-xs" title={e.signer}>
                       <span className="inline-flex items-center gap-1.5 group/cell">
-                        {e.signer ? truncatePK(e.signer) : <span className="text-muted-foreground">{'\u2014'}</span>}
+                        {e.signer ? (
+                          truncatePK(e.signer)
+                        ) : (
+                          <span className="text-muted-foreground">{'\u2014'}</span>
+                        )}
                         {e.signer && <CopyIcon text={e.signer} />}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {e.amount_usdc !== null ? formatUSDC(e.amount_usdc) : <span className="text-muted-foreground">{'\u2014'}</span>}
+                      {e.amount_usdc !== null ? (
+                        formatUSDC(e.amount_usdc)
+                      ) : (
+                        <span className="text-muted-foreground">{'\u2014'}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {e.balance_after_usdc !== null ? formatUSDC(e.balance_after_usdc) : <span className="text-muted-foreground">{'\u2014'}</span>}
+                      {e.balance_after_usdc !== null ? (
+                        formatUSDC(e.balance_after_usdc)
+                      ) : (
+                        <span className="text-muted-foreground">{'\u2014'}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm tabular-nums text-right">
-                      {e.epoch !== null ? e.epoch : <span className="text-muted-foreground">{'\u2014'}</span>}
+                      {e.epoch !== null ? (
+                        e.epoch
+                      ) : (
+                        <span className="text-muted-foreground">{'\u2014'}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <a
@@ -1287,7 +1909,11 @@ export function ShredsEscrowEventsPage() {
                   </tr>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">No activity found</td></tr>
+                  <tr>
+                    <td colSpan={showClientIP ? 9 : 8} className="px-4 py-8 text-center text-muted-foreground">
+                      No activity found
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

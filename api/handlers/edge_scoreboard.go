@@ -691,50 +691,55 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		g.Go(func() error {
 			localFeedStats := make(map[feedKey]*EdgeScoreboardFeedStats)
 
+			// q2: per-host share-of-wins across the scoreboard feeds.
+			// denom = sum(shreds_won) across all scoreboard feeds for in-scope slots —
+			// only races one of the tracked feeds won first. Every feed's win_rate_pct is
+			// its share of those races, so dz + dz_rebop + jito + turbine sum to 100%
+			// and dz_edge (synthesized below from dz + dz_rebop) is additive.
+			// This excludes shreds won first by untracked feeds (regional retransmits,
+			// provider_one, etc.) so the scoreboard isn't diluted by new feeds we don't track.
 			var q2 string
 			if leadersOnly {
 				q2 = fmt.Sprintf(`
-				WITH %s
-				SELECT
-					host, feed, shreds_won, total_shreds,
-					round(shreds_won / max_total * 100, 1) AS win_rate_pct
-				FROM (
-					SELECT
-						host, feed, shreds_won, total_shreds,
-						MAX(total_shreds) OVER (PARTITION BY host) AS max_total
-					FROM (
-						SELECT
-							host, feed,
-							SUM(shreds_won) AS shreds_won,
-							SUM(total_shreds) AS total_shreds
-						FROM %s.slot_feed_race_summary
-						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
-							AND slot IN (SELECT slot FROM dz_leader_slots)
-							%s
-						GROUP BY host, feed
-					)
+				WITH %[1]s,
+				feed_totals AS (
+					SELECT host, feed, sum(shreds_won) AS shreds_won
+					FROM %[2]s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[3]s)
+						AND slot IN (SELECT slot FROM dz_leader_slots)
+						%[4]s
+					GROUP BY host, feed
+				),
+				host_denom AS (
+					SELECT host, sum(shreds_won) AS denom
+					FROM feed_totals
+					GROUP BY host
 				)
+				SELECT
+					ft.host, ft.feed, ft.shreds_won, hd.denom AS total_shreds,
+					if(hd.denom > 0, round(ft.shreds_won / hd.denom * 100, 1), 0) AS win_rate_pct
+				FROM feed_totals ft
+				INNER JOIN host_denom hd ON ft.host = hd.host
 			SETTINGS final=1
 `, dzLeaderCTE, shredderDB, scoreboardFeeds, rangeFilter)
 			} else {
 				q2 = fmt.Sprintf(`
-				SELECT
-					host, feed, shreds_won, total_shreds,
-					round(shreds_won / max_total * 100, 1) AS win_rate_pct
-				FROM (
-					SELECT
-						host, feed, shreds_won, total_shreds,
-						MAX(total_shreds) OVER (PARTITION BY host) AS max_total
-					FROM (
-						SELECT
-							host, feed,
-							SUM(shreds_won) AS shreds_won,
-							SUM(total_shreds) AS total_shreds
-						FROM %s.slot_feed_race_summary
-						WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s) %s
-						GROUP BY host, feed
-					)
+				WITH feed_totals AS (
+					SELECT host, feed, sum(shreds_won) AS shreds_won
+					FROM %[1]s.slot_feed_race_summary
+					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[2]s) %[3]s
+					GROUP BY host, feed
+				),
+				host_denom AS (
+					SELECT host, sum(shreds_won) AS denom
+					FROM feed_totals
+					GROUP BY host
 				)
+				SELECT
+					ft.host, ft.feed, ft.shreds_won, hd.denom AS total_shreds,
+					if(hd.denom > 0, round(ft.shreds_won / hd.denom * 100, 1), 0) AS win_rate_pct
+				FROM feed_totals ft
+				INNER JOIN host_denom hd ON ft.host = hd.host
 			SETTINGS final=1
 `, shredderDB, scoreboardFeeds, rangeFilter)
 			}
@@ -763,84 +768,39 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				return fmt.Errorf("query2 rows: %w", err)
 			}
 
-			// q2c: dz_edge combined win rate with correct per-slot denominator.
-			// Groups by (host, slot) first so overlapping slot totals aren't double-counted
-			// when dz and dz_rebop cover different sets of slots.
-			var q2c string
-			if leadersOnly {
-				q2c = fmt.Sprintf(`
-				WITH %s
-				SELECT
-					host,
-					sum(dz_won + rebop_won) AS shreds_won,
-					sum(slot_total) AS total_shreds,
-					if(sum(slot_total) > 0, round(sum(dz_won + rebop_won) / sum(slot_total) * 100, 1), 0) AS win_rate_pct
-				FROM (
-					SELECT
-						host, slot,
-						sumIf(shreds_won, feed = 'dz') AS dz_won,
-						sumIf(shreds_won, feed = 'dz_rebop') AS rebop_won,
-						greatest(
-							maxIf(total_shreds, feed = 'dz'),
-							maxIf(total_shreds, feed = 'dz_rebop')
-						) AS slot_total
-					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN ('dz', 'dz_rebop')
-						AND slot IN (SELECT slot FROM dz_leader_slots)
-						%s
-					GROUP BY host, slot
-					HAVING slot_total > 0
-				)
-				GROUP BY host
-				SETTINGS final=1
-`, dzLeaderCTE, shredderDB, rangeFilter)
-			} else {
-				q2c = fmt.Sprintf(`
-				SELECT
-					host,
-					sum(dz_won + rebop_won) AS shreds_won,
-					sum(slot_total) AS total_shreds,
-					if(sum(slot_total) > 0, round(sum(dz_won + rebop_won) / sum(slot_total) * 100, 1), 0) AS win_rate_pct
-				FROM (
-					SELECT
-						host, slot,
-						sumIf(shreds_won, feed = 'dz') AS dz_won,
-						sumIf(shreds_won, feed = 'dz_rebop') AS rebop_won,
-						greatest(
-							maxIf(total_shreds, feed = 'dz'),
-							maxIf(total_shreds, feed = 'dz_rebop')
-						) AS slot_total
-					FROM %s.slot_feed_race_summary
-					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN ('dz', 'dz_rebop') %s
-					GROUP BY host, slot
-					HAVING slot_total > 0
-				)
-				GROUP BY host
-				SETTINGS final=1
-`, shredderDB, rangeFilter)
+			// Synthesize dz_edge = dz + dz_rebop on the shared per-host denominator.
+			// Because both dz and dz_rebop carry the same host_denom as TotalShreds,
+			// dz_edge.win_rate_pct == dz.win_rate_pct + dz_rebop.win_rate_pct exactly.
+			hosts := make(map[string]struct{})
+			for k := range localFeedStats {
+				hosts[k.nodeID] = struct{}{}
 			}
-			t = time.Now()
-			rows2c, err := a.envDB(gctx).Query(gctx, q2c)
-			metrics.RecordClickHouseQuery(time.Since(t), err)
-			if err != nil {
-				return fmt.Errorf("query2c: %w", err)
-			}
-			defer rows2c.Close()
-			for rows2c.Next() {
-				var nodeID string
-				var shredsWon, totalShreds uint64
-				var winRatePct float64
-				if err := rows2c.Scan(&nodeID, &shredsWon, &totalShreds, &winRatePct); err != nil {
-					return fmt.Errorf("query2c scan: %w", err)
+			for nodeID := range hosts {
+				dz := localFeedStats[feedKey{nodeID, "dz"}]
+				rebop := localFeedStats[feedKey{nodeID, "dz_rebop"}]
+				if dz == nil && rebop == nil {
+					continue
+				}
+				var denom, won uint64
+				if dz != nil {
+					denom = dz.TotalShreds
+					won += dz.ShredsWon
+				}
+				if rebop != nil {
+					if denom == 0 {
+						denom = rebop.TotalShreds
+					}
+					won += rebop.ShredsWon
+				}
+				var rate float64
+				if denom > 0 {
+					rate = float64(int(float64(won)/float64(denom)*1000+0.5)) / 10
 				}
 				localFeedStats[feedKey{nodeID, "dz_edge"}] = &EdgeScoreboardFeedStats{
-					ShredsWon:   shredsWon,
-					TotalShreds: totalShreds,
-					WinRatePct:  winRatePct,
+					ShredsWon:   won,
+					TotalShreds: denom,
+					WinRatePct:  rate,
 				}
-			}
-			if err := rows2c.Err(); err != nil {
-				return fmt.Errorf("query2c rows: %w", err)
 			}
 
 			feedStats = localFeedStats
@@ -1071,6 +1031,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							%s
 					)
 					GROUP BY slot
+					HAVING count(DISTINCT host) = (SELECT count(*) FROM active_hosts)
 					ORDER BY slot %s
 					LIMIT %d
 				)
@@ -1105,6 +1066,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							%s
 					)
 					GROUP BY slot
+					HAVING count(DISTINCT host) = (SELECT count(*) FROM active_hosts)
 					ORDER BY slot %s
 					LIMIT %d
 				)

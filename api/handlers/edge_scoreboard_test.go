@@ -206,7 +206,8 @@ func TestGetEdgeScoreboard_WithData(t *testing.T) {
 	assert.Equal(t, uint64(2), slc.TotalSlots)
 	assert.Equal(t, uint64(1), slc.SlotsObserved)
 
-	// Check DZ feed win rate for SLC (only slot 100 is DZ-participating)
+	// Check DZ feed win rate for SLC. leaders_only=true by default, so only slot1
+	// (DZ-leader slot) is in scope. Shared denom = slot1 max(total_shreds)=100. dz won 80.
 	dzFeed, ok := slc.Feeds["dz"]
 	require.True(t, ok, "dz feed should exist for slc")
 	assert.Equal(t, uint64(80), dzFeed.ShredsWon)

@@ -1,7 +1,19 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { Loader2, Zap, Download, ArrowRight, ChevronUp, ChevronDown, Search, X, MapPin, Filter, RefreshCw } from 'lucide-react'
+import {
+  Loader2,
+  Zap,
+  Download,
+  ArrowRight,
+  ChevronUp,
+  ChevronDown,
+  Search,
+  X,
+  MapPin,
+  Filter,
+  RefreshCw,
+} from 'lucide-react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useUPlotChart } from '@/hooks/use-uplot-chart'
@@ -34,7 +46,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
   const filteredValues = useMemo(() => {
     if (!metroValues) return []
     if (!query) return metroValues
-    return metroValues.filter(v => v.toLowerCase().includes(query.toLowerCase()))
+    return metroValues.filter((v) => v.toLowerCase().includes(query.toLowerCase()))
   }, [metroValues, query])
 
   const items = isFocused ? filteredValues : []
@@ -43,38 +55,51 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
     setSelectedIndex(-1)
   }, [debouncedQuery])
 
-  const commit = useCallback((value: string) => {
-    onCommit(value)
-    setQuery('')
-    inputRef.current?.focus()
-  }, [onCommit])
+  const commit = useCallback(
+    (value: string) => {
+      onCommit(value)
+      setQuery('')
+      inputRef.current?.focus()
+    },
+    [onCommit],
+  )
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const isDropdownOpen = isFocused && items.length > 0
-    switch (e.key) {
-      case 'ArrowDown':
-        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, items.length - 1)) }
-        break
-      case 'ArrowUp':
-        if (isDropdownOpen) { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)) }
-        break
-      case 'Enter': {
-        e.preventDefault()
-        const idx = selectedIndex >= 0 ? selectedIndex : 0
-        if (idx < items.length) commit(items[idx])
-        break
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const isDropdownOpen = isFocused && items.length > 0
+      switch (e.key) {
+        case 'ArrowDown':
+          if (isDropdownOpen) {
+            e.preventDefault()
+            setSelectedIndex((prev) => Math.min(prev + 1, items.length - 1))
+          }
+          break
+        case 'ArrowUp':
+          if (isDropdownOpen) {
+            e.preventDefault()
+            setSelectedIndex((prev) => Math.max(prev - 1, -1))
+          }
+          break
+        case 'Enter': {
+          e.preventDefault()
+          const idx = selectedIndex >= 0 ? selectedIndex : 0
+          if (idx < items.length) commit(items[idx])
+          break
+        }
+        case 'Escape':
+          e.preventDefault()
+          setQuery('')
+          inputRef.current?.blur()
+          break
       }
-      case 'Escape':
-        e.preventDefault()
-        setQuery('')
-        inputRef.current?.blur()
-        break
-    }
-  }, [items, selectedIndex, commit, isFocused])
+    },
+    [items, selectedIndex, commit, isFocused],
+  )
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsFocused(false)
+      if (containerRef.current && !containerRef.current.contains(e.target as Node))
+        setIsFocused(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -84,7 +109,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
 
   return (
     <div ref={containerRef} className="relative">
-      <div className="flex items-center gap-1.5 px-2 py-1 text-xs border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-md bg-background hover:bg-muted/50 focus-within:ring-1 focus-within:ring-ring transition-colors">
         <Search className="h-3 w-3 text-muted-foreground flex-shrink-0" />
         <input
           ref={inputRef}
@@ -113,7 +138,7 @@ function MetroInlineFilter({ onCommit }: { onCommit: (metro: string) => void }) 
               onClick={() => commit(value)}
               className={cn(
                 'w-full flex items-center gap-2 px-3 py-2 text-left text-xs hover:bg-muted transition-colors',
-                index === selectedIndex && 'bg-muted'
+                index === selectedIndex && 'bg-muted',
               )}
             >
               <MapPin className="h-3 w-3 text-muted-foreground flex-shrink-0" />
@@ -132,7 +157,10 @@ import { useDelayedLoading } from '@/hooks/use-delayed-loading'
 // Parse metro filters from URL
 function parseMetroFilters(searchParam: string): string[] {
   if (!searchParam) return []
-  return searchParam.split(',').map(f => f.trim()).filter(Boolean)
+  return searchParam
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
 }
 
 type SortField = 'route' | 'dz' | 'internet' | 'improvement' | 'dzJitter' | 'internetJitter'
@@ -160,7 +188,12 @@ export function DzVsInternetPage() {
   const isDark = resolvedTheme === 'dark'
 
   // Fetch latency comparison data
-  const { data: latencyData, isLoading: latencyLoading, error: latencyError, isFetching: latencyFetching } = useQuery({
+  const {
+    data: latencyData,
+    isLoading: latencyLoading,
+    error: latencyError,
+    isFetching: latencyFetching,
+  } = useQuery({
     queryKey: ['latency-comparison'],
     queryFn: fetchLatencyComparison,
     staleTime: 0,
@@ -182,63 +215,79 @@ export function DzVsInternetPage() {
   const selectedComparison = useMemo(() => {
     if (!selectedRoute || !latencyData) return null
     const [origin, target] = selectedRoute.split('-')
-    return latencyData.comparisons.find(
-      c => c.origin_metro_code === origin && c.target_metro_code === target
-    ) ?? null
+    return (
+      latencyData.comparisons.find(
+        (c) => c.origin_metro_code === origin && c.target_metro_code === target,
+      ) ?? null
+    )
   }, [selectedRoute, latencyData])
 
   // Update URL when selection changes (preserve metros filter)
-  const setSelectedComparison = useCallback((comp: LatencyComparison | null) => {
-    setSearchParams(prev => {
-      if (comp) {
-        prev.set('route', `${comp.origin_metro_code}-${comp.target_metro_code}`)
-      } else {
-        prev.delete('route')
-      }
-      return prev
-    })
-  }, [setSearchParams])
+  const setSelectedComparison = useCallback(
+    (comp: LatencyComparison | null) => {
+      setSearchParams((prev) => {
+        if (comp) {
+          prev.set('route', `${comp.origin_metro_code}-${comp.target_metro_code}`)
+        } else {
+          prev.delete('route')
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
   // Remove a metro filter
-  const removeMetroFilter = useCallback((metro: string) => {
-    setSearchParams(prev => {
-      const current = parseMetroFilters(prev.get('metros') || '')
-      const newFilters = current.filter(m => m !== metro)
-      if (newFilters.length === 0) {
-        prev.delete('metros')
-      } else {
-        prev.set('metros', newFilters.join(','))
-      }
-      return prev
-    })
-  }, [setSearchParams])
+  const removeMetroFilter = useCallback(
+    (metro: string) => {
+      setSearchParams((prev) => {
+        const current = parseMetroFilters(prev.get('metros') || '')
+        const newFilters = current.filter((m) => m !== metro)
+        if (newFilters.length === 0) {
+          prev.delete('metros')
+        } else {
+          prev.set('metros', newFilters.join(','))
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
   // Clear all metro filters
   const clearAllFilters = useCallback(() => {
-    setSearchParams(prev => {
+    setSearchParams((prev) => {
       prev.delete('metros')
       return prev
     })
   }, [setSearchParams])
 
   // Add a metro filter
-  const addMetroFilter = useCallback((metro: string) => {
-    setSearchParams(prev => {
-      const current = parseMetroFilters(prev.get('metros') || '')
-      if (!current.includes(metro)) {
-        prev.set('metros', [...current, metro].join(','))
-      }
-      return prev
-    })
-  }, [setSearchParams])
+  const addMetroFilter = useCallback(
+    (metro: string) => {
+      setSearchParams((prev) => {
+        const current = parseMetroFilters(prev.get('metros') || '')
+        if (!current.includes(metro)) {
+          prev.set('metros', [...current, metro].join(','))
+        }
+        return prev
+      })
+    },
+    [setSearchParams],
+  )
 
   // Fetch latency history for selected comparison
   const { data: historyData, isFetching: historyFetching } = useQuery({
-    queryKey: ['latency-history', selectedComparison?.origin_metro_code, selectedComparison?.target_metro_code],
-    queryFn: () => fetchLatencyHistory(
-      selectedComparison!.origin_metro_code,
-      selectedComparison!.target_metro_code
-    ),
+    queryKey: [
+      'latency-history',
+      selectedComparison?.origin_metro_code,
+      selectedComparison?.target_metro_code,
+    ],
+    queryFn: () =>
+      fetchLatencyHistory(
+        selectedComparison!.origin_metro_code,
+        selectedComparison!.target_metro_code,
+      ),
     enabled: !!selectedComparison,
     staleTime: 0,
     placeholderData: keepPreviousData,
@@ -253,30 +302,44 @@ export function DzVsInternetPage() {
 
   const rttUPlotData = useMemo(() => {
     if (!historyData?.points || historyData.points.length === 0) return [[]] as uPlot.AlignedData
-    const ts = historyData.points.map(p => new Date(p.timestamp).getTime() / 1000)
-    const dzRtt = historyData.points.map(p => p.dz_avg_rtt_ms)
-    const inetRtt = historyData.points.map(p => p.inet_avg_rtt_ms)
+    const ts = historyData.points.map((p) => new Date(p.timestamp).getTime() / 1000)
+    const dzRtt = historyData.points.map((p) => p.dz_avg_rtt_ms)
+    const inetRtt = historyData.points.map((p) => p.inet_avg_rtt_ms)
     return [ts, dzRtt, inetRtt] as uPlot.AlignedData
   }, [historyData])
 
   const jitterUPlotData = useMemo(() => {
     if (!historyData?.points || historyData.points.length === 0) return [[]] as uPlot.AlignedData
-    const ts = historyData.points.map(p => new Date(p.timestamp).getTime() / 1000)
-    const dzJitter = historyData.points.map(p => p.dz_avg_jitter_ms)
-    const inetJitter = historyData.points.map(p => p.inet_avg_jitter_ms)
+    const ts = historyData.points.map((p) => new Date(p.timestamp).getTime() / 1000)
+    const dzJitter = historyData.points.map((p) => p.dz_avg_jitter_ms)
+    const inetJitter = historyData.points.map((p) => p.inet_avg_jitter_ms)
     return [ts, dzJitter, inetJitter] as uPlot.AlignedData
   }, [historyData])
 
-  const latencySeries = useMemo((): uPlot.Series[] => [
-    {},
-    { label: 'DZ', stroke: dzColor, width: 1.5, points: { show: false } },
-    { label: 'Internet', stroke: inetColor, width: 1.5, points: { show: false } },
-  ], [dzColor, inetColor])
+  const latencySeries = useMemo(
+    (): uPlot.Series[] => [
+      {},
+      { label: 'DZ', stroke: dzColor, width: 1.5, points: { show: false } },
+      {
+        label: 'Internet',
+        stroke: inetColor,
+        width: 1.5,
+        points: { show: false },
+      },
+    ],
+    [dzColor, inetColor],
+  )
 
-  const msAxes = useMemo((): uPlot.Axis[] => [
-    {},
-    { values: (_u: uPlot, vals: number[]) => vals.map(v => `${v.toFixed(1)}ms`), size: 50 },
-  ], [])
+  const msAxes = useMemo(
+    (): uPlot.Axis[] => [
+      {},
+      {
+        values: (_u: uPlot, vals: number[]) => vals.map((v) => `${v.toFixed(1)}ms`),
+        size: 50,
+      },
+    ],
+    [],
+  )
 
   useUPlotChart({
     containerRef: rttChartRef,
@@ -298,15 +361,16 @@ export function DzVsInternetPage() {
   const comparisons = useMemo(() => {
     if (!latencyData) return []
 
-    let filtered = latencyData.comparisons.filter(c => c.internet_sample_count > 0)
+    let filtered = latencyData.comparisons.filter((c) => c.internet_sample_count > 0)
 
     // Apply metro filters - show routes where origin OR target matches any filter
     if (metroFilters.length > 0) {
-      filtered = filtered.filter(c =>
-        metroFilters.some(m =>
-          c.origin_metro_code.toLowerCase() === m.toLowerCase() ||
-          c.target_metro_code.toLowerCase() === m.toLowerCase()
-        )
+      filtered = filtered.filter((c) =>
+        metroFilters.some(
+          (m) =>
+            c.origin_metro_code.toLowerCase() === m.toLowerCase() ||
+            c.target_metro_code.toLowerCase() === m.toLowerCase(),
+        ),
       )
     }
 
@@ -315,7 +379,7 @@ export function DzVsInternetPage() {
       switch (sortField) {
         case 'route':
           cmp = `${a.origin_metro_code}→${a.target_metro_code}`.localeCompare(
-            `${b.origin_metro_code}→${b.target_metro_code}`
+            `${b.origin_metro_code}→${b.target_metro_code}`,
           )
           break
         case 'dz':
@@ -340,7 +404,7 @@ export function DzVsInternetPage() {
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortDirection(d => d === 'asc' ? 'desc' : 'asc')
+      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortField(field)
       setSortDirection(field === 'improvement' ? 'desc' : 'asc')
@@ -360,8 +424,19 @@ export function DzVsInternetPage() {
   const handleExport = () => {
     if (!comparisons.length) return
 
-    const headers = ['From Metro', 'To Metro', 'DZ Avg RTT (ms)', 'DZ P95 RTT (ms)', 'DZ Jitter (ms)', 'Internet Avg RTT (ms)', 'Internet P95 RTT (ms)', 'Internet Jitter (ms)', 'RTT Improvement (%)', 'Jitter Improvement (%)']
-    const rows = comparisons.map(comp => [
+    const headers = [
+      'From Metro',
+      'To Metro',
+      'DZ Avg RTT (ms)',
+      'DZ P95 RTT (ms)',
+      'DZ Jitter (ms)',
+      'Internet Avg RTT (ms)',
+      'Internet P95 RTT (ms)',
+      'Internet Jitter (ms)',
+      'RTT Improvement (%)',
+      'Jitter Improvement (%)',
+    ]
+    const rows = comparisons.map((comp) => [
       comp.origin_metro_code,
       comp.target_metro_code,
       comp.dz_avg_rtt_ms.toFixed(1),
@@ -374,7 +449,7 @@ export function DzVsInternetPage() {
       comp.jitter_improvement_pct?.toFixed(1) ?? '-',
     ])
 
-    const csv = [headers.join(','), ...rows.map(row => row.join(','))].join('\n')
+    const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -428,20 +503,21 @@ export function DzVsInternetPage() {
           actions={
             <button
               onClick={handleExport}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border bg-background hover:bg-muted/50 rounded-md transition-colors"
+              className="flex items-center justify-center gap-2 px-3 py-1.5 text-xs border border-border bg-background hover:bg-muted/50 rounded-md transition-colors"
             >
-              <Download className="h-4 w-4" />
+              <Download className="h-3 w-3" />
               Export CSV
             </button>
           }
         />
 
         <p className="mt-3 text-sm text-muted-foreground">
-          Compares measured latency on direct DZ links against public internet latency for the same metro pairs.
+          Compares measured latency on direct DZ links against public internet latency for the same
+          metro pairs.
         </p>
 
         {/* Summary stats */}
-        <div className="flex gap-6 mt-4 text-sm">
+        <div className="flex flex-col md:flex-row md:gap-6 gap-2 mt-4 text-sm">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">Link Pairs:</span>
             <span className="font-medium">{comparisons.length}</span>
@@ -461,7 +537,7 @@ export function DzVsInternetPage() {
         </div>
 
         {/* Filter bar */}
-        <div className="flex items-center gap-2 flex-wrap mt-4">
+        <div className="flex items-center gap-2 flex-wrap mt-6">
           {/* Inline filter input */}
           <MetroInlineFilter onCommit={addMetroFilter} />
 
@@ -568,11 +644,13 @@ export function DzVsInternetPage() {
                 const rttImprovement = comp.rtt_improvement_pct ?? 0
                 const rttSaved = comp.internet_avg_rtt_ms - comp.dz_avg_rtt_ms
                 const jitterImprovement = comp.jitter_improvement_pct ?? 0
-                const hasJitter = comp.dz_avg_jitter_ms != null && comp.internet_avg_jitter_ms != null
+                const hasJitter =
+                  comp.dz_avg_jitter_ms != null && comp.internet_avg_jitter_ms != null
                 const jitterSaved = hasJitter
-                  ? (comp.internet_avg_jitter_ms! - comp.dz_avg_jitter_ms!)
+                  ? comp.internet_avg_jitter_ms! - comp.dz_avg_jitter_ms!
                   : null
-                const isSelected = selectedComparison?.origin_metro_pk === comp.origin_metro_pk &&
+                const isSelected =
+                  selectedComparison?.origin_metro_pk === comp.origin_metro_pk &&
                   selectedComparison?.target_metro_pk === comp.target_metro_pk
 
                 return (
@@ -580,7 +658,7 @@ export function DzVsInternetPage() {
                     key={`${comp.origin_metro_pk}-${comp.target_metro_pk}`}
                     className={cn(
                       'hover:bg-muted cursor-pointer transition-colors',
-                      isSelected && 'bg-muted/50'
+                      isSelected && 'bg-muted/50',
                     )}
                     onClick={() => setSelectedComparison(isSelected ? null : comp)}
                   >
@@ -600,12 +678,15 @@ export function DzVsInternetPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {comp.dz_avg_rtt_ms > 0 ? (
-                        <span className={cn(
-                          'inline-flex items-center px-2 py-0.5 rounded text-sm font-medium tabular-nums',
-                          getImprovementBg(rttImprovement),
-                          getImprovementColor(rttImprovement)
-                        )}>
-                          {rttImprovement > 0 ? '+' : ''}{rttImprovement.toFixed(1)}%
+                        <span
+                          className={cn(
+                            'inline-flex items-center px-2 py-0.5 rounded text-sm font-medium tabular-nums',
+                            getImprovementBg(rttImprovement),
+                            getImprovementColor(rttImprovement),
+                          )}
+                        >
+                          {rttImprovement > 0 ? '+' : ''}
+                          {rttImprovement.toFixed(1)}%
                         </span>
                       ) : (
                         <span className="text-muted-foreground">-</span>
@@ -618,19 +699,26 @@ export function DzVsInternetPage() {
                     </td>
                     {/* Jitter group */}
                     <td className="px-4 py-3 text-right tabular-nums border-l border-border">
-                      {comp.dz_avg_jitter_ms != null ? `${comp.dz_avg_jitter_ms.toFixed(2)}ms` : '-'}
+                      {comp.dz_avg_jitter_ms != null
+                        ? `${comp.dz_avg_jitter_ms.toFixed(2)}ms`
+                        : '-'}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                      {comp.internet_avg_jitter_ms != null ? `${comp.internet_avg_jitter_ms.toFixed(2)}ms` : '-'}
+                      {comp.internet_avg_jitter_ms != null
+                        ? `${comp.internet_avg_jitter_ms.toFixed(2)}ms`
+                        : '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {hasJitter ? (
-                        <span className={cn(
-                          'inline-flex items-center px-2 py-0.5 rounded text-sm font-medium tabular-nums',
-                          getImprovementBg(jitterImprovement),
-                          getImprovementColor(jitterImprovement)
-                        )}>
-                          {jitterImprovement > 0 ? '+' : ''}{jitterImprovement.toFixed(1)}%
+                        <span
+                          className={cn(
+                            'inline-flex items-center px-2 py-0.5 rounded text-sm font-medium tabular-nums',
+                            getImprovementBg(jitterImprovement),
+                            getImprovementColor(jitterImprovement),
+                          )}
+                        >
+                          {jitterImprovement > 0 ? '+' : ''}
+                          {jitterImprovement.toFixed(1)}%
                         </span>
                       ) : (
                         <span className="text-muted-foreground">-</span>
@@ -650,7 +738,12 @@ export function DzVsInternetPage() {
 
         {/* Detail panel */}
         {selectedComparison && (
-          <div className="w-96 flex-shrink-0 border-l border-border p-4 bg-card overflow-y-auto">
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/50 sm:hidden"
+              onClick={() => setSelectedComparison(null)}
+            />
+            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100%-2rem)] max-h-[85vh] rounded-xl bg-card overflow-y-auto p-4 sm:static sm:top-auto sm:left-auto sm:translate-x-0 sm:translate-y-0 sm:w-96 sm:max-h-none sm:rounded-none sm:shrink-0 sm:border-l sm:border-border">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium flex items-center gap-2">
                   <span>{selectedComparison.origin_metro_code}</span>
@@ -667,18 +760,24 @@ export function DzVsInternetPage() {
 
               {/* DZ Latency */}
               <div className="mb-4">
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">DoubleZero</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+                  DoubleZero
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-lg p-2 bg-muted">
                     <div className="text-[10px] text-muted-foreground mb-0.5">Avg RTT</div>
                     <div className="text-lg font-bold">
-                      {selectedComparison.dz_avg_rtt_ms > 0 ? `${selectedComparison.dz_avg_rtt_ms.toFixed(1)}ms` : '-'}
+                      {selectedComparison.dz_avg_rtt_ms > 0
+                        ? `${selectedComparison.dz_avg_rtt_ms.toFixed(1)}ms`
+                        : '-'}
                     </div>
                   </div>
                   <div className="rounded-lg p-2 bg-muted">
                     <div className="text-[10px] text-muted-foreground mb-0.5">P95 RTT</div>
                     <div className="text-lg font-bold">
-                      {selectedComparison.dz_p95_rtt_ms > 0 ? `${selectedComparison.dz_p95_rtt_ms.toFixed(1)}ms` : '-'}
+                      {selectedComparison.dz_p95_rtt_ms > 0
+                        ? `${selectedComparison.dz_p95_rtt_ms.toFixed(1)}ms`
+                        : '-'}
                     </div>
                   </div>
                   <div className="rounded-lg p-2 bg-muted">
@@ -694,15 +793,21 @@ export function DzVsInternetPage() {
 
               {/* Internet Latency */}
               <div className="mb-4">
-                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Public Internet</div>
+                <div className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
+                  Public Internet
+                </div>
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-lg p-2 bg-muted">
                     <div className="text-[10px] text-muted-foreground mb-0.5">Avg RTT</div>
-                    <div className="text-lg font-bold">{selectedComparison.internet_avg_rtt_ms.toFixed(1)}ms</div>
+                    <div className="text-lg font-bold">
+                      {selectedComparison.internet_avg_rtt_ms.toFixed(1)}ms
+                    </div>
                   </div>
                   <div className="rounded-lg p-2 bg-muted">
                     <div className="text-[10px] text-muted-foreground mb-0.5">P95 RTT</div>
-                    <div className="text-lg font-bold">{selectedComparison.internet_p95_rtt_ms.toFixed(1)}ms</div>
+                    <div className="text-lg font-bold">
+                      {selectedComparison.internet_p95_rtt_ms.toFixed(1)}ms
+                    </div>
                   </div>
                   <div className="rounded-lg p-2 bg-muted">
                     <div className="text-[10px] text-muted-foreground mb-0.5">Jitter</div>
@@ -716,20 +821,27 @@ export function DzVsInternetPage() {
               </div>
 
               {/* Improvement */}
-              <div className={cn(
-                'rounded-lg p-3 mb-4',
-                getImprovementBg(selectedComparison.rtt_improvement_pct ?? 0)
-              )}>
+              <div
+                className={cn(
+                  'rounded-lg p-3 mb-4',
+                  getImprovementBg(selectedComparison.rtt_improvement_pct ?? 0),
+                )}
+              >
                 <div className="text-xs text-muted-foreground mb-1">DZ Advantage</div>
-                <div className={cn(
-                  'text-xl font-bold',
-                  getImprovementColor(selectedComparison.rtt_improvement_pct ?? 0)
-                )}>
+                <div
+                  className={cn(
+                    'text-xl font-bold',
+                    getImprovementColor(selectedComparison.rtt_improvement_pct ?? 0),
+                  )}
+                >
                   {(selectedComparison.rtt_improvement_pct ?? 0) > 0 ? '+' : ''}
                   {selectedComparison.rtt_improvement_pct?.toFixed(1)}%
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {(selectedComparison.internet_avg_rtt_ms - selectedComparison.dz_avg_rtt_ms).toFixed(1)}ms saved
+                  {(
+                    selectedComparison.internet_avg_rtt_ms - selectedComparison.dz_avg_rtt_ms
+                  ).toFixed(1)}
+                  ms saved
                 </div>
               </div>
 
@@ -741,7 +853,11 @@ export function DzVsInternetPage() {
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <button
-                      onClick={() => queryClient.invalidateQueries({ queryKey: ['latency-history'] })}
+                      onClick={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ['latency-history'],
+                        })
+                      }
                       className="opacity-0 group-hover/chart:opacity-100 transition-opacity hover:text-foreground"
                       title="Refresh"
                     >
@@ -755,25 +871,31 @@ export function DzVsInternetPage() {
                   )}
                 </div>
                 <div style={{ minHeight: 128 }}>
-                {rttUPlotData[0].length > 0 ? (
-                  <>
-                    <div ref={rttChartRef} className="h-32" />
-                    <div className="flex justify-center gap-4 text-xs mt-1">
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dzColor }} />
-                        DZ
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: inetColor }} />
-                        Internet
-                      </span>
+                  {rttUPlotData[0].length > 0 ? (
+                    <>
+                      <div ref={rttChartRef} className="h-32" />
+                      <div className="flex justify-center gap-4 text-xs mt-1">
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: dzColor }}
+                          />
+                          DZ
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: inetColor }}
+                          />
+                          Internet
+                        </span>
+                      </div>
+                    </>
+                  ) : !historyFetching ? (
+                    <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
+                      No history data available
                     </div>
-                  </>
-                ) : !historyFetching ? (
-                  <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
-                    No history data available
-                  </div>
-                ) : null}
+                  ) : null}
                 </div>
               </div>
 
@@ -785,7 +907,11 @@ export function DzVsInternetPage() {
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <button
-                      onClick={() => queryClient.invalidateQueries({ queryKey: ['latency-history'] })}
+                      onClick={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ['latency-history'],
+                        })
+                      }
                       className="opacity-0 group-hover/chart:opacity-100 transition-opacity hover:text-foreground"
                       title="Refresh"
                     >
@@ -799,38 +925,45 @@ export function DzVsInternetPage() {
                   )}
                 </div>
                 <div style={{ minHeight: 128 }}>
-                {jitterUPlotData[0].length > 0 ? (
-                  <>
-                    <div ref={jitterChartRef} className="h-32" />
-                    <div className="flex justify-center gap-4 text-xs mt-1">
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: dzColor }} />
-                        DZ
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: inetColor }} />
-                        Internet
-                      </span>
+                  {jitterUPlotData[0].length > 0 ? (
+                    <>
+                      <div ref={jitterChartRef} className="h-32" />
+                      <div className="flex justify-center gap-4 text-xs mt-1">
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: dzColor }}
+                          />
+                          DZ
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: inetColor }}
+                          />
+                          Internet
+                        </span>
+                      </div>
+                    </>
+                  ) : !historyFetching ? (
+                    <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
+                      No history data available
                     </div>
-                  </>
-                ) : !historyFetching ? (
-                  <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">
-                    No history data available
-                  </div>
-                ) : null}
+                  ) : null}
                 </div>
               </div>
 
               <div className="text-xs text-muted-foreground">
-                DZ samples: {selectedComparison.dz_sample_count.toLocaleString()} •
-                Internet samples: {selectedComparison.internet_sample_count.toLocaleString()}
+                DZ samples: {selectedComparison.dz_sample_count.toLocaleString()} • Internet
+                samples: {selectedComparison.internet_sample_count.toLocaleString()}
               </div>
-          </div>
+            </div>
+          </>
         )}
       </div>
 
       {/* Legend */}
-      <div className="px-6 py-4 flex-shrink-0 flex items-center gap-6 text-xs text-muted-foreground">
+      <div className="px-6 py-4 flex-col md:flex-row flex md:items-center gap-2 lg:gap-6 text-xs text-muted-foreground">
         <span className="font-medium">Legend:</span>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 rounded bg-green-100 dark:bg-green-900/40 border border-green-200 dark:border-green-800" />
