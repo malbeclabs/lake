@@ -1852,8 +1852,12 @@ export function EdgeScoreboardPage() {
       for (const key of Object.keys(feedRatesGranular)) feedRatesGranular[key] *= scale
     }
 
+    const winRate = Object.entries(feedRatesGranular)
+      .filter(([key]) => DZ_FEED_KEYS.has(key))
+      .reduce((sum, [, pct]) => sum + pct, 0)
+
     return {
-      winRate: dzTotalShreds > 0 ? dzShredsWon / dzTotalShreds : 0,
+      winRate,
       leads,
       avgCompleteness: data.completeness_pct,
       feedRates,
@@ -2177,7 +2181,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
     }
   }
 
-  // Per-feed-key win rates for the stacked bar (normalized to 100%)
+  // Per-feed-key win rates for the stacked bar, normalized so displayed feeds sum to 100%.
   const feedBarSegments = useMemo(() => {
     const accumulated: Record<string, number> = {}
     const hasDzEdge = 'dz_edge' in node.feeds
@@ -2193,6 +2197,14 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
       .sort(([a], [b]) => feedSortPriority(a) - feedSortPriority(b))
       .map(([key, pct]) => ({ key, pct: pct * scale, color: FEED_COLORS[key] ?? '#6b7280' }))
   }, [node.feeds, granular])
+
+  // Always derive from dz_edge.win_rate_pct (the canonical DZ metric) normalized
+  // against the non-granular total so the label is stable across the granular toggle.
+  const dzEdgeRaw = dzEdge?.win_rate_pct ?? 0
+  const dzNonGranularTotal = dzEdgeRaw
+    + (node.feeds['jito']?.win_rate_pct ?? 0)
+    + (node.feeds['turbine']?.win_rate_pct ?? 0)
+  const dzNormalizedPct = dzNonGranularTotal > 0 ? (dzEdgeRaw / dzNonGranularTotal) * 100 : 0
 
   const hasGossip = !!node.gossip_pubkey
 
@@ -2223,8 +2235,8 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
       </td>
       <td className="px-4 py-3 text-right tabular-nums text-sm">
         {dz ? (
-          <StackedBar segments={feedBarSegments} popoverSide="right" dzTotalPct={edgeFirstArrival}>
-            <div className="mb-1.5">{formatPct(edgeFirstArrival)}</div>
+          <StackedBar segments={feedBarSegments} popoverSide="right" dzTotalPct={dzNormalizedPct}>
+            <div className="mb-1.5">{formatPct(dzNormalizedPct)}</div>
           </StackedBar>
         ) : '—'}
       </td>
