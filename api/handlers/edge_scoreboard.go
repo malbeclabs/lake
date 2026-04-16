@@ -1031,6 +1031,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							%s
 					)
 					GROUP BY slot
+					HAVING count(DISTINCT host) = (SELECT count(*) FROM active_hosts)
 					ORDER BY slot %s
 					LIMIT %d
 				)
@@ -1065,6 +1066,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 							%s
 					)
 					GROUP BY slot
+					HAVING count(DISTINCT host) = (SELECT count(*) FROM active_hosts)
 					ORDER BY slot %s
 					LIMIT %d
 				)
