@@ -849,11 +849,11 @@ function RecentSlotsChart({
     // Seed the live buffer from a set of slot races (initial load path).
     // Puts the vast majority of slots into the immediate buffer (chart starts near live edge)
     // and queues only a small tail so the animation is visually active right away.
-    // With a 2500-slot seed and 2250 slots in the queue, we get ~15 min of animation runway
+    // With a 4000-slot seed and 3750 slots in the queue, we get ~25 min of animation runway
     // at 400ms/slot — enough to span the upstream MV's 5-min batch cadence many times over
     // even if polls briefly hiccup. The immediate buffer (first 250 slots) gives the chart
     // something to render instantly while the queue starts draining.
-    const INITIAL_QUEUE_SLOTS = 2250
+    const INITIAL_QUEUE_SLOTS = 3750
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       liveMaxSlotRef.current = nums.at(-1) ?? 0
@@ -932,11 +932,11 @@ function RecentSlotsChart({
       if (data.slot_leaders) setLiveLeaders(prev => ({ ...prev, ...data.slot_leaders }))
     }
 
-    // Fetch a deep seed (~15 min at 2.5 slots/sec) so the queue holds enough slots to span
+    // Fetch a deep seed (~25 min at 2.5 slots/sec) so the queue holds enough slots to span
     // the upstream MV's ~5-min batch cadence without stalling. When live enters, the queue
-    // drains at a constant 400ms/slot; we want at least one MV batch cycle of runway so the
+    // drains at a constant 400ms/slot; we want several MV batch cycles of runway so the
     // animation never runs dry between polls.
-    const LIVE_SEED_LIMIT = 2500
+    const LIVE_SEED_LIMIT = 4000
     prevLiveParamsRef.current = { leadersOnly, window }
     fetchEdgeScoreboard(window, leadersOnly, { limit: LIVE_SEED_LIMIT }).then(data => {
       if (cancelled) return
