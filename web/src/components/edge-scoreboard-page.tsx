@@ -1752,9 +1752,6 @@ export function EdgeScoreboardPage() {
   const globalStats = useMemo(() => {
     if (!data?.nodes) return null
 
-    let dzShredsWon = 0
-    let dzTotalShreds = 0
-
     // Per-competitor weighted lead times
     const competitors = ['jito', 'turbine'] as const
     const weightedP50: Record<string, number> = {}
@@ -1772,9 +1769,6 @@ export function EdgeScoreboardPage() {
     const nodeFeedRates: Record<string, number>[] = []
 
     for (const node of data.nodes) {
-      dzShredsWon += node.feeds['dz_edge']?.win_rate_pct ?? 0
-      dzTotalShreds++
-
       const nodeRates: Record<string, number> = {}
       const hasDzEdge = 'dz_edge' in node.feeds
       for (const [feedName, stats] of Object.entries(node.feeds)) {
