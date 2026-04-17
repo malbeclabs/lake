@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createShredderTables creates the slot_feed_race_summary and publisher_shred_stats tables in the shredder/publisher DBs.
+// createShredderTables creates the slot_feed_race_summary_v2 and publisher_shred_stats tables in the shredder/publisher DBs.
 func createShredderTables(t *testing.T, api *handlers.API) {
 	t.Helper()
 	ctx := t.Context()
@@ -26,7 +26,7 @@ func createShredderTables(t *testing.T, api *handlers.API) {
 		require.NoError(t, err)
 	}
 	err = api.DB.Exec(ctx, fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s.slot_feed_race_summary (
+		CREATE TABLE IF NOT EXISTS %s.slot_feed_race_summary_v2 (
 			event_ts DateTime64(3),
 			ingested_at DateTime64(3) DEFAULT now(),
 			host String,
@@ -39,8 +39,8 @@ func createShredderTables(t *testing.T, api *handlers.API) {
 			shreds_won UInt64,
 			lead_time_p50_ms Float64 DEFAULT 0,
 			lead_time_p95_ms Float64 DEFAULT 0
-		) ENGINE = MergeTree
-		PARTITION BY toYYYYMM(event_ts)
+		) ENGINE = ReplacingMergeTree(ingested_at)
+		PARTITION BY toYYYYMMDD(event_ts)
 		ORDER BY (host, slot, feed, loser_feed)
 	`, db))
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 	// slot1: all 3 feeds (dz, turbine, jito) for both nodes — DZ wins most shreds (DZ-leader slot)
 	// slot2: only turbine + jito (no DZ) — tests completeness calculation
 	err = api.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.slot_feed_race_summary
+		INSERT INTO %s.slot_feed_race_summary_v2
 			(event_ts, host, feed_type, epoch, slot, feed, loser_feed, total_shreds, shreds_won)
 		VALUES
 			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz',      '', 100, 80),
@@ -136,7 +136,7 @@ func insertEdgeScoreboardTestData(t *testing.T, api *handlers.API) {
 	// Insert lead-time rows (loser_feed != '') — pairwise: winner vs specific loser
 	// For slot1 on slc-qa-bm1: dz beat turbine and jito
 	err = api.DB.Exec(ctx, fmt.Sprintf(`
-		INSERT INTO %s.slot_feed_race_summary
+		INSERT INTO %s.slot_feed_race_summary_v2
 			(event_ts, host, feed_type, epoch, slot, feed, loser_feed, lead_time_p50_ms, lead_time_p95_ms)
 		VALUES
 			(now(), 'slc-qa-bm1', 'shred', %[2]d, %[3]d, 'dz', 'turbine', 1.5, 3.0),

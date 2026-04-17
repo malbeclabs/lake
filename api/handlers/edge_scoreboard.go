@@ -120,7 +120,7 @@ type EdgeScoreboardResponse struct {
 	SlotBuckets        []EdgeScoreboardSlotBucket       `json:"slot_buckets,omitempty"`
 	SlotBucketSize     uint64                           `json:"slot_bucket_size,omitempty"`
 	SlotLeaders        map[string]*EdgeScoreboardLeader `json:"slot_leaders,omitempty"`
-	// DataLagMs is how far behind wall clock the latest row in slot_feed_race_summary is
+	// DataLagMs is how far behind wall clock the latest row in slot_feed_race_summary_v2 is
 	// (server now − max(event_ts)). The client adds this to its own queue depth to show a
 	// pill reflecting actual on-chain time.
 	DataLagMs uint64 `json:"data_lag_ms,omitempty"`
@@ -150,7 +150,7 @@ var validWindows = map[string]string{
 }
 
 // slotsPerWindow bounds how many Solana slots fit in each window. Used to derive
-// a slot-range filter on slot_feed_race_summary, which is ORDER BY (host, slot, …)
+// a slot-range filter on slot_feed_race_summary_v2, which is ORDER BY (host, slot, …)
 // — so a slot range lets the primary index prune, whereas event_ts alone forces
 // a full monthly-partition scan. A small over-estimate is fine (the event_ts
 // filter still enforces exact window semantics).
@@ -337,7 +337,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		var lagSec float64
 		start := time.Now()
 		err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(
-			`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary WHERE slot < %d`,
+			`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
 			shredderDB, maxValidSlot,
 		)).Scan(&maxSlot, &lagSec)
 		metrics.RecordClickHouseQuery(time.Since(start), err)
@@ -404,7 +404,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			max(slot) AS max_slot,
 			max(event_ts) AS last_updated,
 			uniqExact(feed) AS feed_count
-		FROM %s.slot_feed_race_summary
+		FROM %s.slot_feed_race_summary_v2
 		WHERE feed_type = 'shred' AND loser_feed = '' %s
 		GROUP BY host
 	SETTINGS final=1
@@ -499,7 +499,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			query1b := fmt.Sprintf(`
 			WITH %s
 			SELECT host, uniqExact(slot) AS dz_leader_slots
-			FROM %s.slot_feed_race_summary
+			FROM %s.slot_feed_race_summary_v2
 			WHERE feed_type = 'shred' AND (feed = 'dz' OR loser_feed = 'dz')
 				AND slot IN (SELECT slot FROM dz_leader_slots)
 				%s
@@ -544,7 +544,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 		// Query 1c: DZ-leader slot count and total slot count.
 		// dz_leader_slots comes directly from publisher_shred_stats (is_scheduled_leader=true) —
 		// the authoritative count of slots where the scheduled leader published via DZ.
-		// total_slots is the distinct slot count from slot_feed_race_summary aggregate rows.
+		// total_slots is the distinct slot count from slot_feed_race_summary_v2 aggregate rows.
 		// completeness_pct = dz_leader_slots / total_slots — fraction of slots with a DZ leader.
 		{
 			query1c := fmt.Sprintf(`
@@ -552,7 +552,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			SELECT
 				(SELECT count() FROM dz_leader_slots) AS dz_leader_slots,
 				uniqExact(slot) AS total_slots
-			FROM %s.slot_feed_race_summary
+			FROM %s.slot_feed_race_summary_v2
 			WHERE feed_type = 'shred' AND loser_feed = '' %s
 		SETTINGS final=1
 `, dzLeaderCTE, shredderDB, rangeFilter)
@@ -704,7 +704,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WITH %[1]s,
 				feed_totals AS (
 					SELECT host, feed, sum(shreds_won) AS shreds_won
-					FROM %[2]s.slot_feed_race_summary
+					FROM %[2]s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[3]s)
 						AND slot IN (SELECT slot FROM dz_leader_slots)
 						%[4]s
@@ -726,7 +726,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				q2 = fmt.Sprintf(`
 				WITH feed_totals AS (
 					SELECT host, feed, sum(shreds_won) AS shreds_won
-					FROM %[1]s.slot_feed_race_summary
+					FROM %[1]s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%[2]s) %[3]s
 					GROUP BY host, feed
 				),
@@ -823,7 +823,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					count() AS slot_count,
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
-				FROM %s.slot_feed_race_summary
+				FROM %s.slot_feed_race_summary_v2
 				WHERE feed_type = 'shred' AND feed = 'dz' AND loser_feed IN (%s)
 					AND slot IN (SELECT slot FROM dz_leader_slots)
 					AND lead_time_p50_ms <= 500
@@ -838,7 +838,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					count() AS slot_count,
 					quantile(0.5)(lead_time_p50_ms) AS p50_ms,
 					quantile(0.95)(lead_time_p95_ms) AS p95_ms
-				FROM %s.slot_feed_race_summary
+				FROM %s.slot_feed_race_summary_v2
 				WHERE feed_type = 'shred' AND feed IN ('dz', 'dz_rebop') AND loser_feed IN (%s)
 					AND lead_time_p50_ms <= 500
 					%s
@@ -980,7 +980,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 
 		// For recent slots, dz_leader_slots must NOT use the time window filter.
 		// The time filter is based on event_ts in publisher_shred_stats, which has much
-		// longer history than slot_feed_race_summary. A wide window (e.g. 7d) would pull
+		// longer history than slot_feed_race_summary_v2. A wide window (e.g. 7d) would pull
 		// in old leader slots that don't exist in the recent slot range, shrinking results.
 		// Instead, scope to the recent slot range directly so the intersection is correct.
 		dzLeaderCTEForRecent := fmt.Sprintf(`dz_leader_slots AS (
@@ -1009,7 +1009,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				WITH %s,
 				active_hosts AS (
 					SELECT host
-					FROM %s.slot_feed_race_summary
+					FROM %s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = ''
 						AND slot BETWEEN %d AND %d
 					GROUP BY host
@@ -1024,7 +1024,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					SELECT slot
 					FROM (
 						SELECT DISTINCT host, slot
-						FROM %s.slot_feed_race_summary
+						FROM %s.slot_feed_race_summary_v2
 						WHERE feed_type = 'shred' AND loser_feed = ''
 							AND host IN (SELECT host FROM active_hosts)
 							AND slot IN (SELECT slot FROM dz_slots)
@@ -1037,7 +1037,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				SELECT r.host, r.slot, r.feed, r.shreds_won,
 					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
-				FROM %s.slot_feed_race_summary AS r
+				FROM %s.slot_feed_race_summary_v2 AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.slot BETWEEN %d AND %d
@@ -1049,7 +1049,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 			query5 = fmt.Sprintf(`
 				WITH active_hosts AS (
 					SELECT host
-					FROM %s.slot_feed_race_summary
+					FROM %s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = ''
 						AND slot BETWEEN %d AND %d
 					GROUP BY host
@@ -1059,7 +1059,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 					SELECT slot
 					FROM (
 						SELECT DISTINCT host, slot
-						FROM %s.slot_feed_race_summary
+						FROM %s.slot_feed_race_summary_v2
 						WHERE feed_type = 'shred' AND loser_feed = ''
 							AND host IN (SELECT host FROM active_hosts)
 							AND slot BETWEEN %d AND %d
@@ -1072,7 +1072,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 				)
 				SELECT r.host, r.slot, r.feed, r.shreds_won,
 					round(r.shreds_won / greatest(r.total_shreds, 1) * 100, 1) AS win_pct
-				FROM %s.slot_feed_race_summary AS r
+				FROM %s.slot_feed_race_summary_v2 AS r
 				INNER JOIN common_slots cs ON r.slot = cs.slot
 				WHERE r.feed_type = 'shred' AND r.loser_feed = '' AND r.feed IN (%s)
 					AND r.slot BETWEEN %d AND %d
@@ -1273,7 +1273,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						intDiv(slot, %d) * %d AS slot_bucket,
 						feed,
 						sum(shreds_won) AS feed_won
-					FROM %s.slot_feed_race_summary
+					FROM %s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
 						AND host IN (%s)
 						AND slot IN (SELECT slot FROM dz_leader_slots)
@@ -1300,7 +1300,7 @@ func (a *API) FetchEdgeScoreboardData(ctx context.Context, window string, leader
 						intDiv(slot, %d) * %d AS slot_bucket,
 						feed,
 						sum(shreds_won) AS feed_won
-					FROM %s.slot_feed_race_summary
+					FROM %s.slot_feed_race_summary_v2
 					WHERE feed_type = 'shred' AND loser_feed = '' AND feed IN (%s)
 						AND host IN (%s)
 						AND slot <= %d
@@ -1507,7 +1507,7 @@ func (a *API) FetchEdgeScoreboardLatest(ctx context.Context, leadersOnly bool, s
 	var lagSec float64
 	start := time.Now()
 	err := a.envDB(ctx).QueryRow(ctx, fmt.Sprintf(
-		`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary WHERE slot < %d`,
+		`SELECT max(slot), toFloat64(toUnixTimestamp(now()) - toUnixTimestamp(max(event_ts))) FROM %s.slot_feed_race_summary_v2 WHERE slot < %d`,
 		shredderDB, maxValidSlot,
 	)).Scan(&maxSlot, &lagSec)
 	metrics.RecordClickHouseQuery(time.Since(start), err)
