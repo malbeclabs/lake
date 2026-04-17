@@ -220,13 +220,13 @@ func (a *API) GetShredClientSeats(w http.ResponseWriter, r *http.Request) {
 
 		var statusOr []string
 		if statuses["active"] {
-			// Active but NOT expiring (prepaid >= 2).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 2)")
+			// Active but NOT expiring (prepaid >= 1).
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" >= 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["expiring"] {
-			// Active but expiring soon (prepaid < 2).
-			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 2)")
+			// Active but expiring soon (prepaid < 1).
+			statusOr = append(statusOr, "(s.active_epoch >= ? AND s.escrow_count > 0 AND "+prepaidExpr+" < 1)")
 			whereArgs = append(whereArgs, solanaEpoch)
 		}
 		if statuses["pending"] {
