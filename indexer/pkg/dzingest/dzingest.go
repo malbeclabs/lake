@@ -14,6 +14,7 @@ import (
 	temporalclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
+	dzgeoloc "github.com/malbeclabs/lake/indexer/pkg/dz/geolocation"
 	dzgraph "github.com/malbeclabs/lake/indexer/pkg/dz/graph"
 	"github.com/malbeclabs/lake/indexer/pkg/dz/isis"
 	dzsvc "github.com/malbeclabs/lake/indexer/pkg/dz/serviceability"
@@ -35,6 +36,7 @@ type Config struct {
 
 	// Views and stores for activity execution.
 	Serviceability *dzsvc.View
+	Geolocation    *dzgeoloc.View     // optional
 	Shreds         *dzshreds.View     // optional
 	EscrowEvents   *escrowevents.View // optional
 	TelemLatency   *dztelemlatency.View
@@ -79,6 +81,7 @@ func Start(ctx context.Context, cfg Config) error {
 		IngestionLog:   cfg.IngestionLog,
 		Network:        cfg.Network,
 		Serviceability: cfg.Serviceability,
+		Geolocation:    cfg.Geolocation,
 		Shreds:         cfg.Shreds,
 		EscrowEvents:   cfg.EscrowEvents,
 		TelemLatency:   cfg.TelemLatency,
