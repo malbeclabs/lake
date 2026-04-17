@@ -176,16 +176,6 @@ func (v *View) Refresh(ctx context.Context) (ingestionlog.RefreshResult, error) 
 		"probes", len(onchainProbes),
 		"users", len(onchainUsers))
 
-	// Validate that we received data — empty responses would tombstone all existing entities.
-	if len(onchainProbes) == 0 {
-		metrics.ViewRefreshTotal.WithLabelValues("geolocation", "error").Inc()
-		return result, fmt.Errorf("refusing to write snapshot: RPC returned no probes (possible RPC issue)")
-	}
-	if len(onchainUsers) == 0 {
-		metrics.ViewRefreshTotal.WithLabelValues("geolocation", "error").Inc()
-		return result, fmt.Errorf("refusing to write snapshot: RPC returned no users (possible RPC issue)")
-	}
-
 	probes := convertProbes(onchainProbes)
 	users := convertUsers(onchainUsers)
 	targets := convertTargets(onchainUsers)
