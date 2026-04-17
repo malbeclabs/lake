@@ -1577,7 +1577,7 @@ function RecentSlotsChart({
           </div>
         </div>
       </div>}
-      <div className="flex gap-0">
+      <div className="flex flex-col lg:flex-row gap-0">
         <div ref={chartRowsRef} className="relative flex-1 min-w-0">
         {/* Left-edge indicator: shows while fetching older history */}
         {isPrefetching && (
@@ -1626,7 +1626,7 @@ function RecentSlotsChart({
         </div>
         </div>{/* end chart rows */}
         {/* Right info panel */}
-        <div className="w-60 shrink-0 border-l border-border flex flex-col px-5 py-5">
+        <div className="w-full lg:w-60 shrink-0 border-t lg:border-t-0 lg:border-l border-border flex flex-col px-5 py-5">
           <span ref={infoSlotRef} className="text-xs font-medium tabular-nums mb-4" />
           <div className="flex flex-col gap-3">
             {feeds.map((f) => (
@@ -1659,7 +1659,7 @@ function RecentSlotsChart({
           </div>
         </div>
       </div>{/* end flex container */}
-      <div className="flex items-center justify-end gap-1 mt-1">
+      <div className="flex flex-wrap items-center justify-end gap-1 mt-1">
         <span className="text-[10px] text-muted-foreground mr-1">Recent Slots</span>
         {[50, 100, 200, 300, 500].map(n => (
           <button
@@ -1947,8 +1947,8 @@ export function EdgeScoreboardPage() {
             </span>
           }
           actions={
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5 text-xs">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
                 {([
                   [false, 'All Slots', 'Shred arrival rates across all observed slots.'] as const,
                   [true, 'DZ Edge Leaders', 'Scoped to slots where the scheduled leader was publishing shreds via DZ Edge.'] as const,
@@ -1966,7 +1966,7 @@ export function EdgeScoreboardPage() {
                     >
                       {label}
                     </button>
-                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 z-30 w-64 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 z-30 w-64 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
                       {tooltip}
                     </span>
                   </div>
@@ -1995,30 +1995,30 @@ export function EdgeScoreboardPage() {
 
         {/* Hero stats */}
         {data && globalStats && (
-          <div className="flex gap-0 mb-8 bg-card border border-border rounded-lg">
+          <div className="flex flex-col lg:flex-row gap-0 mb-8 bg-card border border-border rounded-lg">
             {/* Left: description + publisher stats */}
-            <div className="flex-1 p-6 flex flex-col justify-between min-w-0">
+            <div className="flex-1 p-4 sm:p-6 flex flex-col justify-between min-w-0">
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Scoreboard benchmarks shred delivery speed across DoubleZero Edge and other providers, using slot-level data to compare performance in real time.
               </p>
-              <div className="border-t border-border pt-4 mt-4 flex items-center gap-6">
+              <div className="border-t border-border pt-4 mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
                 <div className="group relative">
                   <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                     Publishing Shreds
                     <Info className="w-3 h-3 opacity-60" />
                   </div>
-                  <div className="text-2xl font-semibold tabular-nums">{Math.round(animPublishingCount ?? data.publishing_count).toLocaleString()}</div>
-                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{Math.round(animPublishingCount ?? data.publishing_count).toLocaleString()}</div>
+                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
                     Validators currently publishing shred data to the DoubleZero Edge network ({data.publishing_count.toLocaleString()} of {data.publisher_count.toLocaleString()} total registered publishers).
                   </span>
                 </div>
-                <div className="group relative border-l border-border pl-6">
+                <div className="group relative sm:border-l sm:border-border sm:pl-6">
                   <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                     Publisher Stake Weight
                     <Info className="w-3 h-3 opacity-60" />
                   </div>
-                  <div className="text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
-                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="text-xl sm:text-2xl font-semibold tabular-nums">{formatPct(animPublishingStakePct ?? data.publishing_stake_pct)}</div>
+                  <span className="pointer-events-none absolute top-full left-0 mt-2 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg whitespace-normal opacity-0 group-hover:opacity-100 transition-opacity">
                     Percentage of total network stake held by validators actively publishing shreds.
                   </span>
                 </div>
@@ -2026,7 +2026,7 @@ export function EdgeScoreboardPage() {
             </div>
 
             {/* Middle: metrics */}
-            <div className="border-l border-border flex-1 p-6 flex flex-col justify-center gap-4 min-w-0">
+            <div className="border-t lg:border-t-0 lg:border-l border-border flex-1 p-4 sm:p-6 flex flex-col justify-center gap-4 min-w-0">
               <div className="pb-2">
                 <StackedBar
                   popoverSide="right"
@@ -2053,7 +2053,7 @@ export function EdgeScoreboardPage() {
             </div>
 
             {/* Right: gauge */}
-            <div className="border-l border-border px-8 flex items-center justify-center shrink-0">
+            <div className="border-t lg:border-t-0 lg:border-l border-border px-6 sm:px-8 py-6 lg:py-0 flex items-center justify-center shrink-0">
               <WinRateGauge feedRates={globalStats.feedRates} labelPct={animWinRate ?? globalStats.winRate} />
             </div>
           </div>
@@ -2148,10 +2148,10 @@ export function EdgeScoreboardPage() {
             <table className="min-w-full">
               <thead>
                 <tr className="text-sm text-left text-muted-foreground border-b border-border">
-                  <th className="px-4 py-3 font-medium">Node</th>
-                  <th className="px-4 py-3 font-medium text-right">DZ Edge Win Rate %</th>
-                  <th className="px-4 py-3 font-medium text-right">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
-                  <th className="px-4 py-3 font-medium text-right">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
+                  <th className="px-3 sm:px-4 py-3 font-medium whitespace-nowrap">Node</th>
+                  <th className="px-3 sm:px-4 py-3 font-medium text-right whitespace-nowrap">DZ Edge Win Rate %</th>
+                  <th className="px-3 sm:px-4 py-3 font-medium text-right whitespace-nowrap">vs Jito Shredstream<span className="block font-normal text-xs">p50 (p95)</span></th>
+                  <th className="px-3 sm:px-4 py-3 font-medium text-right whitespace-nowrap">vs Turbine<span className="block font-normal text-xs">p50 (p95)</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -2218,7 +2218,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
 
   return (
     <tr className="border-b border-border last:border-b-0 hover:bg-muted/50 transition-colors">
-      <td className="px-4 py-3">
+      <td className="px-3 sm:px-4 py-3">
         <div ref={cellRef} className="relative" onMouseEnter={() => {
           if (cellRef.current) {
             const r = cellRef.current.getBoundingClientRect()
@@ -2241,7 +2241,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
           )}
         </div>
       </td>
-      <td className="px-4 py-3 text-right tabular-nums text-sm">
+      <td className="px-3 sm:px-4 py-3 text-right tabular-nums text-sm">
         {dz ? (
           <StackedBar segments={feedBarSegments} popoverSide="right" dzTotalPct={edgeFirstArrival}>
             <div className="mb-1.5">{formatPct(edgeFirstArrival)}</div>
@@ -2251,7 +2251,7 @@ function NodeRow({ node, label, granular }: { node: EdgeScoreboardNode; label: s
       {['jito', 'turbine'].map(f => {
         const lt = dzLeadByFeed[f]
         return (
-          <td key={f} className="px-4 py-3 text-right tabular-nums text-sm">
+          <td key={f} className="px-3 sm:px-4 py-3 text-right tabular-nums text-sm whitespace-nowrap">
             {lt ? <><AnimatedStat value={lt.p50} fmt={formatMs} /> <span className="text-muted-foreground">(<AnimatedStat value={lt.p95} fmt={formatMs} />)</span></> : '—'}
           </td>
         )
