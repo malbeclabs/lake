@@ -47,6 +47,7 @@ export function Sidebar() {
   const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
+  const showGeoloc = user?.is_internal_user || features.disable_internal_auth === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 
@@ -266,7 +267,7 @@ const { resolvedTheme, setTheme } = useTheme()
           <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
             <Server className="h-4 w-4" />
           </Link>
-          {user?.is_internal_user && (
+          {showGeoloc && (
             <Link to="/dz/geoloc/probes" className={collapsedIconClass(isGeolocRoute)} title="Geolocation">
               <MapPin className="h-4 w-4" />
             </Link>
@@ -564,7 +565,7 @@ const { resolvedTheme, setTheme } = useTheme()
         </div>
 
         {/* Geolocation section - internal users only */}
-        {user?.is_internal_user && (
+        {showGeoloc && (
           <div className="px-3 pt-4">
             <div className="px-3 mb-2">
               <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Geolocation</span>
