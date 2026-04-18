@@ -5576,7 +5576,7 @@ export async function fetchGeolocProbes(
   if (sortBy) params.set('sort_by', sortBy)
   if (sortDir) params.set('sort_dir', sortDir)
   if (filters) filters.forEach(f => params.append('filters', f))
-  const res = await apiFetch(`/api/geoloc/probes?${params}`)
+  const res = await apiFetch(`/api/dz/geoloc/probes?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch geolocation probes')
   }
@@ -5608,7 +5608,7 @@ export async function fetchGeolocUsers(
   if (sortBy) params.set('sort_by', sortBy)
   if (sortDir) params.set('sort_dir', sortDir)
   if (filters) filters.forEach(f => params.append('filters', f))
-  const res = await apiFetch(`/api/geoloc/users?${params}`)
+  const res = await apiFetch(`/api/dz/geoloc/users?${params}`)
   if (!res.ok) {
     throw new Error('Failed to fetch geolocation users')
   }
