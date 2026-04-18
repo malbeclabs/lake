@@ -83,6 +83,17 @@ var entityFieldConfigs = map[string]map[string]fieldConfig{
 		"signer": {table: "fact_dz_shred_escrow_events", column: "signer"},
 		"status": {table: "fact_dz_shred_escrow_events", column: "status"},
 	},
+	"geoloc-probes": {
+		"code":     {table: "geoloc_probes_current", column: "code"},
+		"owner":    {table: "geoloc_probes_current", column: "owner"},
+		"exchange": {table: "geoloc_probes_current", column: "exchange_pk"},
+	},
+	"geoloc-users": {
+		"status":  {table: "geoloc_users_current", column: "status"},
+		"payment": {table: "geoloc_users_current", column: "payment_status"},
+		"code":    {table: "geoloc_users_current", column: "code"},
+		"owner":   {table: "geoloc_users_current", column: "owner"},
+	},
 	"shred-seats": {
 		"seat":   {table: "dim_dz_shred_client_seats_current", column: "pk"},
 		"device": {table: "dim_dz_shred_client_seats_current s JOIN dz_devices_current d ON s.device_key = d.pk", column: "d.code"},

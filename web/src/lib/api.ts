@@ -5548,3 +5548,69 @@ export async function fetchShredDevices(params: {
   }
   return res.json()
 }
+
+// Geolocation types
+export interface GeolocProbe {
+  pk: string
+  owner: string
+  exchange_pk: string
+  public_ip: string
+  location_offset_port: number
+  metrics_publisher_pk: string
+  reference_count: number
+  code: string
+  parent_devices: string
+  target_update_count: number
+}
+
+export async function fetchGeolocProbes(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<GeolocProbe>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await apiFetch(`/api/geoloc/probes?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation probes')
+  }
+  return res.json()
+}
+
+export interface GeolocUser {
+  pk: string
+  owner: string
+  code: string
+  token_account: string
+  payment_status: string
+  status: string
+  target_count: number
+  billing_rate: number
+  last_deduction_dz_epoch: number
+}
+
+export async function fetchGeolocUsers(
+  limit = 100,
+  offset = 0,
+  sortBy?: string,
+  sortDir?: 'asc' | 'desc',
+  filters?: string[]
+): Promise<PaginatedResponse<GeolocUser>> {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  params.set('offset', String(offset))
+  if (sortBy) params.set('sort_by', sortBy)
+  if (sortDir) params.set('sort_dir', sortDir)
+  if (filters) filters.forEach(f => params.append('filters', f))
+  const res = await apiFetch(`/api/geoloc/users?${params}`)
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation users')
+  }
+  return res.json()
+}

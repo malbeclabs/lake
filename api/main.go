@@ -564,6 +564,13 @@ func main() {
 		r.Get("/api/dz/field-values", api.GetFieldValues)
 		r.Get("/api/dz/ledger", api.GetDZLedger)
 
+		// Geolocation routes (internal only)
+		r.Group(func(r chi.Router) {
+			r.Use(handlers.RequireInternalDomain)
+			r.Get("/api/geoloc/probes", api.GetGeolocProbes)
+			r.Get("/api/geoloc/users", api.GetGeolocUsers)
+		})
+
 		// Solana entity routes
 		r.Get("/api/solana/validators", api.GetValidators)
 		r.Get("/api/solana/validators/{vote_pubkey}", api.GetValidator)
