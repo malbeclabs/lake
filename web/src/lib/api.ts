@@ -5834,8 +5834,11 @@ export interface GeolocExplorerResponse {
   offsets: GeolocExplorerOffset[]
 }
 
-export async function fetchGeolocExplorer(): Promise<GeolocExplorerResponse> {
-  const res = await apiFetch('/api/dz/geoloc/explorer')
+export async function fetchGeolocExplorer(hours?: number): Promise<GeolocExplorerResponse> {
+  const params = new URLSearchParams()
+  if (hours) params.set('hours', String(hours))
+  const query = params.toString()
+  const res = await apiFetch(`/api/dz/geoloc/explorer${query ? `?${query}` : ''}`)
   if (!res.ok) {
     throw new Error('Failed to fetch geolocation explorer data')
   }
