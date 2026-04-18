@@ -42,7 +42,7 @@ func EnvFromContext(ctx context.Context) DZEnv {
 // the agent uses fully-qualified table names (e.g., lake_devnet.dim_devices_current).
 func BuildEnvContext(env DZEnv, mainnetDB string) string {
 	if env == EnvMainnet {
-		return fmt.Sprintf("You are querying the mainnet-beta environment (database: `%s`). Other DZ environments are available: devnet (`lake_devnet`), testnet (`lake_testnet`). To query these, use fully-qualified `database.table` syntax (e.g., `lake_devnet.dim_devices_current`).", mainnetDB)
+		return fmt.Sprintf("You are querying the mainnet-beta environment (database: `%s`). Other DZ environments are available: devnet (`lake_devnet`), testnet (`lake_testnet`). To query these, use fully-qualified `database.table` syntax (e.g., `lake_devnet.dim_devices_current`). Some tables live in external databases (e.g., `mainnet-beta`.location_offsets for geolocation data). These appear in the schema with their database prefix — always use the fully-qualified name shown.", mainnetDB)
 	}
 
 	// For non-mainnet envs, tell the agent to USE the environment's database

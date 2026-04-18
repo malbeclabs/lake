@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -68,6 +69,16 @@ func GetPublisherDB() string {
 // SetPublisherDB sets the publisher database name.
 func SetPublisherDB(db string) {
 	publisherDB = db
+}
+
+// extraSchemaDBs are additional databases whose tables should appear in MCP
+// schema discovery. Tables from these databases are shown with fully-qualified
+// names (e.g., "mainnet-beta.location_offsets").
+var extraSchemaDBs []string
+
+// GetExtraSchemaDBs returns the extra schema databases.
+func GetExtraSchemaDBs() []string {
+	return extraSchemaDBs
 }
 
 // Database returns the configured database name.
@@ -135,6 +146,18 @@ func Load() error {
 
 	if db := os.Getenv("CLICKHOUSE_PUBLISHER_DB"); db != "" {
 		publisherDB = db
+	}
+
+	// Extra databases for MCP schema discovery (comma-separated).
+	// Defaults to "mainnet-beta" for geoprobe location_offsets data.
+	if dbs := os.Getenv("CLICKHOUSE_EXTRA_SCHEMA_DBS"); dbs != "" {
+		for _, db := range strings.Split(dbs, ",") {
+			if db = strings.TrimSpace(db); db != "" {
+				extraSchemaDBs = append(extraSchemaDBs, db)
+			}
+		}
+	} else {
+		extraSchemaDBs = []string{"mainnet-beta"}
 	}
 
 	// Build env -> database mapping.

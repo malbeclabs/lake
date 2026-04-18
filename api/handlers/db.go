@@ -134,13 +134,14 @@ func formatQueryResult(result workflow.QueryResult) string {
 
 // DBSchemaFetcher implements workflow.SchemaFetcher using a ClickHouse connection.
 type DBSchemaFetcher struct {
-	db       driver.Conn
-	database string
+	db             driver.Conn
+	database       string
+	extraDatabases []string
 }
 
 // NewDBSchemaFetcher creates a new DBSchemaFetcher.
 func (a *API) NewDBSchemaFetcher() *DBSchemaFetcher {
-	return &DBSchemaFetcher{db: a.PublicQueryDB, database: a.Database}
+	return &DBSchemaFetcher{db: a.PublicQueryDB, database: a.Database, extraDatabases: a.ExtraSchemaDBs}
 }
 
 // FetchSchema retrieves table columns and view definitions from ClickHouse.
@@ -191,6 +192,40 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 		columns = append(columns, c)
 	}
 
+	// Fetch columns from extra databases (e.g., mainnet-beta for location_offsets).
+	// Tables are prefixed with "database." so the agent uses fully-qualified names.
+	for _, extraDB := range f.extraDatabases {
+		start = time.Now()
+		extraRows, err := f.db.Query(ctx, `
+			SELECT
+				table,
+				name,
+				type
+			FROM system.columns
+			WHERE database = $1
+			  AND table NOT LIKE 'stg_%'
+			  AND table != '_env_lock'
+			ORDER BY table, position
+		`, extraDB)
+		duration = time.Since(start)
+		if err != nil {
+			metrics.RecordClickHouseQuery(duration, err)
+			// Non-fatal: log and continue if an extra database is inaccessible
+			continue
+		}
+		for extraRows.Next() {
+			var c columnInfo
+			if err := extraRows.Scan(&c.Table, &c.Name, &c.Type); err != nil {
+				extraRows.Close()
+				break
+			}
+			c.Table = extraDB + "." + c.Table
+			columns = append(columns, c)
+		}
+		extraRows.Close()
+		metrics.RecordClickHouseQuery(duration, nil)
+	}
+
 	// Fetch view names to label them in the output
 	start = time.Now()
 	viewRows, err := f.db.Query(ctx, `
@@ -216,6 +251,34 @@ func (f *DBSchemaFetcher) FetchSchema(ctx context.Context) (string, error) {
 			return "", err
 		}
 		views[name] = true
+	}
+
+	// Fetch view names from extra databases
+	for _, extraDB := range f.extraDatabases {
+		start = time.Now()
+		extraViewRows, err := f.db.Query(ctx, `
+			SELECT name
+			FROM system.tables
+			WHERE database = $1
+			  AND engine = 'View'
+			  AND name NOT LIKE 'stg_%'
+			  AND name != '_env_lock'
+		`, extraDB)
+		duration = time.Since(start)
+		if err != nil {
+			metrics.RecordClickHouseQuery(duration, err)
+			continue
+		}
+		for extraViewRows.Next() {
+			var name string
+			if err := extraViewRows.Scan(&name); err != nil {
+				extraViewRows.Close()
+				break
+			}
+			views[extraDB+"."+name] = true
+		}
+		extraViewRows.Close()
+		metrics.RecordClickHouseQuery(duration, nil)
 	}
 
 	// Format schema as readable text
