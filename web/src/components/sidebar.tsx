@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useLocation, Link, useNavigate } from 'react-router-dom'
 import { useEnv } from '@/contexts/EnvContext'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   PanelLeftClose,
   PanelLeftOpen,
@@ -42,6 +43,7 @@ export function Sidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const { features } = useEnv()
+  const { user } = useAuth()
   const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
@@ -93,6 +95,9 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isEdgeRoute = isShredsRoute
+  const isGeolocRoute = location.pathname.startsWith('/geoloc/')
+  const isGeolocProbesRoute = location.pathname.startsWith('/geoloc/probes')
+  const isGeolocUsersRoute = location.pathname.startsWith('/geoloc/users')
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -261,6 +266,11 @@ const { resolvedTheme, setTheme } = useTheme()
           <Link to="/dz/devices" className={collapsedIconClass(isDZRoute && !isEdgeRoute)} title="DoubleZero">
             <Server className="h-4 w-4" />
           </Link>
+          {user?.is_internal_user && (
+            <Link to="/geoloc/probes" className={collapsedIconClass(isGeolocRoute)} title="Geolocation">
+              <MapPin className="h-4 w-4" />
+            </Link>
+          )}
           {hasSolana && (
             <Link to="/solana/validators" className={collapsedIconClass(isSolanaRoute)} title="Solana">
               <Landmark className="h-4 w-4" />
@@ -552,6 +562,25 @@ const { resolvedTheme, setTheme } = useTheme()
             </Link>
           </div>
         </div>
+
+        {/* Geolocation section - internal users only */}
+        {user?.is_internal_user && (
+          <div className="px-3 pt-4">
+            <div className="px-3 mb-2">
+              <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Geolocation</span>
+            </div>
+            <div className="space-y-1">
+              <Link to="/geoloc/probes" className={navItemClass(isGeolocProbesRoute)}>
+                <MapPin className="h-4 w-4" />
+                Probes
+              </Link>
+              <Link to="/geoloc/users" className={navItemClass(isGeolocUsersRoute)}>
+                <Users className="h-4 w-4" />
+                Users
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Solana section - always visible when feature-gated */}
         {hasSolana && (
