@@ -149,7 +149,7 @@ func Load() error {
 	}
 
 	// Extra databases for MCP schema discovery (comma-separated).
-	// Defaults to "mainnet-beta" for geoprobe location_offsets data.
+	// Defaults to mainnet-beta, devnet, testnet for geoprobe location_offsets data.
 	if dbs := os.Getenv("CLICKHOUSE_EXTRA_SCHEMA_DBS"); dbs != "" {
 		for _, db := range strings.Split(dbs, ",") {
 			if db = strings.TrimSpace(db); db != "" {
@@ -157,7 +157,7 @@ func Load() error {
 			}
 		}
 	} else {
-		extraSchemaDBs = []string{"mainnet-beta"}
+		extraSchemaDBs = []string{"mainnet-beta", "devnet", "testnet"}
 	}
 
 	// Build env -> database mapping.
