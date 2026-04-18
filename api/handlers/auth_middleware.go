@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -70,8 +71,14 @@ func (a *API) RequireAuth(next http.Handler) http.Handler {
 
 // RequireInternalDomain middleware returns 403 unless the user is authenticated
 // with an email from an allowed domain (AUTH_ALLOWED_DOMAINS).
+// Set DISABLE_INTERNAL_AUTH=true to bypass this check in non-production environments.
 func RequireInternalDomain(next http.Handler) http.Handler {
+	bypass := os.Getenv("DISABLE_INTERNAL_AUTH") == "true"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if bypass {
+			next.ServeHTTP(w, r)
+			return
+		}
 		account := GetAccountFromContext(r.Context())
 		if account == nil || !account.IsInternalUser {
 			http.Error(w, "Forbidden", http.StatusForbidden)
