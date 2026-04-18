@@ -5816,3 +5816,28 @@ export async function fetchGeolocUsers(
   }
   return res.json()
 }
+
+export interface GeolocExplorerOffset {
+  sender_pubkey: string
+  probe_code: string
+  lat: number
+  lng: number
+  rtt_ns: number
+  measured_rtt_ns: number
+  target_ip: string
+  num_references: number
+  ref_measured_rtt_ns: number[]
+  ref_rtt_ns: number[]
+}
+
+export interface GeolocExplorerResponse {
+  offsets: GeolocExplorerOffset[]
+}
+
+export async function fetchGeolocExplorer(): Promise<GeolocExplorerResponse> {
+  const res = await apiFetch('/api/dz/geoloc/explorer')
+  if (!res.ok) {
+    throw new Error('Failed to fetch geolocation explorer data')
+  }
+  return res.json()
+}

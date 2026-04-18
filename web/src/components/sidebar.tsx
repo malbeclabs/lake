@@ -102,6 +102,7 @@ const { resolvedTheme, setTheme } = useTheme()
   const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
   const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
   const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
+  const isGeolocExplorerRoute = location.pathname === '/dz/geoloc/explorer'
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -588,6 +589,10 @@ const { resolvedTheme, setTheme } = useTheme()
               <Link to="/dz/geoloc/users" className={navItemClass(isGeolocUsersRoute)}>
                 <Users className="h-4 w-4" />
                 Users
+              </Link>
+              <Link to="/dz/geoloc/explorer" className={navItemClass(isGeolocExplorerRoute)}>
+                <Map className="h-4 w-4" />
+                Explorer
               </Link>
             </div>
           </div>

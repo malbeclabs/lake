@@ -575,6 +575,7 @@ func main() {
 			r.Use(handlers.RequireInternalDomain)
 			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
 			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
+			r.Get("/api/dz/geoloc/explorer", api.GetGeolocExplorer)
 		})
 
 		// Solana entity routes

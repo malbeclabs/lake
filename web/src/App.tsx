@@ -57,6 +57,7 @@ import { UserDetailPage } from '@/components/user-detail-page'
 import { MulticastGroupsPage } from '@/components/multicast-groups-page'
 import { GeolocProbesPage } from '@/components/geoloc-probes-page'
 import { GeolocUsersPage } from '@/components/geoloc-users-page'
+import { GeolocExplorerPage } from '@/components/geoloc-explorer-page'
 import { ShredsSeatsPage, ShredsFundersPage, ShredsDevicesPage, ShredsEscrowEventsPage } from '@/components/shreds-page'
 import { ShredsEconomicsPage } from '@/components/shreds-economics-page'
 import { PublisherCheckPage } from './components/publisher-check-page'
@@ -717,6 +718,7 @@ function AppContent() {
             {/* Geolocation routes */}
             <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
             <Route path="/dz/geoloc/users" element={<GeolocUsersPage />} />
+            <Route path="/dz/geoloc/explorer" element={<GeolocExplorerPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />
