@@ -29,7 +29,7 @@ const fieldPrefixes = [
   { prefix: 'updates:', description: 'Filter by update count' },
 ]
 
-const autocompleteFields: string[] = []
+const autocompleteFields = ['code', 'owner', 'exchange']
 
 function toFilterParam(filter: string): string {
   const colonIndex = filter.indexOf(':')

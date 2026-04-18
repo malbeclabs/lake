@@ -47,7 +47,7 @@ export function Sidebar() {
   const shredsDefaultPath = '/dz/shreds/scoreboard'
   const hasNeo4j = features.neo4j !== false
   const hasSolana = features.solana !== false
-  const showGeoloc = user?.is_internal_user || features.disable_internal_auth === true
+  const showGeoloc = user?.is_internal_user || features.geoloc === true
 const { resolvedTheme, setTheme } = useTheme()
   const { updateAvailable, reload } = useVersionCheck()
 

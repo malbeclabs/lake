@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -283,7 +282,7 @@ func (a *API) GetFieldValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Geolocation field values are gated to internal (domain-authenticated) users.
-	if (entity == "geoloc-probes" || entity == "geoloc-users") && os.Getenv("DISABLE_INTERNAL_AUTH") != "true" {
+	if (entity == "geoloc-probes" || entity == "geoloc-users") && !InternalAuthDisabled {
 		acc := GetAccountFromContext(ctx)
 		if acc == nil || !acc.IsInternalUser {
 			w.Header().Set("Content-Type", "application/json")

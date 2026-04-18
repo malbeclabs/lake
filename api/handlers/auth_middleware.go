@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+// InternalAuthDisabled is true when DISABLE_INTERNAL_AUTH=true is set in a
+// non-production environment. It bypasses RequireInternalDomain middleware and
+// internal-user field-value gating so internal-only pages can be tested in
+// staging/preview where Google Sign-In is unavailable.
+var InternalAuthDisabled = os.Getenv("DISABLE_INTERNAL_AUTH") == "true" &&
+	os.Getenv("SENTRY_ENVIRONMENT") != "production"
+
 // Context keys for auth
 type contextKey string
 
@@ -71,11 +78,10 @@ func (a *API) RequireAuth(next http.Handler) http.Handler {
 
 // RequireInternalDomain middleware returns 403 unless the user is authenticated
 // with an email from an allowed domain (AUTH_ALLOWED_DOMAINS).
-// Set DISABLE_INTERNAL_AUTH=true to bypass this check in non-production environments.
+// Bypassed when InternalAuthDisabled is true (non-production only).
 func RequireInternalDomain(next http.Handler) http.Handler {
-	bypass := os.Getenv("DISABLE_INTERNAL_AUTH") == "true"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if bypass {
+		if InternalAuthDisabled {
 			next.ServeHTTP(w, r)
 			return
 		}

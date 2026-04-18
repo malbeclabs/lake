@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/malbeclabs/lake/api/handlers/dberror"
 	"github.com/malbeclabs/lake/api/metrics"
 )
 
@@ -73,7 +74,7 @@ func (a *API) GetGeolocProbes(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		logError("geoloc probes query error", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -96,7 +97,7 @@ func (a *API) GetGeolocProbes(w http.ResponseWriter, r *http.Request) {
 			&total,
 		); err != nil {
 			logError("geoloc probes scan error", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 			return
 		}
 		probes = append(probes, g)
@@ -104,7 +105,7 @@ func (a *API) GetGeolocProbes(w http.ResponseWriter, r *http.Request) {
 
 	if err := rows.Err(); err != nil {
 		logError("geoloc probes rows error", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, dberror.UserMessage(err), http.StatusInternalServerError)
 		return
 	}
 

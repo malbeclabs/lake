@@ -34,10 +34,10 @@ func (a *API) GetConfig(w http.ResponseWriter, r *http.Request) {
 	// Feature flags based on environment
 	// Mainnet gets all features; non-mainnet environments have restricted features
 	features := map[string]bool{
-		"neo4j":                 a.Neo4jClient != nil && env == EnvMainnet,
-		"solana":                env == EnvMainnet,
-		"geoip":                 env == EnvMainnet,
-		"disable_internal_auth": os.Getenv("DISABLE_INTERNAL_AUTH") == "true",
+		"neo4j":  a.Neo4jClient != nil && env == EnvMainnet,
+		"solana": env == EnvMainnet,
+		"geoip":  env == EnvMainnet,
+		"geoloc": InternalAuthDisabled || env == EnvMainnet,
 	}
 
 	config := PublicConfig{
