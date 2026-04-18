@@ -95,9 +95,9 @@ const { resolvedTheme, setTheme } = useTheme()
   const isShredsEscrowEventsRoute = location.pathname === '/dz/shreds/activity'
   const isShredsRoute = location.pathname.startsWith('/dz/shreds') || isShredsPublishersRoute
   const isEdgeRoute = isShredsRoute
-  const isGeolocRoute = location.pathname.startsWith('/geoloc/')
-  const isGeolocProbesRoute = location.pathname.startsWith('/geoloc/probes')
-  const isGeolocUsersRoute = location.pathname.startsWith('/geoloc/users')
+  const isGeolocRoute = location.pathname.startsWith('/dz/geoloc/')
+  const isGeolocProbesRoute = location.pathname.startsWith('/dz/geoloc/probes')
+  const isGeolocUsersRoute = location.pathname.startsWith('/dz/geoloc/users')
   const isValidatorsRoute = location.pathname.startsWith('/solana/validators')
   const isGossipNodesRoute = location.pathname.startsWith('/solana/gossip-nodes')
   const isSolanaOverviewRoute = location.pathname === '/solana/overview'
@@ -267,7 +267,7 @@ const { resolvedTheme, setTheme } = useTheme()
             <Server className="h-4 w-4" />
           </Link>
           {user?.is_internal_user && (
-            <Link to="/geoloc/probes" className={collapsedIconClass(isGeolocRoute)} title="Geolocation">
+            <Link to="/dz/geoloc/probes" className={collapsedIconClass(isGeolocRoute)} title="Geolocation">
               <MapPin className="h-4 w-4" />
             </Link>
           )}
@@ -570,11 +570,11 @@ const { resolvedTheme, setTheme } = useTheme()
               <span className="text-[11px] font-normal text-muted-foreground/70 uppercase tracking-widest">Geolocation</span>
             </div>
             <div className="space-y-1">
-              <Link to="/geoloc/probes" className={navItemClass(isGeolocProbesRoute)}>
+              <Link to="/dz/geoloc/probes" className={navItemClass(isGeolocProbesRoute)}>
                 <MapPin className="h-4 w-4" />
                 Probes
               </Link>
-              <Link to="/geoloc/users" className={navItemClass(isGeolocUsersRoute)}>
+              <Link to="/dz/geoloc/users" className={navItemClass(isGeolocUsersRoute)}>
                 <Users className="h-4 w-4" />
                 Users
               </Link>

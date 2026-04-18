@@ -709,8 +709,8 @@ function AppContent() {
             <Route path="/dz/edge/scoreboard" element={<Navigate to="/dz/shreds/scoreboard" replace />} />
 
             {/* Geolocation routes */}
-            <Route path="/geoloc/probes" element={<GeolocProbesPage />} />
-            <Route path="/geoloc/users" element={<GeolocUsersPage />} />
+            <Route path="/dz/geoloc/probes" element={<GeolocProbesPage />} />
+            <Route path="/dz/geoloc/users" element={<GeolocUsersPage />} />
 
             {/* Solana entity routes */}
             <Route path="/solana/overview" element={<SolanaOverviewPage />} />

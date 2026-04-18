@@ -567,8 +567,8 @@ func main() {
 		// Geolocation routes (internal only)
 		r.Group(func(r chi.Router) {
 			r.Use(handlers.RequireInternalDomain)
-			r.Get("/api/geoloc/probes", api.GetGeolocProbes)
-			r.Get("/api/geoloc/users", api.GetGeolocUsers)
+			r.Get("/api/dz/geoloc/probes", api.GetGeolocProbes)
+			r.Get("/api/dz/geoloc/users", api.GetGeolocUsers)
 		})
 
 		// Solana entity routes
