@@ -871,9 +871,11 @@ function RecentSlotsChart({
     }
 
     // Seed the live buffer from a set of slot races (initial load path).
-    // Queue depth sets how far behind real-time the view starts; with the rewind-on-catch-up
-    // feature we no longer need a deep runway, so keep this short. ~75 slots ≈ 30s at 2.5/s.
-    const INITIAL_QUEUE_SLOTS = 75
+    // Queue depth sets the animation runway for the fresh-seed path: ~3750 slots ≈ 25 min
+    // at 2.5/s, enough to span the upstream MV's 5-min batch cadence many times over even
+    // if polls briefly hiccup. When fallback already seeded, the merge path below preserves
+    // the near-real-time anchor instead and just adds runway via the fetched slots.
+    const INITIAL_QUEUE_SLOTS = 3750
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       if (!nums.length) return
