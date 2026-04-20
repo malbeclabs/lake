@@ -871,53 +871,17 @@ function RecentSlotsChart({
     }
 
     // Seed the live buffer from a set of slot races (initial load path).
-    // Queue depth sets the animation runway for the fresh-seed path: ~3750 slots ≈ 25 min
-    // at 2.5/s, enough to span the upstream MV's 5-min batch cadence many times over even
-    // if polls briefly hiccup. When fallback already seeded, the merge path below preserves
-    // the near-real-time anchor instead and just adds runway via the fetched slots.
+    // Queue depth sets how far behind real-time the view starts; ~3750 slots ≈ 25 min at
+    // 2.5/s, enough to span the upstream MV's 5-min batch cadence many times over even if
+    // polls briefly hiccup.
     const INITIAL_QUEUE_SLOTS = 3750
     const seedBuffer = (races: EdgeScoreboardSlotRace[], leaders?: Record<string, EdgeScoreboardLeader>) => {
       const { map, nums } = bySlotOrdered(races)
       if (!nums.length) return
       liveMaxSlotRef.current = Math.max(liveMaxSlotRef.current, nums.at(-1) ?? 0)
-
-      // If fallback already seeded, preserve its anchor and merge the fetched data in
-      // place: slots older than the anchor go to the buffer (history, used for rewind),
-      // newer slots enqueue (future animation runway). This avoids a visible anchor
-      // jump when the main fetch lands after the page cache already rendered the chart.
-      if (liveEdgeRef.current > 0) {
-        const anchor = liveEdgeRef.current
-        const bufferedSlots = new Set(slotBufferRef.current.map(r => r.slot))
-        const queuedSlots = new Set<number>()
-        for (const arr of liveQueueRef.current) for (const r of arr) queuedSlots.add(r.slot)
-        const newBuffer = [...slotBufferRef.current]
-        let bufferChanged = false
-        for (const s of nums) {
-          if (s <= anchor && !bufferedSlots.has(s)) {
-            newBuffer.push(...map.get(s)!)
-            bufferChanged = true
-          } else if (s > anchor && !queuedSlots.has(s)) {
-            const q = liveQueueRef.current
-            let i = q.length
-            while (i > 0 && (q[i - 1][0]?.slot ?? 0) > s) i--
-            q.splice(i, 0, map.get(s)!)
-          }
-        }
-        if (bufferChanged) {
-          const bufNums = [...new Set(newBuffer.map(r => r.slot))].sort((a, b) => a - b)
-          const keepBuf = new Set(bufNums.slice(-MAX_BUFFER_SLOTS))
-          slotBufferRef.current = newBuffer.filter(r => keepBuf.has(r.slot))
-          // Nudge activeSlots to recompute so the chart picks up newly merged history
-          // immediately (otherwise it waits until the next rollover advances tailAnchor).
-          setBufferVersion(v => v + 1)
-        }
-        if (leaders) setLiveLeaders(prev => ({ ...prev, ...leaders }))
-        return
-      }
-
-      // Fresh seed — no prior state. Keep at least LIVE_BUFFER_SIZE slots in the
-      // immediate buffer so the chart has data to render. Only the tail goes to the
-      // queue; the queue drives the initial scroll animation.
+      // Keep at least LIVE_BUFFER_SIZE slots in the immediate buffer so the chart has
+      // data to render. Only the tail goes to the queue; the queue drives the initial
+      // scroll animation.
       const minImmediate = Math.min(nums.length, LIVE_BUFFER_SIZE)
       const splitIdx = Math.max(minImmediate, nums.length - INITIAL_QUEUE_SLOTS)
       const immediate = nums.slice(0, splitIdx)
@@ -1189,32 +1153,6 @@ function RecentSlotsChart({
       tailAnchorRef.current = 0
     }
   }, [live, window, leadersOnly])
-
-  // If React Query data arrives after the live effect started but the live effect's
-  // own fetch hasn't returned yet, seed the buffer now so the chart isn't blank.
-  const FALLBACK_QUEUE_SLOTS = 75
-  useEffect(() => {
-    if (!live || !slots.length || slotBufferRef.current.length > 0 || liveEdgeRef.current > 0) return
-    const map = new Map<number, EdgeScoreboardSlotRace[]>()
-    const nums: number[] = []
-    for (const r of slots) {
-      if (!map.has(r.slot)) { map.set(r.slot, []); nums.push(r.slot) }
-      map.get(r.slot)!.push(r)
-    }
-    nums.sort((a, b) => a - b)
-    liveMaxSlotRef.current = nums.at(-1) ?? 0
-    const splitIdx = Math.max(0, nums.length - FALLBACK_QUEUE_SLOTS)
-    slotBufferRef.current = nums.slice(0, splitIdx).flatMap(s => map.get(s)!)
-    const immediateSlot = nums[splitIdx - 1] ?? nums.at(-1) ?? 0
-    liveEdgeRef.current = immediateSlot
-    setLiveEdge(immediateSlot)
-    tailAnchorRef.current = immediateSlot
-    setTailAnchor(immediateSlot)
-    liveQueueRef.current = nums.slice(splitIdx).map(s => map.get(s)!)
-    scrollOffRef.current = 0
-    setScrollOffset(0)
-    if (slotLeaders) setLiveLeaders(slotLeaders)
-  }, [slots, live, slotLeaders])
 
   // In non-live per-slot mode, keep the buffer in sync with the query result so
   // the scroll system works the same way as live mode.
@@ -1621,8 +1559,18 @@ function RecentSlotsChart({
   }, [activeSlots, feeds, slotLeaders, liveLeaders, live, granular, applyInfoBar])
 
 
-  // Don't show "no data" once the live buffer is seeded (liveEdge > 0) — the chart
-  // renders from slotBufferRef even when the page-cache prop is empty.
+  // Show a loading placeholder while the initial seed fetch is in flight so the chart
+  // doesn't flash an empty frame before it has data to render. Falls through to "no
+  // data" only when there's truly nothing to show (non-live mode with empty cache).
+  if (live && !liveEdge)
+    return (
+      <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
+        {!bare && <h3 className="text-sm font-medium mb-4">Recent DZ Edge Leader Slots — Win Rate per Slot</h3>}
+        <div className="flex items-center justify-center py-12 text-muted-foreground">
+          <Loader2 size={16} className="animate-spin" />
+        </div>
+      </div>
+    )
   if (!slots.length && !liveEdge)
     return (
       <div className={bare ? undefined : "rounded-lg border border-border bg-card p-4"}>
