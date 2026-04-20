@@ -599,12 +599,15 @@ const SlotRaceNodeChart = memo(function SlotRaceNodeChart({
     const slotPx = Math.min(plot.valToPos(1, 'x', true) - plot.valToPos(0, 'x', true), 4)
     const duration = 350
     const startTime = performance.now()
-    animOffsetRef.current = slotPx
+    animOffsetRef.current = Math.round(slotPx)
 
     const tick = (now: number) => {
       const t = Math.min((now - startTime) / duration, 1)
       const eased = 1 - (1 - t) ** 3  // cubic ease-out
-      animOffsetRef.current = slotPx * (1 - eased)
+      // Snap to integer pixels. A fractional translate anti-aliases the fillRect
+      // edges, and at globalAlpha=0.8 those partial-coverage pixels read as thin
+      // dark borders around every bar. Whole-pixel shifts keep the edges clean.
+      animOffsetRef.current = Math.round(slotPx * (1 - eased))
       plot.redraw(false)
       if (t < 1) {
         rafRef.current = requestAnimationFrame(tick)
@@ -1479,20 +1482,13 @@ function RecentSlotsChart({
     fetchEdgeScoreboard(window, leadersOnly, { beforeSlot: oldestSlot, limit: 1000 }).then(data => {
       if (!data.recent_slots.length) return
       // Prepend older slots. viewEndSlot is an absolute slot number so the view
-      // is unaffected by buffer growth — no offset adjustment needed.
+      // is unaffected by buffer growth — no offset adjustment needed. The user's
+      // view stays pinned to the slot they clicked to; newly fetched slots sit
+      // below the view as runway that the next back-click can reveal.
       const existingSlots = new Set(slotBufferRef.current.map(r => r.slot))
       const newRaces = data.recent_slots.filter((r: EdgeScoreboardSlotRace) => !existingSlots.has(r.slot))
       if (!newRaces.length) return
       slotBufferRef.current = [...newRaces, ...slotBufferRef.current]
-      // If the user is still pinned at the old left edge, shift the view to the new
-      // left edge so the loaded history becomes immediately visible without another drag.
-      const oldMinEnd = oldestSlot + viewSlotCountRef.current - 1
-      if (viewEndSlotRef.current !== null && Math.abs(viewEndSlotRef.current - oldMinEnd) < 2) {
-        const newNums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
-        const newMinEnd = (newNums[0] ?? 0) + viewSlotCountRef.current - 1
-        viewEndSlotRef.current = newMinEnd
-        setViewEndSlot(newMinEnd)
-      }
     }).catch(() => {
       prefetchedBoundariesRef.current.delete(oldestSlot)
     }).finally(() => {
