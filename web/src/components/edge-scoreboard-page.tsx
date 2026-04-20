@@ -1127,10 +1127,11 @@ function RecentSlotsChart({
           drainTimer -= 400
           const races = liveQueueRef.current.shift()
           if (races) {
-            const newBuf = [...slotBufferRef.current, ...races]
-            const bufNums = [...new Set(newBuf.map(r => r.slot))].sort((a, b) => a - b)
-            const keepBuf = new Set(bufNums.slice(-MAX_BUFFER_SLOTS))
-            slotBufferRef.current = newBuf.filter(r => keepBuf.has(r.slot))
+            // Don't trim in paused mode — the infinite-scroll prefetch prepends older
+            // slots and a MAX_BUFFER_SLOTS trim would evict them before the user can
+            // scroll to them (and prefetchedBoundariesRef then blocks the re-fetch).
+            // The next tail-mode drain trims naturally when the user resumes live.
+            slotBufferRef.current = [...slotBufferRef.current, ...races]
             const slotNum = races[0]?.slot
             if (slotNum) { liveEdgeRef.current = slotNum }
           }
@@ -1385,21 +1386,40 @@ function RecentSlotsChart({
   if (scrollToLiveRef) scrollToLiveRef.current = scrollToLive
   if (toggleLiveRef) toggleLiveRef.current = toggleLive
 
-  // Step N slots forward (positive) or backward (negative).
+  // Step forward (+1) or backward (-1) by one page of data slots.
   const stepSlots = (direction: 1 | -1) => {
     const nums = [...new Set(slotBufferRef.current.map(r => r.slot))].sort((a, b) => a - b)
-    const liveEdge = liveEdgeRef.current || (nums.at(-1) ?? 0)
-    const oldestSlot = nums[0] ?? 0
-    const minEnd = oldestSlot + viewSlotCount - 1
-    const current = viewEndSlotRef.current ?? liveEdge
-    const next = current + direction * viewSlotCount
-    if (direction > 0 && next >= liveEdge) {
-      scrollToLive()
+    if (!nums.length) return
+    const liveEdge = liveEdgeRef.current || nums[nums.length - 1]
+    // In live mode, step from tailAnchor (the actual rendered right edge) rather
+    // than liveEdge. tailAnchor can trail liveEdge after a rewind on catch-up, so
+    // stepping from liveEdge would jump forward of the visible view.
+    const current = viewEndSlotRef.current ?? (tailAnchorRef.current || liveEdge)
+    // Step by viewSlotCount unique data slots rather than raw slot numbers so the
+    // chart shifts by a full page regardless of backend gaps. In leaders-only
+    // mode the server returns only DZ-leader slots, so 200 raw slots can map to
+    // far fewer data points — stepping by raw slots would land on a view with
+    // partial coverage and the chart would render empty padding on the left.
+    let curIdx = nums.length - 1
+    while (curIdx > 0 && nums[curIdx] > current) curIdx--
+    const rawNextIdx = curIdx + direction * viewSlotCount
+    if (direction > 0) {
+      const capped = Math.min(nums.length - 1, rawNextIdx)
+      if (capped >= nums.length - 1 || nums[capped] >= liveEdge) {
+        scrollToLive()
+        return
+      }
+      viewEndSlotRef.current = nums[capped]
+      setViewEndSlot(nums[capped])
       return
     }
-    const clamped = Math.max(minEnd, Math.min(liveEdge, next))
-    viewEndSlotRef.current = clamped
-    setViewEndSlot(clamped)
+    // Backward: clamp so the view has at least viewSlotCount slots to its left.
+    // If the buffer isn't deep enough, hold at the deepest anchor — the prefetch
+    // effect will extend the buffer and the next click can progress.
+    const minIdx = Math.min(nums.length - 1, viewSlotCount - 1)
+    const clampedIdx = Math.max(minIdx, rawNextIdx)
+    viewEndSlotRef.current = nums[clampedIdx]
+    setViewEndSlot(nums[clampedIdx])
   }
 
   // Prefetch older slots when user scrolls near the buffer start (infinite scroll backwards).
@@ -1409,8 +1429,13 @@ function RecentSlotsChart({
     if (!buffer.length) return
     const slotNums = [...new Set(buffer.map(r => r.slot))].sort((a, b) => a - b)
     const oldestSlot = slotNums[0]
-    // Trigger when the left edge of the view is within 150 slots of the oldest data
-    if (viewEndSlot > oldestSlot + viewSlotCount + 150) return
+    // Trigger when fewer than viewSlotCount+150 unique slots sit at or below
+    // viewEndSlot — i.e. the view is within a page of the buffer's oldest in
+    // data-slot terms. Index-based rather than raw-slot-based so sparse data
+    // (leaders-only mode) doesn't delay prefetch past the usable horizon.
+    let endIdx = slotNums.length - 1
+    while (endIdx > 0 && slotNums[endIdx] > viewEndSlot) endIdx--
+    if (endIdx > viewSlotCount + 150) return
     if (prefetchedBoundariesRef.current.has(oldestSlot)) return
     prefetchingRef.current = true
     setIsPrefetching(true)
